@@ -6,7 +6,7 @@
 import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
-import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType, GraphQLInputObjectType, GraphQLFloat } from "graphql";
+import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType, GraphQLInputObjectType, GraphQLFloat, GraphQLBoolean } from "graphql";
 import { ping as queryPingResolver } from "./../graphql/ping";
 export type SchemaConfig = {
     scalars: {
@@ -89,8 +89,21 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const VoidType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Void",
+        description: "Placeholder payload for mutations that have nothing meaningful to return (e.g. delete).\nClients should select `_` (or nothing) and discard the result.",
+        fields() {
+            return {
+                _: {
+                    description: "Exists only because GraphQL forbids empty object types. Always null \u2014 ignore it.",
+                    name: "_",
+                    type: GraphQLBoolean
+                }
+            };
+        }
+    });
     return new GraphQLSchema({
         query: QueryType,
-        types: [DateType, DateTimeType, MoneyInputType, MoneyType, PongType, QueryType]
+        types: [DateType, DateTimeType, MoneyInputType, MoneyType, PongType, QueryType, VoidType]
     });
 }

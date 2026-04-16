@@ -37,3 +37,14 @@ type Query {
   """Call this to check that the GraphQL server is working properly"""
   ping: Pong!
 }
+
+"""
+Placeholder payload for mutations that have nothing meaningful to return (e.g. delete).
+Clients should select `_` (or nothing) and discard the result.
+"""
+type Void {
+  """
+  Exists only because GraphQL forbids empty object types. Always null — ignore it.
+  """
+  _: Boolean
+}
