@@ -5,7 +5,7 @@
 
 import type { GqlScalar } from "grats";
 import type { DateTime as DateTimeInternal } from "./../schema/date-time";
-import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType } from "graphql";
+import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType, GraphQLInputObjectType, GraphQLFloat } from "graphql";
 import { ping as queryPingResolver } from "./../schema/ping";
 export type SchemaConfig = {
     scalars: {
@@ -46,8 +46,44 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "DateTime",
         ...config.scalars.DateTime
     });
+    const MoneyInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Client-supplied monetary value. `amount` is in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
+        name: "MoneyInput",
+        fields() {
+            return {
+                amount: {
+                    description: "Amount in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
+                    name: "amount",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                currency: {
+                    description: "ISO-4217 currency code (e.g. \"GBP\").",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const MoneyType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Money",
+        description: "A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for \u00A3123.45).",
+        fields() {
+            return {
+                amount: {
+                    description: "Amount in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
+                    name: "amount",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                currency: {
+                    description: "ISO-4217 currency code (e.g. \"GBP\").",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
     return new GraphQLSchema({
         query: QueryType,
-        types: [DateTimeType, PongType, QueryType]
+        types: [DateTimeType, MoneyInputType, MoneyType, PongType, QueryType]
     });
 }
