@@ -32,7 +32,7 @@ Lowercase, identifies the affected area. Prefer package names (`backend`), then 
 
 - Imperative mood, lowercase, no trailing period
 - Keep under ~70 characters
-- Describe the *what*, leave the *why* for the body (optional)
+- Describe the _what_, leave the _why_ for the body (optional)
 
 ## Examples
 
