@@ -6,6 +6,10 @@ Monorepo for a personal net worth tracker.
 
 - `packages/backend` — Fastify + Apollo GraphQL server on top of Postgres 18 (via `docker-compose.yml`). Schema is hand-written under `src/graphql/**` using [Grats](https://grats.capt.dev/) JSDoc tags and generated into `packages/backend/src/__generated__/{schema.ts,schema.graphql}` via `pnpm grats` (both committed). Database schema lives in `src/db/schema/**` (Drizzle ORM) with generated migrations in `src/db/migrations/` (all committed).
 
+## Testing
+
+- Vitest runs with `globals: true`. Never import `describe`, `it`, `test`, `expect`, `beforeAll`, `beforeEach`, `afterAll`, `afterEach`, `vi`, etc. from `vitest` — use them as globals. The types come from `"vitest/globals"` in `tsconfig.json`.
+
 ## Skills to use proactively
 
 - **`commit`** (`.claude/skills/commit/SKILL.md`) — conventional commit format (`feat(scope): …`, `fix(scope): …`, etc.). Use on every commit.
