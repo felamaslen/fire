@@ -4,12 +4,13 @@ import fastifyApollo, {
 } from "@as-integrations/fastify";
 import Fastify from "fastify";
 
-import { getSchema } from "../__generated__/schema";
+import { getSchema } from "./__generated__/schema";
+import { dateTimeScalar } from "./graphql/date-time";
 
 const fastify = Fastify({ logger: true });
 
 const apollo = new ApolloServer({
-  schema: getSchema(),
+  schema: getSchema({ scalars: { DateTime: dateTimeScalar } }),
   plugins: [fastifyApolloDrainPlugin(fastify)],
 });
 

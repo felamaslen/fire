@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "grats": "grats --tsconfig tsconfig.grats.json",
-    "dev": "pnpm grats && tsx watch --env-file=../../.env src/index.ts",
-    "start": "pnpm grats && tsx --env-file=../../.env src/index.ts",
+    "dev": "node --env-file=.env ./node_modules/vite-node/dist/cli.mjs --watch src/index.ts",
+    "start": "node --env-file=.env ./node_modules/vite-node/dist/cli.mjs src/index.ts",
     "typecheck": "pnpm grats && tsc --noEmit",
+    "test": "vitest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --env-file=../../.env ./node_modules/drizzle-kit/bin.cjs migrate",
-    "db:studio": "node --env-file=../../.env ./node_modules/drizzle-kit/bin.cjs studio",
+    "db:migrate": "node --env-file=.env ./node_modules/drizzle-kit/bin.cjs migrate",
+    "db:studio": "node --env-file=.env ./node_modules/drizzle-kit/bin.cjs studio",
     "db:generate-schema": "drizzle-kit export --sql > src/db/__generated__/schema.sql"
   },
   "dependencies": {
@@ -25,7 +26,9 @@
     "@types/node": "^24.0.0",
     "drizzle-kit": "^0.31.10",
     "grats": "^0.0.36",
-    "tsx": "^4.21.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vite": "^8.0.8",
+    "vite-node": "^6.0.0",
+    "vitest": "^4.1.4"
   }
 }
