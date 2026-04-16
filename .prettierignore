@@ -1,0 +1,5 @@
+node_modules
+dist
+build
+pnpm-lock.yaml
+packages/backend/src/__generated__
