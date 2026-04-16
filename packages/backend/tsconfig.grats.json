@@ -5,5 +5,5 @@
     "tsSchema": "./src/__generated__/schema.ts",
     "nullableByDefault": false
   },
-  "include": ["src/schema/**/*.ts"]
+  "include": ["src/graphql/**/*.ts"]
 }
