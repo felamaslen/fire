@@ -1,6 +1,5 @@
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
-import { afterAll, beforeAll, beforeEach, vi } from "vitest";
 
 vi.mock("@/db/client");
 
