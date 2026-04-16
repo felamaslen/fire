@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "grats": "grats --tsconfig tsconfig.grats.json",
+    "codegen": "run-p grats db:generate-schema && gql.tada generate-output",
     "dev": "node --env-file=.env ./node_modules/vite-node/dist/cli.mjs --watch src/index.ts",
     "start": "node --env-file=.env ./node_modules/vite-node/dist/cli.mjs src/index.ts",
     "typecheck": "pnpm grats && tsc --noEmit",
@@ -25,7 +26,9 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "drizzle-kit": "^0.31.10",
+    "gql.tada": "^1.9.2",
     "grats": "^0.0.36",
+    "npm-run-all2": "^8.0.4",
     "typescript": "~5.9.2",
     "vite": "^8.0.8",
     "vite-node": "^6.0.0",

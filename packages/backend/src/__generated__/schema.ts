@@ -4,11 +4,13 @@
  */
 
 import type { GqlScalar } from "grats";
+import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType, GraphQLInputObjectType, GraphQLFloat } from "graphql";
 import { ping as queryPingResolver } from "./../graphql/ping";
 export type SchemaConfig = {
     scalars: {
+        Date: GqlScalar<DateInternal>;
         DateTime: GqlScalar<DateTimeInternal>;
     };
 };
@@ -40,6 +42,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 }
             };
         }
+    });
+    const DateType: GraphQLScalarType = new GraphQLScalarType({
+        description: "ISO-8601 calendar date (YYYY-MM-DD). No time-of-day component.",
+        name: "Date",
+        ...config.scalars.Date
     });
     const DateTimeType: GraphQLScalarType = new GraphQLScalarType({
         description: "ISO-8601 date-time. Serialises as an ISO-8601 string over the wire.",
@@ -84,6 +91,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     return new GraphQLSchema({
         query: QueryType,
-        types: [DateTimeType, MoneyInputType, MoneyType, PongType, QueryType]
+        types: [DateType, DateTimeType, MoneyInputType, MoneyType, PongType, QueryType]
     });
 }
