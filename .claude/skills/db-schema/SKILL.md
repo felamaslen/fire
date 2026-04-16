@@ -9,14 +9,17 @@ The database schema lives in `packages/backend/src/db/schema/**` (Drizzle ORM). 
 
 ## Naming
 
-- **Table names: PascalCase, plural, domain-grouped.** Prefix every table in a domain with the same noun so related tables sort together:
-  - `NetWorthEntries`, `NetWorthValues`, `NetWorthAssetCategories`, `NetWorthLiabilityCategories`, `NetWorthOptionCategories`.
-- **Column names: camelCase.** Pass the name as the first argument to each column helper so Drizzle quotes it verbatim:
+- **Table names: PascalCase, plural, domain-grouped, most-significant-part first.** Prefix every table in a domain with the same noun so related tables sort together, and order the remaining parts from most to least significant. The shared root (`NetWorthCategory`) should alphabetise adjacent to the variants:
+  - `NetWorthEntries`, `NetWorthValues`, `NetWorthValueAmounts`, `NetWorthCategoryAssets`, `NetWorthCategoryLiabilities`, `NetWorthCategoryOptions`
+  - **Not** `NetWorthAssetCategories` / `NetWorthLiabilityCategories` — the shared concept (`Category`) belongs before the variant (`Asset`).
+  This mirrors rule 7 of the `graphql-schema` skill; keep DB and GraphQL names aligned.
+- **Column names: camelCase, most-significant-part first.** Pass the name as the first argument to each column helper so Drizzle quotes it verbatim. Apply the same ordering rule to FK columns — `categoryAssetId` (not `assetCategoryId`), `categoryLiabilityId`, `categoryOptionId` — so related columns sort together:
   ```ts
   createdAt: timestamp("createdAt", { withTimezone: true }).notNull().defaultNow(),
+  categoryAssetId: uuid("categoryAssetId").references(() => NetWorthCategoryAssets.id),
   ```
   Do not rely on Drizzle's default snake_case casing for this repo.
-- **Enum type names: camelCase, domain-prefixed** (`netWorthAssetType`, `netWorthCurrency`).
+- **Enum type names: camelCase, domain-prefixed, most-significant-part first** (`netWorthCategoryAssetType`, `netWorthCategoryLiabilityType`).
 
 ## Documentation
 
