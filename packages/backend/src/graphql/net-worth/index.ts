@@ -1,0 +1,562 @@
+import { strict as assert } from "node:assert";
+
+import { and, asc, desc, eq, gt, lt, notInArray, or, sql } from "drizzle-orm";
+import type { Float, ID, Int } from "grats";
+
+import { db } from "@/db";
+import {
+  NetWorthCategoryAssets,
+  NetWorthCategoryLiabilities,
+  NetWorthCategoryOptions,
+  NetWorthCurrencyRates,
+  NetWorthEntries,
+  NetWorthValueAmounts,
+  NetWorthValues,
+} from "@/db/schema/net-worth";
+
+import type { Date as CalendarDate } from "../date";
+import {
+  assertCurrencyCode,
+  getMoneyInputFractionalAmount,
+  Money,
+  type MoneyInput,
+} from "../money";
+import { VOID, type Void } from "../void";
+import {
+  NetWorthCategoryAsset,
+  NetWorthCategoryLiability,
+  NetWorthCategoryOption,
+  toNetWorthCategoryAsset,
+  toNetWorthCategoryLiability,
+  toNetWorthCategoryOption,
+} from "./categories";
+
+/** One net-worth snapshot for a single month. @gqlType */
+export type NetWorthEntry = {
+  /** @gqlField */
+  id: ID;
+  /** Any calendar date inside the target month. @gqlField */
+  date: CalendarDate;
+};
+
+/** Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`. @gqlType */
+export type NetWorthCurrencyRate = {
+  /** ISO-4217 code being priced in (e.g. "GBP" for a GBP/USD quote). @gqlField */
+  base: string;
+  /** ISO-4217 code being quoted (e.g. "USD" for a GBP/USD quote). @gqlField */
+  currency: string;
+  /** Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD). @gqlField */
+  rate: Float;
+};
+
+/** A single line item inside a NetWorthEntry. Exactly one of asset / liability / option is populated. @gqlType */
+export type NetWorthValue = {
+  /** @gqlField */
+  id: ID;
+  categoryAssetId: string | null;
+  categoryLiabilityId: string | null;
+  categoryOptionId: string | null;
+};
+
+/** Pagination state for a NetWorthEntryConnection. @gqlType */
+export type PageInfo = {
+  /** @gqlField */
+  hasNextPage: boolean;
+  /** @gqlField */
+  hasPreviousPage: boolean;
+  /** @gqlField */
+  startCursor: ID | null;
+  /** @gqlField */
+  endCursor: ID | null;
+};
+
+/** An edge within a NetWorthEntryConnection. @gqlType */
+export type NetWorthEntryEdge = {
+  /** @gqlField */
+  cursor: ID;
+  /** @gqlField */
+  node: NetWorthEntry;
+};
+
+/** A cursor-paginated list of NetWorthEntry, newest first. @gqlType */
+export type NetWorthEntryConnection = {
+  /** @gqlField */
+  edges: NetWorthEntryEdge[];
+  /** @gqlField */
+  pageInfo: PageInfo;
+};
+
+function toNetWorthEntry(
+  row: typeof NetWorthEntries.$inferSelect,
+): NetWorthEntry {
+  return {
+    id: row.id,
+    date: row.date,
+  };
+}
+
+function toNetWorthValue(
+  row: typeof NetWorthValues.$inferSelect,
+): NetWorthValue {
+  return {
+    id: row.id,
+    categoryAssetId: row.categoryAssetId,
+    categoryLiabilityId: row.categoryLiabilityId,
+    categoryOptionId: row.categoryOptionId,
+  };
+}
+
+type Cursor = { c: string; i: string };
+
+function encodeCursor(entry: { createdAt: Date | string; id: string }): ID {
+  const c =
+    entry.createdAt instanceof Date
+      ? entry.createdAt.toISOString()
+      : entry.createdAt;
+  const payload: Cursor = { c, i: entry.id };
+  return Buffer.from(JSON.stringify(payload), "utf8").toString(
+    "base64url",
+  ) as ID;
+}
+
+function decodeCursor(raw: string): Cursor {
+  try {
+    const json = Buffer.from(raw, "base64url").toString("utf8");
+    const parsed = JSON.parse(json) as Cursor;
+    assert(
+      typeof parsed.c === "string" && typeof parsed.i === "string",
+      "invalid cursor",
+    );
+    return parsed;
+  } catch {
+    throw new Error("invalid cursor");
+  }
+}
+
+/** Exchange rates captured for this entry. @gqlField */
+export async function currencyRates(
+  entry: NetWorthEntry,
+): Promise<NetWorthCurrencyRate[]> {
+  const rows = await db
+    .select()
+    .from(NetWorthCurrencyRates)
+    .where(eq(NetWorthCurrencyRates.entryId, entry.id));
+  return rows.map((r) => ({
+    base: r.base,
+    currency: r.currency,
+    rate: Number(r.rate),
+  }));
+}
+
+/** The line-item values recorded for this entry. @gqlField */
+export async function values(entry: NetWorthEntry): Promise<NetWorthValue[]> {
+  const rows = await db
+    .select()
+    .from(NetWorthValues)
+    .where(eq(NetWorthValues.entryId, entry.id));
+  return rows.map(toNetWorthValue);
+}
+
+/** Monetary amounts for this line item — at most one per currency. @gqlField */
+export async function amounts(value: NetWorthValue): Promise<Money[]> {
+  const rows = await db
+    .select()
+    .from(NetWorthValueAmounts)
+    .where(eq(NetWorthValueAmounts.valueId, value.id));
+  return rows.map((row) =>
+    Money.fromMinorDenomination(row.amount, row.currency),
+  );
+}
+
+/** The asset category this value is recorded against, if any. @gqlField */
+export async function asset(
+  value: NetWorthValue,
+): Promise<NetWorthCategoryAsset | null> {
+  if (!value.categoryAssetId) return null;
+  const [row] = await db
+    .select()
+    .from(NetWorthCategoryAssets)
+    .where(eq(NetWorthCategoryAssets.id, value.categoryAssetId));
+  assert(
+    row,
+    `NetWorthCategoryAsset ${value.categoryAssetId} referenced by NetWorthValue ${value.id} is missing`,
+  );
+  return toNetWorthCategoryAsset(row);
+}
+
+/** The liability category this value is recorded against, if any. @gqlField */
+export async function liability(
+  value: NetWorthValue,
+): Promise<NetWorthCategoryLiability | null> {
+  if (!value.categoryLiabilityId) return null;
+  const [row] = await db
+    .select()
+    .from(NetWorthCategoryLiabilities)
+    .where(eq(NetWorthCategoryLiabilities.id, value.categoryLiabilityId));
+  assert(
+    row,
+    `NetWorthCategoryLiability ${value.categoryLiabilityId} referenced by NetWorthValue ${value.id} is missing`,
+  );
+  return toNetWorthCategoryLiability(row);
+}
+
+/** The option category this value is recorded against, if any. @gqlField */
+export async function option(
+  value: NetWorthValue,
+): Promise<NetWorthCategoryOption | null> {
+  if (!value.categoryOptionId) return null;
+  const [row] = await db
+    .select()
+    .from(NetWorthCategoryOptions)
+    .where(eq(NetWorthCategoryOptions.id, value.categoryOptionId));
+  assert(
+    row,
+    `NetWorthCategoryOption ${value.categoryOptionId} referenced by NetWorthValue ${value.id} is missing`,
+  );
+  return toNetWorthCategoryOption(row);
+}
+
+const DEFAULT_PAGE_SIZE = 20;
+
+/** Paginated list of net-worth entries, newest first. @gqlQueryField */
+export async function netWorth(
+  first?: Int | null,
+  after?: ID | null,
+  last?: Int | null,
+  before?: ID | null,
+): Promise<NetWorthEntryConnection> {
+  assert(
+    first == null || last == null,
+    "Pass either `first` or `last`, not both.",
+  );
+  assert(
+    after == null || before == null,
+    "Pass either `after` or `before`, not both.",
+  );
+
+  const forward = last == null;
+  const limit = forward
+    ? (first ?? DEFAULT_PAGE_SIZE)
+    : (last ?? DEFAULT_PAGE_SIZE);
+  const cursorRaw = forward ? after : before;
+  const cursor = cursorRaw ? decodeCursor(cursorRaw) : null;
+
+  const cursorWhere = cursor
+    ? forward
+      ? or(
+          lt(NetWorthEntries.createdAt, new Date(cursor.c)),
+          and(
+            eq(NetWorthEntries.createdAt, new Date(cursor.c)),
+            lt(NetWorthEntries.id, cursor.i),
+          ),
+        )
+      : or(
+          gt(NetWorthEntries.createdAt, new Date(cursor.c)),
+          and(
+            eq(NetWorthEntries.createdAt, new Date(cursor.c)),
+            gt(NetWorthEntries.id, cursor.i),
+          ),
+        )
+    : undefined;
+
+  const rows = await db
+    .select()
+    .from(NetWorthEntries)
+    .where(cursorWhere)
+    .orderBy(
+      forward
+        ? desc(NetWorthEntries.createdAt)
+        : asc(NetWorthEntries.createdAt),
+      forward ? desc(NetWorthEntries.id) : asc(NetWorthEntries.id),
+    )
+    .limit(limit + 1);
+
+  const hasExtra = rows.length > limit;
+  const page = hasExtra ? rows.slice(0, limit) : rows;
+  const ordered = forward ? page : [...page].reverse();
+
+  const edges: NetWorthEntryEdge[] = ordered.map((row) => ({
+    cursor: encodeCursor(row),
+    node: toNetWorthEntry(row),
+  }));
+
+  const pageInfo: PageInfo = {
+    hasNextPage: forward ? hasExtra : cursor != null,
+    hasPreviousPage: forward ? cursor != null : hasExtra,
+    startCursor: edges.length > 0 ? edges[0].cursor : null,
+    endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
+  };
+
+  return { edges, pageInfo };
+}
+
+/** A line item recorded against an asset category. @gqlInput */
+export type NetWorthValueAssetInput = {
+  /** Existing NetWorthValue id to update. Omit to create a new line item. */
+  id?: ID | null;
+  /** ID of the asset category this value is recorded against. */
+  categoryId: ID;
+  /** Monetary amounts for this line item; at most one entry per currency. */
+  amounts: MoneyInput[];
+};
+
+/** A line item recorded against a liability category. @gqlInput */
+export type NetWorthValueLiabilityInput = {
+  /** Existing NetWorthValue id to update. Omit to create a new line item. */
+  id?: ID | null;
+  /** ID of the liability category this value is recorded against. */
+  categoryId: ID;
+  /** Monetary amounts for this line item; at most one entry per currency. */
+  amounts: MoneyInput[];
+};
+
+/** A line item recorded against an equity-option category. @gqlInput */
+export type NetWorthValueOptionInput = {
+  /** Existing NetWorthValue id to update. Omit to create a new line item. */
+  id?: ID | null;
+  /** ID of the option category this value is recorded against. */
+  categoryId: ID;
+  /** Monetary amounts for this line item; at most one entry per currency. */
+  amounts: MoneyInput[];
+};
+
+/** A currency rate to record alongside the entry. Keyed by `currency` within the entry. @gqlInput */
+export type NetWorthCurrencyRateInput = {
+  /** ISO-4217 currency being priced in (e.g. "GBP"). */
+  base: string;
+  /** ISO-4217 currency being quoted (e.g. "USD"). */
+  currency: string;
+  /** Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD). */
+  rate: Float;
+};
+
+/** One line item; exactly one of `asset`, `liability`, `option` must be set. @gqlInput */
+export type NetWorthValueInput =
+  | {
+      /** Line item recorded against an asset category. */
+      asset: NetWorthValueAssetInput;
+    }
+  | {
+      /** Line item recorded against a liability category. */
+      liability: NetWorthValueLiabilityInput;
+    }
+  | {
+      /** Line item recorded against an equity-option category. */
+      option: NetWorthValueOptionInput;
+    };
+
+type ValueParts = {
+  id: string | null;
+  row: Omit<typeof NetWorthValues.$inferInsert, "entryId">;
+  amounts: MoneyInput[];
+};
+
+function valueParts(v: NetWorthValueInput): ValueParts {
+  if ("asset" in v) {
+    return {
+      id: v.asset.id ?? null,
+      row: {
+        categoryAssetId: v.asset.categoryId,
+        categoryLiabilityId: null,
+        categoryOptionId: null,
+      },
+      amounts: v.asset.amounts,
+    };
+  }
+  if ("liability" in v) {
+    return {
+      id: v.liability.id ?? null,
+      row: {
+        categoryAssetId: null,
+        categoryLiabilityId: v.liability.categoryId,
+        categoryOptionId: null,
+      },
+      amounts: v.liability.amounts,
+    };
+  }
+  return {
+    id: v.option.id ?? null,
+    row: {
+      categoryAssetId: null,
+      categoryLiabilityId: null,
+      categoryOptionId: v.option.categoryId,
+    },
+    amounts: v.option.amounts,
+  };
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function writeAmounts(
+  tx: Tx,
+  valueId: string,
+  amounts: MoneyInput[],
+): Promise<void> {
+  const rows = amounts.map((m) => {
+    const { currency, amount } = getMoneyInputFractionalAmount(m);
+    return { valueId, amount, currency };
+  });
+  const currencies = rows.map((r) => r.currency);
+  await tx
+    .delete(NetWorthValueAmounts)
+    .where(
+      and(
+        eq(NetWorthValueAmounts.valueId, valueId),
+        currencies.length > 0
+          ? notInArray(NetWorthValueAmounts.currency, currencies)
+          : undefined,
+      ),
+    );
+  if (rows.length > 0) {
+    await tx
+      .insert(NetWorthValueAmounts)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: [NetWorthValueAmounts.valueId, NetWorthValueAmounts.currency],
+        set: {
+          amount: sql`excluded.${sql.identifier("amount")}`,
+          updatedAt: new Date(),
+        },
+      });
+  }
+}
+
+async function writeCurrencyRates(
+  tx: Tx,
+  entryId: string,
+  rates: NetWorthCurrencyRateInput[],
+): Promise<void> {
+  const rows = rates.map((r) => {
+    assertCurrencyCode(r.base);
+    assertCurrencyCode(r.currency);
+    assert(
+      r.base !== r.currency,
+      `Currency rate base and currency must differ (got ${r.base})`,
+    );
+    return {
+      entryId,
+      base: r.base,
+      currency: r.currency,
+      rate: String(r.rate),
+    };
+  });
+
+  await tx.delete(NetWorthCurrencyRates).where(
+    and(
+      eq(NetWorthCurrencyRates.entryId, entryId),
+      rows.length > 0
+        ? notInArray(
+            NetWorthCurrencyRates.currency,
+            rows.map((r) => r.currency),
+          )
+        : undefined,
+    ),
+  );
+
+  if (rows.length === 0) return;
+  await tx
+    .insert(NetWorthCurrencyRates)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [NetWorthCurrencyRates.entryId, NetWorthCurrencyRates.currency],
+      set: {
+        base: sql`excluded.${sql.identifier("base")}`,
+        rate: sql`excluded.${sql.identifier("rate")}`,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+async function writeValues(
+  tx: Tx,
+  entryId: string,
+  values: NetWorthValueInput[],
+): Promise<void> {
+  const parts = values.map(valueParts);
+  const keepIds = parts.map((p) => p.id).filter((x): x is string => x != null);
+
+  await tx
+    .delete(NetWorthValues)
+    .where(
+      and(
+        eq(NetWorthValues.entryId, entryId),
+        keepIds.length > 0 ? notInArray(NetWorthValues.id, keepIds) : undefined,
+      ),
+    );
+
+  for (const p of parts) {
+    const [row] = p.id
+      ? await tx
+          .insert(NetWorthValues)
+          .values({ id: p.id, entryId, ...p.row })
+          .onConflictDoUpdate({
+            target: NetWorthValues.id,
+            set: { ...p.row, updatedAt: new Date() },
+          })
+          .returning({ id: NetWorthValues.id })
+      : await tx
+          .insert(NetWorthValues)
+          .values({ entryId, ...p.row })
+          .returning({ id: NetWorthValues.id });
+    await writeAmounts(tx, row.id, p.amounts);
+  }
+}
+
+/**
+ * Create a net-worth entry and its values.
+ * @gqlMutationField
+ */
+export async function netWorthCreate(
+  /** Any calendar date inside the target month. */
+  date: CalendarDate,
+  values: NetWorthValueInput[],
+  /** Exchange rates captured for this entry. */
+  currencyRates?: NetWorthCurrencyRateInput[] | null,
+): Promise<NetWorthEntry> {
+  return db.transaction(async (tx) => {
+    const [entry] = await tx
+      .insert(NetWorthEntries)
+      .values({ date })
+      .returning();
+    await writeValues(tx, entry.id, values);
+    if (currencyRates != null)
+      await writeCurrencyRates(tx, entry.id, currencyRates);
+    return toNetWorthEntry(entry);
+  });
+}
+
+/**
+ * Partially update an existing net-worth entry. Only fields passed in are changed.
+ * When `values` is set, items with an `id` are upserted, items without one are created,
+ * and any existing value on this entry not listed is deleted.
+ * @gqlMutationField
+ */
+export async function netWorthUpdate(
+  id: ID,
+  /** New calendar date for the entry, or null to keep the existing one. */
+  date?: CalendarDate | null,
+  /** Line items to apply to this entry, or null to leave the existing set untouched. */
+  values?: NetWorthValueInput[] | null,
+  /** Exchange rates to apply to this entry, or null to leave the existing set untouched. */
+  currencyRates?: NetWorthCurrencyRateInput[] | null,
+): Promise<NetWorthEntry> {
+  return db.transaction(async (tx) => {
+    const [entry] = await tx
+      .update(NetWorthEntries)
+      .set({ ...(date != null && { date }), updatedAt: new Date() })
+      .where(eq(NetWorthEntries.id, id))
+      .returning();
+    assert(entry, `NetWorthEntry ${id} not found`);
+
+    if (values != null) await writeValues(tx, entry.id, values);
+    if (currencyRates != null)
+      await writeCurrencyRates(tx, entry.id, currencyRates);
+    return toNetWorthEntry(entry);
+  });
+}
+
+/** Delete a net-worth entry. Its values are removed along with it. @gqlMutationField */
+export async function netWorthDelete(id: ID): Promise<Void> {
+  await db.delete(NetWorthEntries).where(eq(NetWorthEntries.id, id));
+  return VOID;
+}

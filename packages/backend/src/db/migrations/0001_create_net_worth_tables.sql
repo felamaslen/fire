@@ -1,16 +1,3 @@
-CREATE TYPE "public"."CurrencyCode" AS ENUM (
-  'GBP',
-  'USD',
-  'EUR',
-  'JPY',
-  'CZK',
-  'NOK',
-  'CNY',
-  'HKD',
-  'AUD',
-  'SCR',
-  'TWD'
-);
 CREATE TYPE "public"."netWorthCategoryAssetType" AS ENUM (
   'CASH',
   'STOCK',
@@ -18,12 +5,12 @@ CREATE TYPE "public"."netWorthCategoryAssetType" AS ENUM (
   'PENSION',
   'PROPERTY',
   'MISC'
-);
+); -- > statement-breakpoint
 CREATE TYPE "public"."netWorthCategoryLiabilityType" AS ENUM (
   'CREDIT_CARD',
   'LOAN',
   'MISC'
-);
+); -- > statement-breakpoint
 CREATE TABLE "NetWorthCategoryAssets" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "name" text NOT NULL,
@@ -31,7 +18,7 @@ CREATE TABLE "NetWorthCategoryAssets" (
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
-
+-- > statement-breakpoint
 CREATE TABLE "NetWorthCategoryLiabilities" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "name" text NOT NULL,
@@ -52,14 +39,14 @@ CREATE TABLE "NetWorthCategoryLiabilities" (
       )
     )
 );
-
+-- > statement-breakpoint
 CREATE TABLE "NetWorthCategoryOptions" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "name" text NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
-
+-- > statement-breakpoint
 CREATE TABLE "NetWorthCurrencyRates" (
   "entryId" uuid NOT NULL,
   "base" "CurrencyCode" NOT NULL,
@@ -71,14 +58,14 @@ CREATE TABLE "NetWorthCurrencyRates" (
   CONSTRAINT "NetWorthCurrencyRates_base_currency_ck"
     CHECK ("NetWorthCurrencyRates"."base" != "NetWorthCurrencyRates"."currency")
 );
-
+-- > statement-breakpoint
 CREATE TABLE "NetWorthEntries" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "date" date NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
-
+-- > statement-breakpoint
 CREATE TABLE "NetWorthValueAmounts" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "valueId" uuid NOT NULL,
@@ -87,7 +74,7 @@ CREATE TABLE "NetWorthValueAmounts" (
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
-
+-- > statement-breakpoint
 CREATE TABLE "NetWorthValues" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "entryId" uuid NOT NULL,
@@ -118,57 +105,57 @@ CREATE TABLE "NetWorthValues" (
       ) = 1
     )
 );
-
+-- > statement-breakpoint
 ALTER TABLE "NetWorthCategoryLiabilities"
 ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" (
     "id"
   )
     ON DELETE SET NULL
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "NetWorthCurrencyRates"
 ADD CONSTRAINT "NetWorthCurrencyRates_entryId_NetWorthEntries_id_fk"
   FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id")
     ON DELETE CASCADE
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "NetWorthValueAmounts"
 ADD CONSTRAINT "NetWorthValueAmounts_valueId_NetWorthValues_id_fk"
   FOREIGN KEY ("valueId") REFERENCES "public"."NetWorthValues" ("id")
     ON DELETE CASCADE
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "NetWorthValues"
 ADD CONSTRAINT "NetWorthValues_entryId_NetWorthEntries_id_fk"
   FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id")
     ON DELETE CASCADE
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "NetWorthValues"
 ADD CONSTRAINT "NetWorthValues_categoryAssetId_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" (
     "id"
   )
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "NetWorthValues"
 ADD CONSTRAINT "NetWorthValues_categoryLiabilityId_NetWorthCategoryLiabilities_id_fk"
   FOREIGN KEY (
     "categoryLiabilityId"
   ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "NetWorthValues"
 ADD CONSTRAINT "NetWorthValues_categoryOptionId_NetWorthCategoryOptions_id_fk"
   FOREIGN KEY (
     "categoryOptionId"
   ) REFERENCES "public"."NetWorthCategoryOptions" ("id")
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 CREATE UNIQUE INDEX "NetWorthEntries_month_uq" ON "NetWorthEntries" USING btree (
   date_trunc('month', "date"::TIMESTAMP)
-);
+); -- > statement-breakpoint
 CREATE UNIQUE INDEX "NetWorthValueAmounts_valueId_currency_uq" ON "NetWorthValueAmounts" USING btree (
   "valueId",
   "currency"
-);
+); -- > statement-breakpoint
 CREATE INDEX "NetWorthValues_entryId_idx" ON "NetWorthValues" USING btree (
   "entryId"
 );

@@ -6,7 +6,9 @@
 import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
-import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType, GraphQLInputObjectType, GraphQLFloat, GraphQLBoolean } from "graphql";
+import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLID, GraphQLString, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLInputObjectType } from "graphql";
+import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
+import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
 export type SchemaConfig = {
     scalars: {
@@ -15,30 +17,25 @@ export type SchemaConfig = {
     };
 };
 export function getSchema(config: SchemaConfig): GraphQLSchema {
-    const PongType: GraphQLObjectType = new GraphQLObjectType({
-        name: "Pong",
-        description: "An object representing a test response from the GraphQL server",
+    const NetWorthCurrencyRateType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCurrencyRate",
+        description: "Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`.",
         fields() {
             return {
-                pong: {
-                    description: "Set whenever the GraphQL server is working properly",
-                    name: "pong",
+                base: {
+                    description: "ISO-4217 code being priced in (e.g. \"GBP\" for a GBP/USD quote).",
+                    name: "base",
                     type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
-    });
-    const QueryType: GraphQLObjectType = new GraphQLObjectType({
-        name: "Query",
-        fields() {
-            return {
-                ping: {
-                    description: "Call this to check that the GraphQL server is working properly",
-                    name: "ping",
-                    type: new GraphQLNonNull(PongType),
-                    resolve() {
-                        return queryPingResolver();
-                    }
+                },
+                currency: {
+                    description: "ISO-4217 code being quoted (e.g. \"USD\" for a GBP/USD quote).",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                rate: {
+                    description: "Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD).",
+                    name: "rate",
+                    type: new GraphQLNonNull(GraphQLFloat)
                 }
             };
         }
@@ -47,29 +44,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         description: "ISO-8601 calendar date (YYYY-MM-DD). No time-of-day component.",
         name: "Date",
         ...config.scalars.Date
-    });
-    const DateTimeType: GraphQLScalarType = new GraphQLScalarType({
-        description: "ISO-8601 date-time. Serialises as an ISO-8601 string over the wire.",
-        name: "DateTime",
-        ...config.scalars.DateTime
-    });
-    const MoneyInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
-        description: "Client-supplied monetary value. `amount` is in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
-        name: "MoneyInput",
-        fields() {
-            return {
-                amount: {
-                    description: "Amount in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
-                    name: "amount",
-                    type: new GraphQLNonNull(GraphQLFloat)
-                },
-                currency: {
-                    description: "ISO-4217 currency code (e.g. \"GBP\").",
-                    name: "currency",
-                    type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
     });
     const MoneyType: GraphQLObjectType = new GraphQLObjectType({
         name: "Money",
@@ -89,6 +63,451 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const NetWorthAssetTypeType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Kind of asset a category represents.",
+        name: "NetWorthAssetType",
+        values: {
+            CASH: {
+                value: "CASH"
+            },
+            MISC: {
+                value: "MISC"
+            },
+            OPTION: {
+                value: "OPTION"
+            },
+            PENSION: {
+                value: "PENSION"
+            },
+            PROPERTY: {
+                value: "PROPERTY"
+            },
+            STOCK: {
+                value: "STOCK"
+            }
+        }
+    });
+    const NetWorthCategoryType: GraphQLInterfaceType = new GraphQLInterfaceType({
+        description: "A reusable bucket used to classify NetWorthValues (assets, liabilities, or options).",
+        name: "NetWorthCategory",
+        fields() {
+            return {
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const NetWorthCategoryAssetType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCategoryAsset",
+        description: "A reusable bucket for assets (current account, pension pot, property, ...).",
+        fields() {
+            return {
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                type: {
+                    name: "type",
+                    type: new GraphQLNonNull(NetWorthAssetTypeType)
+                }
+            };
+        },
+        interfaces() {
+            return [NetWorthCategoryType];
+        }
+    });
+    const NetWorthLiabilityTypeType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Kind of liability a category represents.",
+        name: "NetWorthLiabilityType",
+        values: {
+            CREDIT_CARD: {
+                value: "CREDIT_CARD"
+            },
+            LOAN: {
+                value: "LOAN"
+            },
+            MISC: {
+                value: "MISC"
+            }
+        }
+    });
+    const NetWorthCategoryLiabilityType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCategoryLiability",
+        description: "A reusable bucket for liabilities (credit card, mortgage, personal loan, ...).",
+        fields() {
+            return {
+                asset: {
+                    description: "The asset this liability is funding (for LTV calcs), if any.",
+                    name: "asset",
+                    type: NetWorthCategoryAssetType
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                interestRate: {
+                    description: "Annual rate as a decimal string (e.g. \"0.0525\" = 5.25%). Present iff type is LOAN.",
+                    name: "interestRate",
+                    type: GraphQLString
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                type: {
+                    name: "type",
+                    type: new GraphQLNonNull(NetWorthLiabilityTypeType)
+                }
+            };
+        },
+        interfaces() {
+            return [NetWorthCategoryType];
+        }
+    });
+    const NetWorthCategoryOptionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCategoryOption",
+        description: "A reusable bucket for equity options (e.g. \"My company shares\").",
+        fields() {
+            return {
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        },
+        interfaces() {
+            return [NetWorthCategoryType];
+        }
+    });
+    const NetWorthValueType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthValue",
+        description: "A single line item inside a NetWorthEntry. Exactly one of asset / liability / option is populated.",
+        fields() {
+            return {
+                amounts: {
+                    description: "Monetary amounts for this line item \u2014 at most one per currency.",
+                    name: "amounts",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType))),
+                    resolve(source) {
+                        return netWorthValueAmountsResolver(source);
+                    }
+                },
+                asset: {
+                    description: "The asset category this value is recorded against, if any.",
+                    name: "asset",
+                    type: NetWorthCategoryAssetType,
+                    resolve(source) {
+                        return netWorthValueAssetResolver(source);
+                    }
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                liability: {
+                    description: "The liability category this value is recorded against, if any.",
+                    name: "liability",
+                    type: NetWorthCategoryLiabilityType,
+                    resolve(source) {
+                        return netWorthValueLiabilityResolver(source);
+                    }
+                },
+                option: {
+                    description: "The option category this value is recorded against, if any.",
+                    name: "option",
+                    type: NetWorthCategoryOptionType,
+                    resolve(source) {
+                        return netWorthValueOptionResolver(source);
+                    }
+                }
+            };
+        }
+    });
+    const NetWorthEntryType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthEntry",
+        description: "One net-worth snapshot for a single month.",
+        fields() {
+            return {
+                currencyRates: {
+                    description: "Exchange rates captured for this entry.",
+                    name: "currencyRates",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthCurrencyRateType))),
+                    resolve(source) {
+                        return netWorthEntryCurrencyRatesResolver(source);
+                    }
+                },
+                date: {
+                    description: "Any calendar date inside the target month.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                values: {
+                    description: "The line-item values recorded for this entry.",
+                    name: "values",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthValueType))),
+                    resolve(source) {
+                        return netWorthEntryValuesResolver(source);
+                    }
+                }
+            };
+        }
+    });
+    const NetWorthEntryEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthEntryEdge",
+        description: "An edge within a NetWorthEntryConnection.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(NetWorthEntryType)
+                }
+            };
+        }
+    });
+    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PageInfo",
+        description: "Pagination state for a NetWorthEntryConnection.",
+        fields() {
+            return {
+                endCursor: {
+                    name: "endCursor",
+                    type: GraphQLID
+                },
+                hasNextPage: {
+                    name: "hasNextPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                hasPreviousPage: {
+                    name: "hasPreviousPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                startCursor: {
+                    name: "startCursor",
+                    type: GraphQLID
+                }
+            };
+        }
+    });
+    const NetWorthEntryConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthEntryConnection",
+        description: "A cursor-paginated list of NetWorthEntry, newest first.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthEntryEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const NetWorthCategoryEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCategoryEdge",
+        description: "An edge within a NetWorthCategoryConnection.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(NetWorthCategoryType)
+                }
+            };
+        }
+    });
+    const NetWorthCategoryConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCategoryConnection",
+        description: "A cursor-paginated list of NetWorthCategory, newest first.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthCategoryEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const PongType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Pong",
+        description: "An object representing a test response from the GraphQL server",
+        fields() {
+            return {
+                pong: {
+                    description: "Set whenever the GraphQL server is working properly",
+                    name: "pong",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const QueryType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Query",
+        fields() {
+            return {
+                netWorth: {
+                    description: "Paginated list of net-worth entries, newest first.",
+                    name: "netWorth",
+                    type: new GraphQLNonNull(NetWorthEntryConnectionType),
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        before: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        },
+                        last: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return queryNetWorthResolver(args.first, args.after, args.last, args.before);
+                    }
+                },
+                netWorthCategories: {
+                    description: "Paginated list of all net-worth categories (assets, liabilities, options), newest first.",
+                    name: "netWorthCategories",
+                    type: new GraphQLNonNull(NetWorthCategoryConnectionType),
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        before: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        },
+                        last: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return queryNetWorthCategoriesResolver(args.first, args.after, args.last, args.before);
+                    }
+                },
+                ping: {
+                    description: "Call this to check that the GraphQL server is working properly",
+                    name: "ping",
+                    type: new GraphQLNonNull(PongType),
+                    resolve() {
+                        return queryPingResolver();
+                    }
+                }
+            };
+        }
+    });
+    const NetWorthCategoryAssetInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Create payload for an asset category.",
+        name: "NetWorthCategoryAssetInput",
+        fields() {
+            return {
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                type: {
+                    name: "type",
+                    type: new GraphQLNonNull(NetWorthAssetTypeType)
+                }
+            };
+        }
+    });
+    const NetWorthCategoryLiabilityInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Create payload for a liability category.",
+        name: "NetWorthCategoryLiabilityInput",
+        fields() {
+            return {
+                assetId: {
+                    description: "Optional link to the asset this liability funds.",
+                    name: "assetId",
+                    type: GraphQLID
+                },
+                interestRate: {
+                    description: "Decimal-string annual rate (e.g. \"0.0525\"). Required iff type is LOAN.",
+                    name: "interestRate",
+                    type: GraphQLString
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                type: {
+                    name: "type",
+                    type: new GraphQLNonNull(NetWorthLiabilityTypeType)
+                }
+            };
+        }
+    });
+    const NetWorthCategoryOptionInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Create payload for an equity-option category.",
+        name: "NetWorthCategoryOptionInput",
+        fields() {
+            return {
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const NetWorthCategoryInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Category create payload; exactly one of `asset`, `liability`, `option` must be set.",
+        name: "NetWorthCategoryInput",
+        fields() {
+            return {
+                asset: {
+                    description: "Payload for creating an asset category.",
+                    name: "asset",
+                    type: NetWorthCategoryAssetInputType
+                },
+                liability: {
+                    description: "Payload for creating a liability category.",
+                    name: "liability",
+                    type: NetWorthCategoryLiabilityInputType
+                },
+                option: {
+                    description: "Payload for creating an equity-option category.",
+                    name: "option",
+                    type: NetWorthCategoryOptionInputType
+                }
+            };
+        },
+        isOneOf: true
+    });
     const VoidType: GraphQLObjectType = new GraphQLObjectType({
         name: "Void",
         description: "Placeholder payload for mutations that have nothing meaningful to return (e.g. delete).\nClients should select `_` (or nothing) and discard the result.",
@@ -102,8 +521,358 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const NetWorthCategoryRefType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Category reference; exactly one of `asset`, `liability`, `option` must be set.",
+        name: "NetWorthCategoryRef",
+        fields() {
+            return {
+                asset: {
+                    description: "ID of an asset category.",
+                    name: "asset",
+                    type: GraphQLID
+                },
+                liability: {
+                    description: "ID of a liability category.",
+                    name: "liability",
+                    type: GraphQLID
+                },
+                option: {
+                    description: "ID of an equity-option category.",
+                    name: "option",
+                    type: GraphQLID
+                }
+            };
+        },
+        isOneOf: true
+    });
+    const NetWorthCategoryAssetPatchType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Partial update for an asset category; unset fields are left unchanged.",
+        name: "NetWorthCategoryAssetPatch",
+        fields() {
+            return {
+                name: {
+                    name: "name",
+                    type: GraphQLString
+                },
+                type: {
+                    name: "type",
+                    type: NetWorthAssetTypeType
+                }
+            };
+        }
+    });
+    const NetWorthCategoryLiabilityPatchType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Partial update for a liability category; unset fields are left unchanged.",
+        name: "NetWorthCategoryLiabilityPatch",
+        fields() {
+            return {
+                assetId: {
+                    description: "Link to the asset this liability funds.",
+                    name: "assetId",
+                    type: GraphQLID
+                },
+                interestRate: {
+                    description: "Decimal-string annual rate (e.g. \"0.0525\").",
+                    name: "interestRate",
+                    type: GraphQLString
+                },
+                name: {
+                    name: "name",
+                    type: GraphQLString
+                },
+                type: {
+                    name: "type",
+                    type: NetWorthLiabilityTypeType
+                }
+            };
+        }
+    });
+    const NetWorthCategoryOptionPatchType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Partial update for an equity-option category; unset fields are left unchanged.",
+        name: "NetWorthCategoryOptionPatch",
+        fields() {
+            return {
+                name: {
+                    name: "name",
+                    type: GraphQLString
+                }
+            };
+        }
+    });
+    const NetWorthCategoryPatchType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Category patch; exactly one of `asset`, `liability`, `option` must be set.",
+        name: "NetWorthCategoryPatch",
+        fields() {
+            return {
+                asset: {
+                    description: "Partial update for an asset category.",
+                    name: "asset",
+                    type: NetWorthCategoryAssetPatchType
+                },
+                liability: {
+                    description: "Partial update for a liability category.",
+                    name: "liability",
+                    type: NetWorthCategoryLiabilityPatchType
+                },
+                option: {
+                    description: "Partial update for an equity-option category.",
+                    name: "option",
+                    type: NetWorthCategoryOptionPatchType
+                }
+            };
+        },
+        isOneOf: true
+    });
+    const NetWorthCurrencyRateInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "A currency rate to record alongside the entry. Keyed by `currency` within the entry.",
+        name: "NetWorthCurrencyRateInput",
+        fields() {
+            return {
+                base: {
+                    description: "ISO-4217 currency being priced in (e.g. \"GBP\").",
+                    name: "base",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                currency: {
+                    description: "ISO-4217 currency being quoted (e.g. \"USD\").",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                rate: {
+                    description: "Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD).",
+                    name: "rate",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                }
+            };
+        }
+    });
+    const MoneyInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Client-supplied monetary value. `amount` is in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
+        name: "MoneyInput",
+        fields() {
+            return {
+                amount: {
+                    description: "Amount in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
+                    name: "amount",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                currency: {
+                    description: "ISO-4217 currency code (e.g. \"GBP\").",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const NetWorthValueAssetInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "A line item recorded against an asset category.",
+        name: "NetWorthValueAssetInput",
+        fields() {
+            return {
+                amounts: {
+                    description: "Monetary amounts for this line item; at most one entry per currency.",
+                    name: "amounts",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyInputType)))
+                },
+                categoryId: {
+                    description: "ID of the asset category this value is recorded against.",
+                    name: "categoryId",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                id: {
+                    description: "Existing NetWorthValue id to update. Omit to create a new line item.",
+                    name: "id",
+                    type: GraphQLID
+                }
+            };
+        }
+    });
+    const NetWorthValueLiabilityInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "A line item recorded against a liability category.",
+        name: "NetWorthValueLiabilityInput",
+        fields() {
+            return {
+                amounts: {
+                    description: "Monetary amounts for this line item; at most one entry per currency.",
+                    name: "amounts",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyInputType)))
+                },
+                categoryId: {
+                    description: "ID of the liability category this value is recorded against.",
+                    name: "categoryId",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                id: {
+                    description: "Existing NetWorthValue id to update. Omit to create a new line item.",
+                    name: "id",
+                    type: GraphQLID
+                }
+            };
+        }
+    });
+    const NetWorthValueOptionInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "A line item recorded against an equity-option category.",
+        name: "NetWorthValueOptionInput",
+        fields() {
+            return {
+                amounts: {
+                    description: "Monetary amounts for this line item; at most one entry per currency.",
+                    name: "amounts",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyInputType)))
+                },
+                categoryId: {
+                    description: "ID of the option category this value is recorded against.",
+                    name: "categoryId",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                id: {
+                    description: "Existing NetWorthValue id to update. Omit to create a new line item.",
+                    name: "id",
+                    type: GraphQLID
+                }
+            };
+        }
+    });
+    const NetWorthValueInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "One line item; exactly one of `asset`, `liability`, `option` must be set.",
+        name: "NetWorthValueInput",
+        fields() {
+            return {
+                asset: {
+                    description: "Line item recorded against an asset category.",
+                    name: "asset",
+                    type: NetWorthValueAssetInputType
+                },
+                liability: {
+                    description: "Line item recorded against a liability category.",
+                    name: "liability",
+                    type: NetWorthValueLiabilityInputType
+                },
+                option: {
+                    description: "Line item recorded against an equity-option category.",
+                    name: "option",
+                    type: NetWorthValueOptionInputType
+                }
+            };
+        },
+        isOneOf: true
+    });
+    const MutationType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Mutation",
+        fields() {
+            return {
+                netWorthCategoryCreate: {
+                    description: "Create a new category (asset, liability, or option).",
+                    name: "netWorthCategoryCreate",
+                    type: new GraphQLNonNull(NetWorthCategoryType),
+                    args: {
+                        input: {
+                            type: new GraphQLNonNull(NetWorthCategoryInputType)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationNetWorthCategoryCreateResolver(args.input);
+                    }
+                },
+                netWorthCategoryDelete: {
+                    description: "Delete a category. Fails if any value still references it.",
+                    name: "netWorthCategoryDelete",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        ref: {
+                            type: new GraphQLNonNull(NetWorthCategoryRefType)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationNetWorthCategoryDeleteResolver(args.ref);
+                    }
+                },
+                netWorthCategoryUpdate: {
+                    description: "Partially update an existing category. Only fields present on the matching variant are changed.\nThe variant of `patch` picks which kind to update.",
+                    name: "netWorthCategoryUpdate",
+                    type: new GraphQLNonNull(NetWorthCategoryType),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        patch: {
+                            type: new GraphQLNonNull(NetWorthCategoryPatchType)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationNetWorthCategoryUpdateResolver(args.id, args.patch);
+                    }
+                },
+                netWorthCreate: {
+                    description: "Create a net-worth entry and its values.",
+                    name: "netWorthCreate",
+                    type: new GraphQLNonNull(NetWorthEntryType),
+                    args: {
+                        currencyRates: {
+                            description: "Exchange rates captured for this entry.",
+                            type: new GraphQLList(new GraphQLNonNull(NetWorthCurrencyRateInputType))
+                        },
+                        date: {
+                            description: "Any calendar date inside the target month.",
+                            type: new GraphQLNonNull(DateType)
+                        },
+                        values: {
+                            type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthValueInputType)))
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationNetWorthCreateResolver(args.date, args.values, args.currencyRates);
+                    }
+                },
+                netWorthDelete: {
+                    description: "Delete a net-worth entry. Its values are removed along with it.",
+                    name: "netWorthDelete",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationNetWorthDeleteResolver(args.id);
+                    }
+                },
+                netWorthUpdate: {
+                    description: "Partially update an existing net-worth entry. Only fields passed in are changed.\nWhen `values` is set, items with an `id` are upserted, items without one are created,\nand any existing value on this entry not listed is deleted.",
+                    name: "netWorthUpdate",
+                    type: new GraphQLNonNull(NetWorthEntryType),
+                    args: {
+                        currencyRates: {
+                            description: "Exchange rates to apply to this entry, or null to leave the existing set untouched.",
+                            type: new GraphQLList(new GraphQLNonNull(NetWorthCurrencyRateInputType))
+                        },
+                        date: {
+                            description: "New calendar date for the entry, or null to keep the existing one.",
+                            type: DateType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        values: {
+                            description: "Line items to apply to this entry, or null to leave the existing set untouched.",
+                            type: new GraphQLList(new GraphQLNonNull(NetWorthValueInputType))
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationNetWorthUpdateResolver(args.id, args.date, args.values, args.currencyRates);
+                    }
+                }
+            };
+        }
+    });
+    const DateTimeType: GraphQLScalarType = new GraphQLScalarType({
+        description: "ISO-8601 date-time. Serialises as an ISO-8601 string over the wire.",
+        name: "DateTime",
+        ...config.scalars.DateTime
+    });
     return new GraphQLSchema({
         query: QueryType,
-        types: [DateType, DateTimeType, MoneyInputType, MoneyType, PongType, QueryType, VoidType]
+        mutation: MutationType,
+        types: [DateType, DateTimeType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PongType, QueryType, VoidType]
     });
 }

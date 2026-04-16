@@ -7,6 +7,31 @@ scalar Date
 """ISO-8601 date-time. Serialises as an ISO-8601 string over the wire."""
 scalar DateTime
 
+"""Kind of asset a category represents."""
+enum NetWorthAssetType {
+  CASH
+  MISC
+  OPTION
+  PENSION
+  PROPERTY
+  STOCK
+}
+
+"""Kind of liability a category represents."""
+enum NetWorthLiabilityType {
+  CREDIT_CARD
+  LOAN
+  MISC
+}
+
+"""
+A reusable bucket used to classify NetWorthValues (assets, liabilities, or options).
+"""
+interface NetWorthCategory {
+  id: ID!
+  name: String!
+}
+
 """
 Client-supplied monetary value. `amount` is in major units of `currency` (e.g. 123.45 for £123.45).
 """
@@ -15,6 +40,142 @@ input MoneyInput {
   amount: Float!
   """ISO-4217 currency code (e.g. "GBP")."""
   currency: String!
+}
+
+"""Create payload for an asset category."""
+input NetWorthCategoryAssetInput {
+  name: String!
+  type: NetWorthAssetType!
+}
+
+"""Partial update for an asset category; unset fields are left unchanged."""
+input NetWorthCategoryAssetPatch {
+  name: String
+  type: NetWorthAssetType
+}
+
+"""
+Category create payload; exactly one of `asset`, `liability`, `option` must be set.
+"""
+input NetWorthCategoryInput @oneOf {
+  """Payload for creating an asset category."""
+  asset: NetWorthCategoryAssetInput
+  """Payload for creating a liability category."""
+  liability: NetWorthCategoryLiabilityInput
+  """Payload for creating an equity-option category."""
+  option: NetWorthCategoryOptionInput
+}
+
+"""Create payload for a liability category."""
+input NetWorthCategoryLiabilityInput {
+  """Optional link to the asset this liability funds."""
+  assetId: ID
+  """Decimal-string annual rate (e.g. "0.0525"). Required iff type is LOAN."""
+  interestRate: String
+  name: String!
+  type: NetWorthLiabilityType!
+}
+
+"""
+Partial update for a liability category; unset fields are left unchanged.
+"""
+input NetWorthCategoryLiabilityPatch {
+  """Link to the asset this liability funds."""
+  assetId: ID
+  """Decimal-string annual rate (e.g. "0.0525")."""
+  interestRate: String
+  name: String
+  type: NetWorthLiabilityType
+}
+
+"""Create payload for an equity-option category."""
+input NetWorthCategoryOptionInput {
+  name: String!
+}
+
+"""
+Partial update for an equity-option category; unset fields are left unchanged.
+"""
+input NetWorthCategoryOptionPatch {
+  name: String
+}
+
+"""
+Category patch; exactly one of `asset`, `liability`, `option` must be set.
+"""
+input NetWorthCategoryPatch @oneOf {
+  """Partial update for an asset category."""
+  asset: NetWorthCategoryAssetPatch
+  """Partial update for a liability category."""
+  liability: NetWorthCategoryLiabilityPatch
+  """Partial update for an equity-option category."""
+  option: NetWorthCategoryOptionPatch
+}
+
+"""
+Category reference; exactly one of `asset`, `liability`, `option` must be set.
+"""
+input NetWorthCategoryRef @oneOf {
+  """ID of an asset category."""
+  asset: ID
+  """ID of a liability category."""
+  liability: ID
+  """ID of an equity-option category."""
+  option: ID
+}
+
+"""
+A currency rate to record alongside the entry. Keyed by `currency` within the entry.
+"""
+input NetWorthCurrencyRateInput {
+  """ISO-4217 currency being priced in (e.g. "GBP")."""
+  base: String!
+  """ISO-4217 currency being quoted (e.g. "USD")."""
+  currency: String!
+  """Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD)."""
+  rate: Float!
+}
+
+"""A line item recorded against an asset category."""
+input NetWorthValueAssetInput {
+  """Monetary amounts for this line item; at most one entry per currency."""
+  amounts: [MoneyInput!]!
+  """ID of the asset category this value is recorded against."""
+  categoryId: ID!
+  """Existing NetWorthValue id to update. Omit to create a new line item."""
+  id: ID
+}
+
+"""
+One line item; exactly one of `asset`, `liability`, `option` must be set.
+"""
+input NetWorthValueInput @oneOf {
+  """Line item recorded against an asset category."""
+  asset: NetWorthValueAssetInput
+  """Line item recorded against a liability category."""
+  liability: NetWorthValueLiabilityInput
+  """Line item recorded against an equity-option category."""
+  option: NetWorthValueOptionInput
+}
+
+"""A line item recorded against a liability category."""
+input NetWorthValueLiabilityInput {
+  """Monetary amounts for this line item; at most one entry per currency."""
+  amounts: [MoneyInput!]!
+  """ID of the liability category this value is recorded against."""
+  categoryId: ID!
+  """Existing NetWorthValue id to update. Omit to create a new line item."""
+  id: ID
+}
+
+"""A line item recorded against an equity-option category."""
+input NetWorthValueOptionInput {
+  """Monetary amounts for this line item; at most one entry per currency."""
+  amounts: [MoneyInput!]!
+  """ID of the option category this value is recorded against."""
+  categoryId: ID!
+  """Existing NetWorthValue id to update. Omit to create a new line item."""
+  id: ID
 }
 
 """
@@ -27,6 +188,146 @@ type Money {
   currency: String!
 }
 
+type Mutation {
+  """Create a new category (asset, liability, or option)."""
+  netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
+  """Delete a category. Fails if any value still references it."""
+  netWorthCategoryDelete(ref: NetWorthCategoryRef!): Void!
+  """
+  Partially update an existing category. Only fields present on the matching variant are changed.
+  The variant of `patch` picks which kind to update.
+  """
+  netWorthCategoryUpdate(id: ID!, patch: NetWorthCategoryPatch!): NetWorthCategory!
+  """Create a net-worth entry and its values."""
+  netWorthCreate(
+    """Exchange rates captured for this entry."""
+    currencyRates: [NetWorthCurrencyRateInput!]
+    """Any calendar date inside the target month."""
+    date: Date!
+    values: [NetWorthValueInput!]!
+  ): NetWorthEntry!
+  """Delete a net-worth entry. Its values are removed along with it."""
+  netWorthDelete(id: ID!): Void!
+  """
+  Partially update an existing net-worth entry. Only fields passed in are changed.
+  When `values` is set, items with an `id` are upserted, items without one are created,
+  and any existing value on this entry not listed is deleted.
+  """
+  netWorthUpdate(
+    """
+    Exchange rates to apply to this entry, or null to leave the existing set untouched.
+    """
+    currencyRates: [NetWorthCurrencyRateInput!]
+    """New calendar date for the entry, or null to keep the existing one."""
+    date: Date
+    id: ID!
+    """
+    Line items to apply to this entry, or null to leave the existing set untouched.
+    """
+    values: [NetWorthValueInput!]
+  ): NetWorthEntry!
+}
+
+"""
+A reusable bucket for assets (current account, pension pot, property, ...).
+"""
+type NetWorthCategoryAsset implements NetWorthCategory {
+  id: ID!
+  name: String!
+  type: NetWorthAssetType!
+}
+
+"""A cursor-paginated list of NetWorthCategory, newest first."""
+type NetWorthCategoryConnection {
+  edges: [NetWorthCategoryEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""An edge within a NetWorthCategoryConnection."""
+type NetWorthCategoryEdge {
+  cursor: ID!
+  node: NetWorthCategory!
+}
+
+"""
+A reusable bucket for liabilities (credit card, mortgage, personal loan, ...).
+"""
+type NetWorthCategoryLiability implements NetWorthCategory {
+  """The asset this liability is funding (for LTV calcs), if any."""
+  asset: NetWorthCategoryAsset
+  id: ID!
+  """
+  Annual rate as a decimal string (e.g. "0.0525" = 5.25%). Present iff type is LOAN.
+  """
+  interestRate: String
+  name: String!
+  type: NetWorthLiabilityType!
+}
+
+"""A reusable bucket for equity options (e.g. "My company shares")."""
+type NetWorthCategoryOption implements NetWorthCategory {
+  id: ID!
+  name: String!
+}
+
+"""
+Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`.
+"""
+type NetWorthCurrencyRate {
+  """ISO-4217 code being priced in (e.g. "GBP" for a GBP/USD quote)."""
+  base: String!
+  """ISO-4217 code being quoted (e.g. "USD" for a GBP/USD quote)."""
+  currency: String!
+  """Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD)."""
+  rate: Float!
+}
+
+"""One net-worth snapshot for a single month."""
+type NetWorthEntry {
+  """Exchange rates captured for this entry."""
+  currencyRates: [NetWorthCurrencyRate!]!
+  """Any calendar date inside the target month."""
+  date: Date!
+  id: ID!
+  """The line-item values recorded for this entry."""
+  values: [NetWorthValue!]!
+}
+
+"""A cursor-paginated list of NetWorthEntry, newest first."""
+type NetWorthEntryConnection {
+  edges: [NetWorthEntryEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""An edge within a NetWorthEntryConnection."""
+type NetWorthEntryEdge {
+  cursor: ID!
+  node: NetWorthEntry!
+}
+
+"""
+A single line item inside a NetWorthEntry. Exactly one of asset / liability / option is populated.
+"""
+type NetWorthValue {
+  """Monetary amounts for this line item — at most one per currency."""
+  amounts: [Money!]!
+  """The asset category this value is recorded against, if any."""
+  asset: NetWorthCategoryAsset
+  id: ID!
+  """The liability category this value is recorded against, if any."""
+  liability: NetWorthCategoryLiability
+  """The option category this value is recorded against, if any."""
+  option: NetWorthCategoryOption
+}
+
+"""Pagination state for a NetWorthEntryConnection."""
+type PageInfo {
+  endCursor: ID
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: ID
+}
+
 """An object representing a test response from the GraphQL server"""
 type Pong {
   """Set whenever the GraphQL server is working properly"""
@@ -34,6 +335,12 @@ type Pong {
 }
 
 type Query {
+  """Paginated list of net-worth entries, newest first."""
+  netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection!
+  """
+  Paginated list of all net-worth categories (assets, liabilities, options), newest first.
+  """
+  netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection!
   """Call this to check that the GraphQL server is working properly"""
   ping: Pong!
 }

@@ -25,7 +25,7 @@ export const CURRENCIES: Record<
   TWD: { scale: 2 }, // fen (分, 1/100 new dollar)
 };
 
-function assertCurrencyCode(s: string): asserts s is CurrencyCode {
+export function assertCurrencyCode(s: string): asserts s is CurrencyCode {
   assert(
     (currencyCode.enumValues as readonly string[]).includes(s),
     `Unsupported currency: ${s}`,
