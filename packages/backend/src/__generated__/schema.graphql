@@ -4,6 +4,26 @@
 """ISO-8601 date-time. Serialises as an ISO-8601 string over the wire."""
 scalar DateTime
 
+"""
+Client-supplied monetary value. `amount` is in major units of `currency` (e.g. 123.45 for £123.45).
+"""
+input MoneyInput {
+  """Amount in major units of `currency` (e.g. 123.45 for £123.45)."""
+  amount: Float!
+  """ISO-4217 currency code (e.g. "GBP")."""
+  currency: String!
+}
+
+"""
+A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for £123.45).
+"""
+type Money {
+  """Amount in major units of `currency` (e.g. 123.45 for £123.45)."""
+  amount: Float!
+  """ISO-4217 currency code (e.g. "GBP")."""
+  currency: String!
+}
+
 """An object representing a test response from the GraphQL server"""
 type Pong {
   """Set whenever the GraphQL server is working properly"""
