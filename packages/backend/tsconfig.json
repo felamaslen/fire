@@ -1,7 +1,7 @@
 {
   "grats": {
-    "graphqlSchema": "./__generated__/schema.graphql",
-    "tsSchema": "./__generated__/schema.ts",
+    "graphqlSchema": "./src/__generated__/schema.graphql",
+    "tsSchema": "./src/__generated__/schema.ts",
     "nullableByDefault": false
   },
   "compilerOptions": {
@@ -18,5 +18,5 @@
     "noEmit": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "__generated__/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }
