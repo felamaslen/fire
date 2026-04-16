@@ -23,19 +23,56 @@ The GraphQL schema lives in `packages/backend/src/graphql/**` and is generated b
 
 2. **Every persisted object type has `id: ID!`.** In Grats this is a `string` field named `id` — grats maps `id: string` on a `@gqlType` to `ID!` automatically.
 
-3. **Prefer `@gqlInput` for mutation arguments** rather than long parameter lists on the resolver function. One input type per mutation, suffix `Input` (e.g. `NetWorthInput`, `NetWorthAssetCategoryInput`).
+3. **Use separate args on mutations, not a wrapping `Input` object.** Expose each field as its own resolver parameter so clients pass them as top-level mutation arguments (e.g. `netWorthCreate(date: String!, values: [NetWorthValueInput!]!)` — no `NetWorthInput` wrapper). Use `@gqlInput` only for genuinely nested shapes that need to be a single value: list items (`NetWorthValueInput`), `@oneOf` discriminators (`NetWorthCategoryInput`, `NetWorthCategoryRef`), or deeply structured sub-objects. Per-arg JSDoc descriptions on the function parameter attach to the GraphQL argument.
+
+   ```ts
+   /** Create a net-worth entry and its values. @gqlMutationField */
+   export async function netWorthCreate(
+     /** Any ISO-8601 calendar date inside the target month (YYYY-MM-DD). */
+     date: string,
+     values: NetWorthValueInput[],
+   ): Promise<NetWorthEntry> { /* ... */ }
+   ```
+
+   For `@oneOf` inputs, define the TypeScript type as a union of single-property object literals — Grats emits `@oneOf` automatically:
+
+   ```ts
+   /** @gqlInput */
+   export type NetWorthCategoryInput =
+     | { asset: NetWorthCategoryAssetInput }
+     | { liability: NetWorthCategoryLiabilityInput }
+     | { option: NetWorthCategoryOptionInput };
+   ```
 
 4. **Use the shared `GqlContext`** (in `src/gql-context.ts`) for DB access. Resolvers receive it as the first parameter — Grats injects it based on the `@gqlContext` tag.
 
-5. **Regenerate after every change.** Run `pnpm grats` (or `pnpm --filter backend grats`) so `src/__generated__/schema.ts` and `src/__generated__/schema.graphql` stay in sync with the source. Both generated files are committed.
+5. **Regenerate after every change.** Run `pnpm codegen` (or `pnpm --filter backend codegen`) to regenerate both the GraphQL schema (`src/__generated__/schema.{ts,graphql}`) and the SQL schema (`src/db/__generated__/schema.sql`). All generated files are committed.
 
 6. **File layout.** One file (or small group of files) per feature under `src/graphql/`, named for the feature (`src/graphql/ping.ts`, `src/graphql/net-worth/{index,categories}.ts`, `src/graphql/date-time.ts`). No generic filenames like `types.ts`, `queries.ts`, `mutations.ts` — descriptive names only. Grats only scans files under `src/graphql/**` (see `tsconfig.grats.json`).
 
 7. **Type naming — most-significant-part first.** Prefer names that sort/group together by domain. `NetWorthCategoryAsset`, `NetWorthCategoryLiability`, `NetWorthCategoryOption` (not `NetWorthAssetCategory` etc.). This applies to types, inputs, mutations, and queries — so the alphabet groups everything belonging to `NetWorthCategory` adjacent to the interface itself. Apply the same pattern to mutation names: `netWorthCategoryAssetCreate` (not `netWorthAssetCategoryCreate`).
 
-8. **Use `ID` and `DateTime` scalars explicitly.** Import from `grats` for `ID` / `Int` / `Float`; from `../date-time` (or relative path) for `DateTime`. Grats does not auto-map `id: string` to `ID!`.
+8. **Use `ID`, `Date`, and `DateTime` scalars explicitly.** Import from `grats` for `ID` / `Int` / `Float`; from `../date-time` for `DateTime` (instant in time, with time-of-day); from `../date` for `Date` (calendar date, no time). Pick `Date` whenever the value has no time component — don't use `DateTime` or `String` as a stand-in. Grats does not auto-map `id: string` to `ID!`.
 
-9. **Never leak backend implementation into GraphQL docs.** No mentions of `Postgres`, `pg enum`, `CHECK constraint`, `FK`, `cascade`, `uuid`, `numeric`, column names, migration files, `storage`, `stored`, `server-side`, `internally`, or similar. Describe the contract in domain terms only. The GraphQL doc is for API consumers who don't know or care what backs the service.
+   ```ts
+   import type { Date as CalendarDate } from "../date";
+   // import aliased because `Date` shadows the global; use `CalendarDate`
+   // locally and only in type positions.
+   ```
+
+9. **Delete mutations return `Void`.** A mutation with no meaningful payload returns the `Void` type (from `../void`), not `Boolean`. `Void` is an object type carrying a single nullable `_` field that exists only because GraphQL forbids empty object types; resolvers return the `VOID` constant. Clients select `{ _ }` and discard the result. This keeps room to add fields later (errors, affected rows, the deleted entity) without a breaking change.
+
+   ```ts
+   import { type Void, VOID } from "../void";
+
+   /** Delete the thing. @gqlMutationField */
+   export async function thingDelete(id: ID): Promise<Void> {
+     await db.delete(Things).where(eq(Things.id, id));
+     return VOID;
+   }
+   ```
+
+10. **Never leak backend implementation into GraphQL docs.** No mentions of `Postgres`, `pg enum`, `CHECK constraint`, `FK`, `cascade`, `uuid`, `numeric`, column names, migration files, `storage`, `stored`, `server-side`, `internally`, or similar. Describe the contract in domain terms only. The GraphQL doc is for API consumers who don't know or care what backs the service.
 
 ## Quick reference
 

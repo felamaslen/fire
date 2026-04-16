@@ -10,4 +10,5 @@ Monorepo for a personal net worth tracker.
 
 - **`commit`** (`.claude/skills/commit/SKILL.md`) — conventional commit format (`feat(scope): …`, `fix(scope): …`, etc.). Use on every commit.
 - **`graphql-schema`** (`.claude/skills/graphql-schema/SKILL.md`) — use when adding or editing anything under `packages/backend/src/graphql/**`.
+- **`graphql-testing`** (`.claude/skills/graphql-testing/SKILL.md`) — use when adding or editing any `*.test.ts` that exercises the GraphQL API.
 - **`db-schema`** (`.claude/skills/db-schema/SKILL.md`) — use when adding or editing anything under `packages/backend/src/db/schema/**` or generating a new Drizzle migration.
