@@ -1,0 +1,55 @@
+STAGED=$(git diff --cached --name-only)
+
+need_grats() {
+  echo "$STAGED" | grep -q "^packages/backend/src/schema/"
+}
+
+need_db_schema() {
+  echo "$STAGED" | grep -q "^packages/backend/src/db/schema/"
+}
+
+if need_grats || need_db_schema; then
+  # Stash unstaged + untracked changes so the generators only see what's actually
+  # being committed. Exclude the generated dirs themselves — they're about to be
+  # rebuilt, and stashing them would clash with the restore.
+  EXCLUDE_GEN=':!packages/backend/src/__generated__ :!packages/backend/src/db/__generated__'
+  HAS_UNSTAGED=0
+  git diff --quiet -- $EXCLUDE_GEN || HAS_UNSTAGED=1
+  if [ $HAS_UNSTAGED -eq 0 ] \
+    && [ -n "$(git ls-files --others --exclude-standard -- $EXCLUDE_GEN)" ]; then
+    HAS_UNSTAGED=1
+  fi
+
+  STASHED=0
+  if [ $HAS_UNSTAGED -eq 1 ]; then
+    git stash push \
+      --keep-index \
+      --include-untracked \
+      --quiet \
+      --message "pre-commit hook" \
+      -- $EXCLUDE_GEN
+    STASHED=1
+  fi
+
+  STATUS=0
+  if [ $STATUS -eq 0 ] && need_grats; then
+    pnpm --filter backend grats \
+      && git add packages/backend/src/__generated__ \
+      || STATUS=$?
+  fi
+  if [ $STATUS -eq 0 ] && need_db_schema; then
+    pnpm --filter backend db:generate-schema \
+      && git add packages/backend/src/db/__generated__ \
+      || STATUS=$?
+  fi
+
+  if [ $STASHED -eq 1 ]; then
+    git stash pop --quiet || {
+      echo "⚠️  Could not auto-restore stashed changes; run 'git stash pop' manually." >&2
+    }
+  fi
+
+  [ $STATUS -eq 0 ] || exit $STATUS
+fi
+
+pnpm lint-staged
