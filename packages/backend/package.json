@@ -1,0 +1,24 @@
+{
+  "name": "backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "grats": "grats",
+    "dev": "pnpm grats && tsx watch src/index.ts",
+    "start": "pnpm grats && tsx src/index.ts",
+    "typecheck": "pnpm grats && tsc --noEmit"
+  },
+  "dependencies": {
+    "@apollo/server": "^5.5.0",
+    "@as-integrations/fastify": "^3.1.0",
+    "fastify": "^5.8.5",
+    "graphql": "^16.13.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "grats": "^0.0.36",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.2"
+  }
+}
