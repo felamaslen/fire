@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "grats": "grats",
+    "grats": "grats --tsconfig tsconfig.grats.json",
     "dev": "pnpm grats && tsx watch src/index.ts",
     "start": "pnpm grats && tsx src/index.ts",
     "typecheck": "pnpm grats && tsc --noEmit"

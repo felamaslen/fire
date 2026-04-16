@@ -4,7 +4,7 @@
  */
 
 import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString } from "graphql";
-import { ping as queryPingResolver } from "./../src/schema/ping";
+import { ping as queryPingResolver } from "./../schema/ping";
 export function getSchema(): GraphQLSchema {
     const PongType: GraphQLObjectType = new GraphQLObjectType({
         name: "Pong",

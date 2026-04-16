@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "grats": {
+    "graphqlSchema": "./src/__generated__/schema.graphql",
+    "tsSchema": "./src/__generated__/schema.ts",
+    "nullableByDefault": false
+  },
+  "include": ["src/schema/**/*.ts"]
+}
