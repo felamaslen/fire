@@ -3,9 +3,16 @@
  * Do not manually edit. Regenerate by running `npx grats`.
  */
 
-import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString } from "graphql";
+import type { GqlScalar } from "grats";
+import type { DateTime as DateTimeInternal } from "./../schema/date-time";
+import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType } from "graphql";
 import { ping as queryPingResolver } from "./../schema/ping";
-export function getSchema(): GraphQLSchema {
+export type SchemaConfig = {
+    scalars: {
+        DateTime: GqlScalar<DateTimeInternal>;
+    };
+};
+export function getSchema(config: SchemaConfig): GraphQLSchema {
     const PongType: GraphQLObjectType = new GraphQLObjectType({
         name: "Pong",
         description: "An object representing a test response from the GraphQL server",
@@ -34,8 +41,13 @@ export function getSchema(): GraphQLSchema {
             };
         }
     });
+    const DateTimeType: GraphQLScalarType = new GraphQLScalarType({
+        description: "ISO-8601 date-time. Serialises as an ISO-8601 string over the wire.",
+        name: "DateTime",
+        ...config.scalars.DateTime
+    });
     return new GraphQLSchema({
         query: QueryType,
-        types: [PongType, QueryType]
+        types: [DateTimeType, PongType, QueryType]
     });
 }
