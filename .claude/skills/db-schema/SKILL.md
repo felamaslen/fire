@@ -47,12 +47,13 @@ Every table gets:
 
 ## Migrations
 
-1. **Drizzle first.** Edit the schema file(s) under `src/db/schema/` — never write SQL migrations by hand.
-2. **Generate.** Run `pnpm --filter backend db:generate`. This creates a new SQL file in `src/db/migrations/` and updates the `_meta` snapshot.
-3. **Commit both** the schema change and the generated migration in the same commit.
-4. **Apply.** `pnpm --filter backend db:migrate` runs pending migrations against the `DATABASE_URL` in `.env`.
-5. **Never hand-edit** a generated migration file. If the generated SQL is wrong, adjust the Drizzle schema and regenerate (after deleting the bad migration if it hasn't been applied anywhere yet).
-6. **Regenerate the full-schema dump** with `pnpm --filter backend db:generate-schema`. This runs `drizzle-kit export --sql` into `src/db/__generated__/schema.sql` (committed) — a flat, readable source of truth for the current shape of the DB. Regenerate whenever the Drizzle schema changes.
+1. **Always add a migration** when any file under `src/db/schema/` changes. No schema-source change ships without its corresponding migration.
+2. **Drizzle first.** Edit the schema file(s) under `src/db/schema/` — never write SQL migrations by hand.
+3. **Generate with a descriptive name.** Run `pnpm --filter backend db:generate --name=<snake_case_name>`. The name must describe the change, not a timestamp or random word — examples: `create_net_worth_tables`, `add_interest_rate_to_liability_categories`, `drop_unused_option_category`. Never accept Drizzle's default random name; pass `--name` every time.
+4. **Commit both** the schema change and the generated migration in the same commit.
+5. **Apply.** `pnpm --filter backend db:migrate` runs pending migrations against the `DATABASE_URL` in `.env`.
+6. **Never hand-edit** a generated migration file. If the generated SQL is wrong, adjust the Drizzle schema and regenerate (after deleting the bad migration if it hasn't been applied anywhere yet).
+7. **Regenerate the full-schema dump** with `pnpm --filter backend db:generate-schema`. This runs `drizzle-kit export --sql` into `src/db/__generated__/schema.sql` (committed) — a flat, readable source of truth for the current shape of the DB. Regenerate whenever the Drizzle schema changes.
 
 ## Constraints
 
