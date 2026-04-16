@@ -8,6 +8,13 @@
       "when": 1776375798016,
       "tag": "0000_create_currency_code_enum",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776381642457,
+      "tag": "0001_create_net_worth_tables",
+      "breakpoints": true
     }
   ]
 }

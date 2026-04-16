@@ -1,0 +1,580 @@
+{
+  "id": "6d8e1045-350f-4ef7-903f-1446c8ff9f3e",
+  "prevId": "9266eb73-2701-4e9f-a70a-dfd9530b1d77",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.NetWorthCategoryAssets": {
+      "name": "NetWorthCategoryAssets",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "netWorthCategoryAssetType",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.NetWorthCategoryLiabilities": {
+      "name": "NetWorthCategoryLiabilities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "netWorthCategoryLiabilityType",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "categoryAssetId": {
+          "name": "categoryAssetId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "interestRate": {
+          "name": "interestRate",
+          "type": "numeric(6, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk": {
+          "name": "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk",
+          "tableFrom": "NetWorthCategoryLiabilities",
+          "tableTo": "NetWorthCategoryAssets",
+          "columnsFrom": [
+            "categoryAssetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "NetWorthCategoryLiabilities_interestRate_ck": {
+          "name": "NetWorthCategoryLiabilities_interestRate_ck",
+          "value": "(\"NetWorthCategoryLiabilities\".\"type\" = 'LOAN' AND \"NetWorthCategoryLiabilities\".\"interestRate\" IS NOT NULL)\n           OR (\"NetWorthCategoryLiabilities\".\"type\" <> 'LOAN' AND \"NetWorthCategoryLiabilities\".\"interestRate\" IS NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.NetWorthCategoryOptions": {
+      "name": "NetWorthCategoryOptions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.NetWorthCurrencyRates": {
+      "name": "NetWorthCurrencyRates",
+      "schema": "",
+      "columns": {
+        "entryId": {
+          "name": "entryId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base": {
+          "name": "base",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rate": {
+          "name": "rate",
+          "type": "numeric(24, 12)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "NetWorthCurrencyRates_entryId_NetWorthEntries_id_fk": {
+          "name": "NetWorthCurrencyRates_entryId_NetWorthEntries_id_fk",
+          "tableFrom": "NetWorthCurrencyRates",
+          "tableTo": "NetWorthEntries",
+          "columnsFrom": [
+            "entryId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "NetWorthCurrencyRates_pk": {
+          "name": "NetWorthCurrencyRates_pk",
+          "columns": [
+            "entryId",
+            "currency"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "NetWorthCurrencyRates_base_currency_ck": {
+          "name": "NetWorthCurrencyRates_base_currency_ck",
+          "value": "\"NetWorthCurrencyRates\".\"base\" <> \"NetWorthCurrencyRates\".\"currency\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.NetWorthEntries": {
+      "name": "NetWorthEntries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "NetWorthEntries_month_uq": {
+          "name": "NetWorthEntries_month_uq",
+          "columns": [
+            {
+              "expression": "date_trunc('month', \"date\"::timestamp)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.NetWorthValueAmounts": {
+      "name": "NetWorthValueAmounts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "valueId": {
+          "name": "valueId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "NetWorthValueAmounts_valueId_currency_uq": {
+          "name": "NetWorthValueAmounts_valueId_currency_uq",
+          "columns": [
+            {
+              "expression": "valueId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "NetWorthValueAmounts_valueId_NetWorthValues_id_fk": {
+          "name": "NetWorthValueAmounts_valueId_NetWorthValues_id_fk",
+          "tableFrom": "NetWorthValueAmounts",
+          "tableTo": "NetWorthValues",
+          "columnsFrom": [
+            "valueId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.NetWorthValues": {
+      "name": "NetWorthValues",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "entryId": {
+          "name": "entryId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "categoryAssetId": {
+          "name": "categoryAssetId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "categoryLiabilityId": {
+          "name": "categoryLiabilityId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "categoryOptionId": {
+          "name": "categoryOptionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "NetWorthValues_entryId_idx": {
+          "name": "NetWorthValues_entryId_idx",
+          "columns": [
+            {
+              "expression": "entryId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "NetWorthValues_entryId_NetWorthEntries_id_fk": {
+          "name": "NetWorthValues_entryId_NetWorthEntries_id_fk",
+          "tableFrom": "NetWorthValues",
+          "tableTo": "NetWorthEntries",
+          "columnsFrom": [
+            "entryId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "NetWorthValues_categoryAssetId_NetWorthCategoryAssets_id_fk": {
+          "name": "NetWorthValues_categoryAssetId_NetWorthCategoryAssets_id_fk",
+          "tableFrom": "NetWorthValues",
+          "tableTo": "NetWorthCategoryAssets",
+          "columnsFrom": [
+            "categoryAssetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "NetWorthValues_categoryLiabilityId_NetWorthCategoryLiabilities_id_fk": {
+          "name": "NetWorthValues_categoryLiabilityId_NetWorthCategoryLiabilities_id_fk",
+          "tableFrom": "NetWorthValues",
+          "tableTo": "NetWorthCategoryLiabilities",
+          "columnsFrom": [
+            "categoryLiabilityId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "NetWorthValues_categoryOptionId_NetWorthCategoryOptions_id_fk": {
+          "name": "NetWorthValues_categoryOptionId_NetWorthCategoryOptions_id_fk",
+          "tableFrom": "NetWorthValues",
+          "tableTo": "NetWorthCategoryOptions",
+          "columnsFrom": [
+            "categoryOptionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "NetWorthValues_exactlyOneCategory_ck": {
+          "name": "NetWorthValues_exactlyOneCategory_ck",
+          "value": "(\n        (CASE WHEN \"NetWorthValues\".\"categoryAssetId\"     IS NOT NULL THEN 1 ELSE 0 END)\n      + (CASE WHEN \"NetWorthValues\".\"categoryLiabilityId\" IS NOT NULL THEN 1 ELSE 0 END)\n      + (CASE WHEN \"NetWorthValues\".\"categoryOptionId\"    IS NOT NULL THEN 1 ELSE 0 END)\n      ) = 1"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.CurrencyCode": {
+      "name": "CurrencyCode",
+      "schema": "public",
+      "values": [
+        "GBP",
+        "USD",
+        "EUR",
+        "JPY",
+        "CZK",
+        "NOK",
+        "CNY",
+        "HKD",
+        "AUD",
+        "SCR",
+        "TWD"
+      ]
+    },
+    "public.netWorthCategoryAssetType": {
+      "name": "netWorthCategoryAssetType",
+      "schema": "public",
+      "values": [
+        "CASH",
+        "STOCK",
+        "OPTION",
+        "PENSION",
+        "PROPERTY",
+        "MISC"
+      ]
+    },
+    "public.netWorthCategoryLiabilityType": {
+      "name": "netWorthCategoryLiabilityType",
+      "schema": "public",
+      "values": [
+        "CREDIT_CARD",
+        "LOAN",
+        "MISC"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
