@@ -16,6 +16,7 @@ export default defineConfig({
     globalSetup: ["./test/global-setup.ts"],
     setupFiles: ["./test/setup.ts"],
     pool: "forks",
+    globals: true,
     silent: "passed-only",
     env: {
       DATABASE_URL: "postgres://fire:fire@localhost:5433/postgres",
