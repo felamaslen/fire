@@ -60,7 +60,25 @@ The GraphQL schema lives in `packages/backend/src/graphql/**` and is generated b
    // locally and only in type positions.
    ```
 
-9. **Delete mutations return `Void`.** A mutation with no meaningful payload returns the `Void` type (from `../void`), not `Boolean`. `Void` is an object type carrying a single nullable `_` field that exists only because GraphQL forbids empty object types; resolvers return the `VOID` constant. Clients select `{ _ }` and discard the result. This keeps room to add fields later (errors, affected rows, the deleted entity) without a breaking change.
+9. **Update mutations take partial, nullable args.** Every argument on an update mutation other than the identifier is nullable; when omitted (or `null`), the corresponding field is left unchanged. Never reuse a create input on an update — create inputs require their fields, updates must not. Define a separate `*Patch` input with every field optional (e.g. `NetWorthCategoryAssetPatch`), and wrap multi-variant patches in a sibling `@oneOf` (`NetWorthCategoryPatch`). The resolver spreads only the fields that are set, so clients can send just what they want to change.
+
+   ```ts
+   /** Partial update for an asset category; unset fields are left unchanged. @gqlInput */
+   export type NetWorthCategoryAssetPatch = {
+     name?: string | null;
+     type?: NetWorthAssetType | null;
+   };
+
+   /** Partially update an entry. @gqlMutationField */
+   export async function netWorthUpdate(
+     id: ID,
+     /** New date, or null to keep the existing one. */
+     date?: CalendarDate | null,
+     values?: NetWorthValueInput[] | null,
+   ): Promise<NetWorthEntry> { /* ... */ }
+   ```
+
+10. **Delete mutations return `Void`.** A mutation with no meaningful payload returns the `Void` type (from `../void`), not `Boolean`. `Void` is an object type carrying a single nullable `_` field that exists only because GraphQL forbids empty object types; resolvers return the `VOID` constant. Clients select `{ _ }` and discard the result. This keeps room to add fields later (errors, affected rows, the deleted entity) without a breaking change.
 
    ```ts
    import { type Void, VOID } from "../void";
@@ -72,7 +90,7 @@ The GraphQL schema lives in `packages/backend/src/graphql/**` and is generated b
    }
    ```
 
-10. **Never leak backend implementation into GraphQL docs.** No mentions of `Postgres`, `pg enum`, `CHECK constraint`, `FK`, `cascade`, `uuid`, `numeric`, column names, migration files, `storage`, `stored`, `server-side`, `internally`, or similar. Describe the contract in domain terms only. The GraphQL doc is for API consumers who don't know or care what backs the service.
+11. **Never leak backend implementation into GraphQL docs.** No mentions of `Postgres`, `pg enum`, `CHECK constraint`, `FK`, `cascade`, `uuid`, `numeric`, column names, migration files, `storage`, `stored`, `server-side`, `internally`, or similar. Describe the contract in domain terms only. The GraphQL doc is for API consumers who don't know or care what backs the service.
 
 ## Quick reference
 
