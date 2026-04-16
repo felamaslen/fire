@@ -6,13 +6,14 @@ const ADMIN_URL = "postgres://fire:fire@localhost:5433/postgres";
 const TEMPLATE_DB = "fire_template";
 
 export default async function globalSetup() {
-  const admin = postgres(ADMIN_URL, { max: 1 });
+  const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
   await admin.unsafe(`DROP DATABASE IF EXISTS "${TEMPLATE_DB}" WITH (FORCE)`);
   await admin.unsafe(`CREATE DATABASE "${TEMPLATE_DB}"`);
   await admin.end();
 
   const sql = postgres(`postgres://fire:fire@localhost:5433/${TEMPLATE_DB}`, {
     max: 1,
+    onnotice: () => {},
   });
   try {
     const db = drizzle(sql);

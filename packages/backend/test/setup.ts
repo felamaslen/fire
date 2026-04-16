@@ -1,5 +1,6 @@
+import { sql } from "drizzle-orm";
 import postgres from "postgres";
-import { afterAll, beforeAll, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, vi } from "vitest";
 
 vi.mock("@/db/client");
 
@@ -14,7 +15,7 @@ function testDbName(): string {
 
 beforeAll(async () => {
   const dbName = testDbName();
-  const admin = postgres(ADMIN_URL, { max: 1 });
+  const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
   try {
     await admin.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
     await admin.unsafe(`CREATE DATABASE "${dbName}" TEMPLATE "${TEMPLATE_DB}"`);
@@ -23,9 +24,20 @@ beforeAll(async () => {
   }
 });
 
+beforeEach(async () => {
+  const { db } = await import("@/db");
+  const rows = await db.execute<{ tablename: string }>(sql`
+    SELECT tablename FROM pg_tables
+    WHERE schemaname = 'public' AND tablename <> '__drizzle_migrations'
+  `);
+  if (rows.length === 0) return;
+  const list = rows.map((r) => `"${r.tablename}"`).join(", ");
+  await db.execute(sql.raw(`TRUNCATE ${list} RESTART IDENTITY CASCADE`));
+});
+
 afterAll(async () => {
   const dbName = testDbName();
-  const admin = postgres(ADMIN_URL, { max: 1 });
+  const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
   try {
     await admin.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
   } finally {
