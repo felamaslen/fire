@@ -4,9 +4,9 @@
  */
 
 import type { GqlScalar } from "grats";
-import type { DateTime as DateTimeInternal } from "./../schema/date-time";
+import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import { GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType, GraphQLInputObjectType, GraphQLFloat } from "graphql";
-import { ping as queryPingResolver } from "./../schema/ping";
+import { ping as queryPingResolver } from "./../graphql/ping";
 export type SchemaConfig = {
     scalars: {
         DateTime: GqlScalar<DateTimeInternal>;

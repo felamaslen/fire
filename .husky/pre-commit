@@ -1,7 +1,7 @@
 STAGED=$(git diff --cached --name-only)
 
 need_grats() {
-  echo "$STAGED" | grep -q "^packages/backend/src/schema/"
+  echo "$STAGED" | grep -q "^packages/backend/src/graphql/"
 }
 
 need_db_schema() {
