@@ -1,18 +1,72 @@
 import { strict as assert } from "node:assert";
 
-import { eq } from "drizzle-orm";
-import type { ID } from "grats";
+import { and, desc, eq, lt, or } from "drizzle-orm";
+import type { ID, Int } from "grats";
 
 import { db } from "@/db";
 import { PlanningBills } from "@/db/schema/planning";
 
 import type { Date as CalendarDate } from "../date";
-import { getMoneyInputFractionalAmount, type MoneyInput } from "../money";
+import {
+  getMoneyInputFractionalAmount,
+  Money,
+  type MoneyInput,
+} from "../money";
+import type { PageInfo } from "../net-worth/index";
+import { decodeCursor, encodeCursor } from "../pagination";
 import { type PlanningYear, planningYearsForYears } from "./index";
 import { yearsOverlapping } from "./months";
 
 /** How often a `PlanningBill` recurs. @gqlEnum */
 export type PlanningBillsFrequency = "MONTHLY" | "QUARTERLY" | "YEARLY";
+
+/** A recurring bill that projects forward into future months' balances as a provisional outgoing transaction until an actual transaction is recorded for that month. @gqlType */
+export class PlanningBill {
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** First day the bill is in effect. @gqlField */
+    public readonly start: CalendarDate,
+    /** Last day the bill is in effect; null if ongoing. @gqlField */
+    public readonly end: CalendarDate | null,
+    /** @gqlField */
+    public readonly frequency: PlanningBillsFrequency,
+    /** In-year occurrences, one `M-D` entry each (MONTHLY uses a bare day, no month prefix). See `billCreate` for the encoding. @gqlField */
+    public readonly collectionDate: string[],
+    /** Amount charged per occurrence. @gqlField */
+    public readonly amount: Money,
+    /** @gqlField */
+    public readonly name: string,
+  ) {}
+
+  static load(row: typeof PlanningBills.$inferSelect): PlanningBill {
+    return new PlanningBill(
+      row.id as ID,
+      row.start,
+      row.end,
+      row.frequency,
+      decodeCollectionDate(row.frequency, row.collectionDate),
+      Money.fromMinorDenomination(row.amount, row.currency),
+      row.name,
+    );
+  }
+}
+
+/** An edge within a `PlanningBillConnection`. @gqlType */
+export type PlanningBillEdge = {
+  /** @gqlField */
+  cursor: ID;
+  /** @gqlField */
+  node: PlanningBill;
+};
+
+/** A cursor-paginated list of `PlanningBill`, newest-`start` first. @gqlType */
+export type PlanningBillConnection = {
+  /** @gqlField */
+  edges: PlanningBillEdge[];
+  /** @gqlField */
+  pageInfo: PageInfo;
+};
 
 /** Assert the right number and per-entry shape for the given frequency: MONTHLY takes one bare day `D`; QUARTERLY takes four `M-D`; YEARLY takes one `M-D`. Digit-range validity is enforced by the `@constraint` directive before this runs. */
 function assertCollectionDateShape(
@@ -43,6 +97,15 @@ function encodeCollectionDate(
 ): string {
   if (frequency === "MONTHLY") return collectionDate[0];
   return collectionDate.join(", ");
+}
+
+/** Inverse of `encodeCollectionDate`. */
+function decodeCollectionDate(
+  frequency: PlanningBillsFrequency,
+  stored: string,
+): string[] {
+  if (frequency === "QUARTERLY") return stored.split(/,\s*/);
+  return [stored];
 }
 
 /**
@@ -172,4 +235,55 @@ export async function billDelete(id: ID): Promise<PlanningYear[]> {
     .returning();
   if (!row) return [];
   return planningYearsForYears(yearsOverlapping(row.start, row.end));
+}
+
+const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * Every registered bill, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function bills(
+  first?: Int | null,
+  after?: ID | null,
+): Promise<PlanningBillConnection | null> {
+  const limit = first ?? DEFAULT_PAGE_SIZE;
+  const cursor = after ? decodeCursor(after) : null;
+
+  const cursorWhere = cursor
+    ? or(
+        lt(PlanningBills.start, new Date(cursor.c)),
+        and(
+          eq(PlanningBills.start, new Date(cursor.c)),
+          lt(PlanningBills.id, cursor.i),
+        ),
+      )
+    : undefined;
+
+  const rows = await db
+    .select()
+    .from(PlanningBills)
+    .where(cursorWhere)
+    .orderBy(desc(PlanningBills.start), desc(PlanningBills.id))
+    .limit(limit + 1);
+
+  const hasExtra = rows.length > limit;
+  const page = hasExtra ? rows.slice(0, limit) : rows;
+
+  const edges: PlanningBillEdge[] = page.map((row) => ({
+    cursor: encodeCursor(row.start.toISOString(), row.id),
+    node: PlanningBill.load(row),
+  }));
+
+  return {
+    edges,
+    pageInfo: {
+      hasNextPage: hasExtra,
+      hasPreviousPage: cursor != null,
+      startCursor: edges.length > 0 ? edges[0].cursor : null,
+      endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
+    },
+  };
 }

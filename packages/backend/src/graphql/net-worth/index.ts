@@ -55,7 +55,7 @@ export type NetWorthValue = {
   categoryOptionId: string | null;
 };
 
-/** Pagination state for a NetWorthEntryConnection. @gqlType */
+/** Pagination state for a cursor-paginated connection. @gqlType */
 export type PageInfo = {
   /** @gqlField */
   hasNextPage: boolean;
@@ -103,31 +103,14 @@ function toNetWorthValue(
   };
 }
 
-type Cursor = { c: string; i: string };
+import { decodeCursor, encodeCursor } from "../pagination";
 
-function encodeCursor(entry: { createdAt: Date | string; id: string }): ID {
+function entryCursor(entry: { createdAt: Date | string; id: string }): ID {
   const c =
     entry.createdAt instanceof Date
       ? entry.createdAt.toISOString()
       : entry.createdAt;
-  const payload: Cursor = { c, i: entry.id };
-  return Buffer.from(JSON.stringify(payload), "utf8").toString(
-    "base64url",
-  ) as ID;
-}
-
-function decodeCursor(raw: string): Cursor {
-  try {
-    const json = Buffer.from(raw, "base64url").toString("utf8");
-    const parsed = JSON.parse(json) as Cursor;
-    assert(
-      typeof parsed.c === "string" && typeof parsed.i === "string",
-      "invalid cursor",
-    );
-    return parsed;
-  } catch {
-    throw new Error("invalid cursor");
-  }
+  return encodeCursor(c, entry.id);
 }
 
 /** Exchange rates captured for this entry. @gqlField */
@@ -278,7 +261,7 @@ export async function netWorth(
   const ordered = forward ? page : [...page].reverse();
 
   const edges: NetWorthEntryEdge[] = ordered.map((row) => ({
-    cursor: encodeCursor(row),
+    cursor: entryCursor(row),
     node: toNetWorthEntry(row),
   }));
 
