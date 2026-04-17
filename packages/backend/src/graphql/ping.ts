@@ -4,7 +4,12 @@ export type Pong = {
   pong: string;
 };
 
-/** Call this to check that the GraphQL server is working properly @gqlQueryField */
-export function ping(): Pong {
+/**
+ * Call this to check that the GraphQL server is working properly
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export function ping(): Pong | null {
   return { pong: "pong" };
 }

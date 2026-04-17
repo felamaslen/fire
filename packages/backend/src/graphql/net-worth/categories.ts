@@ -174,13 +174,18 @@ function decodeCategoryCursor(raw: string): CategoryCursor {
   }
 }
 
-/** Paginated list of all net-worth categories (assets, liabilities, options), newest first. @gqlQueryField */
+/**
+ * Paginated list of all net-worth categories (assets, liabilities, options), newest first.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
 export async function netWorthCategories(
   first?: Int | null,
   after?: ID | null,
   last?: Int | null,
   before?: ID | null,
-): Promise<NetWorthCategoryConnection> {
+): Promise<NetWorthCategoryConnection | null> {
   assert(
     first == null || last == null,
     "Pass either `first` or `last`, not both.",

@@ -218,13 +218,18 @@ export async function option(
 
 const DEFAULT_PAGE_SIZE = 20;
 
-/** Paginated list of net-worth entries, newest first. @gqlQueryField */
+/**
+ * Paginated list of net-worth entries, newest first.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
 export async function netWorth(
   first?: Int | null,
   after?: ID | null,
   last?: Int | null,
   before?: ID | null,
-): Promise<NetWorthEntryConnection> {
+): Promise<NetWorthEntryConnection | null> {
   assert(
     first == null || last == null,
     "Pass either `first` or `last`, not both.",

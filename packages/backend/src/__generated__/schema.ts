@@ -10,6 +10,12 @@ import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, Gra
 import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
+async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
+    const awaited = await value;
+    if (awaited == null)
+        throw new Error("Cannot return null for semantically non-nullable field.");
+    return awaited;
+}
 export type SchemaConfig = {
     scalars: {
         Date: GqlScalar<DateInternal>;
@@ -378,7 +384,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 netWorth: {
                     description: "Paginated list of net-worth entries, newest first.",
                     name: "netWorth",
-                    type: new GraphQLNonNull(NetWorthEntryConnectionType),
+                    type: NetWorthEntryConnectionType,
                     args: {
                         after: {
                             type: GraphQLID
@@ -394,13 +400,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return queryNetWorthResolver(args.first, args.after, args.last, args.before);
+                        return assertNonNull(queryNetWorthResolver(args.first, args.after, args.last, args.before));
                     }
                 },
                 netWorthCategories: {
                     description: "Paginated list of all net-worth categories (assets, liabilities, options), newest first.",
                     name: "netWorthCategories",
-                    type: new GraphQLNonNull(NetWorthCategoryConnectionType),
+                    type: NetWorthCategoryConnectionType,
                     args: {
                         after: {
                             type: GraphQLID
@@ -416,15 +422,15 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return queryNetWorthCategoriesResolver(args.first, args.after, args.last, args.before);
+                        return assertNonNull(queryNetWorthCategoriesResolver(args.first, args.after, args.last, args.before));
                     }
                 },
                 ping: {
                     description: "Call this to check that the GraphQL server is working properly",
                     name: "ping",
-                    type: new GraphQLNonNull(PongType),
+                    type: PongType,
                     resolve() {
-                        return queryPingResolver();
+                        return assertNonNull(queryPingResolver());
                     }
                 }
             };
