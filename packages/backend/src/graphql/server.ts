@@ -6,6 +6,7 @@ import fastifyApollo, {
 import { router } from "@/router";
 
 import { getSchema } from "../__generated__/schema";
+import { constraintPlugin } from "./constraint";
 import { dateScalar } from "./date";
 import { dateTimeScalar } from "./date-time";
 import { applySemanticNonNull } from "./semantic-non-null";
@@ -18,9 +19,11 @@ export const scalars = {
   Upload: uploadScalar,
 };
 
+const schema = applySemanticNonNull(getSchema({ scalars }));
+
 const apollo = new ApolloServer({
-  schema: applySemanticNonNull(getSchema({ scalars })),
-  plugins: [fastifyApolloDrainPlugin(router)],
+  schema,
+  plugins: [fastifyApolloDrainPlugin(router), constraintPlugin(schema)],
 });
 
 await apollo.start();

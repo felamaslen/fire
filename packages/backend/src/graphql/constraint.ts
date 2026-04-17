@@ -63,7 +63,7 @@ function validateConstraints(
         for (const argDef of fieldDef.args) {
           const argValue = values[argDef.name];
           const basePath = [`${fieldDef.name}.${argDef.name}`];
-          const argPattern = constraintPatternOf(argDef.astNode);
+          const argPattern = constraintPatternOf(argDef);
           if (argPattern != null) {
             applyPattern(
               argValue,
@@ -110,7 +110,7 @@ function validateInputValue(
     const fieldValue = obj[fieldName];
     if (fieldValue === undefined) continue;
     const fieldPath = path.concat(fieldName);
-    const pattern = constraintPatternOf(fieldDef.astNode);
+    const pattern = constraintPatternOf(fieldDef);
     if (pattern != null) {
       applyPattern(
         fieldValue,
@@ -147,9 +147,16 @@ function applyPattern(
 }
 
 function constraintPatternOf(
-  astNode: { directives?: readonly unknown[] } | null | undefined,
+  def:
+    | {
+        astNode?: { directives?: readonly unknown[] } | null;
+        extensions?: Record<string, unknown>;
+      }
+    | null
+    | undefined,
 ): string | null {
-  const directives = astNode?.directives as
+  // 1) SDL-built schemas carry directives on the AST node.
+  const astDirectives = def?.astNode?.directives as
     | ReadonlyArray<{
         name: { value: string };
         arguments?: ReadonlyArray<{
@@ -158,11 +165,30 @@ function constraintPatternOf(
         }>;
       }>
     | undefined;
-  const directive = directives?.find((d) => d.name.value === "constraint");
-  if (!directive) return null;
-  const arg = directive.arguments?.find((a) => a.name.value === "pattern");
-  if (!arg || arg.value.kind !== "StringValue" || arg.value.value == null) {
-    return null;
+  const astDirective = astDirectives?.find(
+    (d) => d.name.value === "constraint",
+  );
+  if (astDirective) {
+    const arg = astDirective.arguments?.find((a) => a.name.value === "pattern");
+    if (arg && arg.value.kind === "StringValue" && arg.value.value != null) {
+      return arg.value.value;
+    }
   }
-  return arg.value.value;
+
+  // 2) Grats-built schemas surface directives via `extensions.grats.directives`.
+  const gratsDirectives = (
+    def?.extensions as
+      | {
+          grats?: {
+            directives?: ReadonlyArray<{
+              name: string;
+              args?: Record<string, unknown>;
+            }>;
+          };
+        }
+      | undefined
+  )?.grats?.directives;
+  const gratsDirective = gratsDirectives?.find((d) => d.name === "constraint");
+  const pattern = gratsDirective?.args?.pattern;
+  return typeof pattern === "string" ? pattern : null;
 }
