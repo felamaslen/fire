@@ -141,7 +141,7 @@ CREATE TABLE "PlanningBills" (
   "amount" BIGINT NOT NULL,
   "currency" "CurrencyCode" NOT NULL,
   "name" text NOT NULL,
-  "accountIdFrom" uuid NOT NULL,
+  "fromAccountId" uuid NOT NULL,
   "liabilityId" uuid,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
@@ -179,7 +179,7 @@ CREATE TABLE "PlanningEarnings" (
   "pensionReliefAtSource" DOUBLE PRECISION NOT NULL,
   "pensionNetPay" DOUBLE PRECISION NOT NULL,
   "studentLoanPlan2" BOOLEAN DEFAULT FALSE NOT NULL,
-  "accountIdTo" uuid NOT NULL,
+  "toAccountId" uuid NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   CONSTRAINT "PlanningEarnings_dateRange_ck"
@@ -254,7 +254,7 @@ CREATE TABLE "PlanningPayslips" (
   "amountGross" BIGINT NOT NULL,
   "currency" "CurrencyCode" NOT NULL,
   "name" text NOT NULL,
-  "accountIdTo" uuid NOT NULL,
+  "toAccountId" uuid NOT NULL,
   "fileUrl" text,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
@@ -267,15 +267,15 @@ CREATE TABLE "PlanningTransactions" (
   "amount" BIGINT NOT NULL,
   "currency" "CurrencyCode" NOT NULL,
   "name" text NOT NULL,
-  "accountIdFrom" uuid NOT NULL,
-  "accountIdTo" uuid,
+  "fromAccountId" uuid NOT NULL,
+  "toAccountId" uuid,
   "liabilityId" uuid,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   CONSTRAINT "PlanningTransactions_accounts_ck"
     CHECK (
-      "PlanningTransactions"."accountIdTo" IS NULL
-      OR "PlanningTransactions"."accountIdFrom" != "PlanningTransactions"."accountIdTo"
+      "PlanningTransactions"."toAccountId" IS NULL
+      OR "PlanningTransactions"."fromAccountId" != "PlanningTransactions"."toAccountId"
     )
 );
 
@@ -365,9 +365,9 @@ ADD CONSTRAINT "PlanningAccounts_accountId_NetWorthCategoryAssets_id_fk"
     ON DELETE CASCADE
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningBills"
-ADD CONSTRAINT "PlanningBills_accountIdFrom_NetWorthCategoryAssets_id_fk"
-  FOREIGN KEY ("accountIdFrom") REFERENCES "public"."NetWorthCategoryAssets" (
-    "id"
+ADD CONSTRAINT "PlanningBills_fromAccountId_PlanningAccounts_accountId_fk"
+  FOREIGN KEY ("fromAccountId") REFERENCES "public"."PlanningAccounts" (
+    "accountId"
   )
     ON DELETE RESTRICT
     ON UPDATE NO ACTION;
@@ -379,9 +379,9 @@ ADD CONSTRAINT "PlanningBills_liabilityId_NetWorthCategoryLiabilities_id_fk"
     ON DELETE RESTRICT
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningEarnings"
-ADD CONSTRAINT "PlanningEarnings_accountIdTo_NetWorthCategoryAssets_id_fk"
-  FOREIGN KEY ("accountIdTo") REFERENCES "public"."NetWorthCategoryAssets" (
-    "id"
+ADD CONSTRAINT "PlanningEarnings_toAccountId_PlanningAccounts_accountId_fk"
+  FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" (
+    "accountId"
   )
     ON DELETE RESTRICT
     ON UPDATE NO ACTION;
@@ -414,22 +414,22 @@ ADD CONSTRAINT "PlanningPayslipAdjustments_payslipId_PlanningPayslips_id_fk"
     ON DELETE CASCADE
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningPayslips"
-ADD CONSTRAINT "PlanningPayslips_accountIdTo_NetWorthCategoryAssets_id_fk"
-  FOREIGN KEY ("accountIdTo") REFERENCES "public"."NetWorthCategoryAssets" (
-    "id"
-  )
-    ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
-ALTER TABLE "PlanningTransactions"
-ADD CONSTRAINT "PlanningTransactions_accountIdFrom_PlanningAccounts_accountId_fk"
-  FOREIGN KEY ("accountIdFrom") REFERENCES "public"."PlanningAccounts" (
+ADD CONSTRAINT "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk"
+  FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" (
     "accountId"
   )
     ON DELETE RESTRICT
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningTransactions"
-ADD CONSTRAINT "PlanningTransactions_accountIdTo_PlanningAccounts_accountId_fk"
-  FOREIGN KEY ("accountIdTo") REFERENCES "public"."PlanningAccounts" (
+ADD CONSTRAINT "PlanningTransactions_fromAccountId_PlanningAccounts_accountId_fk"
+  FOREIGN KEY ("fromAccountId") REFERENCES "public"."PlanningAccounts" (
+    "accountId"
+  )
+    ON DELETE RESTRICT
+    ON UPDATE NO ACTION;
+ALTER TABLE "PlanningTransactions"
+ADD CONSTRAINT "PlanningTransactions_toAccountId_PlanningAccounts_accountId_fk"
+  FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" (
     "accountId"
   )
     ON DELETE RESTRICT

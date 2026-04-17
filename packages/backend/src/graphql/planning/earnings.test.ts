@@ -144,7 +144,7 @@ it("earningsCreate projects a monthly take-home into valueEnd from the start mon
           countryCode: "GB"
           pensionReliefAtSource: 0
           pensionNetPay: 0
-          accountIdTo: $a
+          toAccountId: $a
         ) {
           id
         }
@@ -188,7 +188,7 @@ it("earningsUpdate reprojects balances when the gross changes", async () => {
           countryCode: "GB"
           pensionReliefAtSource: 0
           pensionNetPay: 0
-          accountIdTo: $a
+          toAccountId: $a
         ) {
           id
         }
@@ -248,7 +248,7 @@ it("earningsDelete restores balances to the baseline", async () => {
           countryCode: "GB"
           pensionReliefAtSource: 0
           pensionNetPay: 0
-          accountIdTo: $a
+          toAccountId: $a
         ) {
           id
         }
@@ -305,7 +305,7 @@ it("attributes field joins active pension and student-loan flags human-readably"
           pensionNetPay: 0.03
           pensionSalarySacrifice: 0.05
           studentLoanPlan2: true
-          accountIdTo: $a
+          toAccountId: $a
         ) {
           id
         }
@@ -362,7 +362,7 @@ it("Query.earnings returns rows sorted by start date descending, paginated", asy
             countryCode: "GB"
             pensionReliefAtSource: 0
             pensionNetPay: 0
-            accountIdTo: $a
+            toAccountId: $a
           ) {
             id
           }

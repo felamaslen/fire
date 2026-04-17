@@ -7,7 +7,7 @@ import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
-import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
+import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
@@ -65,102 +65,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             YEARLY: {
                 value: "YEARLY"
             }
-        }
-    });
-    const PlanningBillType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningBill",
-        description: "A recurring bill that projects forward into future months' balances as a provisional outgoing transaction until an actual transaction is recorded for that month.",
-        fields() {
-            return {
-                amount: {
-                    description: "Amount charged per occurrence.",
-                    name: "amount",
-                    type: new GraphQLNonNull(MoneyType)
-                },
-                collectionDate: {
-                    description: "In-year occurrences, one `M-D` entry each (MONTHLY uses a bare day, no month prefix). See `billCreate` for the encoding.",
-                    name: "collectionDate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))
-                },
-                end: {
-                    description: "Last day the bill is in effect; null if ongoing.",
-                    name: "end",
-                    type: DateType
-                },
-                frequency: {
-                    name: "frequency",
-                    type: new GraphQLNonNull(PlanningBillsFrequencyType)
-                },
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                name: {
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                start: {
-                    description: "First day the bill is in effect.",
-                    name: "start",
-                    type: new GraphQLNonNull(DateType)
-                }
-            };
-        }
-    });
-    const PlanningBillEdgeType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningBillEdge",
-        description: "An edge within a `PlanningBillConnection`.",
-        fields() {
-            return {
-                cursor: {
-                    name: "cursor",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                node: {
-                    name: "node",
-                    type: new GraphQLNonNull(PlanningBillType)
-                }
-            };
-        }
-    });
-    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PageInfo",
-        description: "Pagination state for a cursor-paginated connection.",
-        fields() {
-            return {
-                endCursor: {
-                    name: "endCursor",
-                    type: GraphQLID
-                },
-                hasNextPage: {
-                    name: "hasNextPage",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                hasPreviousPage: {
-                    name: "hasPreviousPage",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                startCursor: {
-                    name: "startCursor",
-                    type: GraphQLID
-                }
-            };
-        }
-    });
-    const PlanningBillConnectionType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningBillConnection",
-        description: "A cursor-paginated list of `PlanningBill`, newest-`start` first.",
-        fields() {
-            return {
-                edges: {
-                    name: "edges",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningBillEdgeType)))
-                },
-                pageInfo: {
-                    name: "pageInfo",
-                    type: new GraphQLNonNull(PageInfoType)
-                }
-            };
         }
     });
     const NetWorthAssetTypeType: GraphQLEnumType = new GraphQLEnumType({
@@ -247,6 +151,107 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PlanningBillType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBill",
+        description: "A recurring bill that projects forward into future months' balances as a provisional outgoing transaction until an actual transaction is recorded for that month.",
+        fields() {
+            return {
+                amount: {
+                    description: "Amount charged per occurrence.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                collectionDate: {
+                    description: "In-year occurrences, one `M-D` entry each (MONTHLY uses a bare day, no month prefix). See `billCreate` for the encoding.",
+                    name: "collectionDate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))
+                },
+                end: {
+                    description: "Last day the bill is in effect; null if ongoing.",
+                    name: "end",
+                    type: DateType
+                },
+                frequency: {
+                    name: "frequency",
+                    type: new GraphQLNonNull(PlanningBillsFrequencyType)
+                },
+                fromAccount: {
+                    description: "Planning account (asset + alias) the bill is paid from.",
+                    name: "fromAccount",
+                    type: new GraphQLNonNull(PlanningAccountType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                start: {
+                    description: "First day the bill is in effect.",
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                }
+            };
+        }
+    });
+    const PlanningBillEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBillEdge",
+        description: "An edge within a `PlanningBillConnection`.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PlanningBillType)
+                }
+            };
+        }
+    });
+    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PageInfo",
+        description: "Pagination state for a cursor-paginated connection.",
+        fields() {
+            return {
+                endCursor: {
+                    name: "endCursor",
+                    type: GraphQLID
+                },
+                hasNextPage: {
+                    name: "hasNextPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                hasPreviousPage: {
+                    name: "hasPreviousPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                startCursor: {
+                    name: "startCursor",
+                    type: GraphQLID
+                }
+            };
+        }
+    });
+    const PlanningBillConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBillConnection",
+        description: "A cursor-paginated list of `PlanningBill`, newest-`start` first.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningBillEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
     const PlanningEarningUKTaxCodeType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningEarningUKTaxCode",
         description: "A UK tax code active on a `PlanningEarning` over a date range. Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually.",
@@ -274,11 +279,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         description: "A stream of gross earnings (salary, contract income, \u2026) paid into a specific asset account.",
         fields() {
             return {
-                accountTo: {
-                    description: "Destination planning account for the net earnings.",
-                    name: "accountTo",
-                    type: new GraphQLNonNull(PlanningAccountType)
-                },
                 amountGross: {
                     name: "amountGross",
                     type: new GraphQLNonNull(MoneyType)
@@ -308,6 +308,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 start: {
                     name: "start",
                     type: new GraphQLNonNull(DateType)
+                },
+                toAccount: {
+                    description: "Destination planning account for the net earnings.",
+                    name: "toAccount",
+                    type: new GraphQLNonNull(PlanningAccountType)
                 },
                 ukTaxCodes: {
                     description: "Tax codes applied to this earnings stream over time. Used when projecting predicted withholding.",
@@ -1348,14 +1353,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 billCreate: {
-                    description: "Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, \u2026) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `accountIdFrom`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.",
+                    description: "Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, \u2026) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.",
                     name: "billCreate",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
                     args: {
-                        accountIdFrom: {
-                            description: "Asset account (`NetWorthCategoryAsset.id`) the bill is paid from.",
-                            type: new GraphQLNonNull(GraphQLID)
-                        },
                         amount: {
                             description: "Amount charged per occurrence. Currency must match the asset account.",
                             type: new GraphQLNonNull(MoneyInputType)
@@ -1381,8 +1382,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         frequency: {
                             type: new GraphQLNonNull(PlanningBillsFrequencyType)
                         },
+                        fromAccountId: {
+                            description: "Planning account (`PlanningAccount.id`) the bill is paid from. The asset must already have a planning account assigned via `planningAccountAssign`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
                         liabilityId: {
-                            description: "Liability (`NetWorthCategoryLiability.id`) this bill services, if any \u2014 e.g. a credit-card liability paid off by a monthly direct debit, or a mortgage principal. Paying the bill reduces the liability's outstanding balance.",
+                            description: "The liability (`NetWorthCategoryLiability.id`) this bill services, if any \u2014 e.g. a credit-card liability paid off by a monthly direct debit, or a mortgage principal. Paying the bill reduces the liability's outstanding balance.",
                             type: GraphQLID
                         },
                         name: {
@@ -1395,7 +1400,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationBillCreateResolver(args.start, args.frequency, args.collectionDate, args.amount, args.name, args.accountIdFrom, args.liabilityId, args.end);
+                        return mutationBillCreateResolver(args.start, args.frequency, args.collectionDate, args.amount, args.name, args.fromAccountId, args.liabilityId, args.end);
                     }
                 },
                 billDelete: {
@@ -1416,10 +1421,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "billUpdate",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
                     args: {
-                        accountIdFrom: {
-                            description: "New paying asset account (`NetWorthCategoryAsset.id`).",
-                            type: GraphQLID
-                        },
                         amount: {
                             description: "New amount per occurrence. Currency must match the asset account.",
                             type: MoneyInputType
@@ -1446,6 +1447,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "New recurrence cadence.",
                             type: PlanningBillsFrequencyType
                         },
+                        fromAccountId: {
+                            description: "New paying planning account (`PlanningAccount.id`).",
+                            type: GraphQLID
+                        },
                         id: {
                             type: new GraphQLNonNull(GraphQLID)
                         },
@@ -1463,17 +1468,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationBillUpdateResolver(args.id, args.start, args.frequency, args.collectionDate, args.amount, args.name, args.accountIdFrom, args.liabilityId, args.end);
+                        return mutationBillUpdateResolver(args.id, args.start, args.frequency, args.collectionDate, args.amount, args.name, args.fromAccountId, args.liabilityId, args.end);
                     }
                 },
                 earningsCreate: {
-                    description: "Register a new earnings stream (salary, contract income, \u2026). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `accountIdTo` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and \u2014 when enabled \u2014 Student Loan plan 2, using the year's tax rates and any attached UK tax codes.",
+                    description: "Register a new earnings stream (salary, contract income, \u2026). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `toAccountId` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and \u2014 when enabled \u2014 Student Loan plan 2, using the year's tax rates and any attached UK tax codes.",
                     name: "earningsCreate",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
                     args: {
-                        accountIdTo: {
-                            type: new GraphQLNonNull(GraphQLID)
-                        },
                         amountGross: {
                             type: new GraphQLNonNull(MoneyInputType)
                         },
@@ -1503,12 +1505,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "Whether Student Loan plan 2 is being repaid on this income. Defaults to false.",
                             type: GraphQLBoolean
                         },
+                        toAccountId: {
+                            description: "Planning account (`PlanningAccount.id`) the net earnings land in. The asset must already have a planning account assigned via `planningAccountAssign`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
                         ukTaxCodes: {
                             type: new GraphQLList(new GraphQLNonNull(PlanningEarningUKTaxCodeInputType))
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.accountIdTo, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
+                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
                     }
                 },
                 earningsDelete: {
@@ -1529,9 +1535,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "earningsUpdate",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
                     args: {
-                        accountIdTo: {
-                            type: GraphQLID
-                        },
                         amountGross: {
                             type: MoneyInputType
                         },
@@ -1562,12 +1565,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         studentLoanPlan2: {
                             type: GraphQLBoolean
                         },
+                        toAccountId: {
+                            description: "New destination planning account (`PlanningAccount.id`) the net earnings land in.",
+                            type: GraphQLID
+                        },
                         ukTaxCodes: {
                             type: new GraphQLList(new GraphQLNonNull(PlanningEarningUKTaxCodeInputType))
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.accountIdTo, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
+                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
                     }
                 },
                 netWorthCategoryCreate: {
@@ -1676,9 +1683,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "payslipCreate",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
                     args: {
-                        accountIdTo: {
-                            type: new GraphQLNonNull(GraphQLID)
-                        },
                         adjustments: {
                             type: new GraphQLList(new GraphQLNonNull(PayslipAdjustmentInputType))
                         },
@@ -1694,10 +1698,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         },
                         name: {
                             type: new GraphQLNonNull(GraphQLString)
+                        },
+                        toAccountId: {
+                            description: "Planning account (`PlanningAccount.id`) the net pay lands in. The asset must already have a planning account assigned via `planningAccountAssign`.",
+                            type: new GraphQLNonNull(GraphQLID)
                         }
                     },
                     resolve(_source, args) {
-                        return mutationPayslipCreateResolver(args.date, args.amountGross, args.name, args.accountIdTo, args.adjustments, args.file);
+                        return mutationPayslipCreateResolver(args.date, args.amountGross, args.name, args.toAccountId, args.adjustments, args.file);
                     }
                 },
                 payslipDelete: {
@@ -1718,9 +1726,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "payslipUpdate",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
                     args: {
-                        accountIdTo: {
-                            type: GraphQLID
-                        },
                         adjustments: {
                             type: new GraphQLList(new GraphQLNonNull(PayslipAdjustmentInputType))
                         },
@@ -1739,10 +1744,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         },
                         name: {
                             type: GraphQLString
+                        },
+                        toAccountId: {
+                            description: "New destination planning account (`PlanningAccount.id`) the net pay lands in.",
+                            type: GraphQLID
                         }
                     },
                     resolve(_source, args) {
-                        return mutationPayslipUpdateResolver(args.id, args.date, args.amountGross, args.name, args.accountIdTo, args.adjustments, args.file);
+                        return mutationPayslipUpdateResolver(args.id, args.date, args.amountGross, args.name, args.toAccountId, args.adjustments, args.file);
                     }
                 },
                 planningAccountAssign: {

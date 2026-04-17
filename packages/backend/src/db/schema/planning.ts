@@ -159,10 +159,10 @@ export const PlanningEarnings = pgTable(
     pensionNetPay: doublePrecision("pensionNetPay").notNull(),
     /** Whether the earner is repaying UK Student Loan plan 2 on this income. When false, no student-loan deduction is applied to predicted take-home. */
     studentLoanPlan2: boolean("studentLoanPlan2").notNull().default(false),
-    /** Asset account the net earnings land in. */
-    accountIdTo: uuid("accountIdTo")
+    /** Planning account the net earnings land in. */
+    toAccountId: uuid("toAccountId")
       .notNull()
-      .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
+      .references(() => PlanningAccounts.accountId, { onDelete: "restrict" }),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -193,9 +193,9 @@ export const PlanningEarnings = pgTable(
 export const planningEarningsRelations = relations(
   PlanningEarnings,
   ({ one, many }) => ({
-    accountTo: one(NetWorthCategoryAssets, {
-      fields: [PlanningEarnings.accountIdTo],
-      references: [NetWorthCategoryAssets.id],
+    toAccount: one(PlanningAccounts, {
+      fields: [PlanningEarnings.toAccountId],
+      references: [PlanningAccounts.accountId],
     }),
     ukTaxCodes: many(PlanningEarningsUKTaxCodes),
   }),
@@ -243,9 +243,9 @@ export const planningEarningsUKTaxCodesRelations = relations(
   }),
 );
 
-/** Planning-specific metadata attached to an existing NetWorthCategoryAsset. */
+/** Planning-specific metadata attached to an existing NetWorthCategoryAsset. The PK is the underlying asset's id; rows in other planning tables (bills, earnings, payslips, transactions) FK to this table so the referenced asset is guaranteed to have a planning account attached. */
 export const PlanningAccounts = pgTable("PlanningAccounts", {
-  /** Asset account this planning metadata is attached to. */
+  /** Underlying asset this planning account wraps. */
   accountId: uuid("accountId")
     .primaryKey()
     .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
@@ -261,16 +261,10 @@ export const PlanningAccounts = pgTable("PlanningAccounts", {
 
 export const planningAccountsRelations = relations(
   PlanningAccounts,
-  ({ one, many }) => ({
-    account: one(NetWorthCategoryAssets, {
+  ({ one }) => ({
+    asset: one(NetWorthCategoryAssets, {
       fields: [PlanningAccounts.accountId],
       references: [NetWorthCategoryAssets.id],
-    }),
-    transactionsFrom: many(PlanningTransactions, {
-      relationName: "transactionsFrom",
-    }),
-    transactionsTo: many(PlanningTransactions, {
-      relationName: "transactionsTo",
     }),
   }),
 );
@@ -328,11 +322,12 @@ export const PlanningTransactions = pgTable(
     amount: bigint("amount", { mode: "number" }).notNull(),
     currency: currencyCode("currency").notNull(),
     name: text("name").notNull(),
-    accountIdFrom: uuid("accountIdFrom")
+    /** Planning account the transaction is paid from. */
+    fromAccountId: uuid("fromAccountId")
       .notNull()
       .references(() => PlanningAccounts.accountId, { onDelete: "restrict" }),
-    /** Destination account if this is a transfer; null if it's an external outflow. */
-    accountIdTo: uuid("accountIdTo").references(
+    /** Destination planning account if this is a transfer; null if it's an external outflow. */
+    toAccountId: uuid("toAccountId").references(
       () => PlanningAccounts.accountId,
       { onDelete: "restrict" },
     ),
@@ -356,7 +351,7 @@ export const PlanningTransactions = pgTable(
     }).onDelete("cascade"),
     check(
       "PlanningTransactions_accounts_ck",
-      sql`${t.accountIdTo} IS NULL OR ${t.accountIdFrom} <> ${t.accountIdTo}`,
+      sql`${t.toAccountId} IS NULL OR ${t.fromAccountId} <> ${t.toAccountId}`,
     ),
   ],
 );
@@ -368,13 +363,13 @@ export const planningTransactionsRelations = relations(
       fields: [PlanningTransactions.year, PlanningTransactions.date],
       references: [PlanningMonths.year, PlanningMonths.date],
     }),
-    accountFrom: one(PlanningAccounts, {
-      fields: [PlanningTransactions.accountIdFrom],
+    fromAccount: one(PlanningAccounts, {
+      fields: [PlanningTransactions.fromAccountId],
       references: [PlanningAccounts.accountId],
       relationName: "transactionsFrom",
     }),
-    accountTo: one(PlanningAccounts, {
-      fields: [PlanningTransactions.accountIdTo],
+    toAccount: one(PlanningAccounts, {
+      fields: [PlanningTransactions.toAccountId],
       references: [PlanningAccounts.accountId],
       relationName: "transactionsTo",
     }),
@@ -416,9 +411,10 @@ export const PlanningBills = pgTable(
     amount: bigint("amount", { mode: "number" }).notNull(),
     currency: currencyCode("currency").notNull(),
     name: text("name").notNull(),
-    accountIdFrom: uuid("accountIdFrom")
+    /** Planning account the bill is paid from. */
+    fromAccountId: uuid("fromAccountId")
       .notNull()
-      .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
+      .references(() => PlanningAccounts.accountId, { onDelete: "restrict" }),
     /** Liability this bill services, if any (e.g. mortgage direct debit). */
     liabilityId: uuid("liabilityId").references(
       () => NetWorthCategoryLiabilities.id,
@@ -448,9 +444,9 @@ export const PlanningBills = pgTable(
 export const planningBillsRelations = relations(
   PlanningBills,
   ({ one, many }) => ({
-    accountFrom: one(NetWorthCategoryAssets, {
-      fields: [PlanningBills.accountIdFrom],
-      references: [NetWorthCategoryAssets.id],
+    fromAccount: one(PlanningAccounts, {
+      fields: [PlanningBills.fromAccountId],
+      references: [PlanningAccounts.accountId],
     }),
     liability: one(NetWorthCategoryLiabilities, {
       fields: [PlanningBills.liabilityId],
@@ -521,10 +517,10 @@ export const PlanningPayslips = pgTable("PlanningPayslips", {
   amountGross: bigint("amountGross", { mode: "number" }).notNull(),
   currency: currencyCode("currency").notNull(),
   name: text("name").notNull(),
-  /** Asset account the net pay lands in. */
-  accountIdTo: uuid("accountIdTo")
+  /** Planning account the net pay lands in. */
+  toAccountId: uuid("toAccountId")
     .notNull()
-    .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
+    .references(() => PlanningAccounts.accountId, { onDelete: "restrict" }),
   /** Optional link to the payslip PDF/document. */
   fileUrl: text("fileUrl"),
   createdAt: timestamp("createdAt", { withTimezone: true })
@@ -538,9 +534,9 @@ export const PlanningPayslips = pgTable("PlanningPayslips", {
 export const planningPayslipsRelations = relations(
   PlanningPayslips,
   ({ one, many }) => ({
-    accountTo: one(NetWorthCategoryAssets, {
-      fields: [PlanningPayslips.accountIdTo],
-      references: [NetWorthCategoryAssets.id],
+    toAccount: one(PlanningAccounts, {
+      fields: [PlanningPayslips.toAccountId],
+      references: [PlanningAccounts.accountId],
     }),
     adjustments: many(PlanningPayslipAdjustments),
   }),
