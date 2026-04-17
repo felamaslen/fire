@@ -13,6 +13,8 @@ import { print } from "graphql";
 import type { introspection } from "@/__generated__/graphql-env";
 import { router } from "@/router";
 
+import { TestUpload } from "./upload";
+
 export const graphql = initGraphQLTada<{
   introspection: introspection;
   scalars: {
@@ -23,7 +25,26 @@ export const graphql = initGraphQLTada<{
   };
 }>();
 
+type GqlBody<Q extends TadaDocumentNode<any, any>> = {
+  data?: ResultOf<Q>;
+  errors?: Array<{ message: string }>;
+};
+
+/**
+ * Execute a GraphQL operation against the injected server. If any variable (or nested variable) is a `TestUpload`, switches automatically to a graphql-multipart-request-spec POST with the file attached.
+ */
 export async function runGql<Q extends TadaDocumentNode<any, any>>(
+  doc: Q,
+  variables: VariablesOf<Q>,
+): Promise<ResultOf<Q>> {
+  const uploads = collectUploads(variables);
+  if (uploads.length === 0) {
+    return runJsonOperation(doc, variables);
+  }
+  return runMultipartOperation(doc, variables, uploads);
+}
+
+async function runJsonOperation<Q extends TadaDocumentNode<any, any>>(
   doc: Q,
   variables: VariablesOf<Q>,
 ): Promise<ResultOf<Q>> {
@@ -32,61 +53,41 @@ export async function runGql<Q extends TadaDocumentNode<any, any>>(
     url: "/graphql",
     payload: { query: print(doc), variables },
   });
-  const body = JSON.parse(res.body) as {
-    data?: ResultOf<Q>;
-    errors?: Array<{ message: string }>;
-  };
-  if (body.errors?.length) {
-    throw new Error(
-      `GraphQL errors: ${body.errors.map((e) => e.message).join("; ")}`,
-    );
-  }
-  if (body.data == null) throw new Error("No data returned");
-  return body.data;
+  return unwrap<Q>(JSON.parse(res.body));
 }
 
-/** A file attachment for `runGqlUpload`. `path` is a dot-separated path into `variables` (e.g. `"file"` or `"input.attachment"`). */
-export type UploadAttachment = {
-  path: string;
-  filename: string;
-  mimetype: string;
-  content: Buffer | string;
-};
-
-/**
- * Execute a GraphQL operation with attached files via multipart/form-data, per the graphql-multipart-request-spec. Variables referenced by an attachment must be `null` in `variables` — the `path` field maps each file onto its variable slot.
- */
-export async function runGqlUpload<Q extends TadaDocumentNode<any, any>>(
+async function runMultipartOperation<Q extends TadaDocumentNode<any, any>>(
   doc: Q,
   variables: VariablesOf<Q>,
-  attachments: readonly UploadAttachment[],
+  uploads: Array<{ path: string; upload: TestUpload }>,
 ): Promise<ResultOf<Q>> {
+  // Replace TestUpload sentinels in variables with null per the spec.
+  const opVars = replaceUploadsWithNull(variables, uploads);
   const boundary = `----Boundary${randomBytes(8).toString("hex")}`;
   const parts: Buffer[] = [];
   const write = (s: string) => parts.push(Buffer.from(s));
 
   write(`--${boundary}\r\n`);
   write(`Content-Disposition: form-data; name="operations"\r\n\r\n`);
-  write(JSON.stringify({ query: print(doc), variables }));
+  write(JSON.stringify({ query: print(doc), variables: opVars }));
   write("\r\n");
 
   const map = Object.fromEntries(
-    attachments.map((a, i) => [String(i), [`variables.${a.path}`]]),
+    uploads.map((u, i) => [String(i), [`variables.${u.path}`]]),
   );
   write(`--${boundary}\r\n`);
   write(`Content-Disposition: form-data; name="map"\r\n\r\n`);
   write(JSON.stringify(map));
   write("\r\n");
 
-  for (const [i, a] of attachments.entries()) {
+  for (const [i, u] of uploads.entries()) {
+    const content = await u.upload.read();
     write(`--${boundary}\r\n`);
     write(
-      `Content-Disposition: form-data; name="${i}"; filename="${a.filename}"\r\n`,
+      `Content-Disposition: form-data; name="${i}"; filename="${u.upload.filename}"\r\n`,
     );
-    write(`Content-Type: ${a.mimetype}\r\n\r\n`);
-    parts.push(
-      typeof a.content === "string" ? Buffer.from(a.content) : a.content,
-    );
+    write(`Content-Type: ${u.upload.mimetype}\r\n\r\n`);
+    parts.push(content);
     write("\r\n");
   }
   write(`--${boundary}--\r\n`);
@@ -103,15 +104,57 @@ export async function runGqlUpload<Q extends TadaDocumentNode<any, any>>(
       "apollo-require-preflight": "true",
     },
   });
-  const parsed = JSON.parse(res.body) as {
-    data?: ResultOf<Q>;
-    errors?: Array<{ message: string }>;
-  };
-  if (parsed.errors?.length) {
+  return unwrap<Q>(JSON.parse(res.body));
+}
+
+function unwrap<Q extends TadaDocumentNode<any, any>>(
+  body: GqlBody<Q>,
+): ResultOf<Q> {
+  if (body.errors?.length) {
     throw new Error(
-      `GraphQL errors: ${parsed.errors.map((e) => e.message).join("; ")}`,
+      `GraphQL errors: ${body.errors.map((e) => e.message).join("; ")}`,
     );
   }
-  if (parsed.data == null) throw new Error("No data returned");
-  return parsed.data;
+  if (body.data == null) throw new Error("No data returned");
+  return body.data;
+}
+
+function collectUploads(
+  value: unknown,
+  path: string[] = [],
+): Array<{ path: string; upload: TestUpload }> {
+  if (value instanceof TestUpload) {
+    return [{ path: path.join("."), upload: value }];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((v, i) => collectUploads(v, path.concat(String(i))));
+  }
+  if (value != null && typeof value === "object") {
+    return Object.entries(value).flatMap(([k, v]) =>
+      collectUploads(v, path.concat(k)),
+    );
+  }
+  return [];
+}
+
+function replaceUploadsWithNull<T>(
+  value: T,
+  uploads: Array<{ path: string; upload: TestUpload }>,
+): T {
+  if (uploads.length === 0) return value;
+  // Deep-clone swapping TestUpload instances for null.
+  const swap = (v: unknown): unknown => {
+    if (v instanceof TestUpload) return null;
+    if (Array.isArray(v)) return v.map(swap);
+    if (v != null && typeof v === "object") {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([k, val]) => [
+          k,
+          swap(val),
+        ]),
+      );
+    }
+    return v;
+  };
+  return swap(value) as T;
 }
