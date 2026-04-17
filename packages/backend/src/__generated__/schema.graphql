@@ -349,13 +349,13 @@ type Pong {
 
 type Query {
   """Paginated list of net-worth entries, newest first."""
-  netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection!
+  netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """
   Paginated list of all net-worth categories (assets, liabilities, options), newest first.
   """
-  netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection!
+  netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection @semanticNonNull
   """Call this to check that the GraphQL server is working properly"""
-  ping: Pong!
+  ping: Pong @semanticNonNull
 }
 
 """

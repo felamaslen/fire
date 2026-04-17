@@ -117,8 +117,8 @@ describe("categories", () => {
     `);
     const data = await runGql(doc, {});
 
-    expect(data.netWorthCategories.edges).toHaveLength(3);
-    const typenames = data.netWorthCategories.edges.map(
+    expect(data.netWorthCategories!.edges).toHaveLength(3);
+    const typenames = data.netWorthCategories!.edges.map(
       (e) => e.node.__typename,
     );
     expect(typenames).toEqual(
@@ -128,7 +128,7 @@ describe("categories", () => {
         "NetWorthCategoryOption",
       ]),
     );
-    expect(data.netWorthCategories.pageInfo.hasNextPage).toBe(false);
+    expect(data.netWorthCategories!.pageInfo.hasNextPage).toBe(false);
   });
 
   it("updates and deletes a category", async () => {
@@ -352,11 +352,10 @@ describe("entries", () => {
       }
     `);
     const forward = await runGql(forwardDoc, {});
-    expect(forward.netWorth.edges).toHaveLength(2);
-    expect(forward.netWorth.pageInfo.hasNextPage).toBe(true);
+    expect(forward.netWorth!.edges).toHaveLength(2);
+    expect(forward.netWorth!.pageInfo.hasNextPage).toBe(true);
 
-    const endCursor = forward.netWorth.pageInfo.endCursor;
-    if (!endCursor) throw new Error("missing endCursor");
+    const endCursor = forward.netWorth!.pageInfo.endCursor!;
 
     const backwardDoc = graphql(`
       query Backward($c: ID!) {
@@ -376,7 +375,7 @@ describe("entries", () => {
       }
     `);
     const backward = await runGql(backwardDoc, { c: endCursor });
-    expect(backward.netWorth.edges.length).toBeGreaterThan(0);
+    expect(backward.netWorth!.edges.length).toBeGreaterThan(0);
   });
 
   it("sets and updates currency rates on an entry", async () => {
