@@ -370,7 +370,7 @@ async function materialiseEarningAsPayslip(
       else
         adjustments.push({
           part: parsed.part,
-          name: adjustmentLabelFor(parsed.part),
+          name: adjustmentLabel[parsed.part],
           amount: signedOverride,
         });
     }
@@ -401,8 +401,11 @@ async function materialiseEarningAsPayslip(
   });
 }
 
-function adjustmentLabelFor(part: "tax" | "nic" | "sl"): string {
-  if (part === "tax") return "Income tax";
-  if (part === "nic") return "NIC";
-  return "Student loan";
-}
+const adjustmentLabel = {
+  tax: "Income tax",
+  nic: "NIC",
+  sl: "Student loan",
+} satisfies Record<
+  Exclude<Extract<PlanningTransactionId, { part: string }>["part"], "gross">,
+  string
+>;

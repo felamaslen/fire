@@ -19,6 +19,7 @@ import {
   PlanningTransactions,
   PlanningYearUKTaxRates,
 } from "@/db/schema/planning";
+import { UnreachableCaseError } from "@/errors";
 
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
@@ -471,9 +472,19 @@ function collectionDayInMonth(
   monthDate: Date,
 ): number | null {
   const month = monthDate.getUTCMonth() + 1;
-  if (frequency === "MONTHLY") return Number(collectionDate);
-  const entries =
-    frequency === "QUARTERLY" ? collectionDate.split(/,\s*/) : [collectionDate];
+  switch (frequency) {
+    case "MONTHLY":
+      return Number(collectionDate);
+    case "QUARTERLY":
+      return matchMonthDay(collectionDate.split(/,\s*/), month);
+    case "YEARLY":
+      return matchMonthDay([collectionDate], month);
+    default:
+      throw new UnreachableCaseError(frequency);
+  }
+}
+
+function matchMonthDay(entries: string[], month: number): number | null {
   for (const entry of entries) {
     const [m, d] = entry.split("-");
     if (Number(m) === month) return Number(d);
