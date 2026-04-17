@@ -29,6 +29,13 @@
       "when": 1776455191255,
       "tag": "0003_add_value_options_and_payslip_liability_link",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776464308515,
+      "tag": "0004_extend_currency_code_enum",
+      "breakpoints": true
     }
   ]
 }
