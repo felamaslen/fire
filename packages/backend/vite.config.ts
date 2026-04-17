@@ -29,6 +29,7 @@ export default defineConfig({
     silent: "passed-only",
     env: {
       DATABASE_URL: "postgres://fire:fire@localhost:5433/postgres",
+      UPLOADS_DIR: "./.uploads-test",
     },
   },
 });
