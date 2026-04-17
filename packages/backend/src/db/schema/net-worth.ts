@@ -64,18 +64,18 @@ export const netWorthEntriesRelations = relations(
   }),
 );
 
-/** Exchange rate captured alongside a NetWorthEntry. One row per (entry, currency) — the rate converts `base` into `currency`. */
+/** Exchange rate captured alongside a NetWorthEntry. One row per (entry, currency) — the rate converts `currency` into `base`. */
 export const NetWorthCurrencyRates = pgTable(
   "NetWorthCurrencyRates",
   {
     entryId: uuid("entryId")
       .notNull()
       .references(() => NetWorthEntries.id, { onDelete: "cascade" }),
-    /** Currency being priced in (e.g. GBP for GBP/USD). */
+    /** Currency the rate resolves into (e.g. GBP for a GBP/USD quote). */
     base: currencyCode("base").notNull(),
-    /** Currency being quoted (e.g. USD for GBP/USD). */
+    /** Currency being priced (e.g. USD for a GBP/USD quote). */
     currency: currencyCode("currency").notNull(),
-    /** Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD). */
+    /** Units of `base` per one unit of `currency` (e.g. 0.77 for GBP/USD: 1 USD = 0.77 GBP). */
     rate: numeric("rate", { precision: 24, scale: 12 }).notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()

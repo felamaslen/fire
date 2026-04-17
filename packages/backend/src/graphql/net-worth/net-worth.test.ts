@@ -518,8 +518,8 @@ describe("entries", () => {
             }
           ]
           currencyRates: [
-            { base: "GBP", currency: "USD", rate: 1.35 }
-            { base: "GBP", currency: "EUR", rate: 1.17 }
+            { base: "GBP", currency: "USD", rate: 0.77 }
+            { base: "GBP", currency: "EUR", rate: 0.86 }
           ]
         ) {
           id
@@ -534,8 +534,8 @@ describe("entries", () => {
     const created = await runGql(create, { a: assetId });
     expect(created.netWorthCreate.currencyRates).toEqual(
       expect.arrayContaining([
-        { base: "GBP", currency: "USD", rate: 1.35 },
-        { base: "GBP", currency: "EUR", rate: 1.17 },
+        { base: "GBP", currency: "USD", rate: 0.77 },
+        { base: "GBP", currency: "EUR", rate: 0.86 },
       ]),
     );
 
@@ -545,8 +545,8 @@ describe("entries", () => {
         netWorthUpdate(
           id: $id
           currencyRates: [
-            { base: "GBP", currency: "USD", rate: 1.4 }
-            { base: "GBP", currency: "JPY", rate: 190 }
+            { base: "GBP", currency: "USD", rate: 0.74 }
+            { base: "GBP", currency: "JPY", rate: 0.005 }
           ]
         ) {
           currencyRates {
@@ -560,8 +560,8 @@ describe("entries", () => {
     const updated = await runGql(update, { id: created.netWorthCreate.id });
     expect(updated.netWorthUpdate.currencyRates).toEqual(
       expect.arrayContaining([
-        { base: "GBP", currency: "USD", rate: 1.4 },
-        { base: "GBP", currency: "JPY", rate: 190 },
+        { base: "GBP", currency: "USD", rate: 0.74 },
+        { base: "GBP", currency: "JPY", rate: 0.005 },
       ]),
     );
     expect(updated.netWorthUpdate.currencyRates).toHaveLength(2);
@@ -677,7 +677,7 @@ describe("entries", () => {
                 categoryId: $a
                 amounts: [
                   { amount: 5000, currency: "GBP" }
-                  { amount: 1350, currency: "USD" }
+                  { amount: 1250, currency: "USD" }
                 ]
               }
             }
@@ -688,7 +688,7 @@ describe("entries", () => {
               }
             }
           ]
-          currencyRates: [{ base: "GBP", currency: "USD", rate: 1.35 }]
+          currencyRates: [{ base: "GBP", currency: "USD", rate: 0.8 }]
         ) {
           id
           totalAssets {
