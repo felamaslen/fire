@@ -1,4 +1,5 @@
 import "./graphql/server";
+import "./graphql/schema-download";
 import "./uploads";
 
 import { env } from "./env";
