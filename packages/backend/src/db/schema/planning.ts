@@ -189,10 +189,53 @@ export const PlanningEarnings = pgTable(
 
 export const planningEarningsRelations = relations(
   PlanningEarnings,
-  ({ one }) => ({
+  ({ one, many }) => ({
     accountTo: one(NetWorthCategoryAssets, {
       fields: [PlanningEarnings.accountIdTo],
       references: [NetWorthCategoryAssets.id],
+    }),
+    ukTaxCodes: many(PlanningEarningsUKTaxCodes),
+  }),
+);
+
+/** UK tax codes in effect for a PlanningEarnings over a date range. The active code alters the personal allowance when projecting PAYE withholding. Composite PK on (earnings, start) — each stream has at most one code active starting on any given day. */
+export const PlanningEarningsUKTaxCodes = pgTable(
+  "PlanningEarningsUKTaxCodes",
+  {
+    earningsId: uuid("earningsId")
+      .notNull()
+      .references(() => PlanningEarnings.id, { onDelete: "cascade" }),
+    /** First day this tax code applies. */
+    start: date("start", { mode: "date" }).notNull(),
+    /** Last day this tax code applies (inclusive); null while the code is ongoing. */
+    end: date("end", { mode: "date" }),
+    /** HMRC tax code as issued (e.g. `1257L`, `3420X`). */
+    taxCode: text("taxCode").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      name: "PlanningEarningsUKTaxCodes_pk",
+      columns: [t.earningsId, t.start],
+    }),
+    check(
+      "PlanningEarningsUKTaxCodes_dateRange_ck",
+      sql`${t.end} IS NULL OR ${t.end} >= ${t.start}`,
+    ),
+  ],
+);
+
+export const planningEarningsUKTaxCodesRelations = relations(
+  PlanningEarningsUKTaxCodes,
+  ({ one }) => ({
+    earnings: one(PlanningEarnings, {
+      fields: [PlanningEarningsUKTaxCodes.earningsId],
+      references: [PlanningEarnings.id],
     }),
   }),
 );

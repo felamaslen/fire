@@ -1,5 +1,5 @@
 {
-  "id": "bc31edcb-9cc3-48ac-87a5-2db9990a2ec3",
+  "id": "f75d7bd4-4e63-429b-8051-b20b721f972f",
   "prevId": "6d8e1045-350f-4ef7-903f-1446c8ff9f3e",
   "version": "7",
   "dialect": "postgresql",
@@ -828,6 +828,84 @@
         "PlanningEarnings_pensionNetPay_ck": {
           "name": "PlanningEarnings_pensionNetPay_ck",
           "value": "\"PlanningEarnings\".\"pensionNetPay\" BETWEEN 0 AND 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningEarningsUKTaxCodes": {
+      "name": "PlanningEarningsUKTaxCodes",
+      "schema": "",
+      "columns": {
+        "earningsId": {
+          "name": "earningsId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start": {
+          "name": "start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end": {
+          "name": "end",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "taxCode": {
+          "name": "taxCode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningEarningsUKTaxCodes_earningsId_PlanningEarnings_id_fk": {
+          "name": "PlanningEarningsUKTaxCodes_earningsId_PlanningEarnings_id_fk",
+          "tableFrom": "PlanningEarningsUKTaxCodes",
+          "tableTo": "PlanningEarnings",
+          "columnsFrom": [
+            "earningsId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "PlanningEarningsUKTaxCodes_pk": {
+          "name": "PlanningEarningsUKTaxCodes_pk",
+          "columns": [
+            "earningsId",
+            "start"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "PlanningEarningsUKTaxCodes_dateRange_ck": {
+          "name": "PlanningEarningsUKTaxCodes_dateRange_ck",
+          "value": "\"PlanningEarningsUKTaxCodes\".\"end\" IS NULL OR \"PlanningEarningsUKTaxCodes\".\"end\" >= \"PlanningEarningsUKTaxCodes\".\"start\""
         }
       },
       "isRLSEnabled": false
