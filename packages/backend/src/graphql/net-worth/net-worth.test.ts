@@ -177,6 +177,132 @@ describe("categories", () => {
     `);
     await runGql(del, { id: optionId });
   });
+
+  it("deletes an asset category when nothing references it", async () => {
+    const id = await createAsset("Disposable");
+    const del = graphql(`
+      mutation DeleteAsset($id: ID!) {
+        netWorthCategoryDelete(ref: { asset: $id }) {
+          _
+        }
+      }
+    `);
+    await runGql(del, { id });
+  });
+
+  it("refuses to delete an asset referenced by a net-worth value", async () => {
+    const id = await createAsset("In use");
+    await runGql(
+      graphql(`
+        mutation SeedEntry($assetId: ID!) {
+          netWorthCreate(
+            date: "2026-04-15"
+            values: [
+              {
+                asset: {
+                  categoryId: $assetId
+                  amounts: [{ amount: 100, currency: "GBP" }]
+                }
+              }
+            ]
+          ) {
+            id
+          }
+        }
+      `),
+      { assetId: id },
+    );
+
+    const del = graphql(`
+      mutation DeleteAsset($id: ID!) {
+        netWorthCategoryDelete(ref: { asset: $id }) {
+          _
+        }
+      }
+    `);
+    await expect(
+      runGql(del, { id }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: GraphQL errors: Cannot delete asset category: 1 net-worth value still references it. Remove those values first.]`,
+    );
+  });
+
+  it("deletes a liability category when nothing references it", async () => {
+    const id = (
+      await runGql(
+        graphql(`
+          mutation CreateLiability {
+            netWorthCategoryCreate(
+              input: { liability: { name: "Unused", type: CREDIT_CARD } }
+            ) {
+              id
+            }
+          }
+        `),
+        {},
+      )
+    ).netWorthCategoryCreate.id;
+
+    const del = graphql(`
+      mutation DeleteLiability($id: ID!) {
+        netWorthCategoryDelete(ref: { liability: $id }) {
+          _
+        }
+      }
+    `);
+    await runGql(del, { id });
+  });
+
+  it("refuses to delete a liability referenced by a net-worth value", async () => {
+    const id = (
+      await runGql(
+        graphql(`
+          mutation CreateLiability {
+            netWorthCategoryCreate(
+              input: { liability: { name: "Amex", type: CREDIT_CARD } }
+            ) {
+              id
+            }
+          }
+        `),
+        {},
+      )
+    ).netWorthCategoryCreate.id;
+
+    await runGql(
+      graphql(`
+        mutation SeedEntry($liabilityId: ID!) {
+          netWorthCreate(
+            date: "2026-04-15"
+            values: [
+              {
+                liability: {
+                  categoryId: $liabilityId
+                  amounts: [{ amount: 500, currency: "GBP" }]
+                }
+              }
+            ]
+          ) {
+            id
+          }
+        }
+      `),
+      { liabilityId: id },
+    );
+
+    const del = graphql(`
+      mutation DeleteLiability($id: ID!) {
+        netWorthCategoryDelete(ref: { liability: $id }) {
+          _
+        }
+      }
+    `);
+    await expect(
+      runGql(del, { id }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: GraphQL errors: Cannot delete liability category: 1 net-worth value still references it. Remove those values first.]`,
+    );
+  });
 });
 
 describe("entries", () => {

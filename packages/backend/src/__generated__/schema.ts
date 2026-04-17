@@ -1617,7 +1617,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 netWorthCategoryDelete: {
-                    description: "Delete a category. Fails if any value still references it.",
+                    description: "Delete a category. Fails with a human-readable error if any net-worth value still references it.",
                     name: "netWorthCategoryDelete",
                     type: new GraphQLNonNull(VoidType),
                     args: {

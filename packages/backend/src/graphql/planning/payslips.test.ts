@@ -544,7 +544,9 @@ it("nulls adjustment.liabilityId when the linked liability is deleted", async ()
   await runGql(
     graphql(`
       mutation ($l: ID!) {
-        netWorthCategoryDelete(ref: { liability: $l })
+        netWorthCategoryDelete(ref: { liability: $l }) {
+          _
+        }
       }
     `),
     { l: liabilityId },
@@ -555,20 +557,29 @@ it("nulls adjustment.liabilityId when the linked liability is deleted", async ()
   ]);
 });
 
-it("rejects payslipCreate when adjustment.liabilityId references a missing liability", async () => {
+it("rejects payslipUpdate when adjustment.liabilityId references a missing liability", async () => {
   await seedYear();
   const accountIdTo = await createAsset();
   await assign(accountIdTo);
 
+  // Seed the payslip directly so its id (which the driver echoes back in the
+  // FK-violation error's SQL params) is deterministic.
+  const PAYSLIP_ID = "019340b0-5a8e-7f3a-8e9a-1234567890ab";
+  await db.insert(PlanningPayslips).values({
+    id: PAYSLIP_ID,
+    date: new Date("2025-04-30"),
+    name: "April payslip",
+    amountGross: 300_000,
+    currency: "GBP",
+    toAccountId: accountIdTo,
+  });
+
   await expect(
     runGql(
       graphql(`
-        mutation ($a: ID!) {
-          payslipCreate(
-            date: "2025-04-30"
-            amountGross: { amount: 3000, currency: "GBP" }
-            name: "April payslip"
-            toAccountId: $a
+        mutation ($id: ID!) {
+          payslipUpdate(
+            id: $id
             adjustments: [
               {
                 amount: { amount: -100, currency: "GBP" }
@@ -581,10 +592,13 @@ it("rejects payslipCreate when adjustment.liabilityId references a missing liabi
           }
         }
       `),
-      { a: accountIdTo },
+      { id: PAYSLIP_ID },
     ),
   ).rejects.toThrowErrorMatchingInlineSnapshot(
-    `[Error: GraphQL errors: insert or update on table "PlanningPayslipAdjustments" violates foreign key constraint "PlanningPayslipAdjustments_liabilityId_NetWorthCategoryLiabilities_id_fk"]`,
+    `
+    [Error: GraphQL errors: Failed query: insert into "PlanningPayslipAdjustments" ("id", "payslipId", "amount", "name", "liabilityId", "createdAt", "updatedAt") values (default, $1, $2, $3, $4, default, default)
+    params: 019340b0-5a8e-7f3a-8e9a-1234567890ab,-10000,Student loan,00000000-0000-0000-0000-000000000000]
+  `,
   );
 });
 
