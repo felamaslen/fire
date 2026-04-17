@@ -3,6 +3,7 @@ import { strict as assert } from "node:assert";
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
 import type { ID } from "grats";
 
+import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import {
   NetWorthCategoryAssets,
@@ -28,8 +29,8 @@ import type { PlanningTransaction } from "./index";
 import { computeUKTake } from "./tax";
 import { encodePlanningTransactionId } from "./transactions";
 
-// TODO: derive per-account currency from the latest NetWorthValueAmount / let callers specify it. For now the planner reports everything in GBP.
-const REPORTING_CURRENCY = "GBP" as const;
+// TODO: derive per-account currency from the latest NetWorthValueAmount / let callers specify it. For now the planner reports everything in the home currency.
+const REPORTING_CURRENCY = HOME_CURRENCY;
 
 type TxRow = typeof PlanningTransactions.$inferSelect;
 type PayslipRow = typeof PlanningPayslips.$inferSelect;
