@@ -9,7 +9,7 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/dist/**",
       "**/build/**",
-      "**/__generated__/**",
+      "packages/backend/src/__generated__/**",
     ],
   },
   js.configs.recommended,
