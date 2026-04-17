@@ -408,9 +408,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLID)
                 },
                 interestRate: {
-                    description: "Annual rate as a decimal string (e.g. \"0.0525\" = 5.25%). Present iff type is LOAN.",
+                    description: "Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.",
                     name: "interestRate",
-                    type: GraphQLString
+                    type: GraphQLFloat
                 },
                 name: {
                     name: "name",
@@ -971,9 +971,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: GraphQLID
                 },
                 interestRate: {
-                    description: "Decimal-string annual rate (e.g. \"0.0525\"). Required iff type is LOAN.",
+                    description: "Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN.",
                     name: "interestRate",
-                    type: GraphQLString
+                    type: GraphQLFloat
                 },
                 name: {
                     name: "name",
@@ -1091,9 +1091,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: GraphQLID
                 },
                 interestRate: {
-                    description: "Decimal-string annual rate (e.g. \"0.0525\").",
+                    description: "Decimal-fraction annual rate (e.g. 0.0525 = 5.25%).",
                     name: "interestRate",
-                    type: GraphQLString
+                    type: GraphQLFloat
                 },
                 name: {
                     name: "name",
