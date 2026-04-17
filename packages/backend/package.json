@@ -24,8 +24,10 @@
     "postgres": "^3.4.9"
   },
   "devDependencies": {
+    "@graphql-tools/schema": "^10.0.32",
     "@types/node": "^24.0.0",
     "drizzle-kit": "^0.31.10",
+    "fake-tag": "^5.0.0",
     "gql.tada": "^1.9.2",
     "grats": "^0.0.36",
     "npm-run-all2": "^8.0.4",

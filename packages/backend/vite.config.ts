@@ -8,9 +8,17 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
       "#test": fileURLToPath(new URL("./test", import.meta.url)),
     },
+    dedupe: ["graphql"],
   },
   ssr: {
-    noExternal: ["graphql", "@apollo/server", "@as-integrations/fastify"],
+    noExternal: [
+      "graphql",
+      "@apollo/server",
+      "@as-integrations/fastify",
+      "@graphql-tools/schema",
+      "@graphql-tools/merge",
+      "@graphql-tools/utils",
+    ],
   },
   test: {
     globalSetup: ["./test/global-setup.ts"],
