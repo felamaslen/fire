@@ -487,7 +487,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const PlanningYearTaxRatesUKType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningYearTaxRatesUK",
-        description: "UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0\u20131); thresholds are in minor units of GBP.",
+        description: "UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0\u20131); thresholds are in fractional units of GBP.",
         fields() {
             return {
                 rateAdditional: {
@@ -515,37 +515,37 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdAdditional: {
-                    description: "Start of the additional-rate band, in minor units of GBP.",
+                    description: "Start of the additional-rate band, in fractional units of GBP.",
                     name: "thresholdAdditional",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdBasic: {
-                    description: "Top of the basic-rate band, in minor units of GBP.",
+                    description: "Top of the basic-rate band, in fractional units of GBP.",
                     name: "thresholdBasic",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdHigher: {
-                    description: "Top of the higher-rate band, in minor units of GBP.",
+                    description: "Top of the higher-rate band, in fractional units of GBP.",
                     name: "thresholdHigher",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdNicPrimary: {
-                    description: "NIC primary threshold, in minor units of GBP.",
+                    description: "NIC primary threshold, in fractional units of GBP.",
                     name: "thresholdNicPrimary",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdNicUpperEarnings: {
-                    description: "NIC upper earnings limit, in minor units of GBP.",
+                    description: "NIC upper earnings limit, in fractional units of GBP.",
                     name: "thresholdNicUpperEarnings",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdPersonalAllowanceTaper: {
-                    description: "Income at which the personal allowance begins to taper (\u00A31 of PA withdrawn per \u00A32 earned above this), in minor units of GBP.",
+                    description: "Income at which the personal allowance begins to taper (\u00A31 of PA withdrawn per \u00A32 earned above this), in fractional units of GBP.",
                     name: "thresholdPersonalAllowanceTaper",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdStudentLoanPlan2: {
-                    description: "Student-loan plan 2 threshold, in minor units of GBP.",
+                    description: "Student-loan plan 2 threshold, in fractional units of GBP.",
                     name: "thresholdStudentLoanPlan2",
                     type: new GraphQLNonNull(GraphQLFloat)
                 }
@@ -1022,37 +1022,37 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdAdditional: {
-                    description: "Start of the additional-rate band, in minor units of GBP.",
+                    description: "Start of the additional-rate band, in fractional units of GBP.",
                     name: "thresholdAdditional",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdBasic: {
-                    description: "Top of the basic-rate band, in minor units of GBP.",
+                    description: "Top of the basic-rate band, in fractional units of GBP.",
                     name: "thresholdBasic",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdHigher: {
-                    description: "Top of the higher-rate band, in minor units of GBP.",
+                    description: "Top of the higher-rate band, in fractional units of GBP.",
                     name: "thresholdHigher",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdNicPrimary: {
-                    description: "NIC primary threshold, in minor units of GBP.",
+                    description: "NIC primary threshold, in fractional units of GBP.",
                     name: "thresholdNicPrimary",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdNicUpperEarnings: {
-                    description: "NIC upper earnings limit, in minor units of GBP.",
+                    description: "NIC upper earnings limit, in fractional units of GBP.",
                     name: "thresholdNicUpperEarnings",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdPersonalAllowanceTaper: {
-                    description: "Income at which the personal allowance begins to taper, in minor units of GBP.",
+                    description: "Income at which the personal allowance begins to taper, in fractional units of GBP.",
                     name: "thresholdPersonalAllowanceTaper",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
                 thresholdStudentLoanPlan2: {
-                    description: "Student-loan plan 2 threshold, in minor units of GBP.",
+                    description: "Student-loan plan 2 threshold, in fractional units of GBP.",
                     name: "thresholdStudentLoanPlan2",
                     type: new GraphQLNonNull(GraphQLFloat)
                 }

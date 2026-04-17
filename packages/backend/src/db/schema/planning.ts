@@ -46,7 +46,7 @@ export const planningYearsRelations = relations(
   }),
 );
 
-/** UK tax parameters for a planning year. All rates are decimal fractions (0–1); all thresholds are in minor units of GBP (pence). */
+/** UK tax parameters for a planning year. All rates are decimal fractions (0–1); all thresholds are in fractional units of GBP (pence). */
 export const PlanningYearUKTaxRates = pgTable(
   "PlanningYearUKTaxRates",
   {
@@ -59,11 +59,11 @@ export const PlanningYearUKTaxRates = pgTable(
     rateHigher: doublePrecision("rateHigher").notNull(),
     /** Income-tax additional rate (e.g. 0.45). */
     rateAdditional: doublePrecision("rateAdditional").notNull(),
-    /** Top of the basic-rate band, in minor units of GBP. */
+    /** Top of the basic-rate band, in fractional units of GBP. */
     thresholdBasic: bigint("thresholdBasic", { mode: "number" }).notNull(),
-    /** Top of the higher-rate band, in minor units of GBP. */
+    /** Top of the higher-rate band, in fractional units of GBP. */
     thresholdHigher: bigint("thresholdHigher", { mode: "number" }).notNull(),
-    /** Start of the additional-rate band, in minor units of GBP. */
+    /** Start of the additional-rate band, in fractional units of GBP. */
     thresholdAdditional: bigint("thresholdAdditional", {
       mode: "number",
     }).notNull(),
@@ -71,21 +71,21 @@ export const PlanningYearUKTaxRates = pgTable(
     rateNicMain: doublePrecision("rateNicMain").notNull(),
     /** Employee NIC additional rate (above UEL, e.g. 0.02). */
     rateNicAdditional: doublePrecision("rateNicAdditional").notNull(),
-    /** NIC primary threshold (PT), in minor units of GBP. */
+    /** NIC primary threshold (PT), in fractional units of GBP. */
     thresholdNicPrimary: bigint("thresholdNicPrimary", {
       mode: "number",
     }).notNull(),
-    /** NIC upper earnings limit (UEL), in minor units of GBP. */
+    /** NIC upper earnings limit (UEL), in fractional units of GBP. */
     thresholdNicUpperEarnings: bigint("thresholdNicUpperEarnings", {
       mode: "number",
     }).notNull(),
     /** Student-loan plan 2 repayment rate (e.g. 0.09). */
     rateStudentLoanPlan2: doublePrecision("rateStudentLoanPlan2").notNull(),
-    /** Student-loan plan 2 repayment threshold, in minor units of GBP. */
+    /** Student-loan plan 2 repayment threshold, in fractional units of GBP. */
     thresholdStudentLoanPlan2: bigint("thresholdStudentLoanPlan2", {
       mode: "number",
     }).notNull(),
-    /** Income at which the personal allowance begins to taper (£1 withdrawn per £2 earned above this), in minor units of GBP. */
+    /** Income at which the personal allowance begins to taper (£1 withdrawn per £2 earned above this), in fractional units of GBP. */
     thresholdPersonalAllowanceTaper: bigint("thresholdPersonalAllowanceTaper", {
       mode: "number",
     }).notNull(),
@@ -146,7 +146,7 @@ export const PlanningEarnings = pgTable(
     start: date("start", { mode: "date" }).notNull(),
     /** Last day this stream was/is in effect; null if ongoing. */
     end: date("end", { mode: "date" }),
-    /** Gross earnings amount per pay period, in minor units of `currency`. */
+    /** Gross earnings amount per pay period, in fractional units of `currency`. */
     amountGross: bigint("amountGross", { mode: "number" }).notNull(),
     currency: currencyCode("currency").notNull(),
     /** Country where the earnings are taxed. */
@@ -324,7 +324,7 @@ export const PlanningTransactions = pgTable(
       .default(sql`uuidv7()`),
     year: integer("year").notNull(),
     date: date("date", { mode: "date" }).notNull(),
-    /** Amount in minor units of `currency`. */
+    /** Amount in fractional units of `currency`. */
     amount: bigint("amount", { mode: "number" }).notNull(),
     currency: currencyCode("currency").notNull(),
     name: text("name").notNull(),
@@ -412,7 +412,7 @@ export const PlanningBills = pgTable(
      * SQL enforces the overall shape; resolvers validate ranges.
      */
     collectionDate: text("collectionDate").notNull(),
-    /** Amount per occurrence, in minor units of `currency`. */
+    /** Amount per occurrence, in fractional units of `currency`. */
     amount: bigint("amount", { mode: "number" }).notNull(),
     currency: currencyCode("currency").notNull(),
     name: text("name").notNull(),
@@ -469,7 +469,7 @@ export const PlanningMonthBills = pgTable(
     billId: uuid("billId")
       .notNull()
       .references(() => PlanningBills.id, { onDelete: "cascade" }),
-    /** Override amount in minor units of `currency`; null means the bill is skipped this month. */
+    /** Override amount in fractional units of `currency`; null means the bill is skipped this month. */
     amount: bigint("amount", { mode: "number" }),
     currency: currencyCode("currency"),
     createdAt: timestamp("createdAt", { withTimezone: true })
@@ -517,7 +517,7 @@ export const PlanningPayslips = pgTable("PlanningPayslips", {
     .default(sql`uuidv7()`),
   /** Pay date. */
   date: date("date", { mode: "date" }).notNull(),
-  /** Gross pay for the period, in minor units of `currency`. */
+  /** Gross pay for the period, in fractional units of `currency`. */
   amountGross: bigint("amountGross", { mode: "number" }).notNull(),
   currency: currencyCode("currency").notNull(),
   name: text("name").notNull(),
@@ -556,7 +556,7 @@ export const PlanningPayslipAdjustments = pgTable(
     payslipId: uuid("payslipId")
       .notNull()
       .references(() => PlanningPayslips.id, { onDelete: "cascade" }),
-    /** Signed amount in minor units of the payslip's currency; negative = deduction. */
+    /** Signed amount in fractional units of the payslip's currency; negative = deduction. */
     amount: bigint("amount", { mode: "number" }).notNull(),
     name: text("name").notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })

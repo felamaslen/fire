@@ -214,21 +214,21 @@ input PlanningYearTaxRatesUKInput {
   rateNicAdditional: Float!
   rateNicMain: Float!
   rateStudentLoanPlan2: Float!
-  """Start of the additional-rate band, in minor units of GBP."""
+  """Start of the additional-rate band, in fractional units of GBP."""
   thresholdAdditional: Float!
-  """Top of the basic-rate band, in minor units of GBP."""
+  """Top of the basic-rate band, in fractional units of GBP."""
   thresholdBasic: Float!
-  """Top of the higher-rate band, in minor units of GBP."""
+  """Top of the higher-rate band, in fractional units of GBP."""
   thresholdHigher: Float!
-  """NIC primary threshold, in minor units of GBP."""
+  """NIC primary threshold, in fractional units of GBP."""
   thresholdNicPrimary: Float!
-  """NIC upper earnings limit, in minor units of GBP."""
+  """NIC upper earnings limit, in fractional units of GBP."""
   thresholdNicUpperEarnings: Float!
   """
-  Income at which the personal allowance begins to taper, in minor units of GBP.
+  Income at which the personal allowance begins to taper, in fractional units of GBP.
   """
   thresholdPersonalAllowanceTaper: Float!
-  """Student-loan plan 2 threshold, in minor units of GBP."""
+  """Student-loan plan 2 threshold, in fractional units of GBP."""
   thresholdStudentLoanPlan2: Float!
 }
 
@@ -467,7 +467,7 @@ type PlanningYear {
 }
 
 """
-UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0–1); thresholds are in minor units of GBP.
+UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0–1); thresholds are in fractional units of GBP.
 """
 type PlanningYearTaxRatesUK {
   rateAdditional: Float!
@@ -476,21 +476,21 @@ type PlanningYearTaxRatesUK {
   rateNicAdditional: Float!
   rateNicMain: Float!
   rateStudentLoanPlan2: Float!
-  """Start of the additional-rate band, in minor units of GBP."""
+  """Start of the additional-rate band, in fractional units of GBP."""
   thresholdAdditional: Float!
-  """Top of the basic-rate band, in minor units of GBP."""
+  """Top of the basic-rate band, in fractional units of GBP."""
   thresholdBasic: Float!
-  """Top of the higher-rate band, in minor units of GBP."""
+  """Top of the higher-rate band, in fractional units of GBP."""
   thresholdHigher: Float!
-  """NIC primary threshold, in minor units of GBP."""
+  """NIC primary threshold, in fractional units of GBP."""
   thresholdNicPrimary: Float!
-  """NIC upper earnings limit, in minor units of GBP."""
+  """NIC upper earnings limit, in fractional units of GBP."""
   thresholdNicUpperEarnings: Float!
   """
-  Income at which the personal allowance begins to taper (£1 of PA withdrawn per £2 earned above this), in minor units of GBP.
+  Income at which the personal allowance begins to taper (£1 of PA withdrawn per £2 earned above this), in fractional units of GBP.
   """
   thresholdPersonalAllowanceTaper: Float!
-  """Student-loan plan 2 threshold, in minor units of GBP."""
+  """Student-loan plan 2 threshold, in fractional units of GBP."""
   thresholdStudentLoanPlan2: Float!
 }
 

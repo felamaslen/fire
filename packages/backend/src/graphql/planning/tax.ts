@@ -2,7 +2,7 @@ import type { Float } from "grats";
 
 import type { PlanningYearUKTaxRates } from "@/db/schema/planning";
 
-/** UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0–1); thresholds are in minor units of GBP. @gqlType */
+/** UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0–1); thresholds are in fractional units of GBP. @gqlType */
 export class PlanningYearTaxRatesUK {
   readonly __typename = "PlanningYearTaxRatesUK" as const;
 
@@ -21,15 +21,15 @@ export class PlanningYearTaxRatesUK {
   /** @gqlField */ get rateAdditional(): Float {
     return this.row.rateAdditional;
   }
-  /** Top of the basic-rate band, in minor units of GBP. @gqlField */
+  /** Top of the basic-rate band, in fractional units of GBP. @gqlField */
   get thresholdBasic(): Float {
     return this.row.thresholdBasic;
   }
-  /** Top of the higher-rate band, in minor units of GBP. @gqlField */
+  /** Top of the higher-rate band, in fractional units of GBP. @gqlField */
   get thresholdHigher(): Float {
     return this.row.thresholdHigher;
   }
-  /** Start of the additional-rate band, in minor units of GBP. @gqlField */
+  /** Start of the additional-rate band, in fractional units of GBP. @gqlField */
   get thresholdAdditional(): Float {
     return this.row.thresholdAdditional;
   }
@@ -39,22 +39,22 @@ export class PlanningYearTaxRatesUK {
   /** @gqlField */ get rateNicAdditional(): Float {
     return this.row.rateNicAdditional;
   }
-  /** NIC primary threshold, in minor units of GBP. @gqlField */
+  /** NIC primary threshold, in fractional units of GBP. @gqlField */
   get thresholdNicPrimary(): Float {
     return this.row.thresholdNicPrimary;
   }
-  /** NIC upper earnings limit, in minor units of GBP. @gqlField */
+  /** NIC upper earnings limit, in fractional units of GBP. @gqlField */
   get thresholdNicUpperEarnings(): Float {
     return this.row.thresholdNicUpperEarnings;
   }
   /** @gqlField */ get rateStudentLoanPlan2(): Float {
     return this.row.rateStudentLoanPlan2;
   }
-  /** Student-loan plan 2 threshold, in minor units of GBP. @gqlField */
+  /** Student-loan plan 2 threshold, in fractional units of GBP. @gqlField */
   get thresholdStudentLoanPlan2(): Float {
     return this.row.thresholdStudentLoanPlan2;
   }
-  /** Income at which the personal allowance begins to taper (£1 of PA withdrawn per £2 earned above this), in minor units of GBP. @gqlField */
+  /** Income at which the personal allowance begins to taper (£1 of PA withdrawn per £2 earned above this), in fractional units of GBP. @gqlField */
   get thresholdPersonalAllowanceTaper(): Float {
     return this.row.thresholdPersonalAllowanceTaper;
   }
@@ -68,22 +68,22 @@ export type PlanningYearTaxRatesUKInput = {
   rateBasic: Float;
   rateHigher: Float;
   rateAdditional: Float;
-  /** Top of the basic-rate band, in minor units of GBP. */
+  /** Top of the basic-rate band, in fractional units of GBP. */
   thresholdBasic: Float;
-  /** Top of the higher-rate band, in minor units of GBP. */
+  /** Top of the higher-rate band, in fractional units of GBP. */
   thresholdHigher: Float;
-  /** Start of the additional-rate band, in minor units of GBP. */
+  /** Start of the additional-rate band, in fractional units of GBP. */
   thresholdAdditional: Float;
   rateNicMain: Float;
   rateNicAdditional: Float;
-  /** NIC primary threshold, in minor units of GBP. */
+  /** NIC primary threshold, in fractional units of GBP. */
   thresholdNicPrimary: Float;
-  /** NIC upper earnings limit, in minor units of GBP. */
+  /** NIC upper earnings limit, in fractional units of GBP. */
   thresholdNicUpperEarnings: Float;
   rateStudentLoanPlan2: Float;
-  /** Student-loan plan 2 threshold, in minor units of GBP. */
+  /** Student-loan plan 2 threshold, in fractional units of GBP. */
   thresholdStudentLoanPlan2: Float;
-  /** Income at which the personal allowance begins to taper, in minor units of GBP. */
+  /** Income at which the personal allowance begins to taper, in fractional units of GBP. */
   thresholdPersonalAllowanceTaper: Float;
 };
 
@@ -93,7 +93,7 @@ export type PlanningYearTaxRatesInput = {
   uk: PlanningYearTaxRatesUKInput;
 };
 
-/** Input to `computeUKTake`. All monetary values are annual integers in minor units of GBP (pence). Pension fractions are decimals in `[0, 1]`. */
+/** Input to `computeUKTake`. All monetary values are annual integers in fractional units of GBP (pence). Pension fractions are decimals in `[0, 1]`. */
 export type UKTakeInput = {
   /** Annual gross pay before any deductions, in pence. E.g. `8_000_000` = £80,000. */
   gross: number;
@@ -117,7 +117,7 @@ export type UKTakeInput = {
   rates: typeof PlanningYearUKTaxRates.$inferSelect;
 };
 
-/** Output of `computeUKTake`. All values are annual integers in minor units of GBP (pence). Deductions are returned as positive numbers; callers can render them as negatives. */
+/** Output of `computeUKTake`. All values are annual integers in fractional units of GBP (pence). Deductions are returned as positive numbers; callers can render them as negatives. */
 export type UKTake = {
   /** Annual gross after salary-sacrifice deductions, in pence. This is the figure the other outputs are derived from. E.g. input gross £80k with 10% sacrifice → `7_200_000`. */
   gross: number;
