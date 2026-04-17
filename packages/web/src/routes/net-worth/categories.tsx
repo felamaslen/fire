@@ -187,11 +187,11 @@ function NetWorthCategoriesPage() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-8">
+    <div className="space-y-6">
       <AssetsSection data={assets} />
       <LiabilitiesSection data={liabilities} />
       <OptionsSection data={options} />
-    </main>
+    </div>
   );
 }
 

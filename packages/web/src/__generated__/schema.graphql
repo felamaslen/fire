@@ -162,11 +162,13 @@ input NetWorthCategoryRef @oneOf {
 A currency rate to record alongside the entry. Keyed by `currency` within the entry.
 """
 input NetWorthCurrencyRateInput {
-  """ISO-4217 currency being priced in (e.g. "GBP")."""
+  """ISO-4217 currency the rate resolves into (e.g. "GBP")."""
   base: String!
-  """ISO-4217 currency being quoted (e.g. "USD")."""
+  """ISO-4217 currency being priced (e.g. "USD")."""
   currency: String!
-  """Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD)."""
+  """
+  Units of `base` per one unit of `currency` (e.g. 0.77 for GBP/USD: 1 USD = 0.77 GBP).
+  """
   rate: Float!
 }
 
@@ -587,14 +589,16 @@ type NetWorthCategoryOption implements NetWorthCategory {
 }
 
 """
-Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`.
+Exchange rate captured alongside a net-worth entry; converts one unit of `currency` into `base`.
 """
 type NetWorthCurrencyRate {
-  """ISO-4217 code being priced in (e.g. "GBP" for a GBP/USD quote)."""
+  """ISO-4217 code the rate resolves into (e.g. "GBP" for a GBP/USD quote)."""
   base: String!
-  """ISO-4217 code being quoted (e.g. "USD" for a GBP/USD quote)."""
+  """ISO-4217 code being priced (e.g. "USD" for a GBP/USD quote)."""
   currency: String!
-  """Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD)."""
+  """
+  Units of `base` per one unit of `currency` (e.g. 0.77 for GBP/USD: 1 USD = 0.77 GBP).
+  """
   rate: Float!
 }
 
@@ -605,6 +609,16 @@ type NetWorthEntry {
   """Any calendar date inside the target month."""
   date: Date!
   id: ID!
+  """
+  Sum of all asset and option line items for this entry, converted into GBP via the entry's `currencyRates`.
+  """
+  totalAssets: Money!
+  """
+  Sum of all liability line items for this entry (positive magnitude), converted into GBP via the entry's `currencyRates`. Liabilities with `skip = true` are excluded.
+  """
+  totalLiabilities: Money!
+  """Net worth for this entry: `totalAssets − totalLiabilities`, in GBP."""
+  totalNet: Money!
   """The line-item values recorded for this entry."""
   values: [NetWorthValue!]!
 }
