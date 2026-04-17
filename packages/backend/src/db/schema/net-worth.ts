@@ -257,7 +257,7 @@ export const netWorthValuesRelations = relations(
   }),
 );
 
-/** One monetary amount (in minor units of `currency`) for a NetWorthValue. A value may have multiple rows here — at most one per currency. */
+/** One monetary amount (in fractional units of `currency`) for a NetWorthValue. A value may have multiple rows here — at most one per currency. */
 export const NetWorthValueAmounts = pgTable(
   "NetWorthValueAmounts",
   {
@@ -267,7 +267,7 @@ export const NetWorthValueAmounts = pgTable(
     valueId: uuid("valueId")
       .notNull()
       .references(() => NetWorthValues.id, { onDelete: "cascade" }),
-    /** Stored in the minor units of `currency` (e.g. pence for GBP). */
+    /** Stored in the fractional units of `currency` (e.g. pence for GBP). */
     amount: bigint("amount", { mode: "number" }).notNull(),
     currency: currencyCode("currency").notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
