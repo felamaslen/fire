@@ -9,6 +9,11 @@ directive @constraint(
   pattern: String!
 ) on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
 
+"""
+Mark a field as semantically non-null — schema-level nullable (per the Query-field-nullability convention) but the resolver must never actually return null. Returning null throws a `UNEXPECTED_NULL` GraphQLError at resolve time.
+"""
+directive @semanticNonNull on FIELD_DEFINITION
+
 """ISO-8601 calendar date (YYYY-MM-DD). No time-of-day component."""
 scalar Date
 
