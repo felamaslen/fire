@@ -19,12 +19,20 @@ export const scalars = {
   Upload: uploadScalar,
 };
 
-const schema = applySemanticNonNull(getSchema({ scalars }));
+// Fastify can only accept plugins before boot; when Vite re-evaluates this
+// module on HMR, skip re-registration (process restart needed for schema
+// changes — the running server keeps serving with the prior schema).
+const g = globalThis as { __apolloRegistered?: boolean };
+if (!g.__apolloRegistered) {
+  g.__apolloRegistered = true;
 
-const apollo = new ApolloServer({
-  schema,
-  plugins: [fastifyApolloDrainPlugin(router), constraintPlugin(schema)],
-});
+  const schema = applySemanticNonNull(getSchema({ scalars }));
 
-await apollo.start();
-await router.register(fastifyApollo(apollo));
+  const apollo = new ApolloServer({
+    schema,
+    plugins: [fastifyApolloDrainPlugin(router), constraintPlugin(schema)],
+  });
+
+  await apollo.start();
+  await router.register(fastifyApollo(apollo));
+}
