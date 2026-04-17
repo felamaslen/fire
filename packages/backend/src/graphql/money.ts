@@ -2,28 +2,10 @@ import { strict as assert } from "node:assert";
 
 import type { Float } from "grats";
 
+import { CURRENCIES } from "@/config";
 import { type CurrencyCode, currencyCode } from "@/db/schema/currency";
 
-/** Per-currency metadata used to translate between major and minor denominations. */
-export const CURRENCIES: Record<
-  CurrencyCode,
-  {
-    /** Number of fractional digits in the currency's minor denomination (2 for GBP/USD, 0 for JPY, ...). */
-    scale: number;
-  }
-> = {
-  GBP: { scale: 2 }, // penny (1/100 pound)
-  USD: { scale: 2 }, // cent (1/100 dollar)
-  EUR: { scale: 2 }, // cent (1/100 euro)
-  JPY: { scale: 0 }, // no minor unit (sen withdrawn 1953)
-  CZK: { scale: 2 }, // haléř (1/100 koruna — no longer minted, still ISO's minor unit)
-  NOK: { scale: 2 }, // øre (1/100 krone — no longer minted, still ISO's minor unit)
-  CNY: { scale: 2 }, // fen (分, 1/100 yuan — jiao is 1/10 but ISO uses fen)
-  HKD: { scale: 2 }, // cent (1/100 dollar)
-  AUD: { scale: 2 }, // cent (1/100 dollar)
-  SCR: { scale: 2 }, // cent (1/100 rupee)
-  TWD: { scale: 2 }, // fen (分, 1/100 new dollar)
-};
+export { CURRENCIES };
 
 export function assertCurrencyCode(s: string): asserts s is CurrencyCode {
   assert(

@@ -1,0 +1,50 @@
+-- drizzle-kit would drop and recreate the enum; we replace that with additive
+-- `ADD VALUE` statements so existing rows stay valid and the migration runs
+-- against data safely.
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'AED'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'ARS'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'BDT'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'BHD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'BRL'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'CAD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'CHF'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'CLP'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'COP'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'DKK'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'EGP'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'GHS'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'HUF'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'ILS'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'INR'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'ISK'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'JOD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'KES'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'KRW'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'KWD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'LKR'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'MAD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'MXN'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'MYR'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'NGN'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'NZD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'OMR'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'PEN'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'PHP'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'PKR'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'PLN'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'QAR'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'RON'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'RSD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'RUB'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'SAR'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'SEK'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'SGD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'THB'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'TND'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'TRY'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'UAH'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'USD'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'UYU'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'VES'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'VND'; -- > statement-breakpoint
+ALTER TYPE "public"."CurrencyCode" ADD VALUE IF NOT EXISTS 'ZAR';
