@@ -1,5 +1,5 @@
 {
-  "id": "ea1c57b1-bc60-474e-b6eb-d4c663e48858",
+  "id": "bc31edcb-9cc3-48ac-87a5-2db9990a2ec3",
   "prevId": "6d8e1045-350f-4ef7-903f-1446c8ff9f3e",
   "version": "7",
   "dialect": "postgresql",
@@ -1388,6 +1388,12 @@
         },
         "thresholdStudentLoanPlan2": {
           "name": "thresholdStudentLoanPlan2",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thresholdPersonalAllowanceTaper": {
+          "name": "thresholdPersonalAllowanceTaper",
           "type": "bigint",
           "primaryKey": false,
           "notNull": true

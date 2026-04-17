@@ -276,6 +276,7 @@ CREATE TABLE "PlanningYearUKTaxRates" (
   "thresholdNicUpperEarnings" BIGINT NOT NULL,
   "rateStudentLoanPlan2" DOUBLE PRECISION NOT NULL,
   "thresholdStudentLoanPlan2" BIGINT NOT NULL,
+  "thresholdPersonalAllowanceTaper" BIGINT NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   CONSTRAINT "PlanningYearUKTaxRates_rateBasic_ck"
