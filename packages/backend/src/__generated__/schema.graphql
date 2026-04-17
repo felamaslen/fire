@@ -42,6 +42,9 @@ enum NetWorthLiabilityType {
   MISC
 }
 
+"""Country-specific tax parameters captured on a PlanningYear."""
+union PlanningYearTaxRates = PlanningYearTaxRatesUK
+
 """
 A reusable bucket used to classify NetWorthValues (assets, liabilities, or options).
 """
@@ -197,6 +200,39 @@ input NetWorthValueOptionInput {
 }
 
 """
+Country-specific tax parameter payload. Exactly one variant must be set.
+"""
+input PlanningYearTaxRatesInput {
+  """UK tax parameters."""
+  uk: PlanningYearTaxRatesUKInput!
+}
+
+input PlanningYearTaxRatesUKInput {
+  rateAdditional: Float!
+  rateBasic: Float!
+  rateHigher: Float!
+  rateNicAdditional: Float!
+  rateNicMain: Float!
+  rateStudentLoanPlan2: Float!
+  """Start of the additional-rate band, in minor units of GBP."""
+  thresholdAdditional: Float!
+  """Top of the basic-rate band, in minor units of GBP."""
+  thresholdBasic: Float!
+  """Top of the higher-rate band, in minor units of GBP."""
+  thresholdHigher: Float!
+  """NIC primary threshold, in minor units of GBP."""
+  thresholdNicPrimary: Float!
+  """NIC upper earnings limit, in minor units of GBP."""
+  thresholdNicUpperEarnings: Float!
+  """
+  Income at which the personal allowance begins to taper, in minor units of GBP.
+  """
+  thresholdPersonalAllowanceTaper: Float!
+  """Student-loan plan 2 threshold, in minor units of GBP."""
+  thresholdStudentLoanPlan2: Float!
+}
+
+"""
 A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for £123.45).
 """
 type Money {
@@ -244,6 +280,18 @@ type Mutation {
     """
     values: [NetWorthValueInput!]
   ): NetWorthEntry!
+  """
+  Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.
+  """
+  planningAccountAssign(alias: String, assetId: ID!): PlanningAccount!
+  """
+  Remove a planning account. Idempotent — returns `Void` even if the account wasn't assigned.
+  """
+  planningAccountUnassign(assetId: ID!): Void!
+  """
+  Upsert a planning year plus (optionally) its tax rates. Creates the 12 monthly buckets on first write.
+  """
+  planningYearSet(taxRates: PlanningYearTaxRatesInput, year: ID!): PlanningYear!
 }
 
 """
@@ -346,6 +394,106 @@ type PageInfo {
   startCursor: ID
 }
 
+"""
+A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias.
+"""
+type PlanningAccount {
+  asset: NetWorthCategoryAsset!
+  id: ID!
+  """
+  Display name — the alias if one was set, otherwise the underlying asset's name.
+  """
+  name: String!
+}
+
+"""
+A single month inside a PlanningYear. `id` is the lowercased short month + year (e.g. `"dec-2024"`).
+"""
+type PlanningMonth {
+  """Per-account rollups for this month."""
+  accounts: [PlanningMonthAccount!]!
+  date: Date!
+  id: ID!
+}
+
+"""
+A single (month × planning-account) roll-up: name, running balance, and the merged transactions (actual + predicted) for that cell.
+"""
+type PlanningMonthAccount {
+  id: ID!
+  """Display name — alias if set, otherwise the underlying asset's name."""
+  name: String!
+  """
+  Transactions (actual + predicted) affecting this account in this month.
+  """
+  transactions: [PlanningTransaction!]!
+  """Closing balance for the month."""
+  valueEnd: Money!
+  """Opening balance for the month."""
+  valueStart: Money!
+}
+
+"""
+A single row in a PlanningMonthAccount — mix of actual and predicted sources.
+"""
+type PlanningTransaction {
+  """Signed amount — negative for outflows (bills, taxes, transfers out)."""
+  amount: Money!
+  id: ID!
+  """
+  True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable.
+  """
+  isEditable: Boolean!
+  """
+  True when the transaction is a prediction (e.g. forthcoming bill, predicted salary).
+  """
+  isProvisional: Boolean!
+  name: String!
+}
+
+"""
+A financial year inside the planner. `id` is the starting calendar year as a string. Tax rates are country-specific (see `PlanningYearTaxRates`).
+"""
+type PlanningYear {
+  """
+  All assigned planning accounts (not year-scoped — returned here for convenience).
+  """
+  accounts: [PlanningAccount!]!
+  id: ID!
+  """The months making up this financial year."""
+  months: [PlanningMonth!]!
+  """Tax parameters for this year (`null` if none configured)."""
+  taxRates: PlanningYearTaxRates
+}
+
+"""
+UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0–1); thresholds are in minor units of GBP.
+"""
+type PlanningYearTaxRatesUK {
+  rateAdditional: Float!
+  rateBasic: Float!
+  rateHigher: Float!
+  rateNicAdditional: Float!
+  rateNicMain: Float!
+  rateStudentLoanPlan2: Float!
+  """Start of the additional-rate band, in minor units of GBP."""
+  thresholdAdditional: Float!
+  """Top of the basic-rate band, in minor units of GBP."""
+  thresholdBasic: Float!
+  """Top of the higher-rate band, in minor units of GBP."""
+  thresholdHigher: Float!
+  """NIC primary threshold, in minor units of GBP."""
+  thresholdNicPrimary: Float!
+  """NIC upper earnings limit, in minor units of GBP."""
+  thresholdNicUpperEarnings: Float!
+  """
+  Income at which the personal allowance begins to taper (£1 of PA withdrawn per £2 earned above this), in minor units of GBP.
+  """
+  thresholdPersonalAllowanceTaper: Float!
+  """Student-loan plan 2 threshold, in minor units of GBP."""
+  thresholdStudentLoanPlan2: Float!
+}
+
 """An object representing a test response from the GraphQL server"""
 type Pong {
   """Set whenever the GraphQL server is working properly"""
@@ -361,6 +509,12 @@ type Query {
   netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection @semanticNonNull
   """Call this to check that the GraphQL server is working properly"""
   ping: Pong @semanticNonNull
+  """
+  Look up a planning year by its id (the starting calendar year, e.g. `"2025"`).
+  """
+  planningYear(id: ID!): PlanningYear
+  """List every configured planning year."""
+  planningYears: [PlanningYear!]
 }
 
 """

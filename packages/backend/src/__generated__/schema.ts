@@ -7,10 +7,11 @@ import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
-import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLInputObjectType } from "graphql";
+import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
+import { planningYear as queryPlanningYearResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
     if (awaited == null)
@@ -379,6 +380,212 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PlanningAccountType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningAccount",
+        description: "A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias.",
+        fields() {
+            return {
+                asset: {
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    description: "Display name \u2014 the alias if one was set, otherwise the underlying asset's name.",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningTransactionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningTransaction",
+        description: "A single row in a PlanningMonthAccount \u2014 mix of actual and predicted sources.",
+        fields() {
+            return {
+                amount: {
+                    description: "Signed amount \u2014 negative for outflows (bills, taxes, transfers out).",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                isEditable: {
+                    description: "True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable.",
+                    name: "isEditable",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                isProvisional: {
+                    description: "True when the transaction is a prediction (e.g. forthcoming bill, predicted salary).",
+                    name: "isProvisional",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningMonthAccountType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningMonthAccount",
+        description: "A single (month \u00D7 planning-account) roll-up: name, running balance, and the merged transactions (actual + predicted) for that cell.",
+        fields() {
+            return {
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    description: "Display name \u2014 alias if set, otherwise the underlying asset's name.",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                transactions: {
+                    description: "Transactions (actual + predicted) affecting this account in this month.",
+                    name: "transactions",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningTransactionType)))
+                },
+                valueEnd: {
+                    description: "Closing balance for the month.",
+                    name: "valueEnd",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                valueStart: {
+                    description: "Opening balance for the month.",
+                    name: "valueStart",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
+    const PlanningMonthType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningMonth",
+        description: "A single month inside a PlanningYear. `id` is the lowercased short month + year (e.g. `\"dec-2024\"`).",
+        fields() {
+            return {
+                accounts: {
+                    description: "Per-account rollups for this month.",
+                    name: "accounts",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningMonthAccountType)))
+                },
+                date: {
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                }
+            };
+        }
+    });
+    const PlanningYearTaxRatesUKType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningYearTaxRatesUK",
+        description: "UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0\u20131); thresholds are in minor units of GBP.",
+        fields() {
+            return {
+                rateAdditional: {
+                    name: "rateAdditional",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateBasic: {
+                    name: "rateBasic",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateHigher: {
+                    name: "rateHigher",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateNicAdditional: {
+                    name: "rateNicAdditional",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateNicMain: {
+                    name: "rateNicMain",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateStudentLoanPlan2: {
+                    name: "rateStudentLoanPlan2",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdAdditional: {
+                    description: "Start of the additional-rate band, in minor units of GBP.",
+                    name: "thresholdAdditional",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdBasic: {
+                    description: "Top of the basic-rate band, in minor units of GBP.",
+                    name: "thresholdBasic",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdHigher: {
+                    description: "Top of the higher-rate band, in minor units of GBP.",
+                    name: "thresholdHigher",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdNicPrimary: {
+                    description: "NIC primary threshold, in minor units of GBP.",
+                    name: "thresholdNicPrimary",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdNicUpperEarnings: {
+                    description: "NIC upper earnings limit, in minor units of GBP.",
+                    name: "thresholdNicUpperEarnings",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdPersonalAllowanceTaper: {
+                    description: "Income at which the personal allowance begins to taper (\u00A31 of PA withdrawn per \u00A32 earned above this), in minor units of GBP.",
+                    name: "thresholdPersonalAllowanceTaper",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdStudentLoanPlan2: {
+                    description: "Student-loan plan 2 threshold, in minor units of GBP.",
+                    name: "thresholdStudentLoanPlan2",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                }
+            };
+        }
+    });
+    const PlanningYearTaxRatesType: GraphQLUnionType = new GraphQLUnionType({
+        name: "PlanningYearTaxRates",
+        description: "Country-specific tax parameters captured on a PlanningYear.",
+        types() {
+            return [PlanningYearTaxRatesUKType];
+        }
+    });
+    const PlanningYearType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningYear",
+        description: "A financial year inside the planner. `id` is the starting calendar year as a string. Tax rates are country-specific (see `PlanningYearTaxRates`).",
+        fields() {
+            return {
+                accounts: {
+                    description: "All assigned planning accounts (not year-scoped \u2014 returned here for convenience).",
+                    name: "accounts",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningAccountType)))
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                months: {
+                    description: "The months making up this financial year.",
+                    name: "months",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningMonthType)))
+                },
+                taxRates: {
+                    description: "Tax parameters for this year (`null` if none configured).",
+                    name: "taxRates",
+                    type: PlanningYearTaxRatesType
+                }
+            };
+        }
+    });
     const QueryType: GraphQLObjectType = new GraphQLObjectType({
         name: "Query",
         fields() {
@@ -433,6 +640,27 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: PongType,
                     resolve() {
                         return assertNonNull(queryPingResolver());
+                    }
+                },
+                planningYear: {
+                    description: "Look up a planning year by its id (the starting calendar year, e.g. `\"2025\"`).",
+                    name: "planningYear",
+                    type: PlanningYearType,
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return queryPlanningYearResolver(args.id);
+                    }
+                },
+                planningYears: {
+                    description: "List every configured planning year.",
+                    name: "planningYears",
+                    type: new GraphQLList(new GraphQLNonNull(PlanningYearType)),
+                    resolve() {
+                        return queryPlanningYearsResolver();
                     }
                 }
             };
@@ -765,6 +993,85 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         },
         isOneOf: true
     });
+    const PlanningYearTaxRatesUKInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        name: "PlanningYearTaxRatesUKInput",
+        fields() {
+            return {
+                rateAdditional: {
+                    name: "rateAdditional",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateBasic: {
+                    name: "rateBasic",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateHigher: {
+                    name: "rateHigher",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateNicAdditional: {
+                    name: "rateNicAdditional",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateNicMain: {
+                    name: "rateNicMain",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                rateStudentLoanPlan2: {
+                    name: "rateStudentLoanPlan2",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdAdditional: {
+                    description: "Start of the additional-rate band, in minor units of GBP.",
+                    name: "thresholdAdditional",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdBasic: {
+                    description: "Top of the basic-rate band, in minor units of GBP.",
+                    name: "thresholdBasic",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdHigher: {
+                    description: "Top of the higher-rate band, in minor units of GBP.",
+                    name: "thresholdHigher",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdNicPrimary: {
+                    description: "NIC primary threshold, in minor units of GBP.",
+                    name: "thresholdNicPrimary",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdNicUpperEarnings: {
+                    description: "NIC upper earnings limit, in minor units of GBP.",
+                    name: "thresholdNicUpperEarnings",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdPersonalAllowanceTaper: {
+                    description: "Income at which the personal allowance begins to taper, in minor units of GBP.",
+                    name: "thresholdPersonalAllowanceTaper",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                thresholdStudentLoanPlan2: {
+                    description: "Student-loan plan 2 threshold, in minor units of GBP.",
+                    name: "thresholdStudentLoanPlan2",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                }
+            };
+        }
+    });
+    const PlanningYearTaxRatesInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Country-specific tax parameter payload. Exactly one variant must be set.",
+        name: "PlanningYearTaxRatesInput",
+        fields() {
+            return {
+                uk: {
+                    description: "UK tax parameters.",
+                    name: "uk",
+                    type: new GraphQLNonNull(PlanningYearTaxRatesUKInputType)
+                }
+            };
+        }
+    });
     const MutationType: GraphQLObjectType = new GraphQLObjectType({
         name: "Mutation",
         fields() {
@@ -869,6 +1176,51 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     resolve(_source, args) {
                         return mutationNetWorthUpdateResolver(args.id, args.date, args.values, args.currencyRates);
                     }
+                },
+                planningAccountAssign: {
+                    description: "Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.",
+                    name: "planningAccountAssign",
+                    type: new GraphQLNonNull(PlanningAccountType),
+                    args: {
+                        alias: {
+                            type: GraphQLString
+                        },
+                        assetId: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationPlanningAccountAssignResolver(args.assetId, args.alias);
+                    }
+                },
+                planningAccountUnassign: {
+                    description: "Remove a planning account. Idempotent \u2014 returns `Void` even if the account wasn't assigned.",
+                    name: "planningAccountUnassign",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        assetId: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationPlanningAccountUnassignResolver(args.assetId);
+                    }
+                },
+                planningYearSet: {
+                    description: "Upsert a planning year plus (optionally) its tax rates. Creates the 12 monthly buckets on first write.",
+                    name: "planningYearSet",
+                    type: new GraphQLNonNull(PlanningYearType),
+                    args: {
+                        taxRates: {
+                            type: PlanningYearTaxRatesInputType
+                        },
+                        year: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationPlanningYearSetResolver(args.year, args.taxRates);
+                    }
                 }
             };
         }
@@ -901,6 +1253,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }
