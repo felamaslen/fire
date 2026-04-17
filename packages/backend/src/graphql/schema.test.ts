@@ -1,7 +1,7 @@
 import { isNonNullType } from "graphql";
 
 import { getSchema } from "@/__generated__/schema";
-import { scalars } from "@/index";
+import { scalars } from "@/graphql/server";
 
 const schema = getSchema({ scalars });
 

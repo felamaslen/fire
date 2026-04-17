@@ -59,6 +59,7 @@ export type introspection_types = {
     'Pong': { kind: 'OBJECT'; name: 'Pong'; fields: { 'pong': { name: 'pong'; type: { kind: 'NON_NULL'; name: never; ofType: { kind: 'SCALAR'; name: 'String'; ofType: null; }; } }; }; };
     'Query': { kind: 'OBJECT'; name: 'Query'; fields: { 'netWorth': { name: 'netWorth'; type: { kind: 'OBJECT'; name: 'NetWorthEntryConnection'; ofType: null; } }; 'netWorthCategories': { name: 'netWorthCategories'; type: { kind: 'OBJECT'; name: 'NetWorthCategoryConnection'; ofType: null; } }; 'ping': { name: 'ping'; type: { kind: 'OBJECT'; name: 'Pong'; ofType: null; } }; 'planningYear': { name: 'planningYear'; type: { kind: 'OBJECT'; name: 'PlanningYear'; ofType: null; } }; 'planningYears': { name: 'planningYears'; type: { kind: 'LIST'; name: never; ofType: { kind: 'NON_NULL'; name: never; ofType: { kind: 'OBJECT'; name: 'PlanningYear'; ofType: null; }; }; } }; }; };
     'String': unknown;
+    'Upload': unknown;
     'Void': { kind: 'OBJECT'; name: 'Void'; fields: { '_': { name: '_'; type: { kind: 'SCALAR'; name: 'Boolean'; ofType: null; } }; }; };
 };
 

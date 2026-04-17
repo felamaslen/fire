@@ -20,6 +20,11 @@ scalar Date
 """ISO-8601 date-time. Serialises as an ISO-8601 string over the wire."""
 scalar DateTime
 
+"""
+A multipart file upload, per the graphql-multipart-request-spec. Resolves to a `FileUpload` (`createReadStream`, `filename`, `mimetype`, `encoding`).
+"""
+scalar Upload
+
 """Kind of asset a category represents."""
 enum NetWorthAssetType {
   CASH
