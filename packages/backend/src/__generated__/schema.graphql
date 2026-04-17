@@ -98,8 +98,10 @@ input NetWorthCategoryInput @oneOf {
 input NetWorthCategoryLiabilityInput {
   """Optional link to the asset this liability funds."""
   assetId: ID
-  """Decimal-string annual rate (e.g. "0.0525"). Required iff type is LOAN."""
-  interestRate: String
+  """
+  Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN.
+  """
+  interestRate: Float
   name: String!
   """Hide this liability from aggregate totals. Defaults to false."""
   skip: Boolean
@@ -112,8 +114,8 @@ Partial update for a liability category; unset fields are left unchanged.
 input NetWorthCategoryLiabilityPatch {
   """Link to the asset this liability funds."""
   assetId: ID
-  """Decimal-string annual rate (e.g. "0.0525")."""
-  interestRate: String
+  """Decimal-fraction annual rate (e.g. 0.0525 = 5.25%)."""
+  interestRate: Float
   name: String
   """Hide this liability from aggregate totals."""
   skip: Boolean
@@ -567,9 +569,9 @@ type NetWorthCategoryLiability implements NetWorthCategory {
   asset: NetWorthCategoryAsset
   id: ID!
   """
-  Annual rate as a decimal string (e.g. "0.0525" = 5.25%). Present iff type is LOAN.
+  Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.
   """
-  interestRate: String
+  interestRate: Float
   name: String!
   """When true, the liability is hidden from aggregate totals."""
   skip: Boolean!

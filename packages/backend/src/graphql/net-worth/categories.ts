@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 
 import { and, asc, desc, eq, gt, lt, or, type SQL } from "drizzle-orm";
-import type { ID, Int } from "grats";
+import type { Float, ID, Int } from "grats";
 
 import { db } from "@/db";
 import {
@@ -70,8 +70,8 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
     public readonly name: string,
     /** @gqlField */
     public readonly type: NetWorthLiabilityType,
-    /** Annual rate as a decimal string (e.g. "0.0525" = 5.25%). Present iff type is LOAN. @gqlField */
-    public readonly interestRate: string | null,
+    /** Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN. @gqlField */
+    public readonly interestRate: Float | null,
     /** When true, the liability is hidden from aggregate totals. @gqlField */
     public readonly skip: boolean,
     private readonly assetId: string | null,
@@ -85,7 +85,7 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
       row.id as ID,
       row.name,
       row.type,
-      row.interestRate,
+      row.interestRate === null ? null : (Number(row.interestRate) as Float),
       row.skip,
       row.categoryAssetId,
       row.createdAt,
@@ -301,8 +301,8 @@ export type NetWorthCategoryLiabilityInput = {
   type: NetWorthLiabilityType;
   /** Optional link to the asset this liability funds. */
   assetId?: ID | null;
-  /** Decimal-string annual rate (e.g. "0.0525"). Required iff type is LOAN. */
-  interestRate?: string | null;
+  /** Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN. */
+  interestRate?: Float | null;
   /** Hide this liability from aggregate totals. Defaults to false. */
   skip?: boolean | null;
 };
@@ -339,8 +339,8 @@ export type NetWorthCategoryLiabilityPatch = {
   type?: NetWorthLiabilityType | null;
   /** Link to the asset this liability funds. */
   assetId?: ID | null;
-  /** Decimal-string annual rate (e.g. "0.0525"). */
-  interestRate?: string | null;
+  /** Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). */
+  interestRate?: Float | null;
   /** Hide this liability from aggregate totals. */
   skip?: boolean | null;
 };
@@ -407,7 +407,10 @@ export async function netWorthCategoryCreate(
         name: input.liability.name,
         type: input.liability.type,
         categoryAssetId: input.liability.assetId ?? null,
-        interestRate: input.liability.interestRate ?? null,
+        interestRate:
+          input.liability.interestRate == null
+            ? null
+            : String(input.liability.interestRate),
         skip: input.liability.skip ?? false,
       })
       .returning();
@@ -452,7 +455,10 @@ export async function netWorthCategoryUpdate(
           categoryAssetId: patch.liability.assetId,
         }),
         ...(patch.liability.interestRate !== undefined && {
-          interestRate: patch.liability.interestRate,
+          interestRate:
+            patch.liability.interestRate == null
+              ? null
+              : String(patch.liability.interestRate),
         }),
         ...(patch.liability.skip != null && { skip: patch.liability.skip }),
         updatedAt: new Date(),
