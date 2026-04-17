@@ -1,5 +1,4 @@
 import { strict as assert } from "node:assert";
-import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -7,19 +6,16 @@ import { pipeline } from "node:stream/promises";
 
 import type { FileUpload } from "graphql-upload/processRequest.mjs";
 import processRequest from "graphql-upload/processRequest.mjs";
+import { v7 as uuidv7 } from "uuid";
 
+import { env } from "./env";
 import { router } from "./router";
 
 // TODO: swap for a cloud object store (GCS / S3) behind the same `storeUpload` / `readStoredFile` interface.
 
-/** Directory used as the local "bucket". Must be set via `UPLOADS_DIR`; created on demand at boot. */
+/** Directory used as the local "bucket"; created on demand at boot. */
 function bucketDir(): string {
-  const dir = process.env.UPLOADS_DIR;
-  assert(
-    dir,
-    "UPLOADS_DIR env var must be set (path to the local uploads bucket).",
-  );
-  return path.resolve(dir);
+  return path.resolve(env.UPLOADS_DIR);
 }
 
 async function ensureBucket(): Promise<string> {
@@ -33,7 +29,7 @@ export async function storeUpload(upload: FileUpload): Promise<string> {
   const { createReadStream, filename } = upload;
   const dir = await ensureBucket();
   const safeFilename = filename.replace(/[^\w.-]/g, "_") || "file";
-  const key = `${randomUUID()}-${safeFilename}`;
+  const key = `${uuidv7()}-${safeFilename}`;
   const dest = path.join(dir, key);
   await pipeline(createReadStream(), createWriteStream(dest));
   return key;
