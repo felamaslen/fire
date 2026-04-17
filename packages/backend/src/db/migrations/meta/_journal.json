@@ -15,6 +15,13 @@
       "when": 1776381642457,
       "tag": "0001_create_net_worth_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776384087359,
+      "tag": "0002_create_planning_tables",
+      "breakpoints": true
     }
   ]
 }
