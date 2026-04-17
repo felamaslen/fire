@@ -650,4 +650,67 @@ describe("entries", () => {
     `);
     await runGql(del, { id: entryId });
   });
+
+  it("sums totalAssets, totalLiabilities and totalNet in GBP, converting foreign currencies via the entry's rates", async () => {
+    const liabilityId = (
+      await runGql(
+        graphql(`
+          mutation {
+            netWorthCategoryCreate(
+              input: { liability: { name: "Amex", type: CREDIT_CARD } }
+            ) {
+              id
+            }
+          }
+        `),
+        {},
+      )
+    ).netWorthCategoryCreate.id;
+
+    const create = graphql(`
+      mutation CreateEntry($a: ID!, $l: ID!) {
+        netWorthCreate(
+          date: "2026-04-15"
+          values: [
+            {
+              asset: {
+                categoryId: $a
+                amounts: [
+                  { amount: 5000, currency: "GBP" }
+                  { amount: 1350, currency: "USD" }
+                ]
+              }
+            }
+            {
+              liability: {
+                categoryId: $l
+                amounts: [{ amount: 200, currency: "GBP" }]
+              }
+            }
+          ]
+          currencyRates: [{ base: "GBP", currency: "USD", rate: 1.35 }]
+        ) {
+          id
+          totalAssets {
+            amount
+            currency
+          }
+          totalLiabilities {
+            amount
+            currency
+          }
+          totalNet {
+            amount
+            currency
+          }
+        }
+      }
+    `);
+    const data = await runGql(create, { a: assetId, l: liabilityId });
+    expect(data.netWorthCreate).toMatchObject({
+      totalAssets: { amount: 6000, currency: "GBP" },
+      totalLiabilities: { amount: 200, currency: "GBP" },
+      totalNet: { amount: 5800, currency: "GBP" },
+    });
+  });
 });
