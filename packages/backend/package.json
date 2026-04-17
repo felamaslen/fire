@@ -6,7 +6,7 @@
   "scripts": {
     "grats": "grats --tsconfig tsconfig.grats.json",
     "codegen": "run-p grats db:generate-schema && gql.tada generate-output",
-    "dev": "NODE_ENV=development vite --port 4000 --host 0.0.0.0",
+    "dev": "NODE_ENV=development vite",
     "typecheck": "pnpm grats && tsc --noEmit",
     "test": "vitest",
     "db:generate": "drizzle-kit generate",
@@ -39,6 +39,7 @@
     "typescript": "~5.9.2",
     "vite": "^8.0.8",
     "vite-node": "^6.0.0",
+    "vite-plugin-node": "^8.0.0",
     "vitest": "^4.1.4"
   }
 }
