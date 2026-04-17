@@ -178,6 +178,7 @@ CREATE TABLE "PlanningEarnings" (
   "pensionSalarySacrifice" DOUBLE PRECISION,
   "pensionReliefAtSource" DOUBLE PRECISION NOT NULL,
   "pensionNetPay" DOUBLE PRECISION NOT NULL,
+  "studentLoanPlan2" BOOLEAN DEFAULT FALSE NOT NULL,
   "accountIdTo" uuid NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,

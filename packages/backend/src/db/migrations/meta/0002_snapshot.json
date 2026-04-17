@@ -1,5 +1,5 @@
 {
-  "id": "f75d7bd4-4e63-429b-8051-b20b721f972f",
+  "id": "74064b7c-cc7d-47cf-bcb5-1bd73c8e0715",
   "prevId": "6d8e1045-350f-4ef7-903f-1446c8ff9f3e",
   "version": "7",
   "dialect": "postgresql",
@@ -771,6 +771,13 @@
           "type": "double precision",
           "primaryKey": false,
           "notNull": true
+        },
+        "studentLoanPlan2": {
+          "name": "studentLoanPlan2",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "accountIdTo": {
           "name": "accountIdTo",

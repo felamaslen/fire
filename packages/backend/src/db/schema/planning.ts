@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   date,
   doublePrecision,
@@ -156,6 +157,8 @@ export const PlanningEarnings = pgTable(
     pensionReliefAtSource: doublePrecision("pensionReliefAtSource").notNull(),
     /** Fraction of gross contributed via net-pay arrangement. */
     pensionNetPay: doublePrecision("pensionNetPay").notNull(),
+    /** Whether the earner is repaying UK Student Loan plan 2 on this income. When false, no student-loan deduction is applied to predicted take-home. */
+    studentLoanPlan2: boolean("studentLoanPlan2").notNull().default(false),
     /** Asset account the net earnings land in. */
     accountIdTo: uuid("accountIdTo")
       .notNull()
