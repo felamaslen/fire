@@ -40,13 +40,13 @@ export type NetWorthEntry = {
   date: CalendarDate;
 };
 
-/** Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`. @gqlType */
+/** Exchange rate captured alongside a net-worth entry; converts one unit of `currency` into `base`. @gqlType */
 export type NetWorthCurrencyRate = {
-  /** ISO-4217 code being priced in (e.g. "GBP" for a GBP/USD quote). @gqlField */
+  /** ISO-4217 code the rate resolves into (e.g. "GBP" for a GBP/USD quote). @gqlField */
   base: string;
-  /** ISO-4217 code being quoted (e.g. "USD" for a GBP/USD quote). @gqlField */
+  /** ISO-4217 code being priced (e.g. "USD" for a GBP/USD quote). @gqlField */
   currency: string;
-  /** Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD). @gqlField */
+  /** Units of `base` per one unit of `currency` (e.g. 0.77 for GBP/USD: 1 USD = 0.77 GBP). @gqlField */
   rate: Float;
 };
 
@@ -149,8 +149,8 @@ function buildRateToHome(
   const map = new Map<string, number>([[HOME_CURRENCY, 1]]);
   for (const row of rows) {
     const r = Number(row.rate);
-    if (row.base === HOME_CURRENCY) map.set(row.currency, 1 / r);
-    else if (row.currency === HOME_CURRENCY) map.set(row.base, r);
+    if (row.base === HOME_CURRENCY) map.set(row.currency, r);
+    else if (row.currency === HOME_CURRENCY) map.set(row.base, 1 / r);
   }
   return map;
 }
@@ -427,11 +427,11 @@ export type NetWorthValueOptionInput = {
 
 /** A currency rate to record alongside the entry. Keyed by `currency` within the entry. @gqlInput */
 export type NetWorthCurrencyRateInput = {
-  /** ISO-4217 currency being priced in (e.g. "GBP"). */
+  /** ISO-4217 currency the rate resolves into (e.g. "GBP"). */
   base: string;
-  /** ISO-4217 currency being quoted (e.g. "USD"). */
+  /** ISO-4217 currency being priced (e.g. "USD"). */
   currency: string;
-  /** Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD). */
+  /** Units of `base` per one unit of `currency` (e.g. 0.77 for GBP/USD: 1 USD = 0.77 GBP). */
   rate: Float;
 };
 

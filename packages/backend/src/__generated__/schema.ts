@@ -357,21 +357,21 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const NetWorthCurrencyRateType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthCurrencyRate",
-        description: "Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`.",
+        description: "Exchange rate captured alongside a net-worth entry; converts one unit of `currency` into `base`.",
         fields() {
             return {
                 base: {
-                    description: "ISO-4217 code being priced in (e.g. \"GBP\" for a GBP/USD quote).",
+                    description: "ISO-4217 code the rate resolves into (e.g. \"GBP\" for a GBP/USD quote).",
                     name: "base",
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 currency: {
-                    description: "ISO-4217 code being quoted (e.g. \"USD\" for a GBP/USD quote).",
+                    description: "ISO-4217 code being priced (e.g. \"USD\" for a GBP/USD quote).",
                     name: "currency",
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 rate: {
-                    description: "Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD).",
+                    description: "Units of `base` per one unit of `currency` (e.g. 0.77 for GBP/USD: 1 USD = 0.77 GBP).",
                     name: "rate",
                     type: new GraphQLNonNull(GraphQLFloat)
                 }
@@ -1177,17 +1177,17 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 base: {
-                    description: "ISO-4217 currency being priced in (e.g. \"GBP\").",
+                    description: "ISO-4217 currency the rate resolves into (e.g. \"GBP\").",
                     name: "base",
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 currency: {
-                    description: "ISO-4217 currency being quoted (e.g. \"USD\").",
+                    description: "ISO-4217 currency being priced (e.g. \"USD\").",
                     name: "currency",
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 rate: {
-                    description: "Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD).",
+                    description: "Units of `base` per one unit of `currency` (e.g. 0.77 for GBP/USD: 1 USD = 0.77 GBP).",
                     name: "rate",
                     type: new GraphQLNonNull(GraphQLFloat)
                 }
