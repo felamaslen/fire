@@ -72,6 +72,8 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
     public readonly type: NetWorthLiabilityType,
     /** Annual rate as a decimal string (e.g. "0.0525" = 5.25%). Present iff type is LOAN. @gqlField */
     public readonly interestRate: string | null,
+    /** When true, the liability is hidden from aggregate totals. @gqlField */
+    public readonly skip: boolean,
     private readonly assetId: string | null,
     private readonly createdAt: Date,
   ) {}
@@ -84,6 +86,7 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
       row.name,
       row.type,
       row.interestRate,
+      row.skip,
       row.categoryAssetId,
       row.createdAt,
     );
@@ -300,6 +303,8 @@ export type NetWorthCategoryLiabilityInput = {
   assetId?: ID | null;
   /** Decimal-string annual rate (e.g. "0.0525"). Required iff type is LOAN. */
   interestRate?: string | null;
+  /** Hide this liability from aggregate totals. Defaults to false. */
+  skip?: boolean | null;
 };
 
 /** Create payload for an equity-option category. @gqlInput */
@@ -336,6 +341,8 @@ export type NetWorthCategoryLiabilityPatch = {
   assetId?: ID | null;
   /** Decimal-string annual rate (e.g. "0.0525"). */
   interestRate?: string | null;
+  /** Hide this liability from aggregate totals. */
+  skip?: boolean | null;
 };
 
 /** Partial update for an equity-option category; unset fields are left unchanged. @gqlInput */
@@ -401,6 +408,7 @@ export async function netWorthCategoryCreate(
         type: input.liability.type,
         categoryAssetId: input.liability.assetId ?? null,
         interestRate: input.liability.interestRate ?? null,
+        skip: input.liability.skip ?? false,
       })
       .returning();
     return NetWorthCategoryLiability.load(row);
@@ -446,6 +454,7 @@ export async function netWorthCategoryUpdate(
         ...(patch.liability.interestRate !== undefined && {
           interestRate: patch.liability.interestRate,
         }),
+        ...(patch.liability.skip != null && { skip: patch.liability.skip }),
         updatedAt: new Date(),
       })
       .where(eq(NetWorthCategoryLiabilities.id, id))
