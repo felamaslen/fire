@@ -2,7 +2,9 @@ import { ApolloServer } from "@apollo/server";
 import fastifyApollo, {
   fastifyApolloDrainPlugin,
 } from "@as-integrations/fastify";
+import { GraphQLError } from "graphql";
 
+import { log } from "@/log";
 import { router } from "@/router";
 
 import { getSchema } from "../__generated__/schema";
@@ -30,7 +32,24 @@ if (!g.__apolloRegistered) {
 
   const apollo = new ApolloServer({
     schema,
+    includeStacktraceInErrorResponses: false,
     plugins: [fastifyApolloDrainPlugin(router), constraintPlugin(schema)],
+    formatError(formatted, rawError) {
+      const original =
+        rawError instanceof GraphQLError ? rawError.originalError : undefined;
+      log.error("GraphQL error", {
+        message: formatted.message,
+        path: formatted.path,
+        err: original ?? rawError,
+      });
+      const { extensions, ...rest } = formatted;
+      const safeExtensions = extensions
+        ? Object.fromEntries(
+            Object.entries(extensions).filter(([k]) => k !== "stacktrace"),
+          )
+        : undefined;
+      return { ...rest, ...(safeExtensions && { extensions: safeExtensions }) };
+    },
   });
 
   await apollo.start();
