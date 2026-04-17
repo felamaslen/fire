@@ -1,8 +1,5 @@
 import { ApolloServer } from "@apollo/server";
-import {
-  fastifyApolloDrainPlugin,
-  fastifyApolloHandler,
-} from "@as-integrations/fastify";
+import { fastifyApolloHandler } from "@as-integrations/fastify";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { GraphQLError } from "graphql";
 
@@ -39,7 +36,12 @@ async function buildApollo(): Promise<ApolloServer<Context>> {
   const apollo = new ApolloServer<Context>({
     schema,
     includeStacktraceInErrorResponses: false,
-    plugins: [fastifyApolloDrainPlugin(router), constraintPlugin(schema)],
+    // `fastifyApolloDrainPlugin` would close the shared Fastify router when
+    // Apollo stops — during HMR we stop the previous Apollo on every reload,
+    // which would then take the whole Fastify server down with it (503s on
+    // every subsequent request). Shutdown is handled in `index.ts` by closing
+    // the router directly, so draining from Apollo is not needed.
+    plugins: [constraintPlugin(schema)],
     formatError(formatted, rawError) {
       const original =
         rawError instanceof GraphQLError ? rawError.originalError : undefined;
