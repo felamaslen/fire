@@ -36,35 +36,57 @@ export interface NetWorthCategory {
 /** A reusable bucket for assets (current account, pension pot, property, ...). @gqlType */
 export class NetWorthCategoryAsset implements NetWorthCategory {
   readonly __typename = "NetWorthCategoryAsset" as const;
-  /** @gqlField */
-  id!: ID;
-  /** @gqlField */
-  name!: string;
-  /** @gqlField */
-  type!: NetWorthAssetType;
-  createdAt!: Date;
 
-  constructor(data: Omit<NetWorthCategoryAsset, "__typename">) {
-    Object.assign(this, data);
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** @gqlField */
+    public readonly name: string,
+    /** @gqlField */
+    public readonly type: NetWorthAssetType,
+    private readonly createdAt: Date,
+  ) {}
+
+  static load(
+    row: typeof NetWorthCategoryAssets.$inferSelect,
+  ): NetWorthCategoryAsset {
+    return new NetWorthCategoryAsset(
+      row.id as ID,
+      row.name,
+      row.type,
+      row.createdAt,
+    );
   }
 }
 
 /** A reusable bucket for liabilities (credit card, mortgage, personal loan, ...). @gqlType */
 export class NetWorthCategoryLiability implements NetWorthCategory {
   readonly __typename = "NetWorthCategoryLiability" as const;
-  /** @gqlField */
-  id!: ID;
-  /** @gqlField */
-  name!: string;
-  /** @gqlField */
-  type!: NetWorthLiabilityType;
-  /** Annual rate as a decimal string (e.g. "0.0525" = 5.25%). Present iff type is LOAN. @gqlField */
-  interestRate!: string | null;
-  assetId!: string | null;
-  createdAt!: Date;
 
-  constructor(data: Omit<NetWorthCategoryLiability, "__typename" | "asset">) {
-    Object.assign(this, data);
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** @gqlField */
+    public readonly name: string,
+    /** @gqlField */
+    public readonly type: NetWorthLiabilityType,
+    /** Annual rate as a decimal string (e.g. "0.0525" = 5.25%). Present iff type is LOAN. @gqlField */
+    public readonly interestRate: string | null,
+    private readonly assetId: string | null,
+    private readonly createdAt: Date,
+  ) {}
+
+  static load(
+    row: typeof NetWorthCategoryLiabilities.$inferSelect,
+  ): NetWorthCategoryLiability {
+    return new NetWorthCategoryLiability(
+      row.id as ID,
+      row.name,
+      row.type,
+      row.interestRate,
+      row.categoryAssetId,
+      row.createdAt,
+    );
   }
 
   /** The asset this liability is funding (for LTV calcs), if any. @gqlField */
@@ -78,56 +100,27 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
       row,
       `NetWorthCategoryAsset ${this.assetId} referenced by NetWorthCategoryLiability ${this.id} is missing`,
     );
-    return toNetWorthCategoryAsset(row);
+    return NetWorthCategoryAsset.load(row);
   }
 }
 
 /** A reusable bucket for equity options (e.g. "My company shares"). @gqlType */
 export class NetWorthCategoryOption implements NetWorthCategory {
   readonly __typename = "NetWorthCategoryOption" as const;
-  /** @gqlField */
-  id!: ID;
-  /** @gqlField */
-  name!: string;
-  createdAt!: Date;
 
-  constructor(data: Omit<NetWorthCategoryOption, "__typename">) {
-    Object.assign(this, data);
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** @gqlField */
+    public readonly name: string,
+    private readonly createdAt: Date,
+  ) {}
+
+  static load(
+    row: typeof NetWorthCategoryOptions.$inferSelect,
+  ): NetWorthCategoryOption {
+    return new NetWorthCategoryOption(row.id as ID, row.name, row.createdAt);
   }
-}
-
-export function toNetWorthCategoryAsset(
-  row: typeof NetWorthCategoryAssets.$inferSelect,
-): NetWorthCategoryAsset {
-  return new NetWorthCategoryAsset({
-    id: row.id,
-    name: row.name,
-    type: row.type,
-    createdAt: row.createdAt,
-  });
-}
-
-export function toNetWorthCategoryLiability(
-  row: typeof NetWorthCategoryLiabilities.$inferSelect,
-): NetWorthCategoryLiability {
-  return new NetWorthCategoryLiability({
-    id: row.id,
-    name: row.name,
-    type: row.type,
-    interestRate: row.interestRate,
-    assetId: row.categoryAssetId,
-    createdAt: row.createdAt,
-  });
-}
-
-export function toNetWorthCategoryOption(
-  row: typeof NetWorthCategoryOptions.$inferSelect,
-): NetWorthCategoryOption {
-  return new NetWorthCategoryOption({
-    id: row.id,
-    name: row.name,
-    createdAt: row.createdAt,
-  });
 }
 
 /** An edge within a NetWorthCategoryConnection. @gqlType */
@@ -247,17 +240,17 @@ export async function netWorthCategories(
 
   const [assets, liabilities, options] = await Promise.all([
     runPaged(NetWorthCategoryAssets, (row) =>
-      toNetWorthCategoryAsset(
+      NetWorthCategoryAsset.load(
         row as typeof NetWorthCategoryAssets.$inferSelect,
       ),
     ),
     runPaged(NetWorthCategoryLiabilities, (row) =>
-      toNetWorthCategoryLiability(
+      NetWorthCategoryLiability.load(
         row as typeof NetWorthCategoryLiabilities.$inferSelect,
       ),
     ),
     runPaged(NetWorthCategoryOptions, (row) =>
-      toNetWorthCategoryOption(
+      NetWorthCategoryOption.load(
         row as typeof NetWorthCategoryOptions.$inferSelect,
       ),
     ),
@@ -397,7 +390,7 @@ export async function netWorthCategoryCreate(
       .insert(NetWorthCategoryAssets)
       .values({ name: input.asset.name, type: input.asset.type })
       .returning();
-    return toNetWorthCategoryAsset(row);
+    return NetWorthCategoryAsset.load(row);
   }
   if ("liability" in input) {
     validateLiabilityInput(input.liability);
@@ -410,13 +403,13 @@ export async function netWorthCategoryCreate(
         interestRate: input.liability.interestRate ?? null,
       })
       .returning();
-    return toNetWorthCategoryLiability(row);
+    return NetWorthCategoryLiability.load(row);
   }
   const [row] = await db
     .insert(NetWorthCategoryOptions)
     .values({ name: input.option.name })
     .returning();
-  return toNetWorthCategoryOption(row);
+  return NetWorthCategoryOption.load(row);
 }
 
 /**
@@ -439,7 +432,7 @@ export async function netWorthCategoryUpdate(
       .where(eq(NetWorthCategoryAssets.id, id))
       .returning();
     assert(row, `NetWorthCategoryAsset ${id} not found`);
-    return toNetWorthCategoryAsset(row);
+    return NetWorthCategoryAsset.load(row);
   }
   if ("liability" in patch) {
     const [row] = await db
@@ -463,7 +456,7 @@ export async function netWorthCategoryUpdate(
       !isLoan === (row.interestRate === null),
       "interestRate must be non-null iff type is LOAN",
     );
-    return toNetWorthCategoryLiability(row);
+    return NetWorthCategoryLiability.load(row);
   }
   const [row] = await db
     .update(NetWorthCategoryOptions)
@@ -474,7 +467,7 @@ export async function netWorthCategoryUpdate(
     .where(eq(NetWorthCategoryOptions.id, id))
     .returning();
   assert(row, `NetWorthCategoryOption ${id} not found`);
-  return toNetWorthCategoryOption(row);
+  return NetWorthCategoryOption.load(row);
 }
 
 /** Delete a category. Fails if any value still references it. @gqlMutationField */

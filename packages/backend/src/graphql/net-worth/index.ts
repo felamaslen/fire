@@ -26,9 +26,6 @@ import {
   NetWorthCategoryAsset,
   NetWorthCategoryLiability,
   NetWorthCategoryOption,
-  toNetWorthCategoryAsset,
-  toNetWorthCategoryLiability,
-  toNetWorthCategoryOption,
 } from "./categories";
 
 /** One net-worth snapshot for a single month. @gqlType */
@@ -181,7 +178,7 @@ export async function asset(
     row,
     `NetWorthCategoryAsset ${value.categoryAssetId} referenced by NetWorthValue ${value.id} is missing`,
   );
-  return toNetWorthCategoryAsset(row);
+  return NetWorthCategoryAsset.load(row);
 }
 
 /** The liability category this value is recorded against, if any. @gqlField */
@@ -197,7 +194,7 @@ export async function liability(
     row,
     `NetWorthCategoryLiability ${value.categoryLiabilityId} referenced by NetWorthValue ${value.id} is missing`,
   );
-  return toNetWorthCategoryLiability(row);
+  return NetWorthCategoryLiability.load(row);
 }
 
 /** The option category this value is recorded against, if any. @gqlField */
@@ -213,7 +210,7 @@ export async function option(
     row,
     `NetWorthCategoryOption ${value.categoryOptionId} referenced by NetWorthValue ${value.id} is missing`,
   );
-  return toNetWorthCategoryOption(row);
+  return NetWorthCategoryOption.load(row);
 }
 
 const DEFAULT_PAGE_SIZE = 20;

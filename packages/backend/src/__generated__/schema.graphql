@@ -410,14 +410,16 @@ type PlanningAccount {
 A single month inside a PlanningYear. `id` is the lowercased short month + year (e.g. `"dec-2024"`).
 """
 type PlanningMonth {
-  """Per-account rollups for this month."""
+  """
+  Per-account rollups for this month. Each account is built with pre-filtered transactions + value-start so downstream resolvers are synchronous.
+  """
   accounts: [PlanningMonthAccount!]!
   date: Date!
   id: ID!
 }
 
 """
-A single (month × planning-account) roll-up: name, running balance, and the merged transactions (actual + predicted) for that cell.
+A single (month × planning-account) roll-up: name, running balance, and the merged transactions (actual + predicted) for that cell. All fields resolve synchronously from pre-filtered data — no per-field SQL.
 """
 type PlanningMonthAccount {
   id: ID!
@@ -427,9 +429,13 @@ type PlanningMonthAccount {
   Transactions (actual + predicted) affecting this account in this month.
   """
   transactions: [PlanningTransaction!]!
-  """Closing balance for the month."""
+  """
+  Closing balance for the month — `valueStart` plus the sum of this month's transactions.
+  """
   valueEnd: Money!
-  """Opening balance for the month."""
+  """
+  Opening balance for the month — the latest NetWorthValueAmounts snapshot strictly before the month rolled forward through any intervening planning transactions. Defaults to zero when there's no prior snapshot.
+  """
   valueStart: Money!
 }
 
