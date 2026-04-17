@@ -881,6 +881,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         type: new GraphQLNonNull(GraphQLString)
                     }
                 }
+            }), new GraphQLDirective({
+                name: "semanticNonNull",
+                locations: [DirectiveLocation.FIELD_DEFINITION],
+                description: "Mark a field as semantically non-null \u2014 schema-level nullable (per the Query-field-nullability convention) but the resolver must never actually return null. Returning null throws a `UNEXPECTED_NULL` GraphQLError at resolve time."
             })],
         query: QueryType,
         mutation: MutationType,

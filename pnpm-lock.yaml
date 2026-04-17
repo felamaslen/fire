@@ -57,6 +57,9 @@ importers:
       '@graphql-tools/schema':
         specifier: ^10.0.32
         version: 10.0.32(graphql@16.13.2)
+      '@graphql-tools/utils':
+        specifier: ^11.0.1
+        version: 11.0.1(graphql@16.13.2)
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
