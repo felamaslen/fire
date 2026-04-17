@@ -23,7 +23,9 @@
     "fastify": "^5.8.5",
     "graphql": "^16.13.2",
     "graphql-upload": "^17.0.0",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@graphql-tools/schema": "^10.0.32",
