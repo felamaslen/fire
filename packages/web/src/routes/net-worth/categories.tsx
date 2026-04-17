@@ -198,6 +198,7 @@ function NetWorthCategoriesPage() {
 function AssetsSection({ data }: { data: AssetSelection[] }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
     refetchQueries: refetch,
+    onCompleted: () => toast.success("Category created"),
   });
   const form = useForm({
     defaultValues: { name: "", type: "CASH" as AssetType },
@@ -278,9 +279,12 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
 
 function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
   const asset = readFragment(AssetRowDocument, data);
-  const [update] = useMutation(NetWorthCategoryUpdateDocument);
+  const [update] = useMutation(NetWorthCategoryUpdateDocument, {
+    onCompleted: () => toast.success("Category updated"),
+  });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
     refetchQueries: refetch,
+    onCompleted: () => toast.success("Category deleted"),
   });
 
   const form = useForm({
@@ -357,6 +361,7 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
 function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
     refetchQueries: refetch,
+    onCompleted: () => toast.success("Category created"),
   });
   const form = useForm({
     defaultValues: {
@@ -503,9 +508,12 @@ function LiabilityRow({
   data: FragmentOf<typeof LiabilityRowDocument>;
 }) {
   const liability = readFragment(LiabilityRowDocument, data);
-  const [update] = useMutation(NetWorthCategoryUpdateDocument);
+  const [update] = useMutation(NetWorthCategoryUpdateDocument, {
+    onCompleted: () => toast.success("Category updated"),
+  });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
     refetchQueries: refetch,
+    onCompleted: () => toast.success("Category deleted"),
   });
 
   const form = useForm({
@@ -640,6 +648,7 @@ function LiabilityRow({
 function OptionsSection({ data }: { data: OptionSelection[] }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
     refetchQueries: refetch,
+    onCompleted: () => toast.success("Category created"),
   });
   const form = useForm({
     defaultValues: { name: "" },
@@ -686,9 +695,12 @@ function OptionsSection({ data }: { data: OptionSelection[] }) {
 
 function OptionRow({ data }: { data: FragmentOf<typeof OptionRowDocument> }) {
   const option = readFragment(OptionRowDocument, data);
-  const [update] = useMutation(NetWorthCategoryUpdateDocument);
+  const [update] = useMutation(NetWorthCategoryUpdateDocument, {
+    onCompleted: () => toast.success("Category updated"),
+  });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
     refetchQueries: refetch,
+    onCompleted: () => toast.success("Category deleted"),
   });
 
   const form = useForm({

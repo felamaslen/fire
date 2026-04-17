@@ -41,7 +41,7 @@ function RootComponent() {
             </Suspense>
           </TooltipProvider>
         </ApolloProvider>
-        <Toaster richColors position="top-right" />
+        <Toaster richColors position="bottom-right" />
         <Scripts />
       </body>
     </html>
