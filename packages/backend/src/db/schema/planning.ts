@@ -84,6 +84,10 @@ export const PlanningYearUKTaxRates = pgTable(
     thresholdStudentLoanPlan2: bigint("thresholdStudentLoanPlan2", {
       mode: "number",
     }).notNull(),
+    /** Income at which the personal allowance begins to taper (£1 withdrawn per £2 earned above this), in minor units of GBP. */
+    thresholdPersonalAllowanceTaper: bigint("thresholdPersonalAllowanceTaper", {
+      mode: "number",
+    }).notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
