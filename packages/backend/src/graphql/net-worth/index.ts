@@ -33,12 +33,18 @@ import {
 } from "./categories";
 
 /** One net-worth snapshot for a single month. @gqlType */
-export type NetWorthEntry = {
-  /** @gqlField */
-  id: ID;
-  /** Any calendar date inside the target month. @gqlField */
-  date: CalendarDate;
-};
+export class NetWorthEntry {
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** Any calendar date inside the target month. @gqlField */
+    public readonly date: CalendarDate,
+  ) {}
+
+  static load(row: typeof NetWorthEntries.$inferSelect): NetWorthEntry {
+    return new NetWorthEntry(row.id as ID, row.date);
+  }
+}
 
 /** Exchange rate captured alongside a net-worth entry; converts one unit of `currency` into `base`. @gqlType */
 export type NetWorthCurrencyRate = {
@@ -86,15 +92,6 @@ export type NetWorthEntryConnection = {
   /** @gqlField */
   pageInfo: PageInfo;
 };
-
-function toNetWorthEntry(
-  row: typeof NetWorthEntries.$inferSelect,
-): NetWorthEntry {
-  return {
-    id: row.id,
-    date: row.date,
-  };
-}
 
 function toNetWorthValue(
   row: typeof NetWorthValues.$inferSelect,
@@ -318,6 +315,19 @@ export async function option(
   return NetWorthCategoryOption.load(row);
 }
 
+/**
+ * Look up a single net-worth entry by id.
+ *
+ * @gqlQueryField
+ */
+export async function netWorthEntry(id: ID): Promise<NetWorthEntry | null> {
+  const [row] = await db
+    .select()
+    .from(NetWorthEntries)
+    .where(eq(NetWorthEntries.id, id));
+  return row ? NetWorthEntry.load(row) : null;
+}
+
 const DEFAULT_PAGE_SIZE = 20;
 
 /**
@@ -382,7 +392,7 @@ export async function netWorth(
 
   const edges: NetWorthEntryEdge[] = ordered.map((row) => ({
     cursor: entryCursor(row),
-    node: toNetWorthEntry(row),
+    node: NetWorthEntry.load(row),
   }));
 
   const pageInfo: PageInfo = {
@@ -626,7 +636,7 @@ export async function netWorthCreate(
     await writeValues(tx, entry.id, values);
     if (currencyRates != null)
       await writeCurrencyRates(tx, entry.id, currencyRates);
-    return toNetWorthEntry(entry);
+    return NetWorthEntry.load(entry);
   });
 }
 
@@ -656,7 +666,7 @@ export async function netWorthUpdate(
     if (values != null) await writeValues(tx, entry.id, values);
     if (currencyRates != null)
       await writeCurrencyRates(tx, entry.id, currencyRates);
-    return toNetWorthEntry(entry);
+    return NetWorthEntry.load(entry);
   });
 }
 
