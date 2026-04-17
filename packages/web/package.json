@@ -7,7 +7,8 @@
     "dev": "NODE_ENV=development vite --port 4001 dev --host 0.0.0.0",
     "build": "vite build",
     "start": "vite start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "download-schema": "mkdir -p src/__generated__ && curl -fsSL http://localhost:4000/schema.graphql -o src/__generated__/schema.graphql"
   },
   "dependencies": {
     "@tanstack/react-router": "^1.133.0",
