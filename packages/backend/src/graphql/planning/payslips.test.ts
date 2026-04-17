@@ -370,6 +370,224 @@ it("rejects an adjustment whose currency differs from the payslip's gross", asyn
   );
 });
 
+async function createLiability(name = "Student Loan"): Promise<string> {
+  const data = await runGql(
+    graphql(`
+      mutation ($name: String!) {
+        netWorthCategoryCreate(
+          input: { liability: { name: $name, type: MISC } }
+        ) {
+          id
+        }
+      }
+    `),
+    { name },
+  );
+  return data.netWorthCategoryCreate.id;
+}
+
+/** Returns the April-2025 adjustments (excluding the payslip row itself), as `(name, liabilityId)` pairs, for the sole account in the test setup. */
+async function aprilAdjustments(): Promise<
+  Array<{ name: string; liabilityId: string | null }>
+> {
+  const data = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              name
+              transactions {
+                name
+                liabilityId
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const april = data.planningYear!.months.find((m) => m.id === "apr-2025")!;
+  const account = april.accounts[0];
+  return account.transactions
+    .filter((t) => !t.name.includes("payslip"))
+    .map((t) => ({
+      name: t.name,
+      liabilityId: (t.liabilityId ?? null) as string | null,
+    }));
+}
+
+it("persists adjustment.liabilityId and returns it on PlanningTransaction", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+  const liabilityId = await createLiability();
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!, $l: ID!) {
+        payslipCreate(
+          date: "2025-04-30"
+          amountGross: { amount: 3000, currency: "GBP" }
+          name: "April payslip"
+          toAccountId: $a
+          adjustments: [
+            { amount: { amount: -500, currency: "GBP" }, name: "Income Tax" }
+            {
+              amount: { amount: -100, currency: "GBP" }
+              name: "Student loan"
+              liabilityId: $l
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo, l: liabilityId },
+  );
+
+  const rows = await aprilAdjustments();
+  expect(rows).toEqual(
+    expect.arrayContaining([
+      { name: "Income Tax", liabilityId: null },
+      { name: "Student loan", liabilityId },
+    ]),
+  );
+});
+
+it("clears adjustment.liabilityId on payslipUpdate when omitted", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+  const liabilityId = await createLiability();
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!, $l: ID!) {
+        payslipCreate(
+          date: "2025-04-30"
+          amountGross: { amount: 3000, currency: "GBP" }
+          name: "April payslip"
+          toAccountId: $a
+          adjustments: [
+            {
+              amount: { amount: -100, currency: "GBP" }
+              name: "Student loan"
+              liabilityId: $l
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo, l: liabilityId },
+  );
+
+  const payslipId = await firstPayslipId();
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        payslipUpdate(
+          id: $id
+          adjustments: [
+            { amount: { amount: -100, currency: "GBP" }, name: "Student loan" }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { id: payslipId },
+  );
+
+  expect(await aprilAdjustments()).toEqual([
+    { name: "Student loan", liabilityId: null },
+  ]);
+});
+
+it("nulls adjustment.liabilityId when the linked liability is deleted", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+  const liabilityId = await createLiability();
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!, $l: ID!) {
+        payslipCreate(
+          date: "2025-04-30"
+          amountGross: { amount: 3000, currency: "GBP" }
+          name: "April payslip"
+          toAccountId: $a
+          adjustments: [
+            {
+              amount: { amount: -100, currency: "GBP" }
+              name: "Student loan"
+              liabilityId: $l
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo, l: liabilityId },
+  );
+
+  await runGql(
+    graphql(`
+      mutation ($l: ID!) {
+        netWorthCategoryDelete(ref: { liability: $l })
+      }
+    `),
+    { l: liabilityId },
+  );
+
+  expect(await aprilAdjustments()).toEqual([
+    { name: "Student loan", liabilityId: null },
+  ]);
+});
+
+it("rejects payslipCreate when adjustment.liabilityId references a missing liability", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+
+  await expect(
+    runGql(
+      graphql(`
+        mutation ($a: ID!) {
+          payslipCreate(
+            date: "2025-04-30"
+            amountGross: { amount: 3000, currency: "GBP" }
+            name: "April payslip"
+            toAccountId: $a
+            adjustments: [
+              {
+                amount: { amount: -100, currency: "GBP" }
+                name: "Student loan"
+                liabilityId: "00000000-0000-0000-0000-000000000000"
+              }
+            ]
+          ) {
+            id
+          }
+        }
+      `),
+      { a: accountIdTo },
+    ),
+  ).rejects.toThrowErrorMatchingInlineSnapshot(
+    `[Error: GraphQL errors: insert or update on table "PlanningPayslipAdjustments" violates foreign key constraint "PlanningPayslipAdjustments_liabilityId_NetWorthCategoryLiabilities_id_fk"]`,
+  );
+});
+
 it("stores the attached PDF fixture in the local bucket and serves it via GET /files/:key", async () => {
   await seedYear();
   const accountIdTo = await createAsset();

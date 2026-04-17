@@ -216,6 +216,10 @@ input PayslipAdjustmentInput {
   amount: MoneyInput!
   """Existing adjustment id to update. Omit to create a new one."""
   id: ID
+  """
+  Optional link to a `NetWorthCategoryLiability` this adjustment pays down (e.g. a student-loan deduction). Pass `null` to clear an existing link.
+  """
+  liabilityId: ID
   name: String!
 }
 
@@ -769,6 +773,10 @@ type PlanningTransaction {
   True when the transaction is a prediction (e.g. forthcoming bill, predicted salary).
   """
   isProvisional: Boolean!
+  """
+  `NetWorthCategoryLiability.id` if this row is a payslip adjustment linked to a liability (e.g. a student-loan deduction). Null on every other kind of transaction.
+  """
+  liabilityId: ID
   name: String!
 }
 

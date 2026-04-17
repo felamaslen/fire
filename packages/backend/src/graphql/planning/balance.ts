@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
+import type { ID } from "grats";
 
 import { db } from "@/db";
 import {
@@ -264,6 +265,7 @@ export function monthTransactionsFor(
         amount: Money.fromMinorDenomination(-tx.amount, tx.currency),
         isProvisional: false,
         isEditable: true,
+        liabilityId: null,
       });
     }
     if (tx.toAccountId === assetId) {
@@ -273,6 +275,7 @@ export function monthTransactionsFor(
         amount: Money.fromMinorDenomination(tx.amount, tx.currency),
         isProvisional: false,
         isEditable: false,
+        liabilityId: null,
       });
     }
   }
@@ -291,6 +294,7 @@ export function monthTransactionsFor(
       amount: Money.fromMinorDenomination(p.amountGross, p.currency),
       isProvisional: false,
       isEditable: true,
+      liabilityId: null,
     });
     for (const a of adjustments) {
       out.push({
@@ -299,6 +303,7 @@ export function monthTransactionsFor(
         amount: Money.fromMinorDenomination(a.amount, p.currency),
         isProvisional: false,
         isEditable: true,
+        liabilityId: (a.liabilityId ?? null) as ID | null,
       });
     }
   }
@@ -332,6 +337,7 @@ export function monthTransactionsFor(
         amount: Money.fromMinorDenomination(perMonth(take.gross), e.currency),
         isProvisional: true,
         isEditable: true,
+        liabilityId: null,
       });
       if (take.incomeTax > 0) {
         out.push({
@@ -347,6 +353,7 @@ export function monthTransactionsFor(
           ),
           isProvisional: true,
           isEditable: true,
+          liabilityId: null,
         });
       }
       if (take.nic > 0) {
@@ -360,6 +367,7 @@ export function monthTransactionsFor(
           amount: Money.fromMinorDenomination(-perMonth(take.nic), e.currency),
           isProvisional: true,
           isEditable: true,
+          liabilityId: null,
         });
       }
       if (take.studentLoan > 0) {
@@ -376,6 +384,7 @@ export function monthTransactionsFor(
           ),
           isProvisional: true,
           isEditable: true,
+          liabilityId: null,
         });
       }
     }
@@ -411,6 +420,7 @@ export function monthTransactionsFor(
         ),
         isProvisional: false,
         isEditable: true,
+        liabilityId: null,
       });
     } else {
       out.push({
@@ -419,6 +429,7 @@ export function monthTransactionsFor(
         amount: Money.fromMinorDenomination(-b.amount, b.currency),
         isProvisional: true,
         isEditable: true,
+        liabilityId: null,
       });
     }
   }

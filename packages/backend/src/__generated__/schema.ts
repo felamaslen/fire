@@ -623,6 +623,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "isProvisional",
                     type: new GraphQLNonNull(GraphQLBoolean)
                 },
+                liabilityId: {
+                    description: "`NetWorthCategoryLiability.id` if this row is a payslip adjustment linked to a liability (e.g. a student-loan deduction). Null on every other kind of transaction.",
+                    name: "liabilityId",
+                    type: GraphQLID
+                },
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
@@ -1256,6 +1261,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 id: {
                     description: "Existing adjustment id to update. Omit to create a new one.",
                     name: "id",
+                    type: GraphQLID
+                },
+                liabilityId: {
+                    description: "Optional link to a `NetWorthCategoryLiability` this adjustment pays down (e.g. a student-loan deduction). Pass `null` to clear an existing link.",
+                    name: "liabilityId",
                     type: GraphQLID
                 },
                 name: {
