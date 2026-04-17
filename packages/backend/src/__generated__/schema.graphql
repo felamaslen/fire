@@ -220,6 +220,15 @@ input PayslipAdjustmentInput {
 }
 
 """
+A tax-code entry to attach to a PlanningEarning. Rows are upserted by (earnings, start) — re-supplying the same `start` overwrites the previous code/end.
+"""
+input PlanningEarningUKTaxCodeInput {
+  end: Date
+  start: Date!
+  taxCode: String!
+}
+
+"""
 Country-specific tax parameter payload. Exactly one variant must be set.
 """
 input PlanningYearTaxRatesInput {
@@ -317,6 +326,34 @@ type Mutation {
     """New first day in effect."""
     start: Date
   ): [PlanningYear!]!
+  """
+  Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `accountIdTo` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
+  """
+  earningsCreate(
+    accountIdTo: ID!
+    amountGross: MoneyInput!
+    """ISO-3166-1 alpha-2 country where the earnings are taxed (e.g. `"GB"`)."""
+    countryCode: String!
+    end: Date
+    name: String!
+    pensionNetPay: Float!
+    pensionReliefAtSource: Float!
+    pensionSalarySacrifice: Float
+    start: Date!
+    """
+    Whether Student Loan plan 2 is being repaid on this income. Defaults to false.
+    """
+    studentLoanPlan2: Boolean
+    ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
+  ): [PlanningYear!]!
+  """
+  Delete an earnings stream and stop all future projections it was driving. Attached UK tax codes are removed via cascade. Use this when a role ends and no further income is expected from this source.
+  """
+  earningsDelete(id: ID!): [PlanningYear!]!
+  """
+  Partially update an earnings stream. Only fields passed in are changed — omit a field to leave it untouched. Passing `ukTaxCodes` replaces the full tax-code history (existing rows are deleted, then the supplied list is inserted). Months affected by the old or new date range have their projections recomputed.
+  """
+  earningsUpdate(accountIdTo: ID, amountGross: MoneyInput, countryCode: String, end: Date, id: ID!, name: String, pensionNetPay: Float, pensionReliefAtSource: Float, pensionSalarySacrifice: Float, start: Date, studentLoanPlan2: Boolean, ukTaxCodes: [PlanningEarningUKTaxCodeInput!]): [PlanningYear!]!
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """Delete a category. Fails if any value still references it."""
@@ -543,6 +580,52 @@ type PlanningBillEdge {
 }
 
 """
+A stream of gross earnings (salary, contract income, …) paid into a specific asset account.
+"""
+type PlanningEarning {
+  """Destination planning account for the net earnings."""
+  accountTo: PlanningAccount!
+  amountGross: Money!
+  """
+  Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `"5% salary sacrifice, 3% net pay pension, student loan plan 2"`). Empty string if none apply.
+  """
+  attributes: String!
+  """ISO-3166-1 alpha-2 country where the earnings are taxed."""
+  countryCode: String!
+  end: Date
+  id: ID!
+  name: String!
+  start: Date!
+  """
+  Tax codes applied to this earnings stream over time. Used when projecting predicted withholding.
+  """
+  ukTaxCodes: [PlanningEarningUKTaxCode!]!
+}
+
+"""A cursor-paginated list of `PlanningEarning`, newest-`start` first."""
+type PlanningEarningConnection {
+  edges: [PlanningEarningEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""An edge within a `PlanningEarningConnection`."""
+type PlanningEarningEdge {
+  cursor: ID!
+  node: PlanningEarning!
+}
+
+"""
+A UK tax code active on a `PlanningEarning` over a date range. Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually.
+"""
+type PlanningEarningUKTaxCode {
+  """Last day the code applies (inclusive); null while ongoing."""
+  end: Date
+  start: Date!
+  """HMRC tax code (e.g. `1257L`, `3420X`)."""
+  taxCode: String!
+}
+
+"""
 A single month inside a PlanningYear. `id` is the lowercased short month + year (e.g. `"dec-2024"`).
 """
 type PlanningMonth {
@@ -647,6 +730,10 @@ type Query {
   Every registered bill, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
   """
   bills(after: ID, first: Int): PlanningBillConnection @semanticNonNull
+  """
+  Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
+  """
+  earnings(after: ID, first: Int): PlanningEarningConnection @semanticNonNull
   """Paginated list of net-worth entries, newest first."""
   netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """

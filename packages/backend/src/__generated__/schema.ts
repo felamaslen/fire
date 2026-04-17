@@ -9,6 +9,7 @@ import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
 import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
+import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
@@ -162,29 +163,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
-    const NetWorthCurrencyRateType: GraphQLObjectType = new GraphQLObjectType({
-        name: "NetWorthCurrencyRate",
-        description: "Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`.",
-        fields() {
-            return {
-                base: {
-                    description: "ISO-4217 code being priced in (e.g. \"GBP\" for a GBP/USD quote).",
-                    name: "base",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                currency: {
-                    description: "ISO-4217 code being quoted (e.g. \"USD\" for a GBP/USD quote).",
-                    name: "currency",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                rate: {
-                    description: "Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD).",
-                    name: "rate",
-                    type: new GraphQLNonNull(GraphQLFloat)
-                }
-            };
-        }
-    });
     const NetWorthAssetTypeType: GraphQLEnumType = new GraphQLEnumType({
         description: "Kind of asset a category represents.",
         name: "NetWorthAssetType",
@@ -246,6 +224,152 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         },
         interfaces() {
             return [NetWorthCategoryType];
+        }
+    });
+    const PlanningAccountType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningAccount",
+        description: "A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias.",
+        fields() {
+            return {
+                asset: {
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    description: "Display name \u2014 the alias if one was set, otherwise the underlying asset's name.",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningEarningUKTaxCodeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarningUKTaxCode",
+        description: "A UK tax code active on a `PlanningEarning` over a date range. Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually.",
+        fields() {
+            return {
+                end: {
+                    description: "Last day the code applies (inclusive); null while ongoing.",
+                    name: "end",
+                    type: DateType
+                },
+                start: {
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                },
+                taxCode: {
+                    description: "HMRC tax code (e.g. `1257L`, `3420X`).",
+                    name: "taxCode",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningEarningType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarning",
+        description: "A stream of gross earnings (salary, contract income, \u2026) paid into a specific asset account.",
+        fields() {
+            return {
+                accountTo: {
+                    description: "Destination planning account for the net earnings.",
+                    name: "accountTo",
+                    type: new GraphQLNonNull(PlanningAccountType)
+                },
+                amountGross: {
+                    name: "amountGross",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                attributes: {
+                    description: "Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `\"5% salary sacrifice, 3% net pay pension, student loan plan 2\"`). Empty string if none apply.",
+                    name: "attributes",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                countryCode: {
+                    description: "ISO-3166-1 alpha-2 country where the earnings are taxed.",
+                    name: "countryCode",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                end: {
+                    name: "end",
+                    type: DateType
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                start: {
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                },
+                ukTaxCodes: {
+                    description: "Tax codes applied to this earnings stream over time. Used when projecting predicted withholding.",
+                    name: "ukTaxCodes",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningEarningUKTaxCodeType)))
+                }
+            };
+        }
+    });
+    const PlanningEarningEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarningEdge",
+        description: "An edge within a `PlanningEarningConnection`.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PlanningEarningType)
+                }
+            };
+        }
+    });
+    const PlanningEarningConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarningConnection",
+        description: "A cursor-paginated list of `PlanningEarning`, newest-`start` first.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningEarningEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const NetWorthCurrencyRateType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCurrencyRate",
+        description: "Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`.",
+        fields() {
+            return {
+                base: {
+                    description: "ISO-4217 code being priced in (e.g. \"GBP\" for a GBP/USD quote).",
+                    name: "base",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                currency: {
+                    description: "ISO-4217 code being quoted (e.g. \"USD\" for a GBP/USD quote).",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                rate: {
+                    description: "Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD).",
+                    name: "rate",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                }
+            };
         }
     });
     const NetWorthLiabilityTypeType: GraphQLEnumType = new GraphQLEnumType({
@@ -469,27 +593,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
-    const PlanningAccountType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningAccount",
-        description: "A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias.",
-        fields() {
-            return {
-                asset: {
-                    name: "asset",
-                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
-                },
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                name: {
-                    description: "Display name \u2014 the alias if one was set, otherwise the underlying asset's name.",
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
-    });
     const PlanningTransactionType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningTransaction",
         description: "A single row in a PlanningMonthAccount \u2014 mix of actual and predicted sources.",
@@ -695,6 +798,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return assertNonNull(queryBillsResolver(args.first, args.after));
                     }
                 },
+                earnings: {
+                    description: "Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).",
+                    name: "earnings",
+                    type: PlanningEarningConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryEarningsResolver(args.first, args.after));
+                    }
+                },
                 netWorth: {
                     description: "Paginated list of net-worth entries, newest first.",
                     name: "netWorth",
@@ -784,6 +903,26 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 currency: {
                     description: "ISO-4217 currency code (e.g. \"GBP\").",
                     name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningEarningUKTaxCodeInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "A tax-code entry to attach to a PlanningEarning. Rows are upserted by (earnings, start) \u2014 re-supplying the same `start` overwrites the previous code/end.",
+        name: "PlanningEarningUKTaxCodeInput",
+        fields() {
+            return {
+                end: {
+                    name: "end",
+                    type: DateType
+                },
+                start: {
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                },
+                taxCode: {
+                    name: "taxCode",
                     type: new GraphQLNonNull(GraphQLString)
                 }
             };
@@ -1327,6 +1466,110 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationBillUpdateResolver(args.id, args.start, args.frequency, args.collectionDate, args.amount, args.name, args.accountIdFrom, args.liabilityId, args.end);
                     }
                 },
+                earningsCreate: {
+                    description: "Register a new earnings stream (salary, contract income, \u2026). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `accountIdTo` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and \u2014 when enabled \u2014 Student Loan plan 2, using the year's tax rates and any attached UK tax codes.",
+                    name: "earningsCreate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        accountIdTo: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        amountGross: {
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
+                        countryCode: {
+                            description: "ISO-3166-1 alpha-2 country where the earnings are taxed (e.g. `\"GB\"`).",
+                            type: new GraphQLNonNull(GraphQLString)
+                        },
+                        end: {
+                            type: DateType
+                        },
+                        name: {
+                            type: new GraphQLNonNull(GraphQLString)
+                        },
+                        pensionNetPay: {
+                            type: new GraphQLNonNull(GraphQLFloat)
+                        },
+                        pensionReliefAtSource: {
+                            type: new GraphQLNonNull(GraphQLFloat)
+                        },
+                        pensionSalarySacrifice: {
+                            type: GraphQLFloat
+                        },
+                        start: {
+                            type: new GraphQLNonNull(DateType)
+                        },
+                        studentLoanPlan2: {
+                            description: "Whether Student Loan plan 2 is being repaid on this income. Defaults to false.",
+                            type: GraphQLBoolean
+                        },
+                        ukTaxCodes: {
+                            type: new GraphQLList(new GraphQLNonNull(PlanningEarningUKTaxCodeInputType))
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.accountIdTo, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
+                    }
+                },
+                earningsDelete: {
+                    description: "Delete an earnings stream and stop all future projections it was driving. Attached UK tax codes are removed via cascade. Use this when a role ends and no further income is expected from this source.",
+                    name: "earningsDelete",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationEarningsDeleteResolver(args.id);
+                    }
+                },
+                earningsUpdate: {
+                    description: "Partially update an earnings stream. Only fields passed in are changed \u2014 omit a field to leave it untouched. Passing `ukTaxCodes` replaces the full tax-code history (existing rows are deleted, then the supplied list is inserted). Months affected by the old or new date range have their projections recomputed.",
+                    name: "earningsUpdate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        accountIdTo: {
+                            type: GraphQLID
+                        },
+                        amountGross: {
+                            type: MoneyInputType
+                        },
+                        countryCode: {
+                            type: GraphQLString
+                        },
+                        end: {
+                            type: DateType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        name: {
+                            type: GraphQLString
+                        },
+                        pensionNetPay: {
+                            type: GraphQLFloat
+                        },
+                        pensionReliefAtSource: {
+                            type: GraphQLFloat
+                        },
+                        pensionSalarySacrifice: {
+                            type: GraphQLFloat
+                        },
+                        start: {
+                            type: DateType
+                        },
+                        studentLoanPlan2: {
+                            type: GraphQLBoolean
+                        },
+                        ukTaxCodes: {
+                            type: new GraphQLList(new GraphQLNonNull(PlanningEarningUKTaxCodeInputType))
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.accountIdTo, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
+                    }
+                },
                 netWorthCategoryCreate: {
                     description: "Create a new category (asset, liability, or option).",
                     name: "netWorthCategoryCreate",
@@ -1573,6 +1816,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }
