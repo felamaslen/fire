@@ -197,6 +197,22 @@ CREATE TABLE "PlanningEarnings" (
     CHECK ("PlanningEarnings"."pensionNetPay" BETWEEN 0 AND 1)
 );
 
+CREATE TABLE "PlanningEarningsUKTaxCodes" (
+  "earningsId" uuid NOT NULL,
+  "start" date NOT NULL,
+  "end" date,
+  "taxCode" text NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "PlanningEarningsUKTaxCodes_pk"
+    PRIMARY KEY ("earningsId", "start"),
+  CONSTRAINT "PlanningEarningsUKTaxCodes_dateRange_ck"
+    CHECK (
+      "PlanningEarningsUKTaxCodes"."end" IS NULL
+      OR "PlanningEarningsUKTaxCodes"."end" >= "PlanningEarningsUKTaxCodes"."start"
+    )
+);
+
 CREATE TABLE "PlanningMonthBills" (
   "year" INTEGER NOT NULL,
   "date" date NOT NULL,
@@ -367,6 +383,11 @@ ADD CONSTRAINT "PlanningEarnings_accountIdTo_NetWorthCategoryAssets_id_fk"
     "id"
   )
     ON DELETE RESTRICT
+    ON UPDATE NO ACTION;
+ALTER TABLE "PlanningEarningsUKTaxCodes"
+ADD CONSTRAINT "PlanningEarningsUKTaxCodes_earningsId_PlanningEarnings_id_fk"
+  FOREIGN KEY ("earningsId") REFERENCES "public"."PlanningEarnings" ("id")
+    ON DELETE CASCADE
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningMonthBills"
 ADD CONSTRAINT "PlanningMonthBills_billId_PlanningBills_id_fk"
