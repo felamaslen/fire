@@ -605,6 +605,16 @@ type NetWorthEntry {
   """Any calendar date inside the target month."""
   date: Date!
   id: ID!
+  """
+  Sum of all asset and option line items for this entry, converted into GBP via the entry's `currencyRates`.
+  """
+  totalAssets: Money!
+  """
+  Sum of all liability line items for this entry (positive magnitude), converted into GBP via the entry's `currencyRates`. Liabilities with `skip = true` are excluded.
+  """
+  totalLiabilities: Money!
+  """Net worth for this entry: `totalAssets − totalLiabilities`, in GBP."""
+  totalNet: Money!
   """The line-item values recorded for this entry."""
   values: [NetWorthValue!]!
 }

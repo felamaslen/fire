@@ -10,7 +10,7 @@ import type { Upload as UploadInternal } from "./../graphql/upload";
 import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
-import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
+import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
@@ -515,6 +515,30 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 id: {
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
+                },
+                totalAssets: {
+                    description: "Sum of all asset and option line items for this entry, converted into GBP via the entry's `currencyRates`.",
+                    name: "totalAssets",
+                    type: new GraphQLNonNull(MoneyType),
+                    resolve(source, _args, context) {
+                        return netWorthEntryTotalAssetsResolver(source, context);
+                    }
+                },
+                totalLiabilities: {
+                    description: "Sum of all liability line items for this entry (positive magnitude), converted into GBP via the entry's `currencyRates`. Liabilities with `skip = true` are excluded.",
+                    name: "totalLiabilities",
+                    type: new GraphQLNonNull(MoneyType),
+                    resolve(source, _args, context) {
+                        return netWorthEntryTotalLiabilitiesResolver(source, context);
+                    }
+                },
+                totalNet: {
+                    description: "Net worth for this entry: `totalAssets \u2212 totalLiabilities`, in GBP.",
+                    name: "totalNet",
+                    type: new GraphQLNonNull(MoneyType),
+                    resolve(source, _args, context) {
+                        return netWorthEntryTotalNetResolver(source, context);
+                    }
                 },
                 values: {
                     description: "The line-item values recorded for this entry.",

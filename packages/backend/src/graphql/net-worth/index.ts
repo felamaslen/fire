@@ -1,8 +1,10 @@
 import { strict as assert } from "node:assert";
 
 import { and, asc, desc, eq, gt, lt, notInArray, or, sql } from "drizzle-orm";
+import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
 
+import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import {
   NetWorthCategoryAssets,
@@ -14,9 +16,11 @@ import {
   NetWorthValues,
 } from "@/db/schema/net-worth";
 
+import { type Context, contextAwareDataLoader } from "../context";
 import type { Date as CalendarDate } from "../date";
 import {
   assertCurrencyCode,
+  CURRENCIES,
   getMoneyInputFractionalAmount,
   Money,
   type MoneyInput,
@@ -105,11 +109,11 @@ function toNetWorthValue(
 
 import { decodeCursor, encodeCursor } from "../pagination";
 
-function entryCursor(entry: { createdAt: Date | string; id: string }): ID {
+function entryCursor(entry: { date: Date | string; id: string }): ID {
   const c =
-    entry.createdAt instanceof Date
-      ? entry.createdAt.toISOString()
-      : entry.createdAt;
+    entry.date instanceof Date
+      ? entry.date.toISOString().slice(0, 10)
+      : entry.date;
   return encodeCursor(c, entry.id);
 }
 
@@ -135,6 +139,137 @@ export async function values(entry: NetWorthEntry): Promise<NetWorthValue[]> {
     .from(NetWorthValues)
     .where(eq(NetWorthValues.entryId, entry.id));
   return rows.map(toNetWorthValue);
+}
+
+type EntryTotals = { assetsMinor: number; liabilitiesMinor: number };
+
+function buildRateToHome(
+  rows: (typeof NetWorthCurrencyRates.$inferSelect)[],
+): Map<string, number> {
+  const map = new Map<string, number>([[HOME_CURRENCY, 1]]);
+  for (const row of rows) {
+    const r = Number(row.rate);
+    if (row.base === HOME_CURRENCY) map.set(row.currency, 1 / r);
+    else if (row.currency === HOME_CURRENCY) map.set(row.base, r);
+  }
+  return map;
+}
+
+function convertToHomeMinor(
+  amountMinor: number,
+  currency: string,
+  rateMap: Map<string, number>,
+): number {
+  assertCurrencyCode(currency);
+  const ratio = rateMap.get(currency);
+  if (ratio == null) {
+    throw new GraphQLError(
+      `No exchange rate stored for ${currency} → ${HOME_CURRENCY} on this entry.`,
+    );
+  }
+  const amountMajor = amountMinor / 10 ** CURRENCIES[currency].scale;
+  const homeMajor = amountMajor * ratio;
+  return Math.round(homeMajor * 10 ** CURRENCIES[HOME_CURRENCY].scale);
+}
+
+async function loadTotals(entryId: string): Promise<EntryTotals> {
+  const valueRows = await db
+    .select({
+      categoryLiabilityId: NetWorthValues.categoryLiabilityId,
+      liabilitySkip: NetWorthCategoryLiabilities.skip,
+      amount: NetWorthValueAmounts.amount,
+      currency: NetWorthValueAmounts.currency,
+    })
+    .from(NetWorthValues)
+    .leftJoin(
+      NetWorthValueAmounts,
+      eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
+    )
+    .leftJoin(
+      NetWorthCategoryLiabilities,
+      eq(NetWorthCategoryLiabilities.id, NetWorthValues.categoryLiabilityId),
+    )
+    .where(eq(NetWorthValues.entryId, entryId));
+
+  const rateRows = await db
+    .select()
+    .from(NetWorthCurrencyRates)
+    .where(eq(NetWorthCurrencyRates.entryId, entryId));
+  const rateMap = buildRateToHome(rateRows);
+
+  let assetsMinor = 0;
+  let liabilitiesMinor = 0;
+  for (const row of valueRows) {
+    if (row.amount == null || row.currency == null) continue;
+    const homeMinor = convertToHomeMinor(row.amount, row.currency, rateMap);
+    if (row.categoryLiabilityId) {
+      if (row.liabilitySkip) continue;
+      liabilitiesMinor += homeMinor;
+    } else {
+      assetsMinor += homeMinor;
+    }
+  }
+
+  return { assetsMinor, liabilitiesMinor };
+}
+
+/** Request-scoped `Map<entryId, Promise<EntryTotals>>`. Resolvers populate it lazily, so multiple `totalAssets` / `totalLiabilities` / `totalNet` lookups on the same entry within one request share a single DB round-trip. */
+const getTotalsCache = contextAwareDataLoader(
+  () => new Map<string, Promise<EntryTotals>>(),
+);
+
+async function computeTotals(
+  ctx: Context,
+  entryId: string,
+): Promise<EntryTotals> {
+  const cache = await getTotalsCache(ctx);
+  const existing = cache.get(entryId);
+  if (existing) return existing;
+  const p = loadTotals(entryId);
+  cache.set(entryId, p);
+  return p;
+}
+
+/**
+ * Sum of all asset and option line items for this entry, converted into GBP via the entry's `currencyRates`.
+ *
+ * @gqlField
+ */
+export async function totalAssets(
+  entry: NetWorthEntry,
+  ctx: Context,
+): Promise<Money> {
+  const { assetsMinor } = await computeTotals(ctx, entry.id);
+  return Money.fromMinorDenomination(assetsMinor, HOME_CURRENCY);
+}
+
+/**
+ * Sum of all liability line items for this entry (positive magnitude), converted into GBP via the entry's `currencyRates`. Liabilities with `skip = true` are excluded.
+ *
+ * @gqlField
+ */
+export async function totalLiabilities(
+  entry: NetWorthEntry,
+  ctx: Context,
+): Promise<Money> {
+  const { liabilitiesMinor } = await computeTotals(ctx, entry.id);
+  return Money.fromMinorDenomination(liabilitiesMinor, HOME_CURRENCY);
+}
+
+/**
+ * Net worth for this entry: `totalAssets − totalLiabilities`, in GBP.
+ *
+ * @gqlField
+ */
+export async function totalNet(
+  entry: NetWorthEntry,
+  ctx: Context,
+): Promise<Money> {
+  const { assetsMinor, liabilitiesMinor } = await computeTotals(ctx, entry.id);
+  return Money.fromMinorDenomination(
+    assetsMinor - liabilitiesMinor,
+    HOME_CURRENCY,
+  );
 }
 
 /** Monetary amounts for this line item — at most one per currency. @gqlField */
@@ -229,16 +364,16 @@ export async function netWorth(
   const cursorWhere = cursor
     ? forward
       ? or(
-          lt(NetWorthEntries.createdAt, new Date(cursor.c)),
+          lt(NetWorthEntries.date, new Date(cursor.c)),
           and(
-            eq(NetWorthEntries.createdAt, new Date(cursor.c)),
+            eq(NetWorthEntries.date, new Date(cursor.c)),
             lt(NetWorthEntries.id, cursor.i),
           ),
         )
       : or(
-          gt(NetWorthEntries.createdAt, new Date(cursor.c)),
+          gt(NetWorthEntries.date, new Date(cursor.c)),
           and(
-            eq(NetWorthEntries.createdAt, new Date(cursor.c)),
+            eq(NetWorthEntries.date, new Date(cursor.c)),
             gt(NetWorthEntries.id, cursor.i),
           ),
         )
@@ -249,9 +384,7 @@ export async function netWorth(
     .from(NetWorthEntries)
     .where(cursorWhere)
     .orderBy(
-      forward
-        ? desc(NetWorthEntries.createdAt)
-        : asc(NetWorthEntries.createdAt),
+      forward ? desc(NetWorthEntries.date) : asc(NetWorthEntries.date),
       forward ? desc(NetWorthEntries.id) : asc(NetWorthEntries.id),
     )
     .limit(limit + 1);
