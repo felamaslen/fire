@@ -213,22 +213,9 @@ async function loadTotals(entryId: string): Promise<EntryTotals> {
   return { assetsMinor, liabilitiesMinor };
 }
 
-/** Request-scoped `Map<entryId, Promise<EntryTotals>>`. Resolvers populate it lazily, so multiple `totalAssets` / `totalLiabilities` / `totalNet` lookups on the same entry within one request share a single DB round-trip. */
-const getTotalsCache = contextAwareDataLoader(
-  () => new Map<string, Promise<EntryTotals>>(),
+const computeTotals = contextAwareDataLoader((_ctx: Context, entryId: string) =>
+  loadTotals(entryId),
 );
-
-async function computeTotals(
-  ctx: Context,
-  entryId: string,
-): Promise<EntryTotals> {
-  const cache = await getTotalsCache(ctx);
-  const existing = cache.get(entryId);
-  if (existing) return existing;
-  const p = loadTotals(entryId);
-  cache.set(entryId, p);
-  return p;
-}
 
 /**
  * Sum of all asset and option line items for this entry, converted into GBP via the entry's `currencyRates`.
