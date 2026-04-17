@@ -13,16 +13,13 @@ import { router } from "./router";
 
 // TODO: swap for a cloud object store (GCS / S3) behind the same `storeUpload` / `readStoredFile` interface.
 
-/** Directory used as the local "bucket"; created on demand at boot. */
-function bucketDir(): string {
-  return path.resolve(env.UPLOADS_DIR);
-}
-
+/** Directory used as the local "bucket"; created at boot. */
 async function ensureBucket(): Promise<string> {
-  const dir = bucketDir();
+  const dir = path.resolve(env.UPLOADS_DIR);
   if (!existsSync(dir)) await mkdir(dir, { recursive: true });
   return dir;
 }
+await ensureBucket();
 
 /** Persist an already-resolved graphql-upload `FileUpload` to the local bucket and return the stored key. Mutations that accept `file: Upload` should `await file` first and pass the result in. */
 export async function storeUpload(upload: FileUpload): Promise<string> {
@@ -36,8 +33,8 @@ export async function storeUpload(upload: FileUpload): Promise<string> {
 }
 
 /** Absolute path for a stored key. Resolves strictly inside the bucket — throws on `..` traversal. */
-function resolveStoredPath(key: string): string {
-  const dir = bucketDir();
+async function resolveStoredPath(key: string): Promise<string> {
+  const dir = await ensureBucket();
   const resolved = path.resolve(dir, key);
   assert(
     resolved.startsWith(dir + path.sep),
@@ -58,9 +55,9 @@ router.addHook("preValidation", async (req, reply) => {
 });
 
 // TODO: swap for a GCS / S3 signed-URL endpoint once we move off the local bucket.
-router.get<{ Params: { key: string } }>("/files/:key", (req, reply) => {
+router.get<{ Params: { key: string } }>("/files/:key", async (req, reply) => {
   try {
-    const absolute = resolveStoredPath(req.params.key);
+    const absolute = await resolveStoredPath(req.params.key);
     if (!existsSync(absolute)) return reply.code(404).send();
     reply.header(
       "content-disposition",
