@@ -44,6 +44,7 @@ CREATE TABLE "NetWorthCategoryLiabilities" (
   "type" "netWorthCategoryLiabilityType" NOT NULL,
   "categoryAssetId" uuid,
   "interestRate" NUMERIC(6, 4),
+  "skip" BOOLEAN DEFAULT FALSE NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   CONSTRAINT "NetWorthCategoryLiabilities_interestRate_ck"
@@ -92,6 +93,19 @@ CREATE TABLE "NetWorthValueAmounts" (
   "currency" "CurrencyCode" NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+CREATE TABLE "NetWorthValueOptions" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "valueId" uuid NOT NULL,
+  "units" BIGINT NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "priceStrike" BIGINT NOT NULL,
+  "priceMarket" BIGINT,
+  "vested" BIGINT NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "NetWorthValueOptions_valueId_unique" UNIQUE ("valueId")
 );
 
 CREATE TABLE "NetWorthValues" (
@@ -244,6 +258,7 @@ CREATE TABLE "PlanningPayslipAdjustments" (
   "payslipId" uuid NOT NULL,
   "amount" BIGINT NOT NULL,
   "name" text NOT NULL,
+  "liabilityId" uuid,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
@@ -333,6 +348,11 @@ ADD CONSTRAINT "NetWorthValueAmounts_valueId_NetWorthValues_id_fk"
   FOREIGN KEY ("valueId") REFERENCES "public"."NetWorthValues" ("id")
     ON DELETE CASCADE
     ON UPDATE NO ACTION;
+ALTER TABLE "NetWorthValueOptions"
+ADD CONSTRAINT "NetWorthValueOptions_valueId_NetWorthValues_id_fk"
+  FOREIGN KEY ("valueId") REFERENCES "public"."NetWorthValues" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
 ALTER TABLE "NetWorthValues"
 ADD CONSTRAINT "NetWorthValues_entryId_NetWorthEntries_id_fk"
   FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id")
@@ -412,6 +432,13 @@ ALTER TABLE "PlanningPayslipAdjustments"
 ADD CONSTRAINT "PlanningPayslipAdjustments_payslipId_PlanningPayslips_id_fk"
   FOREIGN KEY ("payslipId") REFERENCES "public"."PlanningPayslips" ("id")
     ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "PlanningPayslipAdjustments"
+ADD CONSTRAINT "PlanningPayslipAdjustments_liabilityId_NetWorthCategoryLiabilities_id_fk"
+  FOREIGN KEY (
+    "liabilityId"
+  ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
+    ON DELETE SET NULL
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningPayslips"
 ADD CONSTRAINT "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk"

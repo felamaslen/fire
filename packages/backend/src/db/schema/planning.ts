@@ -555,6 +555,11 @@ export const PlanningPayslipAdjustments = pgTable(
     /** Signed amount in fractional units of the payslip's currency; negative = deduction. */
     amount: bigint("amount", { mode: "number" }).notNull(),
     name: text("name").notNull(),
+    /** Optional link to a liability this adjustment pays down (e.g. a loan or student loan repayment). Cleared if the liability is deleted. */
+    liabilityId: uuid("liabilityId").references(
+      () => NetWorthCategoryLiabilities.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -570,6 +575,10 @@ export const planningPayslipAdjustmentsRelations = relations(
     payslip: one(PlanningPayslips, {
       fields: [PlanningPayslipAdjustments.payslipId],
       references: [PlanningPayslips.id],
+    }),
+    liability: one(NetWorthCategoryLiabilities, {
+      fields: [PlanningPayslipAdjustments.liabilityId],
+      references: [NetWorthCategoryLiabilities.id],
     }),
   }),
 );

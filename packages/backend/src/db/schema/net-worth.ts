@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   date,
   index,
@@ -144,6 +145,8 @@ export const NetWorthCategoryLiabilities = pgTable(
     ),
     /** Annual interest rate as a decimal (0.0525 = 5.25%). Required iff type=LOAN. */
     interestRate: numeric("interestRate", { precision: 6, scale: 4 }),
+    /** When true, the liability is hidden from aggregate totals (e.g. a closed credit card). */
+    skip: boolean("skip").notNull().default(false),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -254,6 +257,47 @@ export const netWorthValuesRelations = relations(
       references: [NetWorthCategoryOptions.id],
     }),
     amounts: many(NetWorthValueAmounts),
+    valueOptions: one(NetWorthValueOptions, {
+      fields: [NetWorthValues.id],
+      references: [NetWorthValueOptions.valueId],
+    }),
+  }),
+);
+
+/** Per-value option metadata (units, strike, market, vested). One row per `NetWorthValue` whose category is an option. Not currently exposed via GraphQL. */
+export const NetWorthValueOptions = pgTable("NetWorthValueOptions", {
+  id: uuid("id")
+    .primaryKey()
+    .default(sql`uuidv7()`),
+  valueId: uuid("valueId")
+    .notNull()
+    .unique()
+    .references(() => NetWorthValues.id, { onDelete: "cascade" }),
+  /** Number of option units held. */
+  units: bigint("units", { mode: "number" }).notNull(),
+  /** Currency of `priceStrike` and `priceMarket`. */
+  currency: currencyCode("currency").notNull(),
+  /** Strike price, in fractional units of `currency`. */
+  priceStrike: bigint("priceStrike", { mode: "number" }).notNull(),
+  /** Most-recent market price, in fractional units of `currency`. Null if unknown. */
+  priceMarket: bigint("priceMarket", { mode: "number" }),
+  /** How many of the held units have vested (<= units). */
+  vested: bigint("vested", { mode: "number" }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const netWorthValueOptionsRelations = relations(
+  NetWorthValueOptions,
+  ({ one }) => ({
+    value: one(NetWorthValues, {
+      fields: [NetWorthValueOptions.valueId],
+      references: [NetWorthValues.id],
+    }),
   }),
 );
 

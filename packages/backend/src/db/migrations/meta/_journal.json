@@ -22,6 +22,13 @@
       "when": 1776440871402,
       "tag": "0002_create_planning_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776455191255,
+      "tag": "0003_add_value_options_and_payslip_liability_link",
+      "breakpoints": true
     }
   ]
 }
