@@ -8,6 +8,7 @@ import {
 import { Suspense } from "react";
 
 import { createApolloClient } from "../apollo";
+import { Home } from "../components/home";
 import { Spinner } from "../components/spinner";
 import { Toaster } from "../components/ui/sonner";
 import { TooltipProvider } from "../components/ui/tooltip";
@@ -36,6 +37,7 @@ function RootComponent() {
       <body>
         <ApolloProvider client={apolloClient}>
           <TooltipProvider delayDuration={200}>
+            <Home />
             <Suspense fallback={<Spinner />}>
               <Outlet />
             </Suspense>
