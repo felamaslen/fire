@@ -416,6 +416,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
                 },
+                skip: {
+                    description: "When true, the liability is hidden from aggregate totals.",
+                    name: "skip",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
                 type: {
                     name: "type",
                     type: new GraphQLNonNull(NetWorthLiabilityTypeType)
@@ -974,6 +979,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
                 },
+                skip: {
+                    description: "Hide this liability from aggregate totals. Defaults to false.",
+                    name: "skip",
+                    type: GraphQLBoolean
+                },
                 type: {
                     name: "type",
                     type: new GraphQLNonNull(NetWorthLiabilityTypeType)
@@ -1088,6 +1098,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 name: {
                     name: "name",
                     type: GraphQLString
+                },
+                skip: {
+                    description: "Hide this liability from aggregate totals.",
+                    name: "skip",
+                    type: GraphQLBoolean
                 },
                 type: {
                     name: "type",
