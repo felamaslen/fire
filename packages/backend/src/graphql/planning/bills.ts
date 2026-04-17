@@ -6,6 +6,7 @@ import type { ID, Int } from "grats";
 import { db } from "@/db";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 import { PlanningAccounts, PlanningBills } from "@/db/schema/planning";
+import { UnreachableCaseError } from "@/errors";
 
 import type { Date as CalendarDate } from "../date";
 import {
@@ -128,8 +129,16 @@ function encodeCollectionDate(
   frequency: PlanningBillsFrequency,
   collectionDate: string[],
 ): string {
-  if (frequency === "MONTHLY") return collectionDate[0];
-  return collectionDate.join(", ");
+  switch (frequency) {
+    case "MONTHLY":
+      return collectionDate[0];
+    case "YEARLY":
+      return collectionDate[0];
+    case "QUARTERLY":
+      return collectionDate.join(", ");
+    default:
+      throw new UnreachableCaseError(frequency);
+  }
 }
 
 /** Inverse of `encodeCollectionDate`. */
@@ -137,8 +146,16 @@ function decodeCollectionDate(
   frequency: PlanningBillsFrequency,
   stored: string,
 ): string[] {
-  if (frequency === "QUARTERLY") return stored.split(/,\s*/);
-  return [stored];
+  switch (frequency) {
+    case "MONTHLY":
+      return [stored];
+    case "YEARLY":
+      return [stored];
+    case "QUARTERLY":
+      return stored.split(/,\s*/);
+    default:
+      throw new UnreachableCaseError(frequency);
+  }
 }
 
 /**
