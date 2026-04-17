@@ -3,12 +3,21 @@ import prettier from "eslint-plugin-prettier/recommended";
 import simpleImportSort from "eslint-plugin-simple-import-sort";
 import tseslint from "typescript-eslint";
 
+import { gqlResolverNullabilityRule } from "./eslint-rules/gql-resolver-nullability.mjs";
+
+const localPlugin = {
+  rules: {
+    "gql-resolver-nullability": gqlResolverNullabilityRule,
+  },
+};
+
 export default tseslint.config(
   {
     ignores: [
       "**/node_modules/**",
       "**/dist/**",
       "**/build/**",
+      "**/.idea/**",
       "packages/backend/src/__generated__/**",
       "packages/web/src/routeTree.gen.ts",
     ],
@@ -25,6 +34,13 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+    },
+  },
+  {
+    files: ["packages/backend/src/**/*.ts"],
+    plugins: { local: localPlugin },
+    rules: {
+      "local/gql-resolver-nullability": "error",
     },
   },
   prettier,
