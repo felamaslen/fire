@@ -1,0 +1,741 @@
+import { useMutation, useSuspenseQuery } from "@apollo/client/react";
+import { useForm } from "@tanstack/react-form";
+import { createFileRoute } from "@tanstack/react-router";
+import { toast } from "sonner";
+
+import { DeleteButton } from "@/components/delete-button";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+import {
+  type FragmentOf,
+  graphql,
+  readFragment,
+  type ResultOf,
+} from "../../graphql";
+
+const AssetRowDocument = graphql(`
+  fragment AssetRow on NetWorthCategoryAsset {
+    id
+    name
+    assetType: type
+  }
+`);
+
+const LiabilityRowDocument = graphql(`
+  fragment LiabilityRow on NetWorthCategoryLiability {
+    id
+    name
+    liabilityType: type
+    interestRate
+    skip
+  }
+`);
+
+const OptionRowDocument = graphql(`
+  fragment OptionRow on NetWorthCategoryOption {
+    id
+    name
+  }
+`);
+
+const NetWorthCategorySelectionDocument = graphql(
+  `
+    fragment NetWorthCategorySelection on NetWorthCategory {
+      __typename
+      id
+      ... on NetWorthCategoryAsset {
+        assetType: type
+        ...AssetRow
+      }
+      ... on NetWorthCategoryLiability {
+        liabilityType: type
+        ...LiabilityRow
+      }
+      ... on NetWorthCategoryOption {
+        ...OptionRow
+      }
+    }
+  `,
+  [AssetRowDocument, LiabilityRowDocument, OptionRowDocument],
+);
+
+type AssetSelection = Extract<
+  ResultOf<typeof NetWorthCategorySelectionDocument>,
+  { __typename: "NetWorthCategoryAsset" }
+>;
+type LiabilitySelection = Extract<
+  ResultOf<typeof NetWorthCategorySelectionDocument>,
+  { __typename: "NetWorthCategoryLiability" }
+>;
+type OptionSelection = Extract<
+  ResultOf<typeof NetWorthCategorySelectionDocument>,
+  { __typename: "NetWorthCategoryOption" }
+>;
+
+const NetWorthCategoriesDocument = graphql(
+  `
+    query NetWorthCategories {
+      netWorthCategories(first: 100) {
+        edges {
+          node {
+            ...NetWorthCategorySelection
+          }
+        }
+      }
+    }
+  `,
+  [NetWorthCategorySelectionDocument],
+);
+
+const NetWorthCategoryCreateDocument = graphql(
+  `
+    mutation NetWorthCategoryCreate($input: NetWorthCategoryInput!) {
+      netWorthCategoryCreate(input: $input) {
+        ...NetWorthCategorySelection
+      }
+    }
+  `,
+  [NetWorthCategorySelectionDocument],
+);
+
+const NetWorthCategoryUpdateDocument = graphql(
+  `
+    mutation NetWorthCategoryUpdate($id: ID!, $patch: NetWorthCategoryPatch!) {
+      netWorthCategoryUpdate(id: $id, patch: $patch) {
+        ...NetWorthCategorySelection
+      }
+    }
+  `,
+  [NetWorthCategorySelectionDocument],
+);
+
+const NetWorthCategoryDeleteDocument = graphql(`
+  mutation NetWorthCategoryDelete($ref: NetWorthCategoryRef!) {
+    netWorthCategoryDelete(ref: $ref) {
+      _
+    }
+  }
+`);
+
+type AssetType = ResultOf<typeof AssetRowDocument>["assetType"];
+type LiabilityType = ResultOf<typeof LiabilityRowDocument>["liabilityType"];
+
+const ASSET_TYPE_LABELS = {
+  CASH: "Cash",
+  STOCK: "Stocks",
+  OPTION: "Options",
+  PENSION: "Pensions",
+  PROPERTY: "Property",
+  MISC: "Other",
+} as const satisfies Record<AssetType, string>;
+
+const LIABILITY_TYPE_LABELS = {
+  CREDIT_CARD: "Credit cards",
+  LOAN: "Loans",
+  MISC: "Other",
+} as const satisfies Record<LiabilityType, string>;
+
+const ASSET_TYPES = Object.keys(ASSET_TYPE_LABELS) as AssetType[];
+const LIABILITY_TYPES = Object.keys(LIABILITY_TYPE_LABELS) as LiabilityType[];
+
+function decimalToPercent(decimal: number | null): string {
+  if (decimal == null) return "";
+  return (decimal * 100).toString();
+}
+
+function percentToDecimal(percent: string): number | null {
+  if (!percent) return null;
+  const n = Number.parseFloat(percent);
+  if (Number.isNaN(n)) return null;
+  return n / 100;
+}
+
+export const Route = createFileRoute("/net-worth/categories")({
+  component: NetWorthCategoriesPage,
+});
+
+const refetch = [{ query: NetWorthCategoriesDocument }];
+
+function NetWorthCategoriesPage() {
+  const { data } = useSuspenseQuery(NetWorthCategoriesDocument);
+
+  const nodes = data.netWorthCategories?.edges.map((e) => e.node) ?? [];
+  const assets: AssetSelection[] = [];
+  const liabilities: LiabilitySelection[] = [];
+  const options: OptionSelection[] = [];
+  for (const _n of nodes) {
+    const n = readFragment(NetWorthCategorySelectionDocument, _n);
+    if (n.__typename === "NetWorthCategoryAsset") assets.push(n);
+    else if (n.__typename === "NetWorthCategoryLiability") liabilities.push(n);
+    else if (n.__typename === "NetWorthCategoryOption") options.push(n);
+    else throw new Error("Unhandled node: " + n);
+  }
+
+  return (
+    <main className="mx-auto max-w-4xl space-y-6 p-8">
+      <AssetsSection data={assets} />
+      <LiabilitiesSection data={liabilities} />
+      <OptionsSection data={options} />
+    </main>
+  );
+}
+
+function AssetsSection({ data }: { data: AssetSelection[] }) {
+  const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
+    refetchQueries: refetch,
+  });
+  const form = useForm({
+    defaultValues: { name: "", type: "CASH" as AssetType },
+    onSubmit: async ({ value }) => {
+      if (!value.name.trim()) return;
+      await create({
+        variables: { input: { asset: { name: value.name, type: value.type } } },
+      });
+      form.reset();
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Assets</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {ASSET_TYPES.map((group) => {
+          const rows = data.filter((d) => d.assetType === group);
+          if (rows.length === 0) return null;
+          return (
+            <div key={group} className="space-y-2">
+              <h3 className="text-sm font-medium text-muted-foreground">
+                {ASSET_TYPE_LABELS[group]}
+              </h3>
+              <div className="space-y-2">
+                {rows.map((d) => (
+                  <AssetRow key={d.id} data={d} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        <form
+          className="flex items-center gap-2 pt-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void form.handleSubmit();
+          }}
+        >
+          <form.Field name="name">
+            {(field) => (
+              <Input
+                placeholder="New asset name"
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+              />
+            )}
+          </form.Field>
+          <form.Field name="type">
+            {(field) => (
+              <Select
+                value={field.state.value}
+                onValueChange={(v) => field.handleChange(v as AssetType)}
+              >
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ASSET_TYPES.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {ASSET_TYPE_LABELS[t]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </form.Field>
+          <Button type="submit" disabled={loading}>
+            Add
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
+  const asset = readFragment(AssetRowDocument, data);
+  const [update] = useMutation(NetWorthCategoryUpdateDocument);
+  const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
+    refetchQueries: refetch,
+  });
+
+  const form = useForm({
+    defaultValues: { name: asset.name, type: asset.assetType },
+    onSubmit: async ({ value }) => {
+      await update({
+        variables: {
+          id: asset.id,
+          patch: { asset: { name: value.name, type: value.type } },
+        },
+      }).catch((err: Error) => toast.error(err.message));
+      form.reset(value);
+    },
+  });
+
+  return (
+    <form
+      className="flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void form.handleSubmit();
+      }}
+    >
+      <form.Field name="name">
+        {(field) => (
+          <Input
+            value={field.state.value}
+            onChange={(e) => field.handleChange(e.target.value)}
+          />
+        )}
+      </form.Field>
+      <form.Field name="type">
+        {(field) => (
+          <Select
+            value={field.state.value}
+            onValueChange={(v) => field.handleChange(v as AssetType)}
+          >
+            <SelectTrigger className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ASSET_TYPES.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {ASSET_TYPE_LABELS[t]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </form.Field>
+      <form.Subscribe selector={(s) => [s.canSubmit, s.isDirty]}>
+        {([canSubmit, isDirty]) => (
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            disabled={!canSubmit || !isDirty}
+          >
+            Save
+          </Button>
+        )}
+      </form.Subscribe>
+      <DeleteButton
+        onConfirm={() =>
+          remove({ variables: { ref: { asset: asset.id } } }).catch(
+            (err: Error) => toast.error(err.message),
+          )
+        }
+      />
+    </form>
+  );
+}
+
+function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
+  const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
+    refetchQueries: refetch,
+  });
+  const form = useForm({
+    defaultValues: {
+      name: "",
+      type: "CREDIT_CARD" as LiabilityType,
+      interestRate: "",
+      skip: false,
+    },
+    onSubmit: async ({ value }) => {
+      if (!value.name.trim()) return;
+      if (value.type === "LOAN" && !value.interestRate) return;
+      await create({
+        variables: {
+          input: {
+            liability: {
+              name: value.name,
+              type: value.type,
+              interestRate:
+                value.type === "LOAN" && value.interestRate
+                  ? Number.parseFloat(value.interestRate) / 100
+                  : null,
+              skip: value.type === "LOAN" ? value.skip : null,
+            },
+          },
+        },
+      });
+      form.reset();
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Liabilities</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {LIABILITY_TYPES.map((group) => {
+          const rows = data.filter((d) => d.liabilityType === group);
+          if (rows.length === 0) return null;
+          return (
+            <div key={group} className="space-y-2">
+              <h3 className="text-sm font-medium text-muted-foreground">
+                {LIABILITY_TYPE_LABELS[group]}
+              </h3>
+              <div className="space-y-2">
+                {rows.map((d) => (
+                  <LiabilityRow key={d.id} data={d} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        <form
+          className="flex items-center gap-2 pt-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void form.handleSubmit();
+          }}
+        >
+          <form.Field name="name">
+            {(field) => (
+              <Input
+                placeholder="New liability name"
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+              />
+            )}
+          </form.Field>
+          <form.Field name="type">
+            {(field) => (
+              <Select
+                value={field.state.value}
+                onValueChange={(v) => field.handleChange(v as LiabilityType)}
+              >
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LIABILITY_TYPES.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {LIABILITY_TYPE_LABELS[t]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </form.Field>
+          <form.Subscribe selector={(s) => s.values.type}>
+            {(type) =>
+              type === "LOAN" && (
+                <>
+                  <form.Field name="interestRate">
+                    {(field) => (
+                      <Input
+                        inputMode="decimal"
+                        className="w-28"
+                        aria-label="Interest rate (%)"
+                        endAdornment="%"
+                        value={field.state.value}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                      />
+                    )}
+                  </form.Field>
+                  <form.Field name="skip">
+                    {(field) => (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
+                            <Checkbox
+                              checked={field.state.value}
+                              onCheckedChange={(v) =>
+                                field.handleChange(v === true)
+                              }
+                            />
+                            Skip
+                          </label>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Exclude this loan from net-worth totals and
+                          debt-payoff projections. Use for loans you're still
+                          tracking but don't want included in calculations
+                          (e.g. a 0% interest-free arrangement you're happy to
+                          carry).
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </form.Field>
+                </>
+              )
+            }
+          </form.Subscribe>
+          <Button type="submit" disabled={loading}>
+            Add
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LiabilityRow({
+  data,
+}: {
+  data: FragmentOf<typeof LiabilityRowDocument>;
+}) {
+  const liability = readFragment(LiabilityRowDocument, data);
+  const [update] = useMutation(NetWorthCategoryUpdateDocument);
+  const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
+    refetchQueries: refetch,
+  });
+
+  const form = useForm({
+    defaultValues: {
+      name: liability.name,
+      type: liability.liabilityType,
+      interestRate: decimalToPercent(liability.interestRate),
+      skip: liability.skip ?? false,
+    },
+    onSubmit: async ({ value }) => {
+      await update({
+        variables: {
+          id: liability.id,
+          patch: {
+            liability: {
+              name: value.name,
+              type: value.type,
+              interestRate:
+                value.type === "LOAN"
+                  ? percentToDecimal(value.interestRate)
+                  : null,
+              skip: value.type === "LOAN" ? value.skip : null,
+            },
+          },
+        },
+      }).catch((err: Error) => toast.error(err.message));
+      form.reset(value);
+    },
+  });
+
+  return (
+    <form
+      className="flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void form.handleSubmit();
+      }}
+    >
+      <form.Field name="name">
+        {(field) => (
+          <Input
+            value={field.state.value}
+            onChange={(e) => field.handleChange(e.target.value)}
+          />
+        )}
+      </form.Field>
+      <form.Field name="type">
+        {(field) => (
+          <Select
+            value={field.state.value}
+            onValueChange={(v) => field.handleChange(v as LiabilityType)}
+          >
+            <SelectTrigger className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {LIABILITY_TYPES.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {LIABILITY_TYPE_LABELS[t]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </form.Field>
+      <form.Subscribe selector={(s) => s.values.type}>
+        {(type) =>
+          type === "LOAN" && (
+            <>
+              <form.Field name="interestRate">
+                {(field) => (
+                  <Input
+                    inputMode="decimal"
+                    className="w-28"
+                    aria-label="Interest rate (%)"
+                    endAdornment="%"
+                    value={field.state.value}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                  />
+                )}
+              </form.Field>
+              <form.Field name="skip">
+                {(field) => (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
+                        <Checkbox
+                          checked={field.state.value}
+                          onCheckedChange={(v) =>
+                            field.handleChange(v === true)
+                          }
+                        />
+                        Skip
+                      </label>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Exclude this loan from net-worth totals and debt-payoff
+                      projections. Use for loans you're still tracking but
+                      don't want included in calculations (e.g. a 0%
+                      interest-free arrangement you're happy to carry).
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </form.Field>
+            </>
+          )
+        }
+      </form.Subscribe>
+      <form.Subscribe selector={(s) => [s.canSubmit, s.isDirty]}>
+        {([canSubmit, isDirty]) => (
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            disabled={!canSubmit || !isDirty}
+          >
+            Save
+          </Button>
+        )}
+      </form.Subscribe>
+      <DeleteButton
+        onConfirm={() =>
+          remove({ variables: { ref: { liability: liability.id } } }).catch(
+            (err: Error) => toast.error(err.message),
+          )
+        }
+      />
+    </form>
+  );
+}
+
+function OptionsSection({ data }: { data: OptionSelection[] }) {
+  const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
+    refetchQueries: refetch,
+  });
+  const form = useForm({
+    defaultValues: { name: "" },
+    onSubmit: async ({ value }) => {
+      if (!value.name.trim()) return;
+      await create({ variables: { input: { option: { name: value.name } } } });
+      form.reset();
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Options</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {data.map((d) => (
+          <OptionRow key={d.id} data={d} />
+        ))}
+        <form
+          className="flex items-center gap-2 pt-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void form.handleSubmit();
+          }}
+        >
+          <form.Field name="name">
+            {(field) => (
+              <Input
+                placeholder="New option name"
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+              />
+            )}
+          </form.Field>
+          <Button type="submit" disabled={loading}>
+            Add
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function OptionRow({ data }: { data: FragmentOf<typeof OptionRowDocument> }) {
+  const option = readFragment(OptionRowDocument, data);
+  const [update] = useMutation(NetWorthCategoryUpdateDocument);
+  const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
+    refetchQueries: refetch,
+  });
+
+  const form = useForm({
+    defaultValues: { name: option.name },
+    onSubmit: async ({ value }) => {
+      await update({
+        variables: { id: option.id, patch: { option: { name: value.name } } },
+      }).catch((err: Error) => toast.error(err.message));
+      form.reset(value);
+    },
+  });
+
+  return (
+    <form
+      className="flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void form.handleSubmit();
+      }}
+    >
+      <form.Field name="name">
+        {(field) => (
+          <Input
+            value={field.state.value}
+            onChange={(e) => field.handleChange(e.target.value)}
+          />
+        )}
+      </form.Field>
+      <form.Subscribe selector={(s) => [s.canSubmit, s.isDirty]}>
+        {([canSubmit, isDirty]) => (
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            disabled={!canSubmit || !isDirty}
+          >
+            Save
+          </Button>
+        )}
+      </form.Subscribe>
+      <DeleteButton
+        onConfirm={() =>
+          remove({ variables: { ref: { option: option.id } } }).catch(
+            (err: Error) => toast.error(err.message),
+          )
+        }
+      />
+    </form>
+  );
+}
