@@ -9,6 +9,7 @@ Monorepo for a personal net worth tracker.
 ## Code style
 
 - **JSDoc line breaks are semantic, not cosmetic.** Inside a JSDoc comment, only insert a hard line break where there's a genuine paragraph boundary (e.g. before a block tag like `@param`, `@returns`, `@gqlField`, or between two distinct ideas that warrant a blank line). Do not wrap prose across multiple lines for display width — let prettier / the editor soft-wrap. A one-sentence or even multi-sentence description goes on a single line.
+- **Never add `eslint-disable` / `eslint-disable-next-line` comments to silence a lint error.** If a rule is firing, the first move is to fix the code so the rule passes, or — if the rule doesn't fit this codebase — change the rule in `eslint.config.js`. A disable comment is only ever acceptable for a truly local, unavoidable exception (e.g. generated code interop, a framework-required side-effect import), and when added, it MUST carry an inline comment at the same site explaining *why* the rule is wrong here. "Silence warning" is not a why. Same goes for `@ts-ignore` / `@ts-expect-error`.
 
 ## Testing
 
