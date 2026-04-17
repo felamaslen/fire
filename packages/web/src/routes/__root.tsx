@@ -1,9 +1,14 @@
+import { ApolloProvider } from "@apollo/client/react";
 import {
   createRootRoute,
   HeadContent,
   Outlet,
   Scripts,
 } from "@tanstack/react-router";
+
+import { createApolloClient } from "../apollo";
+
+const apolloClient = createApolloClient();
 
 export const Route = createRootRoute({
   head: () => ({
@@ -23,7 +28,9 @@ function RootComponent() {
         <HeadContent />
       </head>
       <body>
-        <Outlet />
+        <ApolloProvider client={apolloClient}>
+          <Outlet />
+        </ApolloProvider>
         <Scripts />
       </body>
     </html>
