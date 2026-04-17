@@ -1,5 +1,12 @@
+import "./bootstrap-env";
+
+import { rm } from "node:fs/promises";
+import path from "node:path";
+
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
+
+import { env } from "@/env";
 
 vi.mock("@/db/client");
 
@@ -29,9 +36,12 @@ beforeEach(async () => {
     SELECT tablename FROM pg_tables
     WHERE schemaname = 'public' AND tablename <> '__drizzle_migrations'
   `);
-  if (rows.length === 0) return;
-  const list = rows.map((r) => `"${r.tablename}"`).join(", ");
-  await db.execute(sql.raw(`TRUNCATE ${list} RESTART IDENTITY CASCADE`));
+  if (rows.length > 0) {
+    const list = rows.map((r) => `"${r.tablename}"`).join(", ");
+    await db.execute(sql.raw(`TRUNCATE ${list} RESTART IDENTITY CASCADE`));
+  }
+  // Wipe the uploads bucket so file-count assertions in upload tests are deterministic.
+  await rm(path.resolve(env.UPLOADS_DIR), { recursive: true, force: true });
 });
 
 afterAll(async () => {
