@@ -384,8 +384,8 @@ export async function netWorth(
     .from(NetWorthEntries)
     .where(cursorWhere)
     .orderBy(
-      forward ? desc(NetWorthEntries.date) : asc(NetWorthEntries.date),
-      forward ? desc(NetWorthEntries.id) : asc(NetWorthEntries.id),
+      forward ? asc(NetWorthEntries.date) : desc(NetWorthEntries.date),
+      forward ? asc(NetWorthEntries.id) : desc(NetWorthEntries.id),
     )
     .limit(limit + 1);
 
