@@ -1,6 +1,8 @@
 import { strict as assert } from "node:assert";
 
-import { and, asc, desc, eq, gt, lt, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, lt, or, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
 
 import { db } from "@/db";
@@ -8,6 +10,7 @@ import {
   NetWorthCategoryAssets,
   NetWorthCategoryLiabilities,
   NetWorthCategoryOptions,
+  NetWorthValues,
 } from "@/db/schema/net-worth";
 
 import { VOID, type Void } from "../void";
@@ -485,22 +488,54 @@ export async function netWorthCategoryUpdate(
   return NetWorthCategoryOption.load(row);
 }
 
-/** Delete a category. Fails if any value still references it. @gqlMutationField */
+/** Delete a category. Fails with a human-readable error if any net-worth value still references it. @gqlMutationField */
 export async function netWorthCategoryDelete(
   ref: NetWorthCategoryRef,
 ): Promise<Void> {
   if ("asset" in ref) {
+    await assertNoDependentValues(
+      NetWorthValues.categoryAssetId,
+      ref.asset,
+      "asset",
+    );
     await db
       .delete(NetWorthCategoryAssets)
       .where(eq(NetWorthCategoryAssets.id, ref.asset));
   } else if ("liability" in ref) {
+    await assertNoDependentValues(
+      NetWorthValues.categoryLiabilityId,
+      ref.liability,
+      "liability",
+    );
     await db
       .delete(NetWorthCategoryLiabilities)
       .where(eq(NetWorthCategoryLiabilities.id, ref.liability));
   } else {
+    await assertNoDependentValues(
+      NetWorthValues.categoryOptionId,
+      ref.option,
+      "option",
+    );
     await db
       .delete(NetWorthCategoryOptions)
       .where(eq(NetWorthCategoryOptions.id, ref.option));
   }
   return VOID;
+}
+
+async function assertNoDependentValues(
+  column: AnyPgColumn,
+  id: string,
+  kind: "asset" | "liability" | "option",
+): Promise<void> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(NetWorthValues)
+    .where(eq(column, id));
+  const n = row?.n ?? 0;
+  if (n === 0) return;
+  throw new GraphQLError(
+    `Cannot delete ${kind} category: ${n} net-worth value${n === 1 ? "" : "s"} still reference${n === 1 ? "s" : ""} it. Remove those values first.`,
+    { extensions: { code: "CATEGORY_IN_USE", referencingValues: n } },
+  );
 }

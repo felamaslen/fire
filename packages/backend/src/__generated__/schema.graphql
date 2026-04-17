@@ -387,7 +387,9 @@ type Mutation {
   ): [PlanningYear!]!
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
-  """Delete a category. Fails if any value still references it."""
+  """
+  Delete a category. Fails with a human-readable error if any net-worth value still references it.
+  """
   netWorthCategoryDelete(ref: NetWorthCategoryRef!): Void!
   """
   Partially update an existing category. Only fields present on the matching variant are changed.
