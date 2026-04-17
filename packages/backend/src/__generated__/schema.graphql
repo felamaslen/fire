@@ -200,6 +200,19 @@ input NetWorthValueOptionInput {
 }
 
 """
+A single payslip line item to attach to a payslip. Include `id` to update an existing adjustment; omit it to create a new one.
+"""
+input PayslipAdjustmentInput {
+  """
+  Signed amount. Negative = deduction. Must use the same currency as the payslip's gross.
+  """
+  amount: MoneyInput!
+  """Existing adjustment id to update. Omit to create a new one."""
+  id: ID
+  name: String!
+}
+
+"""
 Country-specific tax parameter payload. Exactly one variant must be set.
 """
 input PlanningYearTaxRatesInput {
@@ -280,6 +293,37 @@ type Mutation {
     """
     values: [NetWorthValueInput!]
   ): NetWorthEntry!
+  """
+  Create a new payslip. If `file` is provided it's streamed into the local uploads bucket and its URL stored on the row.
+  """
+  payslipCreate(
+    accountIdTo: ID!
+    adjustments: [PayslipAdjustmentInput!]
+    amountGross: MoneyInput!
+    date: Date!
+    """
+    Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket; the resolved URL is persisted on the payslip row.
+    """
+    file: Upload
+    name: String!
+  ): [PlanningYear!]!
+  """Delete a payslip. Adjustments are removed via cascade."""
+  payslipDelete(id: ID!): [PlanningYear!]!
+  """
+  Partially update an existing payslip. Only fields passed in are changed. Passing `adjustments` replaces the full set of line items (rows not listed are deleted; entries with an `id` are upserted).
+  """
+  payslipUpdate(
+    accountIdTo: ID
+    adjustments: [PayslipAdjustmentInput!]
+    amountGross: MoneyInput
+    date: Date
+    """
+    Replacement file upload. Pass `null` explicitly to clear the existing fileUrl; omit to leave it unchanged.
+    """
+    file: Upload
+    id: ID!
+    name: String
+  ): [PlanningYear!]!
   """
   Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.
   """

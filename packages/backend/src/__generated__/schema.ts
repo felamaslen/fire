@@ -12,6 +12,7 @@ import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWort
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
+import { payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
     if (awaited == null)
@@ -993,6 +994,33 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         },
         isOneOf: true
     });
+    const PayslipAdjustmentInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "A single payslip line item to attach to a payslip. Include `id` to update an existing adjustment; omit it to create a new one.",
+        name: "PayslipAdjustmentInput",
+        fields() {
+            return {
+                amount: {
+                    description: "Signed amount. Negative = deduction. Must use the same currency as the payslip's gross.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyInputType)
+                },
+                id: {
+                    description: "Existing adjustment id to update. Omit to create a new one.",
+                    name: "id",
+                    type: GraphQLID
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const UploadType: GraphQLScalarType = new GraphQLScalarType({
+        description: "A multipart file upload, per the graphql-multipart-request-spec. Resolves to a `FileUpload` (`createReadStream`, `filename`, `mimetype`, `encoding`).",
+        name: "Upload",
+        ...config.scalars.Upload
+    });
     const PlanningYearTaxRatesUKInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
         name: "PlanningYearTaxRatesUKInput",
         fields() {
@@ -1177,6 +1205,80 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationNetWorthUpdateResolver(args.id, args.date, args.values, args.currencyRates);
                     }
                 },
+                payslipCreate: {
+                    description: "Create a new payslip. If `file` is provided it's streamed into the local uploads bucket and its URL stored on the row.",
+                    name: "payslipCreate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        accountIdTo: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        adjustments: {
+                            type: new GraphQLList(new GraphQLNonNull(PayslipAdjustmentInputType))
+                        },
+                        amountGross: {
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
+                        date: {
+                            type: new GraphQLNonNull(DateType)
+                        },
+                        file: {
+                            description: "Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket; the resolved URL is persisted on the payslip row.",
+                            type: UploadType
+                        },
+                        name: {
+                            type: new GraphQLNonNull(GraphQLString)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationPayslipCreateResolver(args.date, args.amountGross, args.name, args.accountIdTo, args.adjustments, args.file);
+                    }
+                },
+                payslipDelete: {
+                    description: "Delete a payslip. Adjustments are removed via cascade.",
+                    name: "payslipDelete",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationPayslipDeleteResolver(args.id);
+                    }
+                },
+                payslipUpdate: {
+                    description: "Partially update an existing payslip. Only fields passed in are changed. Passing `adjustments` replaces the full set of line items (rows not listed are deleted; entries with an `id` are upserted).",
+                    name: "payslipUpdate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        accountIdTo: {
+                            type: GraphQLID
+                        },
+                        adjustments: {
+                            type: new GraphQLList(new GraphQLNonNull(PayslipAdjustmentInputType))
+                        },
+                        amountGross: {
+                            type: MoneyInputType
+                        },
+                        date: {
+                            type: DateType
+                        },
+                        file: {
+                            description: "Replacement file upload. Pass `null` explicitly to clear the existing fileUrl; omit to leave it unchanged.",
+                            type: UploadType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        name: {
+                            type: GraphQLString
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationPayslipUpdateResolver(args.id, args.date, args.amountGross, args.name, args.accountIdTo, args.adjustments, args.file);
+                    }
+                },
                 planningAccountAssign: {
                     description: "Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.",
                     name: "planningAccountAssign",
@@ -1230,11 +1332,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "DateTime",
         ...config.scalars.DateTime
     });
-    const UploadType: GraphQLScalarType = new GraphQLScalarType({
-        description: "A multipart file upload, per the graphql-multipart-request-spec. Resolves to a `FileUpload` (`createReadStream`, `filename`, `mimetype`, `encoding`).",
-        name: "Upload",
-        ...config.scalars.Upload
-    });
     return new GraphQLSchema({
         directives: [...specifiedDirectives, new GraphQLDirective({
                 name: "constraint",
@@ -1253,6 +1350,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }
