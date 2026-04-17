@@ -11,8 +11,10 @@
     "download-schema": "mkdir -p src/__generated__ && curl -fsSL http://localhost:4000/schema.graphql -o src/__generated__/schema.graphql"
   },
   "dependencies": {
+    "@apollo/client": "^4.1.7",
     "@tanstack/react-router": "^1.133.0",
     "@tanstack/react-start": "^1.133.0",
+    "graphql": "^16.13.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
