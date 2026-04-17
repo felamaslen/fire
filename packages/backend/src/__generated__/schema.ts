@@ -434,7 +434,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const PlanningMonthAccountType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningMonthAccount",
-        description: "A single (month \u00D7 planning-account) roll-up: name, running balance, and the merged transactions (actual + predicted) for that cell.",
+        description: "A single (month \u00D7 planning-account) roll-up: name, running balance, and the merged transactions (actual + predicted) for that cell. All fields resolve synchronously from pre-filtered data \u2014 no per-field SQL.",
         fields() {
             return {
                 id: {
@@ -452,12 +452,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningTransactionType)))
                 },
                 valueEnd: {
-                    description: "Closing balance for the month.",
+                    description: "Closing balance for the month \u2014 `valueStart` plus the sum of this month's transactions.",
                     name: "valueEnd",
                     type: new GraphQLNonNull(MoneyType)
                 },
                 valueStart: {
-                    description: "Opening balance for the month.",
+                    description: "Opening balance for the month \u2014 the latest NetWorthValueAmounts snapshot strictly before the month rolled forward through any intervening planning transactions. Defaults to zero when there's no prior snapshot.",
                     name: "valueStart",
                     type: new GraphQLNonNull(MoneyType)
                 }
@@ -470,7 +470,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 accounts: {
-                    description: "Per-account rollups for this month.",
+                    description: "Per-account rollups for this month. Each account is built with pre-filtered transactions + value-start so downstream resolvers are synchronous.",
                     name: "accounts",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningMonthAccountType)))
                 },
