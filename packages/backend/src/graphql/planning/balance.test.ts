@@ -178,7 +178,7 @@ it("no snapshots — valueStart chains from predictions", async () => {
         billCreate(
           start: "2025-04-01"
           frequency: MONTHLY
-          collectionDate: "15"
+          collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Internet"
           accountIdFrom: $from
@@ -222,7 +222,7 @@ it("snapshot in month prior — subsequent months baselined from it", async () =
         billCreate(
           start: "2025-04-01"
           frequency: MONTHLY
-          collectionDate: "15"
+          collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Internet"
           accountIdFrom: $from
@@ -268,7 +268,7 @@ it("snapshots with gaps — each snapshot re-anchors, months in between chain fo
         billCreate(
           start: "2025-04-01"
           frequency: MONTHLY
-          collectionDate: "15"
+          collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Internet"
           accountIdFrom: $from
@@ -319,7 +319,7 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
           start: "2025-04-01"
           end: "2025-09-30"
           frequency: MONTHLY
-          collectionDate: "15"
+          collectionDate: ["15"]
           amount: { amount: 50, currency: "GBP" }
           name: "Internet"
           accountIdFrom: $from
@@ -461,7 +461,7 @@ it("transactions field surfaces each source with the expected provisional/editab
           start: "2025-04-01"
           end: "2025-06-30"
           frequency: MONTHLY
-          collectionDate: "15"
+          collectionDate: ["15"]
           amount: { amount: 50, currency: "GBP" }
           name: "Internet"
           accountIdFrom: $from

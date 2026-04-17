@@ -12,6 +12,7 @@ import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWort
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
+import { billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
@@ -667,6 +668,39 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const MoneyInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Client-supplied monetary value. `amount` is in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
+        name: "MoneyInput",
+        fields() {
+            return {
+                amount: {
+                    description: "Amount in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
+                    name: "amount",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                currency: {
+                    description: "ISO-4217 currency code (e.g. \"GBP\").",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningBillsFrequencyType: GraphQLEnumType = new GraphQLEnumType({
+        description: "How often a `PlanningBill` recurs.",
+        name: "PlanningBillsFrequency",
+        values: {
+            MONTHLY: {
+                value: "MONTHLY"
+            },
+            QUARTERLY: {
+                value: "QUARTERLY"
+            },
+            YEARLY: {
+                value: "YEARLY"
+            }
+        }
+    });
     const NetWorthCategoryAssetInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
         description: "Create payload for an asset category.",
         name: "NetWorthCategoryAssetInput",
@@ -883,24 +917,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
-    const MoneyInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
-        description: "Client-supplied monetary value. `amount` is in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
-        name: "MoneyInput",
-        fields() {
-            return {
-                amount: {
-                    description: "Amount in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
-                    name: "amount",
-                    type: new GraphQLNonNull(GraphQLFloat)
-                },
-                currency: {
-                    description: "ISO-4217 currency code (e.g. \"GBP\").",
-                    name: "currency",
-                    type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
-    });
     const NetWorthValueAssetInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
         description: "A line item recorded against an asset category.",
         name: "NetWorthValueAssetInput",
@@ -1104,6 +1120,125 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "Mutation",
         fields() {
             return {
+                billCreate: {
+                    description: "Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, \u2026) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `accountIdFrom`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.",
+                    name: "billCreate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        accountIdFrom: {
+                            description: "Asset account (`NetWorthCategoryAsset.id`) the bill is paid from.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        amount: {
+                            description: "Amount charged per occurrence. Currency must match the asset account.",
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
+                        collectionDate: {
+                            description: "One `M-D` entry per in-year occurrence (`M` omitted for MONTHLY). Shape per frequency: MONTHLY \u2192 one bare day (e.g. `[\"15\"]`); QUARTERLY \u2192 four `M-D` entries (e.g. `[\"4-01\", \"7-01\", \"10-01\", \"1-01\"]`); YEARLY \u2192 one `M-D` entry (e.g. `[\"4-06\"]`).",
+                            type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))),
+                            extensions: {
+                                grats: {
+                                    directives: [{
+                                            name: "constraint",
+                                            args: {
+                                                pattern: "^(\\d{1,2}-)?\\d{1,2}$"
+                                            }
+                                        }]
+                                }
+                            }
+                        },
+                        end: {
+                            description: "Last day the bill is in effect; null / omitted for ongoing.",
+                            type: DateType
+                        },
+                        frequency: {
+                            type: new GraphQLNonNull(PlanningBillsFrequencyType)
+                        },
+                        liabilityId: {
+                            description: "Liability (`NetWorthCategoryLiability.id`) this bill services, if any \u2014 e.g. a credit-card liability paid off by a monthly direct debit, or a mortgage principal. Paying the bill reduces the liability's outstanding balance.",
+                            type: GraphQLID
+                        },
+                        name: {
+                            description: "Human-readable label, e.g. \"Broadband\", \"Council tax\".",
+                            type: new GraphQLNonNull(GraphQLString)
+                        },
+                        start: {
+                            description: "First day the bill is in effect.",
+                            type: new GraphQLNonNull(DateType)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationBillCreateResolver(args.start, args.frequency, args.collectionDate, args.amount, args.name, args.accountIdFrom, args.liabilityId, args.end);
+                    }
+                },
+                billDelete: {
+                    description: "Delete a bill and every projection derived from it. Any actual transactions that had been recorded against this bill's months (via `PlanningMonthBills` overrides) are removed too, since they no longer have a parent bill. Use this when a subscription is cancelled or a mortgage is paid off.",
+                    name: "billDelete",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationBillDeleteResolver(args.id);
+                    }
+                },
+                billUpdate: {
+                    description: "Partially update an existing bill. Only fields passed in are changed \u2014 omit a field to leave it untouched. The projected-transaction stream for every affected month is recomputed from the new values; months that already had actual transactions recorded keep those and simply use the new bill as a fallback where no actual exists.",
+                    name: "billUpdate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        accountIdFrom: {
+                            description: "New paying asset account (`NetWorthCategoryAsset.id`).",
+                            type: GraphQLID
+                        },
+                        amount: {
+                            description: "New amount per occurrence. Currency must match the asset account.",
+                            type: MoneyInputType
+                        },
+                        collectionDate: {
+                            description: "New collection-day entries \u2014 see `billCreate` for the format per frequency.",
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLString)),
+                            extensions: {
+                                grats: {
+                                    directives: [{
+                                            name: "constraint",
+                                            args: {
+                                                pattern: "^(\\d{1,2}-)?\\d{1,2}$"
+                                            }
+                                        }]
+                                }
+                            }
+                        },
+                        end: {
+                            description: "New last day in effect; pass null explicitly to mark ongoing.",
+                            type: DateType
+                        },
+                        frequency: {
+                            description: "New recurrence cadence.",
+                            type: PlanningBillsFrequencyType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        liabilityId: {
+                            description: "New serviced liability (`NetWorthCategoryLiability.id`) \u2014 e.g. swap from a credit-card to a mortgage. Pass null explicitly to unset.",
+                            type: GraphQLID
+                        },
+                        name: {
+                            description: "New label.",
+                            type: GraphQLString
+                        },
+                        start: {
+                            description: "New first day in effect.",
+                            type: DateType
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationBillUpdateResolver(args.id, args.start, args.frequency, args.collectionDate, args.amount, args.name, args.accountIdFrom, args.liabilityId, args.end);
+                    }
+                },
                 netWorthCategoryCreate: {
                     description: "Create a new category (asset, liability, or option).",
                     name: "netWorthCategoryCreate",
@@ -1350,6 +1485,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }

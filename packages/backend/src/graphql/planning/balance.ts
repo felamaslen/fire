@@ -367,10 +367,21 @@ export function monthTransactionsFor(
   // 4) Bills with per-month overrides
   for (const { bill: b, overridesByMonthStartIso } of data.bills) {
     if (b.accountIdFrom !== assetId) continue;
-    if (b.start.getTime() > monthStart.getTime()) continue;
-    if (b.end && b.end.getTime() < monthStart.getTime()) continue;
-    if (!billCollectsInMonth(b.frequency, b.collectionDate, monthStart))
-      continue;
+    const collectionDay = collectionDayInMonth(
+      b.frequency,
+      b.collectionDate,
+      monthStart,
+    );
+    if (collectionDay == null) continue;
+    const collectionOn = new Date(
+      Date.UTC(
+        monthStart.getUTCFullYear(),
+        monthStart.getUTCMonth(),
+        collectionDay,
+      ),
+    );
+    if (collectionOn.getTime() < b.start.getTime()) continue;
+    if (b.end && collectionOn.getTime() > b.end.getTime()) continue;
     const override = overridesByMonthStartIso.get(monthStart.toISOString());
     if (override) {
       if (override.amount == null || override.currency == null) continue;
@@ -437,20 +448,19 @@ export function valueStartFor(
   return Money.fromMinorDenomination(runningMinor, REPORTING_CURRENCY);
 }
 
-/** Does a bill collect in the given month given its frequency + encoded collectionDate? */
-function billCollectsInMonth(
+/** The day-of-month on which the bill collects within `monthDate`, or `null` if it does not collect that month. MONTHLY returns the bare day; QUARTERLY/YEARLY look up the matching `M-D` entry. */
+function collectionDayInMonth(
   frequency: "MONTHLY" | "QUARTERLY" | "YEARLY",
   collectionDate: string,
   monthDate: Date,
-): boolean {
+): number | null {
   const month = monthDate.getUTCMonth() + 1;
-  if (frequency === "MONTHLY") return true;
-  if (frequency === "QUARTERLY") {
-    return collectionDate.split(/,\s*/).some((entry) => {
-      const [m] = entry.split("-");
-      return Number(m) === month;
-    });
+  if (frequency === "MONTHLY") return Number(collectionDate);
+  const entries =
+    frequency === "QUARTERLY" ? collectionDate.split(/,\s*/) : [collectionDate];
+  for (const entry of entries) {
+    const [m, d] = entry.split("-");
+    if (Number(m) === month) return Number(d);
   }
-  const [m] = collectionDate.split("-");
-  return Number(m) === month;
+  return null;
 }
