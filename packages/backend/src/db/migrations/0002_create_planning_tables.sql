@@ -16,6 +16,7 @@ CREATE TABLE "PlanningBills" (
   "start" date NOT NULL,
   "end" date,
   "frequency" "planningBillsFrequency" NOT NULL,
+  "collectionDate" text NOT NULL,
   "amount" BIGINT NOT NULL,
   "currency" "CurrencyCode" NOT NULL,
   "name" text NOT NULL,
@@ -27,6 +28,21 @@ CREATE TABLE "PlanningBills" (
     CHECK (
       "PlanningBills"."end" IS NULL
       OR "PlanningBills"."end" >= "PlanningBills"."start"
+    ),
+  CONSTRAINT "PlanningBills_collectionDate_ck"
+    CHECK (
+      (
+        "PlanningBills"."frequency" = 'MONTHLY'
+        AND "PlanningBills"."collectionDate" ~ '^[0-9]+$'
+      )
+      OR (
+        "PlanningBills"."frequency" = 'QUARTERLY'
+        AND "PlanningBills"."collectionDate" ~ '^[0-9]+-[0-9]+(, ?[0-9]+-[0-9]+){3}$'
+      )
+      OR (
+        "PlanningBills"."frequency" = 'YEARLY'
+        AND "PlanningBills"."collectionDate" ~ '^[0-9]+-[0-9]+$'
+      )
     )
 );
 -- > statement-breakpoint
@@ -58,6 +74,23 @@ CREATE TABLE "PlanningEarnings" (
     CHECK ("PlanningEarnings"."pensionReliefAtSource" BETWEEN 0 AND 1),
   CONSTRAINT "PlanningEarnings_pensionNetPay_ck"
     CHECK ("PlanningEarnings"."pensionNetPay" BETWEEN 0 AND 1)
+);
+-- > statement-breakpoint
+CREATE TABLE "PlanningMonthBills" (
+  "year" INTEGER NOT NULL,
+  "date" date NOT NULL,
+  "billId" uuid NOT NULL,
+  "amount" BIGINT,
+  "currency" "CurrencyCode",
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "PlanningMonthBills_pk" PRIMARY KEY ("year", "date", "billId"),
+  CONSTRAINT "PlanningMonthBills_amountCurrency_ck"
+    CHECK (
+      ("PlanningMonthBills"."amount" IS NULL) = (
+        "PlanningMonthBills"."currency" IS NULL
+      )
+    )
 );
 -- > statement-breakpoint
 CREATE TABLE "PlanningMonths" (
@@ -169,6 +202,19 @@ ADD CONSTRAINT "PlanningEarnings_accountIdTo_NetWorthCategoryAssets_id_fk"
     "id"
   )
     ON DELETE RESTRICT
+    ON UPDATE NO ACTION; -- > statement-breakpoint
+ALTER TABLE "PlanningMonthBills"
+ADD CONSTRAINT "PlanningMonthBills_billId_PlanningBills_id_fk"
+  FOREIGN KEY ("billId") REFERENCES "public"."PlanningBills" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION; -- > statement-breakpoint
+ALTER TABLE "PlanningMonthBills"
+ADD CONSTRAINT "PlanningMonthBills_month_fk"
+  FOREIGN KEY ("year", "date") REFERENCES "public"."PlanningMonths" (
+    "year",
+    "date"
+  )
+    ON DELETE CASCADE
     ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningMonths"
 ADD CONSTRAINT "PlanningMonths_year_PlanningYears_year_fk"
