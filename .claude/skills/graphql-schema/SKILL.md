@@ -92,6 +92,26 @@ The GraphQL schema lives in `packages/backend/src/graphql/**` and is generated b
 
 11. **Never leak backend implementation into GraphQL docs.** No mentions of `Postgres`, `pg enum`, `CHECK constraint`, `FK`, `cascade`, `uuid`, `numeric`, column names, migration files, `storage`, `stored`, `server-side`, `internally`, or similar. Describe the contract in domain terms only. The GraphQL doc is for API consumers who don't know or care what backs the service.
 
+12. **Prefer parameter-property constructors for `@gqlType` classes.** When the type is a class (rather than a `type` alias), declare each exposed field as `public readonly` on the constructor and attach its `/** @gqlField */` JSDoc inline. Pair it with a `static load(row)` factory that converts a Drizzle `$inferSelect` row into an instance. This keeps the field declarations, their JSDoc, and the values that populate them in one place, with no duplicated property-then-assignment boilerplate. Reserve `private readonly` for fields the class needs internally but doesn't expose.
+
+    ```ts
+    /** A UK tax code active on a `PlanningEarning` over a date range. @gqlType */
+    export class PlanningEarningUKTaxCode {
+      constructor(
+        /** @gqlField */
+        public readonly start: CalendarDate,
+        /** Last day the code applies; null while ongoing. @gqlField */
+        public readonly end: CalendarDate | null,
+        /** HMRC tax code (e.g. `1257L`). @gqlField */
+        public readonly taxCode: string,
+      ) {}
+
+      static load(row: typeof PlanningEarningsUKTaxCodes.$inferSelect): PlanningEarningUKTaxCode {
+        return new PlanningEarningUKTaxCode(row.start, row.end, row.taxCode);
+      }
+    }
+    ```
+
 ## Quick reference
 
 | Tag                 | Attaches to                 | Purpose               |
