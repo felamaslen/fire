@@ -42,6 +42,13 @@ enum NetWorthLiabilityType {
   MISC
 }
 
+"""How often a `PlanningBill` recurs."""
+enum PlanningBillsFrequency {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
 """Country-specific tax parameters captured on a PlanningYear."""
 union PlanningYearTaxRates = PlanningYearTaxRatesUK
 
@@ -256,6 +263,60 @@ type Money {
 }
 
 type Mutation {
+  """
+  Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `accountIdFrom`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
+  """
+  billCreate(
+    """Asset account (`NetWorthCategoryAsset.id`) the bill is paid from."""
+    accountIdFrom: ID!
+    """Amount charged per occurrence. Currency must match the asset account."""
+    amount: MoneyInput!
+    """
+    One `M-D` entry per in-year occurrence (`M` omitted for MONTHLY). Shape per frequency: MONTHLY → one bare day (e.g. `["15"]`); QUARTERLY → four `M-D` entries (e.g. `["4-01", "7-01", "10-01", "1-01"]`); YEARLY → one `M-D` entry (e.g. `["4-06"]`).
+    """
+    collectionDate: [String!]! @constraint(pattern: "^(\\d{1,2}-)?\\d{1,2}$")
+    """Last day the bill is in effect; null / omitted for ongoing."""
+    end: Date
+    frequency: PlanningBillsFrequency!
+    """
+    Liability (`NetWorthCategoryLiability.id`) this bill services, if any — e.g. a credit-card liability paid off by a monthly direct debit, or a mortgage principal. Paying the bill reduces the liability's outstanding balance.
+    """
+    liabilityId: ID
+    """Human-readable label, e.g. "Broadband", "Council tax"."""
+    name: String!
+    """First day the bill is in effect."""
+    start: Date!
+  ): [PlanningYear!]!
+  """
+  Delete a bill and every projection derived from it. Any actual transactions that had been recorded against this bill's months (via `PlanningMonthBills` overrides) are removed too, since they no longer have a parent bill. Use this when a subscription is cancelled or a mortgage is paid off.
+  """
+  billDelete(id: ID!): [PlanningYear!]!
+  """
+  Partially update an existing bill. Only fields passed in are changed — omit a field to leave it untouched. The projected-transaction stream for every affected month is recomputed from the new values; months that already had actual transactions recorded keep those and simply use the new bill as a fallback where no actual exists.
+  """
+  billUpdate(
+    """New paying asset account (`NetWorthCategoryAsset.id`)."""
+    accountIdFrom: ID
+    """New amount per occurrence. Currency must match the asset account."""
+    amount: MoneyInput
+    """
+    New collection-day entries — see `billCreate` for the format per frequency.
+    """
+    collectionDate: [String!] @constraint(pattern: "^(\\d{1,2}-)?\\d{1,2}$")
+    """New last day in effect; pass null explicitly to mark ongoing."""
+    end: Date
+    """New recurrence cadence."""
+    frequency: PlanningBillsFrequency
+    id: ID!
+    """
+    New serviced liability (`NetWorthCategoryLiability.id`) — e.g. swap from a credit-card to a mortgage. Pass null explicitly to unset.
+    """
+    liabilityId: ID
+    """New label."""
+    name: String
+    """New first day in effect."""
+    start: Date
+  ): [PlanningYear!]!
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """Delete a category. Fails if any value still references it."""
