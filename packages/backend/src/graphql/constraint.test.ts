@@ -1,6 +1,14 @@
 import { ApolloServer } from "@apollo/server";
 import { makeExecutableSchema } from "@graphql-tools/schema";
 import gql from "fake-tag";
+import {
+  GraphQLInputObjectType,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLObjectType,
+  GraphQLSchema,
+  GraphQLString,
+} from "graphql";
 
 import { constraintPlugin } from "./constraint";
 
@@ -139,4 +147,135 @@ it("passes a well-formed input object", async () => {
   );
   expect(result.errors).toBeUndefined();
   expect(result.data).toEqual({ register: "registered a@b" });
+});
+
+/**
+ * Schemas built programmatically (e.g. by grats) don't carry directive AST nodes;
+ * they surface them via `extensions.grats.directives`. The plugin has to honour
+ * both shapes, so we cover the extensions path with a hand-built schema.
+ */
+describe("extensions.grats.directives", () => {
+  function extSchema(): GraphQLSchema {
+    const ProductInput = new GraphQLInputObjectType({
+      name: "ProductInput",
+      fields: {
+        sku: {
+          type: new GraphQLNonNull(GraphQLString),
+          extensions: {
+            grats: {
+              directives: [
+                { name: "constraint", args: { pattern: "^[A-Z]{3}-\\d+$" } },
+              ],
+            },
+          },
+        },
+      },
+    });
+    return new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: "Query",
+        fields: {
+          lookup: {
+            type: new GraphQLNonNull(GraphQLString),
+            args: {
+              code: {
+                type: new GraphQLNonNull(GraphQLString),
+                extensions: {
+                  grats: {
+                    directives: [
+                      { name: "constraint", args: { pattern: "^\\d{4}$" } },
+                    ],
+                  },
+                },
+              },
+            },
+            resolve: (_: unknown, args: { code: string }) => `ok:${args.code}`,
+          },
+          codes: {
+            type: new GraphQLNonNull(GraphQLString),
+            args: {
+              codes: {
+                type: new GraphQLList(new GraphQLNonNull(GraphQLString)),
+                extensions: {
+                  grats: {
+                    directives: [
+                      { name: "constraint", args: { pattern: "^\\d{4}$" } },
+                    ],
+                  },
+                },
+              },
+            },
+            resolve: () => "ok",
+          },
+          submit: {
+            type: new GraphQLNonNull(GraphQLString),
+            args: {
+              product: { type: new GraphQLNonNull(ProductInput) },
+            },
+            resolve: () => "ok",
+          },
+        },
+      }),
+    });
+  }
+
+  async function runExt(
+    query: string,
+    variables?: Record<string, unknown>,
+  ): Promise<{
+    data?: unknown;
+    errors?: ReadonlyArray<{
+      message: string;
+      extensions?: Record<string, unknown>;
+    }>;
+  }> {
+    const schema = extSchema();
+    const s = new ApolloServer({
+      schema,
+      plugins: [constraintPlugin(schema)],
+    });
+    await s.start();
+    try {
+      const res = await s.executeOperation({ query, variables });
+      if (res.body.kind !== "single")
+        throw new Error("expected single response");
+      return res.body.singleResult;
+    } finally {
+      await s.stop();
+    }
+  }
+
+  it("honours constraint on a scalar argument surfaced via grats extensions", async () => {
+    const result = await runExt(`{ lookup(code: "12ab") }`);
+    expect(result.errors?.[0].message).toMatchInlineSnapshot(
+      `"Argument "code" on field "lookup" does not match pattern /^\\d{4}$/"`,
+    );
+    expect(result.errors?.[0].extensions?.code).toBe("BAD_USER_INPUT");
+  });
+
+  it("honours constraint on a list argument surfaced via grats extensions", async () => {
+    const result = await runExt(`{ codes(codes: ["1234", "xyz"]) }`);
+    expect(result.errors?.[0].message).toMatchInlineSnapshot(
+      `"Argument "codes" on field "codes" at [1] does not match pattern /^\\d{4}$/"`,
+    );
+  });
+
+  it("honours constraint on an input-object field surfaced via grats extensions", async () => {
+    const result = await runExt(`{ submit(product: { sku: "abc" }) }`);
+    expect(result.errors?.[0].message).toMatchInlineSnapshot(
+      `"Input field "submit.product.sku" does not match pattern /^[A-Z]{3}-\\d+$/"`,
+    );
+  });
+
+  it("lets well-formed values through the grats-extensions path", async () => {
+    const result = await runExt(
+      `{ lookup(code: "1234") codes(codes: ["1234", "5678"]) submit(product: { sku: "ABC-42" }) }`,
+    );
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      lookup: "ok:1234",
+      codes: "ok",
+      submit: "ok",
+    });
+  });
 });
