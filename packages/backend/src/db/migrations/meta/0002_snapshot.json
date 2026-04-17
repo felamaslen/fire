@@ -1,5 +1,5 @@
 {
-  "id": "32e6e09b-cbdd-4141-b4de-984435af7ff6",
+  "id": "ea1c57b1-bc60-474e-b6eb-d4c663e48858",
   "prevId": "6d8e1045-350f-4ef7-903f-1446c8ff9f3e",
   "version": "7",
   "dialect": "postgresql",
@@ -609,6 +609,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "collectionDate": {
+          "name": "collectionDate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "amount": {
           "name": "amount",
           "type": "bigint",
@@ -691,6 +697,10 @@
         "PlanningBills_dateRange_ck": {
           "name": "PlanningBills_dateRange_ck",
           "value": "\"PlanningBills\".\"end\" IS NULL OR \"PlanningBills\".\"end\" >= \"PlanningBills\".\"start\""
+        },
+        "PlanningBills_collectionDate_ck": {
+          "name": "PlanningBills_collectionDate_ck",
+          "value": "(\"PlanningBills\".\"frequency\" = 'MONTHLY' AND \"PlanningBills\".\"collectionDate\" ~ '^[0-9]+$')\n           OR (\"PlanningBills\".\"frequency\" = 'QUARTERLY' AND \"PlanningBills\".\"collectionDate\" ~ '^[0-9]+-[0-9]+(, ?[0-9]+-[0-9]+){3}$')\n           OR (\"PlanningBills\".\"frequency\" = 'YEARLY' AND \"PlanningBills\".\"collectionDate\" ~ '^[0-9]+-[0-9]+$')"
         }
       },
       "isRLSEnabled": false
@@ -818,6 +828,107 @@
         "PlanningEarnings_pensionNetPay_ck": {
           "name": "PlanningEarnings_pensionNetPay_ck",
           "value": "\"PlanningEarnings\".\"pensionNetPay\" BETWEEN 0 AND 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningMonthBills": {
+      "name": "PlanningMonthBills",
+      "schema": "",
+      "columns": {
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "billId": {
+          "name": "billId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningMonthBills_billId_PlanningBills_id_fk": {
+          "name": "PlanningMonthBills_billId_PlanningBills_id_fk",
+          "tableFrom": "PlanningMonthBills",
+          "tableTo": "PlanningBills",
+          "columnsFrom": [
+            "billId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "PlanningMonthBills_month_fk": {
+          "name": "PlanningMonthBills_month_fk",
+          "tableFrom": "PlanningMonthBills",
+          "tableTo": "PlanningMonths",
+          "columnsFrom": [
+            "year",
+            "date"
+          ],
+          "columnsTo": [
+            "year",
+            "date"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "PlanningMonthBills_pk": {
+          "name": "PlanningMonthBills_pk",
+          "columns": [
+            "year",
+            "date",
+            "billId"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "PlanningMonthBills_amountCurrency_ck": {
+          "name": "PlanningMonthBills_amountCurrency_ck",
+          "value": "(\"PlanningMonthBills\".\"amount\" IS NULL) = (\"PlanningMonthBills\".\"currency\" IS NULL)"
         }
       },
       "isRLSEnabled": false

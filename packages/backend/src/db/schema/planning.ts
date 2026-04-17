@@ -261,6 +261,7 @@ export const planningMonthsRelations = relations(
       references: [PlanningYears.year],
     }),
     transactions: many(PlanningTransactions),
+    billOverrides: many(PlanningMonthBills),
   }),
 );
 
@@ -353,6 +354,14 @@ export const PlanningBills = pgTable(
     /** Last day this bill is/was in effect; null if ongoing. */
     end: date("end", { mode: "date" }),
     frequency: planningBillsFrequency("frequency").notNull(),
+    /**
+     * When the bill is collected, encoded per frequency:
+     * - MONTHLY: a day-of-month as a bare number (`"15"`, `"31"`).
+     * - QUARTERLY: four comma-separated `M-D` entries, one per quarter (`"2-04, 5-05, 8-01, 11-03"`).
+     * - YEARLY: one `M-D` entry (`"3-07"`).
+     * SQL enforces the overall shape; resolvers validate ranges.
+     */
+    collectionDate: text("collectionDate").notNull(),
     /** Amount per occurrence, in minor units of `currency`. */
     amount: bigint("amount", { mode: "number" }).notNull(),
     currency: currencyCode("currency").notNull(),
@@ -377,19 +386,79 @@ export const PlanningBills = pgTable(
       "PlanningBills_dateRange_ck",
       sql`${t.end} IS NULL OR ${t.end} >= ${t.start}`,
     ),
+    check(
+      "PlanningBills_collectionDate_ck",
+      sql`(${t.frequency} = 'MONTHLY' AND ${t.collectionDate} ~ '^[0-9]+$')
+           OR (${t.frequency} = 'QUARTERLY' AND ${t.collectionDate} ~ '^[0-9]+-[0-9]+(, ?[0-9]+-[0-9]+){3}$')
+           OR (${t.frequency} = 'YEARLY' AND ${t.collectionDate} ~ '^[0-9]+-[0-9]+$')`,
+    ),
   ],
 );
 
-export const planningBillsRelations = relations(PlanningBills, ({ one }) => ({
-  accountFrom: one(NetWorthCategoryAssets, {
-    fields: [PlanningBills.accountIdFrom],
-    references: [NetWorthCategoryAssets.id],
+export const planningBillsRelations = relations(
+  PlanningBills,
+  ({ one, many }) => ({
+    accountFrom: one(NetWorthCategoryAssets, {
+      fields: [PlanningBills.accountIdFrom],
+      references: [NetWorthCategoryAssets.id],
+    }),
+    liability: one(NetWorthCategoryLiabilities, {
+      fields: [PlanningBills.liabilityId],
+      references: [NetWorthCategoryLiabilities.id],
+    }),
+    monthOverrides: many(PlanningMonthBills),
   }),
-  liability: one(NetWorthCategoryLiabilities, {
-    fields: [PlanningBills.liabilityId],
-    references: [NetWorthCategoryLiabilities.id],
+);
+
+/** Per-month override for a PlanningBill. If a row exists the bill is NOT provisional for that month; `amount` null means the bill is skipped. */
+export const PlanningMonthBills = pgTable(
+  "PlanningMonthBills",
+  {
+    year: integer("year").notNull(),
+    date: date("date", { mode: "date" }).notNull(),
+    billId: uuid("billId")
+      .notNull()
+      .references(() => PlanningBills.id, { onDelete: "cascade" }),
+    /** Override amount in minor units of `currency`; null means the bill is skipped this month. */
+    amount: bigint("amount", { mode: "number" }),
+    currency: currencyCode("currency"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      name: "PlanningMonthBills_pk",
+      columns: [t.year, t.date, t.billId],
+    }),
+    foreignKey({
+      name: "PlanningMonthBills_month_fk",
+      columns: [t.year, t.date],
+      foreignColumns: [PlanningMonths.year, PlanningMonths.date],
+    }).onDelete("cascade"),
+    check(
+      "PlanningMonthBills_amountCurrency_ck",
+      sql`(${t.amount} IS NULL) = (${t.currency} IS NULL)`,
+    ),
+  ],
+);
+
+export const planningMonthBillsRelations = relations(
+  PlanningMonthBills,
+  ({ one }) => ({
+    bill: one(PlanningBills, {
+      fields: [PlanningMonthBills.billId],
+      references: [PlanningBills.id],
+    }),
+    month: one(PlanningMonths, {
+      fields: [PlanningMonthBills.year, PlanningMonthBills.date],
+      references: [PlanningMonths.year, PlanningMonths.date],
+    }),
   }),
-}));
+);
 
 /** A recorded payslip — one pay-period snapshot, paid into an asset account. */
 export const PlanningPayslips = pgTable("PlanningPayslips", {
