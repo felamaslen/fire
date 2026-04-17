@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 
+import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -27,9 +28,6 @@ export default defineConfig({
     pool: "forks",
     globals: true,
     silent: "passed-only",
-    env: {
-      DATABASE_URL: "postgres://fire:fire@localhost:5433/postgres",
-      UPLOADS_DIR: "./.uploads-test",
-    },
+    env: loadEnv("test", process.cwd(), ""),
   },
 });
