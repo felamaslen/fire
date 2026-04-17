@@ -11,8 +11,8 @@
     "typecheck": "pnpm grats && tsc --noEmit",
     "test": "vitest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --env-file=.env ./node_modules/drizzle-kit/bin.cjs migrate",
-    "db:studio": "node --env-file=.env ./node_modules/drizzle-kit/bin.cjs studio",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
     "db:generate-schema": "drizzle-kit export --sql > src/db/__generated__/schema.sql"
   },
   "dependencies": {

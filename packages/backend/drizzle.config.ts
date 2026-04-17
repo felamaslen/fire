@@ -6,6 +6,6 @@ export default defineConfig({
   out: "./src/db/migrations",
   casing: "camelCase",
   dbCredentials: {
-    url: process.env.DATABASE_URL!,
+    url: process.env.DATABASE_URL ?? "postgres://fire:fire@localhost:5433/fire",
   },
 });
