@@ -1,7 +1,9 @@
 import { ApolloServer } from "@apollo/server";
-import fastifyApollo, {
+import {
   fastifyApolloDrainPlugin,
+  fastifyApolloHandler,
 } from "@as-integrations/fastify";
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { GraphQLError } from "graphql";
 
 import { log } from "@/log";
@@ -9,7 +11,7 @@ import { router } from "@/router";
 
 import { getSchema } from "../__generated__/schema";
 import { constraintPlugin } from "./constraint";
-import { Context, createContext } from "./context";
+import { type Context, createContext } from "./context";
 import { dateScalar } from "./date";
 import { dateTimeScalar } from "./date-time";
 import { applySemanticNonNull } from "./semantic-non-null";
@@ -22,15 +24,18 @@ export const scalars = {
   Upload: uploadScalar,
 };
 
-// Fastify can only accept plugins before boot; when Vite re-evaluates this
-// module on HMR, skip re-registration (process restart needed for schema
-// changes — the running server keeps serving with the prior schema).
-const g = globalThis as { __apolloRegistered?: boolean };
-if (!g.__apolloRegistered) {
-  g.__apolloRegistered = true;
+// Apollo state persists across Vite HMR via globalThis. Only the Fastify route
+// registration is one-shot (Fastify rejects plugin registration after boot);
+// the Apollo server itself is rebuilt on every module evaluation so schema /
+// resolver changes take effect without a process restart.
+declare global {
+  var __apolloState: { current: ApolloServer<Context> | null } | undefined;
 
+  var __apolloRouted: boolean | undefined;
+}
+
+async function buildApollo(): Promise<ApolloServer<Context>> {
   const schema = applySemanticNonNull(getSchema({ scalars }));
-
   const apollo = new ApolloServer<Context>({
     schema,
     includeStacktraceInErrorResponses: false,
@@ -52,9 +57,37 @@ if (!g.__apolloRegistered) {
       return { ...rest, ...(safeExtensions && { extensions: safeExtensions }) };
     },
   });
-
   await apollo.start();
-  await router.register(fastifyApollo<Context>(apollo), {
-    context: createContext,
-  });
+  return apollo;
+}
+
+globalThis.__apolloState ??= { current: null };
+const prev = globalThis.__apolloState.current;
+globalThis.__apolloState.current = await buildApollo();
+if (prev) await prev.stop();
+
+if (!globalThis.__apolloRouted) {
+  globalThis.__apolloRouted = true;
+  const state = globalThis.__apolloState;
+  const dispatch: FastifyPluginAsync = async (app) => {
+    app.route({
+      method: ["GET", "POST"],
+      url: "/graphql",
+      async handler(request, reply) {
+        const current = state.current;
+        if (!current) throw new Error("Apollo server not initialised");
+        // `fastifyApolloHandler` returns a handler typed against its own
+        // narrow `RouteInterface`; widen back to the generic Fastify handler
+        // shape so our route's request/reply types flow through.
+        const apolloHandler = fastifyApolloHandler(current, {
+          context: createContext,
+        }) as unknown as (
+          req: FastifyRequest,
+          rep: FastifyReply,
+        ) => Promise<unknown>;
+        return apolloHandler(request, reply);
+      },
+    });
+  };
+  await router.register(dispatch);
 }
