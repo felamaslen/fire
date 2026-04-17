@@ -1,0 +1,4 @@
+.output/
+.vite/
+.tanstack/
+src/routeTree.gen.ts
