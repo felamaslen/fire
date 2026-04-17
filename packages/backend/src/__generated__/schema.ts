@@ -9,6 +9,7 @@ import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
 import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
+import { currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
@@ -836,6 +837,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryBillsResolver(args.first, args.after));
+                    }
+                },
+                currencyDefault: {
+                    description: "ISO-4217 code of the server's configured home currency (e.g. `\"GBP\"`). Used by clients as the default currency when the user has not configured any currency rates on an entry.",
+                    name: "currencyDefault",
+                    type: GraphQLString,
+                    resolve() {
+                        return assertNonNull(queryCurrencyDefaultResolver());
                     }
                 },
                 earnings: {

@@ -2,10 +2,20 @@ import { strict as assert } from "node:assert";
 
 import type { Float } from "grats";
 
-import { CURRENCIES } from "@/config";
+import { CURRENCIES, HOME_CURRENCY } from "@/config";
 import { type CurrencyCode, currencyCode } from "@/db/schema/currency";
 
 export { CURRENCIES };
+
+/**
+ * ISO-4217 code of the server's configured home currency (e.g. `"GBP"`). Used by clients as the default currency when the user has not configured any currency rates on an entry.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export function currencyDefault(): string | null {
+  return HOME_CURRENCY;
+}
 
 export function assertCurrencyCode(s: string): asserts s is CurrencyCode {
   assert(

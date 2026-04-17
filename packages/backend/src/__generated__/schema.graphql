@@ -859,6 +859,10 @@ type Query {
   """
   bills(after: ID, first: Int): PlanningBillConnection @semanticNonNull
   """
+  ISO-4217 code of the server's configured home currency (e.g. `"GBP"`). Used by clients as the default currency when the user has not configured any currency rates on an entry.
+  """
+  currencyDefault: String @semanticNonNull
+  """
   Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
   """
   earnings(after: ID, first: Int): PlanningEarningConnection @semanticNonNull
