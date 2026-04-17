@@ -15,6 +15,7 @@ import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategory
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
 import { payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
+import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
     if (awaited == null)
@@ -1797,6 +1798,94 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return mutationPlanningYearSetResolver(args.year, args.taxRates);
+                    }
+                },
+                transactionCreate: {
+                    description: "Record a manual transaction on a planning month. Amount is a positive magnitude; the direction is carried by which account is `fromAccountId` (and optionally `toAccountId` for internal transfers).",
+                    name: "transactionCreate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        amount: {
+                            description: "Positive magnitude. Sign is derived from which side of the transaction an account is on.",
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
+                        fromAccountId: {
+                            description: "Planning account (`PlanningAccount.id`) the transaction is paid from.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        liabilityId: {
+                            description: "Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any.",
+                            type: GraphQLID
+                        },
+                        monthId: {
+                            description: "Planning month id, e.g. `\"apr-2025\"`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        name: {
+                            type: new GraphQLNonNull(GraphQLString)
+                        },
+                        toAccountId: {
+                            description: "Destination planning account (`PlanningAccount.id`) for a transfer.",
+                            type: GraphQLID
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationTransactionCreateResolver(args.monthId, args.amount, args.name, args.fromAccountId, args.toAccountId, args.liabilityId);
+                    }
+                },
+                transactionDelete: {
+                    description: "Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:\n\n- `tx:\u2026` / `to:\u2026` \u2014 deletes the `PlanningTransactions` row.\n- `pay:\u2026` \u2014 deletes the payslip (and its adjustments, via cascade).\n- `adj:\u2026` \u2014 deletes the single adjustment.\n- `bill:\u2026` \u2014 writes a per-month bill override with null amount, which skips the bill for this month only.\n- `earn:\u2026` \u2014 inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.",
+                    name: "transactionDelete",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        id: {
+                            description: "Composite id as returned on `PlanningTransaction.id`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        monthId: {
+                            description: "Planning month id, e.g. `\"apr-2025\"`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationTransactionDeleteResolver(args.monthId, args.id);
+                    }
+                },
+                transactionUpdate: {
+                    description: "Update an existing transaction. The composite `id` determines what's actually rewritten:\n\n- `tx:\u2026` / `to:\u2026` \u2014 patches the underlying manual `PlanningTransactions` row.\n- `pay:\u2026` \u2014 patches the payslip gross / name.\n- `adj:\u2026` \u2014 patches a payslip adjustment (sign of the existing row is preserved; `amount` is treated as magnitude).\n- `bill:\u2026` \u2014 creates or updates a per-month bill override so this month uses the new amount in place of the predicted value.\n- `earn:\u2026` \u2014 materialises this month's earnings prediction as a real payslip (gross + auto-populated tax/NIC/student-loan deductions), then applies the edit to the corresponding payslip line. Future months continue to be predicted from the earnings stream.",
+                    name: "transactionUpdate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    args: {
+                        amount: {
+                            description: "New positive magnitude.",
+                            type: MoneyInputType
+                        },
+                        fromAccountId: {
+                            description: "New paying planning account (`PlanningAccount.id`). Manual transactions only.",
+                            type: GraphQLID
+                        },
+                        id: {
+                            description: "Composite id as returned on `PlanningTransaction.id`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        liabilityId: {
+                            description: "New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only.",
+                            type: GraphQLID
+                        },
+                        monthId: {
+                            description: "Planning month id, e.g. `\"apr-2025\"`. For manual transactions this also re-anchors the transaction to that month.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        name: {
+                            type: GraphQLString
+                        },
+                        toAccountId: {
+                            description: "New destination planning account (`PlanningAccount.id`) for a transfer. Pass null explicitly to clear. Manual transactions only.",
+                            type: GraphQLID
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationTransactionUpdateResolver(args.monthId, args.id, args.amount, args.name, args.fromAccountId, args.toAccountId, args.liabilityId);
                     }
                 }
             };

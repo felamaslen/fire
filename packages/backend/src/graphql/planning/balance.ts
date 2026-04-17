@@ -1,7 +1,6 @@
 import { strict as assert } from "node:assert";
 
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
-import type { ID } from "grats";
 
 import { db } from "@/db";
 import {
@@ -25,6 +24,7 @@ import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
 import type { PlanningTransaction } from "./index";
 import { computeUKTake } from "./tax";
+import { encodePlanningTransactionId } from "./transactions";
 
 // TODO: derive per-account currency from the latest NetWorthValueAmount / let callers specify it. For now the planner reports everything in GBP.
 const REPORTING_CURRENCY = "GBP" as const;
@@ -258,7 +258,7 @@ export function monthTransactionsFor(
     if (tx.date.getTime() >= monthEnd.getTime()) continue;
     if (tx.fromAccountId === assetId) {
       out.push({
-        id: `tx:${tx.id}` as ID,
+        id: encodePlanningTransactionId({ kind: "tx", id: tx.id }),
         name: tx.name,
         amount: Money.fromMinorDenomination(-tx.amount, tx.currency),
         isProvisional: false,
@@ -267,7 +267,7 @@ export function monthTransactionsFor(
     }
     if (tx.toAccountId === assetId) {
       out.push({
-        id: `to:${tx.id}` as ID,
+        id: encodePlanningTransactionId({ kind: "to", id: tx.id }),
         name: tx.name,
         amount: Money.fromMinorDenomination(tx.amount, tx.currency),
         isProvisional: false,
@@ -285,7 +285,7 @@ export function monthTransactionsFor(
   );
   for (const { payslip: p, adjustments } of payslipsThisMonth) {
     out.push({
-      id: `pay:${p.id}` as ID,
+      id: encodePlanningTransactionId({ kind: "pay", id: p.id }),
       name: p.name,
       amount: Money.fromMinorDenomination(p.amountGross, p.currency),
       isProvisional: false,
@@ -293,7 +293,7 @@ export function monthTransactionsFor(
     });
     for (const a of adjustments) {
       out.push({
-        id: `adj:${a.id}` as ID,
+        id: encodePlanningTransactionId({ kind: "adj", id: a.id }),
         name: a.name,
         amount: Money.fromMinorDenomination(a.amount, p.currency),
         isProvisional: false,
@@ -322,43 +322,59 @@ export function monthTransactionsFor(
       });
       const perMonth = (n: number) => Math.round(n / 12);
       out.push({
-        id: `earn:gross:${e.id}` as ID,
+        id: encodePlanningTransactionId({
+          kind: "earn",
+          part: "gross",
+          id: e.id,
+        }),
         name: `${e.name} — gross`,
         amount: Money.fromMinorDenomination(perMonth(take.gross), e.currency),
         isProvisional: true,
-        isEditable: false,
+        isEditable: true,
       });
       if (take.incomeTax > 0) {
         out.push({
-          id: `earn:tax:${e.id}` as ID,
+          id: encodePlanningTransactionId({
+            kind: "earn",
+            part: "tax",
+            id: e.id,
+          }),
           name: `${e.name} — income tax`,
           amount: Money.fromMinorDenomination(
             -perMonth(take.incomeTax),
             e.currency,
           ),
           isProvisional: true,
-          isEditable: false,
+          isEditable: true,
         });
       }
       if (take.nic > 0) {
         out.push({
-          id: `earn:nic:${e.id}` as ID,
+          id: encodePlanningTransactionId({
+            kind: "earn",
+            part: "nic",
+            id: e.id,
+          }),
           name: `${e.name} — NIC`,
           amount: Money.fromMinorDenomination(-perMonth(take.nic), e.currency),
           isProvisional: true,
-          isEditable: false,
+          isEditable: true,
         });
       }
       if (take.studentLoan > 0) {
         out.push({
-          id: `earn:sl:${e.id}` as ID,
+          id: encodePlanningTransactionId({
+            kind: "earn",
+            part: "sl",
+            id: e.id,
+          }),
           name: `${e.name} — student loan`,
           amount: Money.fromMinorDenomination(
             -perMonth(take.studentLoan),
             e.currency,
           ),
           isProvisional: true,
-          isEditable: false,
+          isEditable: true,
         });
       }
     }
@@ -386,7 +402,7 @@ export function monthTransactionsFor(
     if (override) {
       if (override.amount == null || override.currency == null) continue;
       out.push({
-        id: `bill:${b.id}` as ID,
+        id: encodePlanningTransactionId({ kind: "bill", id: b.id }),
         name: b.name,
         amount: Money.fromMinorDenomination(
           -override.amount,
@@ -397,7 +413,7 @@ export function monthTransactionsFor(
       });
     } else {
       out.push({
-        id: `bill:${b.id}` as ID,
+        id: encodePlanningTransactionId({ kind: "bill", id: b.id }),
         name: b.name,
         amount: Money.fromMinorDenomination(-b.amount, b.currency),
         isProvisional: true,

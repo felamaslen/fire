@@ -461,6 +461,73 @@ type Mutation {
   Upsert a planning year plus (optionally) its tax rates. Creates the 12 monthly buckets on first write.
   """
   planningYearSet(taxRates: PlanningYearTaxRatesInput, year: ID!): PlanningYear!
+  """
+  Record a manual transaction on a planning month. Amount is a positive magnitude; the direction is carried by which account is `fromAccountId` (and optionally `toAccountId` for internal transfers).
+  """
+  transactionCreate(
+    """
+    Positive magnitude. Sign is derived from which side of the transaction an account is on.
+    """
+    amount: MoneyInput!
+    """Planning account (`PlanningAccount.id`) the transaction is paid from."""
+    fromAccountId: ID!
+    """
+    Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any.
+    """
+    liabilityId: ID
+    """Planning month id, e.g. `"apr-2025"`."""
+    monthId: ID!
+    name: String!
+    """Destination planning account (`PlanningAccount.id`) for a transfer."""
+    toAccountId: ID
+  ): [PlanningYear!]!
+  """
+  Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:
+  
+  - `tx:…` / `to:…` — deletes the `PlanningTransactions` row.
+  - `pay:…` — deletes the payslip (and its adjustments, via cascade).
+  - `adj:…` — deletes the single adjustment.
+  - `bill:…` — writes a per-month bill override with null amount, which skips the bill for this month only.
+  - `earn:…` — inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.
+  """
+  transactionDelete(
+    """Composite id as returned on `PlanningTransaction.id`."""
+    id: ID!
+    """Planning month id, e.g. `"apr-2025"`."""
+    monthId: ID!
+  ): [PlanningYear!]!
+  """
+  Update an existing transaction. The composite `id` determines what's actually rewritten:
+  
+  - `tx:…` / `to:…` — patches the underlying manual `PlanningTransactions` row.
+  - `pay:…` — patches the payslip gross / name.
+  - `adj:…` — patches a payslip adjustment (sign of the existing row is preserved; `amount` is treated as magnitude).
+  - `bill:…` — creates or updates a per-month bill override so this month uses the new amount in place of the predicted value.
+  - `earn:…` — materialises this month's earnings prediction as a real payslip (gross + auto-populated tax/NIC/student-loan deductions), then applies the edit to the corresponding payslip line. Future months continue to be predicted from the earnings stream.
+  """
+  transactionUpdate(
+    """New positive magnitude."""
+    amount: MoneyInput
+    """
+    New paying planning account (`PlanningAccount.id`). Manual transactions only.
+    """
+    fromAccountId: ID
+    """Composite id as returned on `PlanningTransaction.id`."""
+    id: ID!
+    """
+    New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only.
+    """
+    liabilityId: ID
+    """
+    Planning month id, e.g. `"apr-2025"`. For manual transactions this also re-anchors the transaction to that month.
+    """
+    monthId: ID!
+    name: String
+    """
+    New destination planning account (`PlanningAccount.id`) for a transfer. Pass null explicitly to clear. Manual transactions only.
+    """
+    toAccountId: ID
+  ): [PlanningYear!]!
 }
 
 """
