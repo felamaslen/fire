@@ -9,6 +9,7 @@ import { router } from "@/router";
 
 import { getSchema } from "../__generated__/schema";
 import { constraintPlugin } from "./constraint";
+import { Context, createContext } from "./context";
 import { dateScalar } from "./date";
 import { dateTimeScalar } from "./date-time";
 import { applySemanticNonNull } from "./semantic-non-null";
@@ -30,7 +31,7 @@ if (!g.__apolloRegistered) {
 
   const schema = applySemanticNonNull(getSchema({ scalars }));
 
-  const apollo = new ApolloServer({
+  const apollo = new ApolloServer<Context>({
     schema,
     includeStacktraceInErrorResponses: false,
     plugins: [fastifyApolloDrainPlugin(router), constraintPlugin(schema)],
@@ -53,5 +54,7 @@ if (!g.__apolloRegistered) {
   });
 
   await apollo.start();
-  await router.register(fastifyApollo(apollo));
+  await router.register(fastifyApollo<Context>(apollo), {
+    context: createContext,
+  });
 }
