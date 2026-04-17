@@ -491,7 +491,7 @@ type NetWorthValue {
   option: NetWorthCategoryOption
 }
 
-"""Pagination state for a NetWorthEntryConnection."""
+"""Pagination state for a cursor-paginated connection."""
 type PageInfo {
   endCursor: ID
   hasNextPage: Boolean!
@@ -509,6 +509,37 @@ type PlanningAccount {
   Display name — the alias if one was set, otherwise the underlying asset's name.
   """
   name: String!
+}
+
+"""
+A recurring bill that projects forward into future months' balances as a provisional outgoing transaction until an actual transaction is recorded for that month.
+"""
+type PlanningBill {
+  """Amount charged per occurrence."""
+  amount: Money!
+  """
+  In-year occurrences, one `M-D` entry each (MONTHLY uses a bare day, no month prefix). See `billCreate` for the encoding.
+  """
+  collectionDate: [String!]!
+  """Last day the bill is in effect; null if ongoing."""
+  end: Date
+  frequency: PlanningBillsFrequency!
+  id: ID!
+  name: String!
+  """First day the bill is in effect."""
+  start: Date!
+}
+
+"""A cursor-paginated list of `PlanningBill`, newest-`start` first."""
+type PlanningBillConnection {
+  edges: [PlanningBillEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""An edge within a `PlanningBillConnection`."""
+type PlanningBillEdge {
+  cursor: ID!
+  node: PlanningBill!
 }
 
 """
@@ -612,6 +643,10 @@ type Pong {
 }
 
 type Query {
+  """
+  Every registered bill, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
+  """
+  bills(after: ID, first: Int): PlanningBillConnection @semanticNonNull
   """Paginated list of net-worth entries, newest first."""
   netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """

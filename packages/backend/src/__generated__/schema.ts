@@ -7,12 +7,12 @@ import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
-import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
+import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
+import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
-import { billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
@@ -28,6 +28,140 @@ export type SchemaConfig = {
     };
 };
 export function getSchema(config: SchemaConfig): GraphQLSchema {
+    const MoneyType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Money",
+        description: "A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for \u00A3123.45).",
+        fields() {
+            return {
+                amount: {
+                    description: "Amount in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
+                    name: "amount",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                currency: {
+                    description: "ISO-4217 currency code (e.g. \"GBP\").",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const DateType: GraphQLScalarType = new GraphQLScalarType({
+        description: "ISO-8601 calendar date (YYYY-MM-DD). No time-of-day component.",
+        name: "Date",
+        ...config.scalars.Date
+    });
+    const PlanningBillsFrequencyType: GraphQLEnumType = new GraphQLEnumType({
+        description: "How often a `PlanningBill` recurs.",
+        name: "PlanningBillsFrequency",
+        values: {
+            MONTHLY: {
+                value: "MONTHLY"
+            },
+            QUARTERLY: {
+                value: "QUARTERLY"
+            },
+            YEARLY: {
+                value: "YEARLY"
+            }
+        }
+    });
+    const PlanningBillType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBill",
+        description: "A recurring bill that projects forward into future months' balances as a provisional outgoing transaction until an actual transaction is recorded for that month.",
+        fields() {
+            return {
+                amount: {
+                    description: "Amount charged per occurrence.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                collectionDate: {
+                    description: "In-year occurrences, one `M-D` entry each (MONTHLY uses a bare day, no month prefix). See `billCreate` for the encoding.",
+                    name: "collectionDate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))
+                },
+                end: {
+                    description: "Last day the bill is in effect; null if ongoing.",
+                    name: "end",
+                    type: DateType
+                },
+                frequency: {
+                    name: "frequency",
+                    type: new GraphQLNonNull(PlanningBillsFrequencyType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                start: {
+                    description: "First day the bill is in effect.",
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                }
+            };
+        }
+    });
+    const PlanningBillEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBillEdge",
+        description: "An edge within a `PlanningBillConnection`.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PlanningBillType)
+                }
+            };
+        }
+    });
+    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PageInfo",
+        description: "Pagination state for a cursor-paginated connection.",
+        fields() {
+            return {
+                endCursor: {
+                    name: "endCursor",
+                    type: GraphQLID
+                },
+                hasNextPage: {
+                    name: "hasNextPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                hasPreviousPage: {
+                    name: "hasPreviousPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                startCursor: {
+                    name: "startCursor",
+                    type: GraphQLID
+                }
+            };
+        }
+    });
+    const PlanningBillConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBillConnection",
+        description: "A cursor-paginated list of `PlanningBill`, newest-`start` first.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningBillEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
     const NetWorthCurrencyRateType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthCurrencyRate",
         description: "Exchange rate captured alongside a net-worth entry; converts one unit of `base` into `currency`.",
@@ -47,29 +181,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Units of `currency` per one unit of `base` (e.g. 1.35 for GBP/USD).",
                     name: "rate",
                     type: new GraphQLNonNull(GraphQLFloat)
-                }
-            };
-        }
-    });
-    const DateType: GraphQLScalarType = new GraphQLScalarType({
-        description: "ISO-8601 calendar date (YYYY-MM-DD). No time-of-day component.",
-        name: "Date",
-        ...config.scalars.Date
-    });
-    const MoneyType: GraphQLObjectType = new GraphQLObjectType({
-        name: "Money",
-        description: "A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for \u00A3123.45).",
-        fields() {
-            return {
-                amount: {
-                    description: "Amount in major units of `currency` (e.g. 123.45 for \u00A3123.45).",
-                    name: "amount",
-                    type: new GraphQLNonNull(GraphQLFloat)
-                },
-                currency: {
-                    description: "ISO-4217 currency code (e.g. \"GBP\").",
-                    name: "currency",
-                    type: new GraphQLNonNull(GraphQLString)
                 }
             };
         }
@@ -293,30 +404,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 node: {
                     name: "node",
                     type: new GraphQLNonNull(NetWorthEntryType)
-                }
-            };
-        }
-    });
-    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PageInfo",
-        description: "Pagination state for a NetWorthEntryConnection.",
-        fields() {
-            return {
-                endCursor: {
-                    name: "endCursor",
-                    type: GraphQLID
-                },
-                hasNextPage: {
-                    name: "hasNextPage",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                hasPreviousPage: {
-                    name: "hasPreviousPage",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                startCursor: {
-                    name: "startCursor",
-                    type: GraphQLID
                 }
             };
         }
@@ -592,6 +679,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "Query",
         fields() {
             return {
+                bills: {
+                    description: "Every registered bill, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).",
+                    name: "bills",
+                    type: PlanningBillConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryBillsResolver(args.first, args.after));
+                    }
+                },
                 netWorth: {
                     description: "Paginated list of net-worth entries, newest first.",
                     name: "netWorth",
@@ -684,21 +787,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLString)
                 }
             };
-        }
-    });
-    const PlanningBillsFrequencyType: GraphQLEnumType = new GraphQLEnumType({
-        description: "How often a `PlanningBill` recurs.",
-        name: "PlanningBillsFrequency",
-        values: {
-            MONTHLY: {
-                value: "MONTHLY"
-            },
-            QUARTERLY: {
-                value: "QUARTERLY"
-            },
-            YEARLY: {
-                value: "YEARLY"
-            }
         }
     });
     const NetWorthCategoryAssetInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
@@ -1485,6 +1573,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }

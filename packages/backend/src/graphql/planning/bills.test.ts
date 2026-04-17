@@ -593,3 +593,91 @@ it("rejects a YEARLY bill whose entry lacks a month (must be M-D)", async () => 
     `[Error: GraphQL errors: YEARLY collectionDate entries must be in "M-D" form, got "15".]`,
   );
 });
+
+it("Query.bills returns rows sorted by start descending, paginated", async () => {
+  await seedYear();
+  const accountIdFrom = await createAsset();
+  await assign(accountIdFrom);
+
+  for (const [name, start] of [
+    ["second", "2025-07-01"],
+    ["oldest", "2025-04-01"],
+    ["newest", "2025-10-01"],
+    ["third", "2025-06-01"],
+  ] as const) {
+    await runGql(
+      graphql(`
+        mutation ($a: ID!, $n: String!, $s: Date!) {
+          billCreate(
+            start: $s
+            frequency: MONTHLY
+            collectionDate: ["15"]
+            amount: { amount: 100, currency: "GBP" }
+            name: $n
+            accountIdFrom: $a
+          ) {
+            id
+          }
+        }
+      `),
+      { a: accountIdFrom, n: name, s: start },
+    );
+  }
+
+  const page1 = await runGql(
+    graphql(`
+      query {
+        bills(first: 2) {
+          edges {
+            cursor
+            node {
+              name
+              start
+            }
+          }
+          pageInfo {
+            hasNextPage
+            hasPreviousPage
+          }
+        }
+      }
+    `),
+    {},
+  );
+  expect(page1.bills!.edges.map((e) => e.node.name)).toEqual([
+    "newest",
+    "second",
+  ]);
+  expect(page1.bills!.pageInfo).toMatchObject({
+    hasNextPage: true,
+    hasPreviousPage: false,
+  });
+
+  const page2 = await runGql(
+    graphql(`
+      query ($after: ID!) {
+        bills(first: 2, after: $after) {
+          edges {
+            node {
+              name
+              start
+            }
+          }
+          pageInfo {
+            hasNextPage
+            hasPreviousPage
+          }
+        }
+      }
+    `),
+    { after: page1.bills!.edges.at(-1)!.cursor },
+  );
+  expect(page2.bills!.edges.map((e) => e.node.name)).toEqual([
+    "third",
+    "oldest",
+  ]);
+  expect(page2.bills!.pageInfo).toMatchObject({
+    hasNextPage: false,
+    hasPreviousPage: true,
+  });
+});
