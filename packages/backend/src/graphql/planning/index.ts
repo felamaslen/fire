@@ -203,6 +203,8 @@ export type PlanningTransaction = {
   isProvisional: boolean;
   /** True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable. @gqlField */
   isEditable: boolean;
+  /** `NetWorthCategoryLiability.id` if this row is a payslip adjustment linked to a liability (e.g. a student-loan deduction). Null on every other kind of transaction. @gqlField */
+  liabilityId: ID | null;
 };
 
 /** A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias. @gqlType */

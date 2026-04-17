@@ -23,6 +23,8 @@ export type PayslipAdjustmentInput = {
   /** Signed amount. Negative = deduction. Must use the same currency as the payslip's gross. */
   amount: MoneyInput;
   name: string;
+  /** Optional link to a `NetWorthCategoryLiability` this adjustment pays down (e.g. a student-loan deduction). Pass `null` to clear an existing link. */
+  liabilityId?: ID | null;
 };
 
 async function writeAdjustments(
@@ -51,7 +53,12 @@ async function writeAdjustments(
       currency === payslipCurrency,
       `Adjustment currency ${currency} must match payslip currency ${payslipCurrency}`,
     );
-    const row = { payslipId, amount, name: a.name };
+    const row = {
+      payslipId,
+      amount,
+      name: a.name,
+      liabilityId: a.liabilityId ?? null,
+    };
     if (a.id) {
       await tx
         .insert(PlanningPayslipAdjustments)
