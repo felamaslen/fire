@@ -9,7 +9,7 @@
     "start": "vite start",
     "typecheck": "tsc --noEmit",
     "download-schema": "mkdir -p src/__generated__ && curl -fsSL http://localhost:4000/schema.graphql -o src/__generated__/schema.graphql",
-    "codegen": "gql.tada generate-output"
+    "codegen": "gql.tada generate-output && tsx scripts/generate-possible-types.ts"
   },
   "dependencies": {
     "@apollo/client": "^4.1.7",
