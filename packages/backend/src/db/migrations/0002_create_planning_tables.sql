@@ -1,137 +1,16 @@
-CREATE TYPE "public"."CountryCode" AS ENUM ('GB');
-CREATE TYPE "public"."CurrencyCode" AS ENUM (
-  'GBP',
-  'USD',
-  'EUR',
-  'JPY',
-  'CZK',
-  'NOK',
-  'CNY',
-  'HKD',
-  'AUD',
-  'SCR',
-  'TWD'
-);
-CREATE TYPE "public"."netWorthCategoryAssetType" AS ENUM (
-  'CASH',
-  'STOCK',
-  'OPTION',
-  'PENSION',
-  'PROPERTY',
-  'MISC'
-);
-CREATE TYPE "public"."netWorthCategoryLiabilityType" AS ENUM (
-  'CREDIT_CARD',
-  'LOAN',
-  'MISC'
-);
+CREATE TYPE "public"."CountryCode" AS ENUM ('GB'); -- > statement-breakpoint
 CREATE TYPE "public"."planningBillsFrequency" AS ENUM (
   'MONTHLY',
   'QUARTERLY',
   'YEARLY'
-);
-CREATE TABLE "NetWorthCategoryAssets" (
-  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
-  "name" text NOT NULL,
-  "type" "netWorthCategoryAssetType" NOT NULL,
-  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
-);
-
-CREATE TABLE "NetWorthCategoryLiabilities" (
-  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
-  "name" text NOT NULL,
-  "type" "netWorthCategoryLiabilityType" NOT NULL,
-  "categoryAssetId" uuid,
-  "interestRate" NUMERIC(6, 4),
-  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  CONSTRAINT "NetWorthCategoryLiabilities_interestRate_ck"
-    CHECK (
-      (
-        "NetWorthCategoryLiabilities"."type" = 'LOAN'
-        AND "NetWorthCategoryLiabilities"."interestRate" IS NOT NULL
-      )
-      OR (
-        "NetWorthCategoryLiabilities"."type" != 'LOAN'
-        AND "NetWorthCategoryLiabilities"."interestRate" IS NULL
-      )
-    )
-);
-
-CREATE TABLE "NetWorthCategoryOptions" (
-  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
-  "name" text NOT NULL,
-  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
-);
-
-CREATE TABLE "NetWorthCurrencyRates" (
-  "entryId" uuid NOT NULL,
-  "base" "CurrencyCode" NOT NULL,
-  "currency" "CurrencyCode" NOT NULL,
-  "rate" NUMERIC(24, 12) NOT NULL,
-  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  CONSTRAINT "NetWorthCurrencyRates_pk" PRIMARY KEY ("entryId", "currency"),
-  CONSTRAINT "NetWorthCurrencyRates_base_currency_ck"
-    CHECK ("NetWorthCurrencyRates"."base" != "NetWorthCurrencyRates"."currency")
-);
-
-CREATE TABLE "NetWorthEntries" (
-  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
-  "date" date NOT NULL,
-  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
-);
-
-CREATE TABLE "NetWorthValueAmounts" (
-  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
-  "valueId" uuid NOT NULL,
-  "amount" BIGINT NOT NULL,
-  "currency" "CurrencyCode" NOT NULL,
-  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
-);
-
-CREATE TABLE "NetWorthValues" (
-  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
-  "entryId" uuid NOT NULL,
-  "categoryAssetId" uuid,
-  "categoryLiabilityId" uuid,
-  "categoryOptionId" uuid,
-  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  CONSTRAINT "NetWorthValues_exactlyOneCategory_ck"
-    CHECK (
-      (
-        (
-          CASE
-            WHEN "NetWorthValues"."categoryAssetId" IS NOT NULL THEN 1
-            ELSE 0
-          END
-        ) + (
-          CASE
-            WHEN "NetWorthValues"."categoryLiabilityId" IS NOT NULL THEN 1
-            ELSE 0
-          END
-        ) + (
-          CASE
-            WHEN "NetWorthValues"."categoryOptionId" IS NOT NULL THEN 1
-            ELSE 0
-          END
-        )
-      ) = 1
-    )
-);
-
+); -- > statement-breakpoint
 CREATE TABLE "PlanningAccounts" (
   "accountId" uuid PRIMARY KEY NOT NULL,
   "alias" text,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
-
+-- > statement-breakpoint
 CREATE TABLE "PlanningBills" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "start" date NOT NULL,
@@ -150,7 +29,7 @@ CREATE TABLE "PlanningBills" (
       OR "PlanningBills"."end" >= "PlanningBills"."start"
     )
 );
-
+-- > statement-breakpoint
 CREATE TABLE "PlanningEarnings" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "name" text NOT NULL,
@@ -180,7 +59,7 @@ CREATE TABLE "PlanningEarnings" (
   CONSTRAINT "PlanningEarnings_pensionNetPay_ck"
     CHECK ("PlanningEarnings"."pensionNetPay" BETWEEN 0 AND 1)
 );
-
+-- > statement-breakpoint
 CREATE TABLE "PlanningMonths" (
   "year" INTEGER NOT NULL,
   "date" date NOT NULL,
@@ -188,7 +67,7 @@ CREATE TABLE "PlanningMonths" (
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   CONSTRAINT "PlanningMonths_pk" PRIMARY KEY ("year", "date")
 );
-
+-- > statement-breakpoint
 CREATE TABLE "PlanningPayslipAdjustments" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "payslipId" uuid NOT NULL,
@@ -197,7 +76,7 @@ CREATE TABLE "PlanningPayslipAdjustments" (
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
-
+-- > statement-breakpoint
 CREATE TABLE "PlanningPayslips" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "date" date NOT NULL,
@@ -209,7 +88,7 @@ CREATE TABLE "PlanningPayslips" (
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
-
+-- > statement-breakpoint
 CREATE TABLE "PlanningTransactions" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "year" INTEGER NOT NULL,
@@ -228,7 +107,7 @@ CREATE TABLE "PlanningTransactions" (
       OR "PlanningTransactions"."accountIdFrom" != "PlanningTransactions"."accountIdTo"
     )
 );
-
+-- > statement-breakpoint
 CREATE TABLE "PlanningYearUKTaxRates" (
   "year" INTEGER PRIMARY KEY NOT NULL,
   "rateBasic" DOUBLE PRECISION NOT NULL,
@@ -258,120 +137,77 @@ CREATE TABLE "PlanningYearUKTaxRates" (
   CONSTRAINT "PlanningYearUKTaxRates_rateStudentLoanPlan2_ck"
     CHECK ("PlanningYearUKTaxRates"."rateStudentLoanPlan2" BETWEEN 0 AND 1)
 );
-
+-- > statement-breakpoint
 CREATE TABLE "PlanningYears" (
   "year" INTEGER PRIMARY KEY NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
-
-ALTER TABLE "NetWorthCategoryLiabilities"
-ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk"
-  FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" (
-    "id"
-  )
-    ON DELETE SET NULL
-    ON UPDATE NO ACTION;
-ALTER TABLE "NetWorthCurrencyRates"
-ADD CONSTRAINT "NetWorthCurrencyRates_entryId_NetWorthEntries_id_fk"
-  FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id")
-    ON DELETE CASCADE
-    ON UPDATE NO ACTION;
-ALTER TABLE "NetWorthValueAmounts"
-ADD CONSTRAINT "NetWorthValueAmounts_valueId_NetWorthValues_id_fk"
-  FOREIGN KEY ("valueId") REFERENCES "public"."NetWorthValues" ("id")
-    ON DELETE CASCADE
-    ON UPDATE NO ACTION;
-ALTER TABLE "NetWorthValues"
-ADD CONSTRAINT "NetWorthValues_entryId_NetWorthEntries_id_fk"
-  FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id")
-    ON DELETE CASCADE
-    ON UPDATE NO ACTION;
-ALTER TABLE "NetWorthValues"
-ADD CONSTRAINT "NetWorthValues_categoryAssetId_NetWorthCategoryAssets_id_fk"
-  FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" (
-    "id"
-  )
-    ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
-ALTER TABLE "NetWorthValues"
-ADD CONSTRAINT "NetWorthValues_categoryLiabilityId_NetWorthCategoryLiabilities_id_fk"
-  FOREIGN KEY (
-    "categoryLiabilityId"
-  ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
-    ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
-ALTER TABLE "NetWorthValues"
-ADD CONSTRAINT "NetWorthValues_categoryOptionId_NetWorthCategoryOptions_id_fk"
-  FOREIGN KEY (
-    "categoryOptionId"
-  ) REFERENCES "public"."NetWorthCategoryOptions" ("id")
-    ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+-- > statement-breakpoint
 ALTER TABLE "PlanningAccounts"
 ADD CONSTRAINT "PlanningAccounts_accountId_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("accountId") REFERENCES "public"."NetWorthCategoryAssets" ("id")
     ON DELETE CASCADE
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningBills"
 ADD CONSTRAINT "PlanningBills_accountIdFrom_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("accountIdFrom") REFERENCES "public"."NetWorthCategoryAssets" (
     "id"
   )
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningBills"
 ADD CONSTRAINT "PlanningBills_liabilityId_NetWorthCategoryLiabilities_id_fk"
   FOREIGN KEY (
     "liabilityId"
   ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningEarnings"
 ADD CONSTRAINT "PlanningEarnings_accountIdTo_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("accountIdTo") REFERENCES "public"."NetWorthCategoryAssets" (
     "id"
   )
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningMonths"
 ADD CONSTRAINT "PlanningMonths_year_PlanningYears_year_fk"
   FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year")
     ON DELETE CASCADE
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningPayslipAdjustments"
 ADD CONSTRAINT "PlanningPayslipAdjustments_payslipId_PlanningPayslips_id_fk"
   FOREIGN KEY ("payslipId") REFERENCES "public"."PlanningPayslips" ("id")
     ON DELETE CASCADE
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningPayslips"
 ADD CONSTRAINT "PlanningPayslips_accountIdTo_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("accountIdTo") REFERENCES "public"."NetWorthCategoryAssets" (
     "id"
   )
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningTransactions"
 ADD CONSTRAINT "PlanningTransactions_accountIdFrom_PlanningAccounts_accountId_fk"
   FOREIGN KEY ("accountIdFrom") REFERENCES "public"."PlanningAccounts" (
     "accountId"
   )
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningTransactions"
 ADD CONSTRAINT "PlanningTransactions_accountIdTo_PlanningAccounts_accountId_fk"
   FOREIGN KEY ("accountIdTo") REFERENCES "public"."PlanningAccounts" (
     "accountId"
   )
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningTransactions"
 ADD CONSTRAINT "PlanningTransactions_liabilityId_NetWorthCategoryLiabilities_id_fk"
   FOREIGN KEY (
     "liabilityId"
   ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
     ON DELETE RESTRICT
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningTransactions"
 ADD CONSTRAINT "PlanningTransactions_month_fk"
   FOREIGN KEY ("year", "date") REFERENCES "public"."PlanningMonths" (
@@ -379,22 +215,12 @@ ADD CONSTRAINT "PlanningTransactions_month_fk"
     "date"
   )
     ON DELETE CASCADE
-    ON UPDATE NO ACTION;
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 ALTER TABLE "PlanningYearUKTaxRates"
 ADD CONSTRAINT "PlanningYearUKTaxRates_year_PlanningYears_year_fk"
   FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year")
     ON DELETE CASCADE
-    ON UPDATE NO ACTION;
-CREATE UNIQUE INDEX "NetWorthEntries_month_uq" ON "NetWorthEntries" USING btree (
-  date_trunc('month', "date"::TIMESTAMP)
-);
-CREATE UNIQUE INDEX "NetWorthValueAmounts_valueId_currency_uq" ON "NetWorthValueAmounts" USING btree (
-  "valueId",
-  "currency"
-);
-CREATE INDEX "NetWorthValues_entryId_idx" ON "NetWorthValues" USING btree (
-  "entryId"
-);
+    ON UPDATE NO ACTION; -- > statement-breakpoint
 CREATE UNIQUE INDEX "PlanningMonths_year_month_uq" ON "PlanningMonths" USING btree (
   "year",
   date_trunc('month', "date"::TIMESTAMP)
