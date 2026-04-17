@@ -1,5 +1,5 @@
 {
-  "id": "74064b7c-cc7d-47cf-bcb5-1bd73c8e0715",
+  "id": "70c380ab-0750-44ef-bb82-977062f47649",
   "prevId": "6d8e1045-350f-4ef7-903f-1446c8ff9f3e",
   "version": "7",
   "dialect": "postgresql",
@@ -634,8 +634,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "accountIdFrom": {
-          "name": "accountIdFrom",
+        "fromAccountId": {
+          "name": "fromAccountId",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -663,15 +663,15 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "PlanningBills_accountIdFrom_NetWorthCategoryAssets_id_fk": {
-          "name": "PlanningBills_accountIdFrom_NetWorthCategoryAssets_id_fk",
+        "PlanningBills_fromAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningBills_fromAccountId_PlanningAccounts_accountId_fk",
           "tableFrom": "PlanningBills",
-          "tableTo": "NetWorthCategoryAssets",
+          "tableTo": "PlanningAccounts",
           "columnsFrom": [
-            "accountIdFrom"
+            "fromAccountId"
           ],
           "columnsTo": [
-            "id"
+            "accountId"
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
@@ -779,8 +779,8 @@
           "notNull": true,
           "default": false
         },
-        "accountIdTo": {
-          "name": "accountIdTo",
+        "toAccountId": {
+          "name": "toAccountId",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -802,15 +802,15 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "PlanningEarnings_accountIdTo_NetWorthCategoryAssets_id_fk": {
-          "name": "PlanningEarnings_accountIdTo_NetWorthCategoryAssets_id_fk",
+        "PlanningEarnings_toAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningEarnings_toAccountId_PlanningAccounts_accountId_fk",
           "tableFrom": "PlanningEarnings",
-          "tableTo": "NetWorthCategoryAssets",
+          "tableTo": "PlanningAccounts",
           "columnsFrom": [
-            "accountIdTo"
+            "toAccountId"
           ],
           "columnsTo": [
-            "id"
+            "accountId"
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
@@ -1203,8 +1203,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "accountIdTo": {
-          "name": "accountIdTo",
+        "toAccountId": {
+          "name": "toAccountId",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -1232,15 +1232,15 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "PlanningPayslips_accountIdTo_NetWorthCategoryAssets_id_fk": {
-          "name": "PlanningPayslips_accountIdTo_NetWorthCategoryAssets_id_fk",
+        "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk",
           "tableFrom": "PlanningPayslips",
-          "tableTo": "NetWorthCategoryAssets",
+          "tableTo": "PlanningAccounts",
           "columnsFrom": [
-            "accountIdTo"
+            "toAccountId"
           ],
           "columnsTo": [
-            "id"
+            "accountId"
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
@@ -1294,14 +1294,14 @@
           "primaryKey": false,
           "notNull": true
         },
-        "accountIdFrom": {
-          "name": "accountIdFrom",
+        "fromAccountId": {
+          "name": "fromAccountId",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "accountIdTo": {
-          "name": "accountIdTo",
+        "toAccountId": {
+          "name": "toAccountId",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
@@ -1329,12 +1329,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "PlanningTransactions_accountIdFrom_PlanningAccounts_accountId_fk": {
-          "name": "PlanningTransactions_accountIdFrom_PlanningAccounts_accountId_fk",
+        "PlanningTransactions_fromAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningTransactions_fromAccountId_PlanningAccounts_accountId_fk",
           "tableFrom": "PlanningTransactions",
           "tableTo": "PlanningAccounts",
           "columnsFrom": [
-            "accountIdFrom"
+            "fromAccountId"
           ],
           "columnsTo": [
             "accountId"
@@ -1342,12 +1342,12 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "PlanningTransactions_accountIdTo_PlanningAccounts_accountId_fk": {
-          "name": "PlanningTransactions_accountIdTo_PlanningAccounts_accountId_fk",
+        "PlanningTransactions_toAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningTransactions_toAccountId_PlanningAccounts_accountId_fk",
           "tableFrom": "PlanningTransactions",
           "tableTo": "PlanningAccounts",
           "columnsFrom": [
-            "accountIdTo"
+            "toAccountId"
           ],
           "columnsTo": [
             "accountId"
@@ -1390,7 +1390,7 @@
       "checkConstraints": {
         "PlanningTransactions_accounts_ck": {
           "name": "PlanningTransactions_accounts_ck",
-          "value": "\"PlanningTransactions\".\"accountIdTo\" IS NULL OR \"PlanningTransactions\".\"accountIdFrom\" <> \"PlanningTransactions\".\"accountIdTo\""
+          "value": "\"PlanningTransactions\".\"toAccountId\" IS NULL OR \"PlanningTransactions\".\"fromAccountId\" <> \"PlanningTransactions\".\"toAccountId\""
         }
       },
       "isRLSEnabled": false

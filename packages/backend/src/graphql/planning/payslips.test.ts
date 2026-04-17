@@ -153,7 +153,7 @@ it("payslipCreate lifts valueEnd for the payslip's month and every later month",
           date: "2025-06-30"
           amountGross: { amount: 3000, currency: "GBP" }
           name: "June payslip"
-          accountIdTo: $a
+          toAccountId: $a
           adjustments: [
             { amount: { amount: -500, currency: "GBP" }, name: "Income Tax" }
             { amount: { amount: -200, currency: "GBP" }, name: "NIC" }
@@ -198,7 +198,7 @@ it("payslipUpdate moves the effect to the new month and resizes it", async () =>
           date: "2025-04-30"
           amountGross: { amount: 3000, currency: "GBP" }
           name: "April payslip"
-          accountIdTo: $a
+          toAccountId: $a
           adjustments: [
             { amount: { amount: -500, currency: "GBP" }, name: "Income Tax" }
           ]
@@ -282,7 +282,7 @@ it("payslipDelete restores balances to the baseline", async () => {
           date: "2025-04-30"
           amountGross: { amount: 3000, currency: "GBP" }
           name: "April payslip"
-          accountIdTo: $a
+          toAccountId: $a
           adjustments: [
             { amount: { amount: -500, currency: "GBP" }, name: "Income Tax" }
           ]
@@ -354,7 +354,7 @@ it("rejects an adjustment whose currency differs from the payslip's gross", asyn
             date: "2025-04-30"
             amountGross: { amount: 5000, currency: "GBP" }
             name: "Mismatch"
-            accountIdTo: $a
+            toAccountId: $a
             adjustments: [
               { amount: { amount: -100, currency: "USD" }, name: "Oops" }
             ]
@@ -382,7 +382,7 @@ it("stores the attached PDF fixture in the local bucket and serves it via GET /f
           date: "2025-04-30"
           amountGross: { amount: 3000, currency: "GBP" }
           name: "April"
-          accountIdTo: $a
+          toAccountId: $a
           file: $file
         ) {
           id

@@ -129,7 +129,7 @@ it("billCreate deducts from valueEnd every month the bill collects", async () =>
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Broadband"
-          accountIdFrom: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -172,7 +172,7 @@ it("billUpdate resizes the deduction for every collecting month", async () => {
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Broadband"
-          accountIdFrom: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -228,7 +228,7 @@ it("billDelete restores balances to the baseline", async () => {
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Broadband"
-          accountIdFrom: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -283,7 +283,7 @@ it("QUARTERLY bills only deduct in the configured months", async () => {
           collectionDate: ["4-01", "7-01", "10-01", "1-01"]
           amount: { amount: 300, currency: "GBP" }
           name: "Water"
-          accountIdFrom: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -326,7 +326,7 @@ it("a bill with end before year end only deducts up to that month", async () => 
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Short-lived"
-          accountIdFrom: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -370,7 +370,7 @@ it("skips the first month when start falls after the month's collection day", as
           collectionDate: ["10"]
           amount: { amount: 100, currency: "GBP" }
           name: "Late-start"
-          accountIdFrom: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -414,7 +414,7 @@ it("still collects in the start month when the collection day lands on or after 
           collectionDate: ["25"]
           amount: { amount: 100, currency: "GBP" }
           name: "Mid-start"
-          accountIdFrom: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -459,7 +459,7 @@ it("skips the final month when end falls before the month's collection day", asy
           collectionDate: ["25"]
           amount: { amount: 100, currency: "GBP" }
           name: "Early-end"
-          accountIdFrom: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -500,7 +500,7 @@ it("rejects a collectionDate entry whose shape does not match the constraint reg
             collectionDate: ["not-a-date"]
             amount: { amount: 100, currency: "GBP" }
             name: "Bad"
-            accountIdFrom: $a
+            fromAccountId: $a
           ) {
             id
           }
@@ -527,7 +527,7 @@ it("rejects an entry with an empty month (dash without a leading number)", async
             collectionDate: ["-15"]
             amount: { amount: 100, currency: "GBP" }
             name: "Bad"
-            accountIdFrom: $a
+            fromAccountId: $a
           ) {
             id
           }
@@ -554,7 +554,7 @@ it("rejects a MONTHLY bill whose entry includes a month (must be bare day)", asy
             collectionDate: ["4-15"]
             amount: { amount: 100, currency: "GBP" }
             name: "Bad"
-            accountIdFrom: $a
+            fromAccountId: $a
           ) {
             id
           }
@@ -581,7 +581,7 @@ it("rejects a YEARLY bill whose entry lacks a month (must be M-D)", async () => 
             collectionDate: ["15"]
             amount: { amount: 100, currency: "GBP" }
             name: "Bad"
-            accountIdFrom: $a
+            fromAccountId: $a
           ) {
             id
           }
@@ -614,7 +614,7 @@ it("Query.bills returns rows sorted by start descending, paginated", async () =>
             collectionDate: ["15"]
             amount: { amount: 100, currency: "GBP" }
             name: $n
-            accountIdFrom: $a
+            fromAccountId: $a
           ) {
             id
           }

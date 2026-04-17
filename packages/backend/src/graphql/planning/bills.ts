@@ -4,7 +4,8 @@ import { and, desc, eq, lt, or } from "drizzle-orm";
 import type { ID, Int } from "grats";
 
 import { db } from "@/db";
-import { PlanningBills } from "@/db/schema/planning";
+import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
+import { PlanningAccounts, PlanningBills } from "@/db/schema/planning";
 
 import type { Date as CalendarDate } from "../date";
 import {
@@ -12,9 +13,14 @@ import {
   Money,
   type MoneyInput,
 } from "../money";
+import { NetWorthCategoryAsset } from "../net-worth/categories";
 import type { PageInfo } from "../net-worth/index";
 import { decodeCursor, encodeCursor } from "../pagination";
-import { type PlanningYear, planningYearsForYears } from "./index";
+import {
+  PlanningAccount,
+  type PlanningYear,
+  planningYearsForYears,
+} from "./index";
 import { yearsOverlapping } from "./months";
 
 /** How often a `PlanningBill` recurs. @gqlEnum */
@@ -37,6 +43,7 @@ export class PlanningBill {
     public readonly amount: Money,
     /** @gqlField */
     public readonly name: string,
+    public readonly fromAccountId: string,
   ) {}
 
   static load(row: typeof PlanningBills.$inferSelect): PlanningBill {
@@ -48,7 +55,33 @@ export class PlanningBill {
       decodeCollectionDate(row.frequency, row.collectionDate),
       Money.fromMinorDenomination(row.amount, row.currency),
       row.name,
+      row.fromAccountId,
     );
+  }
+
+  /** Planning account (asset + alias) the bill is paid from. @gqlField */
+  async fromAccount(): Promise<PlanningAccount> {
+    const [row] = await db
+      .select({
+        assetId: PlanningAccounts.accountId,
+        alias: PlanningAccounts.alias,
+        asset: NetWorthCategoryAssets,
+      })
+      .from(PlanningAccounts)
+      .innerJoin(
+        NetWorthCategoryAssets,
+        eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
+      )
+      .where(eq(PlanningAccounts.accountId, this.fromAccountId));
+    assert(
+      row,
+      `PlanningAccount for asset ${this.fromAccountId} referenced by PlanningBill ${this.id} is missing — assign it via planningAccountAssign first.`,
+    );
+    return new PlanningAccount({
+      assetId: row.assetId,
+      alias: row.alias,
+      asset: NetWorthCategoryAsset.load(row.asset),
+    });
   }
 }
 
@@ -109,7 +142,7 @@ function decodeCollectionDate(
 }
 
 /**
- * Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `accountIdFrom`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
+ * Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
  *
  * @gqlMutationField
  */
@@ -126,9 +159,9 @@ export async function billCreate(
   amount: MoneyInput,
   /** Human-readable label, e.g. "Broadband", "Council tax". */
   name: string,
-  /** Asset account (`NetWorthCategoryAsset.id`) the bill is paid from. */
-  accountIdFrom: ID,
-  /** Liability (`NetWorthCategoryLiability.id`) this bill services, if any — e.g. a credit-card liability paid off by a monthly direct debit, or a mortgage principal. Paying the bill reduces the liability's outstanding balance. */
+  /** Planning account (`PlanningAccount.id`) the bill is paid from. The asset must already have a planning account assigned via `planningAccountAssign`. */
+  fromAccountId: ID,
+  /** The liability (`NetWorthCategoryLiability.id`) this bill services, if any — e.g. a credit-card liability paid off by a monthly direct debit, or a mortgage principal. Paying the bill reduces the liability's outstanding balance. */
   liabilityId?: ID | null,
   /** Last day the bill is in effect; null / omitted for ongoing. */
   end?: CalendarDate | null,
@@ -145,7 +178,7 @@ export async function billCreate(
       amount: minor,
       currency,
       name,
-      accountIdFrom,
+      fromAccountId,
       liabilityId: liabilityId ?? null,
     })
     .returning();
@@ -172,8 +205,8 @@ export async function billUpdate(
   amount?: MoneyInput | null,
   /** New label. */
   name?: string | null,
-  /** New paying asset account (`NetWorthCategoryAsset.id`). */
-  accountIdFrom?: ID | null,
+  /** New paying planning account (`PlanningAccount.id`). */
+  fromAccountId?: ID | null,
   /** New serviced liability (`NetWorthCategoryLiability.id`) — e.g. swap from a credit-card to a mortgage. Pass null explicitly to unset. */
   liabilityId?: ID | null,
   /** New last day in effect; pass null explicitly to mark ongoing. */
@@ -209,7 +242,7 @@ export async function billUpdate(
         currency: moneyPatch.currency,
       }),
       ...(name != null && { name }),
-      ...(accountIdFrom != null && { accountIdFrom }),
+      ...(fromAccountId != null && { fromAccountId: fromAccountId }),
       ...(liabilityId !== undefined && { liabilityId }),
       updatedAt: new Date(),
     })

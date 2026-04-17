@@ -181,7 +181,7 @@ it("no snapshots — valueStart chains from predictions", async () => {
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Internet"
-          accountIdFrom: $from
+          fromAccountId: $from
         ) {
           id
         }
@@ -225,7 +225,7 @@ it("snapshot in month prior — subsequent months baselined from it", async () =
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Internet"
-          accountIdFrom: $from
+          fromAccountId: $from
         ) {
           id
         }
@@ -271,7 +271,7 @@ it("snapshots with gaps — each snapshot re-anchors, months in between chain fo
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Internet"
-          accountIdFrom: $from
+          fromAccountId: $from
         ) {
           id
         }
@@ -322,7 +322,7 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
           collectionDate: ["15"]
           amount: { amount: 50, currency: "GBP" }
           name: "Internet"
-          accountIdFrom: $from
+          fromAccountId: $from
         ) {
           id
         }
@@ -352,8 +352,8 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
     amount: 20_000,
     currency: "GBP",
     name: "Transfer to joint",
-    accountIdFrom: current,
-    accountIdTo: joint,
+    fromAccountId: current,
+    toAccountId: joint,
   });
 
   // A credit-card payment £150 from Current in August.
@@ -363,7 +363,7 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
     amount: 15_000,
     currency: "GBP",
     name: "Amex payment",
-    accountIdFrom: current,
+    fromAccountId: current,
     liabilityId: cardLiability,
   });
 
@@ -378,7 +378,7 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
           countryCode: "GB"
           pensionReliefAtSource: 0
           pensionNetPay: 0
-          accountIdTo: $a
+          toAccountId: $a
         ) {
           id
         }
@@ -395,7 +395,7 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
           date: "2025-05-28"
           amountGross: { amount: 3000, currency: "GBP" }
           name: "May payslip"
-          accountIdTo: $a
+          toAccountId: $a
           adjustments: [
             { amount: { amount: -500, currency: "GBP" }, name: "Income Tax" }
             { amount: { amount: -200, currency: "GBP" }, name: "NIC" }
@@ -464,7 +464,7 @@ it("transactions field surfaces each source with the expected provisional/editab
           collectionDate: ["15"]
           amount: { amount: 50, currency: "GBP" }
           name: "Internet"
-          accountIdFrom: $from
+          fromAccountId: $from
         ) {
           id
         }
@@ -499,8 +499,8 @@ it("transactions field surfaces each source with the expected provisional/editab
     amount: 20_000,
     currency: "GBP",
     name: "Transfer to joint",
-    accountIdFrom: current,
-    accountIdTo: joint,
+    fromAccountId: current,
+    toAccountId: joint,
   });
 
   // Credit-card payment in April — debit-only.
@@ -510,7 +510,7 @@ it("transactions field surfaces each source with the expected provisional/editab
     amount: 15_000,
     currency: "GBP",
     name: "Amex payment",
-    accountIdFrom: current,
+    fromAccountId: current,
     liabilityId: cardLiability,
   });
 
@@ -526,7 +526,7 @@ it("transactions field surfaces each source with the expected provisional/editab
           countryCode: "GB"
           pensionReliefAtSource: 0
           pensionNetPay: 0
-          accountIdTo: $a
+          toAccountId: $a
         ) {
           id
         }
@@ -541,7 +541,7 @@ it("transactions field surfaces each source with the expected provisional/editab
           date: "2025-05-28"
           amountGross: { amount: 3000, currency: "GBP" }
           name: "May payslip"
-          accountIdTo: $a
+          toAccountId: $a
           adjustments: [
             { amount: { amount: -500, currency: "GBP" }, name: "Income Tax" }
             { amount: { amount: -200, currency: "GBP" }, name: "NIC" }

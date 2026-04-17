@@ -75,7 +75,8 @@ export async function payslipCreate(
   date: CalendarDate,
   amountGross: MoneyInput,
   name: string,
-  accountIdTo: ID,
+  /** Planning account (`PlanningAccount.id`) the net pay lands in. The asset must already have a planning account assigned via `planningAccountAssign`. */
+  toAccountId: ID,
   adjustments?: PayslipAdjustmentInput[] | null,
   /** Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket; the resolved URL is persisted on the payslip row. */
   file?: Upload | null,
@@ -90,7 +91,7 @@ export async function payslipCreate(
         amountGross: amount,
         currency,
         name,
-        accountIdTo,
+        toAccountId: toAccountId,
         fileUrl,
       })
       .returning();
@@ -112,7 +113,8 @@ export async function payslipUpdate(
   date?: CalendarDate | null,
   amountGross?: MoneyInput | null,
   name?: string | null,
-  accountIdTo?: ID | null,
+  /** New destination planning account (`PlanningAccount.id`) the net pay lands in. */
+  toAccountId?: ID | null,
   adjustments?: PayslipAdjustmentInput[] | null,
   /** Replacement file upload. Pass `null` explicitly to clear the existing fileUrl; omit to leave it unchanged. */
   file?: Upload | null,
@@ -144,7 +146,7 @@ export async function payslipUpdate(
           currency: moneyPatch.currency,
         }),
         ...(name != null && { name }),
-        ...(accountIdTo != null && { accountIdTo }),
+        ...(toAccountId != null && { toAccountId: toAccountId }),
         ...(fileUrlPatch ?? {}),
         updatedAt: new Date(),
       })

@@ -273,11 +273,9 @@ type Money {
 
 type Mutation {
   """
-  Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `accountIdFrom`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
+  Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
   """
   billCreate(
-    """Asset account (`NetWorthCategoryAsset.id`) the bill is paid from."""
-    accountIdFrom: ID!
     """Amount charged per occurrence. Currency must match the asset account."""
     amount: MoneyInput!
     """
@@ -288,7 +286,11 @@ type Mutation {
     end: Date
     frequency: PlanningBillsFrequency!
     """
-    Liability (`NetWorthCategoryLiability.id`) this bill services, if any — e.g. a credit-card liability paid off by a monthly direct debit, or a mortgage principal. Paying the bill reduces the liability's outstanding balance.
+    Planning account (`PlanningAccount.id`) the bill is paid from. The asset must already have a planning account assigned via `planningAccountAssign`.
+    """
+    fromAccountId: ID!
+    """
+    The liability (`NetWorthCategoryLiability.id`) this bill services, if any — e.g. a credit-card liability paid off by a monthly direct debit, or a mortgage principal. Paying the bill reduces the liability's outstanding balance.
     """
     liabilityId: ID
     """Human-readable label, e.g. "Broadband", "Council tax"."""
@@ -304,8 +306,6 @@ type Mutation {
   Partially update an existing bill. Only fields passed in are changed — omit a field to leave it untouched. The projected-transaction stream for every affected month is recomputed from the new values; months that already had actual transactions recorded keep those and simply use the new bill as a fallback where no actual exists.
   """
   billUpdate(
-    """New paying asset account (`NetWorthCategoryAsset.id`)."""
-    accountIdFrom: ID
     """New amount per occurrence. Currency must match the asset account."""
     amount: MoneyInput
     """
@@ -316,6 +316,8 @@ type Mutation {
     end: Date
     """New recurrence cadence."""
     frequency: PlanningBillsFrequency
+    """New paying planning account (`PlanningAccount.id`)."""
+    fromAccountId: ID
     id: ID!
     """
     New serviced liability (`NetWorthCategoryLiability.id`) — e.g. swap from a credit-card to a mortgage. Pass null explicitly to unset.
@@ -327,10 +329,9 @@ type Mutation {
     start: Date
   ): [PlanningYear!]!
   """
-  Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `accountIdTo` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
+  Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `toAccountId` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
   """
   earningsCreate(
-    accountIdTo: ID!
     amountGross: MoneyInput!
     """ISO-3166-1 alpha-2 country where the earnings are taxed (e.g. `"GB"`)."""
     countryCode: String!
@@ -344,6 +345,10 @@ type Mutation {
     Whether Student Loan plan 2 is being repaid on this income. Defaults to false.
     """
     studentLoanPlan2: Boolean
+    """
+    Planning account (`PlanningAccount.id`) the net earnings land in. The asset must already have a planning account assigned via `planningAccountAssign`.
+    """
+    toAccountId: ID!
     ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ): [PlanningYear!]!
   """
@@ -353,7 +358,23 @@ type Mutation {
   """
   Partially update an earnings stream. Only fields passed in are changed — omit a field to leave it untouched. Passing `ukTaxCodes` replaces the full tax-code history (existing rows are deleted, then the supplied list is inserted). Months affected by the old or new date range have their projections recomputed.
   """
-  earningsUpdate(accountIdTo: ID, amountGross: MoneyInput, countryCode: String, end: Date, id: ID!, name: String, pensionNetPay: Float, pensionReliefAtSource: Float, pensionSalarySacrifice: Float, start: Date, studentLoanPlan2: Boolean, ukTaxCodes: [PlanningEarningUKTaxCodeInput!]): [PlanningYear!]!
+  earningsUpdate(
+    amountGross: MoneyInput
+    countryCode: String
+    end: Date
+    id: ID!
+    name: String
+    pensionNetPay: Float
+    pensionReliefAtSource: Float
+    pensionSalarySacrifice: Float
+    start: Date
+    studentLoanPlan2: Boolean
+    """
+    New destination planning account (`PlanningAccount.id`) the net earnings land in.
+    """
+    toAccountId: ID
+    ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
+  ): [PlanningYear!]!
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """Delete a category. Fails if any value still references it."""
@@ -395,7 +416,6 @@ type Mutation {
   Create a new payslip. If `file` is provided it's streamed into the local uploads bucket and its URL stored on the row.
   """
   payslipCreate(
-    accountIdTo: ID!
     adjustments: [PayslipAdjustmentInput!]
     amountGross: MoneyInput!
     date: Date!
@@ -404,6 +424,10 @@ type Mutation {
     """
     file: Upload
     name: String!
+    """
+    Planning account (`PlanningAccount.id`) the net pay lands in. The asset must already have a planning account assigned via `planningAccountAssign`.
+    """
+    toAccountId: ID!
   ): [PlanningYear!]!
   """Delete a payslip. Adjustments are removed via cascade."""
   payslipDelete(id: ID!): [PlanningYear!]!
@@ -411,7 +435,6 @@ type Mutation {
   Partially update an existing payslip. Only fields passed in are changed. Passing `adjustments` replaces the full set of line items (rows not listed are deleted; entries with an `id` are upserted).
   """
   payslipUpdate(
-    accountIdTo: ID
     adjustments: [PayslipAdjustmentInput!]
     amountGross: MoneyInput
     date: Date
@@ -421,6 +444,10 @@ type Mutation {
     file: Upload
     id: ID!
     name: String
+    """
+    New destination planning account (`PlanningAccount.id`) the net pay lands in.
+    """
+    toAccountId: ID
   ): [PlanningYear!]!
   """
   Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.
@@ -561,6 +588,8 @@ type PlanningBill {
   """Last day the bill is in effect; null if ongoing."""
   end: Date
   frequency: PlanningBillsFrequency!
+  """Planning account (asset + alias) the bill is paid from."""
+  fromAccount: PlanningAccount!
   id: ID!
   name: String!
   """First day the bill is in effect."""
@@ -583,8 +612,6 @@ type PlanningBillEdge {
 A stream of gross earnings (salary, contract income, …) paid into a specific asset account.
 """
 type PlanningEarning {
-  """Destination planning account for the net earnings."""
-  accountTo: PlanningAccount!
   amountGross: Money!
   """
   Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `"5% salary sacrifice, 3% net pay pension, student loan plan 2"`). Empty string if none apply.
@@ -596,6 +623,8 @@ type PlanningEarning {
   id: ID!
   name: String!
   start: Date!
+  """Destination planning account for the net earnings."""
+  toAccount: PlanningAccount!
   """
   Tax codes applied to this earnings stream over time. Used when projecting predicted withholding.
   """

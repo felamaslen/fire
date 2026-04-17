@@ -45,7 +45,7 @@ export class PlanningEarning {
     public readonly countryCode: string,
     /** Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `"5% salary sacrifice, 3% net pay pension, student loan plan 2"`). Empty string if none apply. @gqlField */
     public readonly attributes: string,
-    public readonly accountIdTo: string,
+    public readonly toAccountId: string,
   ) {}
 
   static load(row: typeof PlanningEarnings.$inferSelect): PlanningEarning {
@@ -62,15 +62,15 @@ export class PlanningEarning {
         pensionReliefAtSource: row.pensionReliefAtSource,
         studentLoanPlan2: row.studentLoanPlan2,
       }),
-      row.accountIdTo,
+      row.toAccountId,
     );
   }
 
   /** Destination planning account for the net earnings. @gqlField */
-  async accountTo(): Promise<PlanningAccount> {
+  async toAccount(): Promise<PlanningAccount> {
     const [row] = await db
       .select({
-        accountId: PlanningAccounts.accountId,
+        assetId: PlanningAccounts.accountId,
         alias: PlanningAccounts.alias,
         asset: NetWorthCategoryAssets,
       })
@@ -79,13 +79,13 @@ export class PlanningEarning {
         NetWorthCategoryAssets,
         eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
       )
-      .where(eq(PlanningAccounts.accountId, this.accountIdTo));
+      .where(eq(PlanningAccounts.accountId, this.toAccountId));
     assert(
       row,
-      `PlanningAccount for asset ${this.accountIdTo} referenced by PlanningEarning ${this.id} is missing — assign it via planningAccountAssign first.`,
+      `PlanningAccount for asset ${this.toAccountId} referenced by PlanningEarning ${this.id} is missing — assign it via planningAccountAssign first.`,
     );
     return new PlanningAccount({
-      assetId: row.accountId,
+      assetId: row.assetId,
       alias: row.alias,
       asset: NetWorthCategoryAsset.load(row.asset),
     });
@@ -184,7 +184,7 @@ async function writeTaxCodes(
 }
 
 /**
- * Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `accountIdTo` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
+ * Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `toAccountId` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
  *
  * @gqlMutationField
  */
@@ -196,7 +196,8 @@ export async function earningsCreate(
   countryCode: string,
   pensionReliefAtSource: Float,
   pensionNetPay: Float,
-  accountIdTo: ID,
+  /** Planning account (`PlanningAccount.id`) the net earnings land in. The asset must already have a planning account assigned via `planningAccountAssign`. */
+  toAccountId: ID,
   end?: CalendarDate | null,
   pensionSalarySacrifice?: Float | null,
   /** Whether Student Loan plan 2 is being repaid on this income. Defaults to false. */
@@ -219,7 +220,7 @@ export async function earningsCreate(
         pensionReliefAtSource,
         pensionNetPay,
         studentLoanPlan2: studentLoanPlan2 ?? false,
-        accountIdTo,
+        toAccountId: toAccountId,
       })
       .returning();
     if (ukTaxCodes != null) await writeTaxCodes(tx, inserted.id, ukTaxCodes);
@@ -241,7 +242,8 @@ export async function earningsUpdate(
   countryCode?: string | null,
   pensionReliefAtSource?: Float | null,
   pensionNetPay?: Float | null,
-  accountIdTo?: ID | null,
+  /** New destination planning account (`PlanningAccount.id`) the net earnings land in. */
+  toAccountId?: ID | null,
   end?: CalendarDate | null,
   pensionSalarySacrifice?: Float | null,
   studentLoanPlan2?: boolean | null,
@@ -279,7 +281,7 @@ export async function earningsUpdate(
         ...(pensionReliefAtSource != null && { pensionReliefAtSource }),
         ...(pensionNetPay != null && { pensionNetPay }),
         ...(studentLoanPlan2 != null && { studentLoanPlan2 }),
-        ...(accountIdTo != null && { accountIdTo }),
+        ...(toAccountId != null && { toAccountId: toAccountId }),
         updatedAt: new Date(),
       })
       .where(eq(PlanningEarnings.id, id))

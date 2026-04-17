@@ -66,7 +66,7 @@ export async function loadPlanningAccountInfos(): Promise<
 > {
   const rows = await db
     .select({
-      accountId: PlanningAccounts.accountId,
+      assetId: PlanningAccounts.accountId,
       alias: PlanningAccounts.alias,
       asset: NetWorthCategoryAssets,
     })
@@ -76,7 +76,7 @@ export async function loadPlanningAccountInfos(): Promise<
       eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
     );
   return rows.map((r) => ({
-    assetId: r.accountId,
+    assetId: r.assetId,
     alias: r.alias,
     asset: NetWorthCategoryAsset.load(r.asset),
   }));
@@ -113,7 +113,7 @@ export async function loadPlanningYearData(
             )
             .where(
               and(
-                inArray(PlanningPayslips.accountIdTo, assetIds),
+                inArray(PlanningPayslips.toAccountId, assetIds),
                 gte(PlanningPayslips.date, fyStart),
                 lt(PlanningPayslips.date, fyEnd),
               ),
@@ -127,7 +127,7 @@ export async function loadPlanningYearData(
             .from(PlanningEarnings)
             .where(
               and(
-                inArray(PlanningEarnings.accountIdTo, assetIds),
+                inArray(PlanningEarnings.toAccountId, assetIds),
                 lte(PlanningEarnings.start, fyEnd),
                 or(
                   isNull(PlanningEarnings.end),
@@ -149,7 +149,7 @@ export async function loadPlanningYearData(
             )
             .where(
               and(
-                inArray(PlanningBills.accountIdFrom, assetIds),
+                inArray(PlanningBills.fromAccountId, assetIds),
                 lte(PlanningBills.start, fyEnd),
                 or(isNull(PlanningBills.end), gte(PlanningBills.end, fyStart)),
               ),
@@ -256,7 +256,7 @@ export function monthTransactionsFor(
   for (const tx of data.transactions) {
     if (tx.date.getTime() < monthStart.getTime()) continue;
     if (tx.date.getTime() >= monthEnd.getTime()) continue;
-    if (tx.accountIdFrom === assetId) {
+    if (tx.fromAccountId === assetId) {
       out.push({
         id: `tx:${tx.id}` as ID,
         name: tx.name,
@@ -265,7 +265,7 @@ export function monthTransactionsFor(
         isEditable: true,
       });
     }
-    if (tx.accountIdTo === assetId) {
+    if (tx.toAccountId === assetId) {
       out.push({
         id: `to:${tx.id}` as ID,
         name: tx.name,
@@ -279,7 +279,7 @@ export function monthTransactionsFor(
   // 2) Payslips (actual income)
   const payslipsThisMonth = data.payslips.filter(
     ({ payslip: p }) =>
-      p.accountIdTo === assetId &&
+      p.toAccountId === assetId &&
       p.date.getTime() >= monthStart.getTime() &&
       p.date.getTime() < monthEnd.getTime(),
   );
@@ -306,7 +306,7 @@ export function monthTransactionsFor(
   // 3) Earnings predictions (skipped when a payslip covers this account+month)
   if (!hasPayslip && data.rates) {
     for (const e of data.earnings) {
-      if (e.accountIdTo !== assetId) continue;
+      if (e.toAccountId !== assetId) continue;
       if (e.start.getTime() > monthStart.getTime()) continue;
       if (e.end && e.end.getTime() < monthStart.getTime()) continue;
       assert(e.countryCode === "GB", "Only GB earnings supported");
@@ -366,7 +366,7 @@ export function monthTransactionsFor(
 
   // 4) Bills with per-month overrides
   for (const { bill: b, overridesByMonthStartIso } of data.bills) {
-    if (b.accountIdFrom !== assetId) continue;
+    if (b.fromAccountId !== assetId) continue;
     const collectionDay = collectionDayInMonth(
       b.frequency,
       b.collectionDate,
