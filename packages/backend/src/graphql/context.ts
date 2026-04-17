@@ -20,11 +20,15 @@ export function contextAwareDataLoader<T, Args extends unknown[]>(
   /** Function that produces the per-request value. Receives `ctx` plus any forwarded `args` */
   fn: (ctx: Context, ...args: Args) => T | Promise<T>,
 ) {
-  const cache = new WeakMap<Context, T | Promise<T>>();
+  const cache = new WeakMap<Context, Map<string, T | Promise<T>>>();
   return async (ctx: Context, ...args: Args) => {
-    if (cache.has(ctx)) return cache.get(ctx)!;
-    const result = fn(ctx, ...args);
-    cache.set(ctx, result);
-    return result;
+    if (!cache.has(ctx)) cache.set(ctx, new Map());
+    const key = args.length ? JSON.stringify(args) : "";
+    let v = cache.get(ctx)!.get(key);
+    if (v === undefined) {
+      v = fn(ctx, ...args);
+      cache.get(ctx)!.set(key, v);
+    }
+    return v;
   };
 }
