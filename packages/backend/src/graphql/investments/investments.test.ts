@@ -201,6 +201,9 @@ describe("investments query", () => {
       }
     `);
     const data = await runGql(doc, {});
-    expect(data.investments.map((i) => i.name)).toEqual(["Microsoft", "Apple"]);
+    expect(data.investments?.map((i) => i.name)).toEqual([
+      "Microsoft",
+      "Apple",
+    ]);
   });
 });
