@@ -348,10 +348,10 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
   await db.insert(PlanningTransactions).values({
     year: 2025,
     date: new Date(Date.UTC(2025, 6, 1)),
-    amount: 20_000,
+    amount: -20_000,
     currency: "GBP",
     name: "Transfer to joint",
-    fromAccountId: current,
+    accountId: current,
     toAccountId: joint,
   });
 
@@ -359,10 +359,10 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
   await db.insert(PlanningTransactions).values({
     year: 2025,
     date: new Date(Date.UTC(2025, 7, 1)),
-    amount: 15_000,
+    amount: -15_000,
     currency: "GBP",
     name: "Amex payment",
-    fromAccountId: current,
+    accountId: current,
     liabilityId: cardLiability,
   });
 
@@ -495,10 +495,10 @@ it("transactions field surfaces each source with the expected provisional/editab
   await db.insert(PlanningTransactions).values({
     year: 2025,
     date: new Date(Date.UTC(2025, 3, 1)),
-    amount: 20_000,
+    amount: -20_000,
     currency: "GBP",
     name: "Transfer to joint",
-    fromAccountId: current,
+    accountId: current,
     toAccountId: joint,
   });
 
@@ -506,10 +506,10 @@ it("transactions field surfaces each source with the expected provisional/editab
   await db.insert(PlanningTransactions).values({
     year: 2025,
     date: new Date(Date.UTC(2025, 3, 1)),
-    amount: 15_000,
+    amount: -15_000,
     currency: "GBP",
     name: "Amex payment",
-    fromAccountId: current,
+    accountId: current,
     liabilityId: cardLiability,
   });
 

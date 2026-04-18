@@ -79,26 +79,32 @@ export function decodePlanningTransactionId(
 }
 
 /**
- * Record a manual transaction on a planning month. Amount is a positive magnitude; the direction is carried by which account is `fromAccountId` (and optionally `toAccountId` for internal transfers).
+ * Record a manual transaction on a planning month. `amount` is signed — negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId` and `liabilityId` to be null.
  *
  * @gqlMutationField
  */
 export async function transactionCreate(
   /** Planning month id, e.g. `"apr-2025"`. */
   monthId: ID,
-  /** Positive magnitude. Sign is derived from which side of the transaction an account is on. */
+  /** Signed amount: negative = outflow, positive = ad-hoc inflow. */
   amount: MoneyInput,
   name: string,
-  /** Planning account (`PlanningAccount.id`) the transaction is paid from. */
-  fromAccountId: ID,
-  /** Destination planning account (`PlanningAccount.id`) for a transfer. */
+  /** Primary planning account (`PlanningAccount.id`): debited when `amount` is negative (outflow) or credited when positive (ad-hoc inflow). */
+  accountId: ID,
+  /** Destination planning account (`PlanningAccount.id`) for an internal transfer. Only valid for outflows. */
   toAccountId?: ID | null,
-  /** Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. */
+  /** Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows. */
   liabilityId?: ID | null,
 ): Promise<PlanningTransaction> {
   const { year, date } = monthKey(monthId);
   const { currency, amount: minor } = getMoneyInputFractionalAmount(amount);
-  assert(minor >= 0, "Transaction amount must be a positive magnitude");
+  assert(minor !== 0, "Transaction amount must be non-zero");
+  if (minor > 0) {
+    assert(
+      toAccountId == null && liabilityId == null,
+      "Inflow transactions must not have a toAccountId or liabilityId",
+    );
+  }
   await ensurePlanningMonth(year, date);
   const [row] = await db
     .insert(PlanningTransactions)
@@ -108,7 +114,7 @@ export async function transactionCreate(
       amount: minor,
       currency,
       name,
-      fromAccountId,
+      accountId,
       toAccountId: toAccountId ?? null,
       liabilityId: liabilityId ?? null,
     })
@@ -116,7 +122,7 @@ export async function transactionCreate(
   return {
     id: encodePlanningTransactionId({ kind: "tx", id: row.id }),
     name: row.name,
-    amount: Money.fromMinorDenomination(-row.amount, row.currency),
+    amount: Money.fromMinorDenomination(row.amount, row.currency),
     isProvisional: false,
     isEditable: true,
     liabilityId: (row.liabilityId ?? null) as ID | null,
@@ -142,8 +148,8 @@ export async function transactionUpdate(
   /** New positive magnitude. */
   amount?: MoneyInput | null,
   name?: string | null,
-  /** New paying planning account (`PlanningAccount.id`). Manual transactions only. */
-  fromAccountId?: ID | null,
+  /** New primary planning account (`PlanningAccount.id`). Manual transactions only. */
+  accountId?: ID | null,
   /** New destination planning account (`PlanningAccount.id`) for a transfer. Pass null explicitly to clear. Manual transactions only. */
   toAccountId?: ID | null,
   /** New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only. */
@@ -158,17 +164,30 @@ export async function transactionUpdate(
     case "tx":
     case "to": {
       await ensurePlanningMonth(year, date);
+      let amountPatch: { amount: number; currency: CurrencyCode } | null = null;
+      if (patchAmount) {
+        // `EditTransactionForm` sends a positive magnitude; preserve the
+        // stored sign so clients don't have to know whether the row is an
+        // inflow or an outflow.
+        const [existing] = await db
+          .select({ amount: PlanningTransactions.amount })
+          .from(PlanningTransactions)
+          .where(eq(PlanningTransactions.id, parsed.id));
+        assert(existing, `Transaction ${parsed.id} not found`);
+        const sign = existing.amount < 0 ? -1 : 1;
+        amountPatch = {
+          amount: sign * Math.abs(patchAmount.amount),
+          currency: patchAmount.currency,
+        };
+      }
       await db
         .update(PlanningTransactions)
         .set({
           year,
           date,
           ...(name != null && { name }),
-          ...(patchAmount && {
-            amount: Math.abs(patchAmount.amount),
-            currency: patchAmount.currency,
-          }),
-          ...(fromAccountId != null && { fromAccountId }),
+          ...(amountPatch && amountPatch),
+          ...(accountId != null && { accountId }),
           ...(toAccountId !== undefined && { toAccountId }),
           ...(liabilityId !== undefined && { liabilityId }),
           updatedAt: new Date(),
@@ -253,13 +272,12 @@ async function reloadTransaction(
         .where(eq(PlanningTransactions.id, parsed.id));
       assert(row, `Transaction ${parsed.id} not found`);
       const fromSide = parsed.kind === "tx";
+      // The "to" side of a transfer is the mirror image: flip the stored sign.
+      const signedMinor = fromSide ? row.amount : -row.amount;
       return {
         id: encodePlanningTransactionId(parsed),
         name: row.name,
-        amount: Money.fromMinorDenomination(
-          fromSide ? -row.amount : row.amount,
-          row.currency,
-        ),
+        amount: Money.fromMinorDenomination(signedMinor, row.currency),
         isProvisional: false,
         isEditable: fromSide,
         liabilityId: (row.liabilityId ?? null) as ID | null,

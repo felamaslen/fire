@@ -340,7 +340,7 @@ CREATE TABLE "PlanningTransactions" (
   "amount" BIGINT NOT NULL,
   "currency" "CurrencyCode" NOT NULL,
   "name" text NOT NULL,
-  "fromAccountId" uuid NOT NULL,
+  "accountId" uuid NOT NULL,
   "toAccountId" uuid,
   "liabilityId" uuid,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
@@ -348,7 +348,15 @@ CREATE TABLE "PlanningTransactions" (
   CONSTRAINT "PlanningTransactions_accounts_ck"
     CHECK (
       "PlanningTransactions"."toAccountId" IS NULL
-      OR "PlanningTransactions"."fromAccountId" != "PlanningTransactions"."toAccountId"
+      OR "PlanningTransactions"."accountId" != "PlanningTransactions"."toAccountId"
+    ),
+  CONSTRAINT "PlanningTransactions_inflow_ck"
+    CHECK (
+      "PlanningTransactions"."amount" < 0
+      OR (
+        "PlanningTransactions"."toAccountId" IS NULL
+        AND "PlanningTransactions"."liabilityId" IS NULL
+      )
     )
 );
 
@@ -513,10 +521,8 @@ ADD CONSTRAINT "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk"
     ON DELETE RESTRICT
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningTransactions"
-ADD CONSTRAINT "PlanningTransactions_fromAccountId_PlanningAccounts_accountId_fk"
-  FOREIGN KEY ("fromAccountId") REFERENCES "public"."PlanningAccounts" (
-    "accountId"
-  )
+ADD CONSTRAINT "PlanningTransactions_accountId_PlanningAccounts_accountId_fk"
+  FOREIGN KEY ("accountId") REFERENCES "public"."PlanningAccounts" ("accountId")
     ON DELETE RESTRICT
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningTransactions"
