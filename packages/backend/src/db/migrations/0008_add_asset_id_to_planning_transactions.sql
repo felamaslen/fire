@@ -1,0 +1,5 @@
+ALTER TABLE "PlanningTransactions" DROP CONSTRAINT "PlanningTransactions_inflow_ck";--> statement-breakpoint
+ALTER TABLE "PlanningTransactions" ADD COLUMN "assetId" uuid;--> statement-breakpoint
+ALTER TABLE "PlanningTransactions" ADD CONSTRAINT "PlanningTransactions_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "PlanningTransactions" ADD CONSTRAINT "PlanningTransactions_liabilityAssetExclusive_ck" CHECK ("PlanningTransactions"."liabilityId" IS NULL OR "PlanningTransactions"."assetId" IS NULL);--> statement-breakpoint
+ALTER TABLE "PlanningTransactions" ADD CONSTRAINT "PlanningTransactions_inflow_ck" CHECK ("PlanningTransactions"."amount" < 0 OR ("PlanningTransactions"."toAccountId" IS NULL AND "PlanningTransactions"."liabilityId" IS NULL AND "PlanningTransactions"."assetId" IS NULL));

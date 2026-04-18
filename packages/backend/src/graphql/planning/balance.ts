@@ -301,7 +301,8 @@ export function monthTransactionsFor(
         amount: Money.fromMinorDenomination(tx.amount, tx.currency),
         isProvisional: false,
         isEditable: true,
-        liabilityId: null,
+        liabilityId: (tx.liabilityId ?? null) as ID | null,
+        assetId: (tx.assetId ?? null) as ID | null,
       });
     }
     if (tx.toAccountId === assetId) {
@@ -312,6 +313,7 @@ export function monthTransactionsFor(
         isProvisional: false,
         isEditable: false,
         liabilityId: null,
+        assetId: null,
       });
     }
   }
@@ -331,6 +333,7 @@ export function monthTransactionsFor(
       isProvisional: false,
       isEditable: true,
       liabilityId: null,
+      assetId: null,
     });
     for (const a of adjustments) {
       out.push({
@@ -340,6 +343,7 @@ export function monthTransactionsFor(
         isProvisional: false,
         isEditable: true,
         liabilityId: (a.liabilityId ?? null) as ID | null,
+        assetId: null,
       });
     }
   }
@@ -379,6 +383,7 @@ export function monthTransactionsFor(
         isProvisional: true,
         isEditable: true,
         liabilityId: null,
+        assetId: null,
       });
       if (take.incomeTax > 0) {
         out.push({
@@ -396,6 +401,7 @@ export function monthTransactionsFor(
           isProvisional: true,
           isEditable: true,
           liabilityId: null,
+          assetId: null,
         });
       }
       if (take.nic > 0) {
@@ -411,6 +417,7 @@ export function monthTransactionsFor(
           isProvisional: true,
           isEditable: true,
           liabilityId: null,
+          assetId: null,
         });
       }
       if (take.studentLoan > 0) {
@@ -429,6 +436,7 @@ export function monthTransactionsFor(
           isProvisional: true,
           isEditable: true,
           liabilityId: (e.studentLoanLiabilityId ?? null) as ID | null,
+          assetId: null,
         });
       }
     }
@@ -469,6 +477,7 @@ export function monthTransactionsFor(
         isProvisional: false,
         isEditable: true,
         liabilityId: null,
+        assetId: null,
       });
     } else {
       out.push({
@@ -482,6 +491,7 @@ export function monthTransactionsFor(
         isProvisional: true,
         isEditable: true,
         liabilityId: null,
+        assetId: null,
       });
     }
   }

@@ -33,6 +33,20 @@ async function createAsset(name = "Main"): Promise<string> {
   return data.netWorthCategoryCreate.id;
 }
 
+async function createStockAsset(name: string): Promise<string> {
+  const data = await runGql(
+    graphql(`
+      mutation ($name: String!) {
+        netWorthCategoryCreate(input: { asset: { name: $name, type: STOCK } }) {
+          id
+        }
+      }
+    `),
+    { name },
+  );
+  return data.netWorthCategoryCreate.id;
+}
+
 async function seedYear(year = "2025", withRates = true): Promise<void> {
   if (withRates) {
     await runGql(
@@ -672,4 +686,170 @@ it("transactionUpdate on a payslip adjustment keeps every other adjustment in it
 
   // Only the NIC amount should have changed vs. the pre-edit snapshot.
   expect(before.replace("-200", "-250")).toBe(await aprilTransactions());
+});
+
+describe("asset investment link", () => {
+  it("transactionCreate links an outflow to a STOCK asset and exposes assetId", async () => {
+    await seedYear("2025", false);
+    const main = await createAsset();
+    await assign(main);
+    const stock = await createStockAsset("VWRL");
+
+    const created = await runGql(
+      graphql(`
+        mutation ($a: ID!, $s: ID!) {
+          transactionCreate(
+            monthId: "apr-2025"
+            amount: { amount: -500, currency: "GBP" }
+            name: "VWRL buy"
+            accountId: $a
+            assetId: $s
+          ) {
+            id
+            assetId
+            liabilityId
+          }
+        }
+      `),
+      { a: main, s: stock },
+    );
+    expect(created.transactionCreate.assetId).toBe(stock);
+    expect(created.transactionCreate.liabilityId).toBe(null);
+  });
+
+  it("transactionCreate rejects an asset whose type isn't STOCK or PENSION", async () => {
+    await seedYear("2025", false);
+    const main = await createAsset();
+    await assign(main);
+    const cash = await createAsset("Other cash");
+
+    await expect(
+      runGql(
+        graphql(`
+          mutation ($a: ID!, $s: ID!) {
+            transactionCreate(
+              monthId: "apr-2025"
+              amount: { amount: -100, currency: "GBP" }
+              name: "bad"
+              accountId: $a
+              assetId: $s
+            ) {
+              id
+            }
+          }
+        `),
+        { a: main, s: cash },
+      ),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: Only STOCK or PENSION assets can receive investment transactions]`,
+    );
+  });
+
+  it("transactionCreate rejects combining liabilityId and assetId", async () => {
+    await seedYear("2025", false);
+    const main = await createAsset();
+    await assign(main);
+    const stock = await createStockAsset("VWRL");
+    const liabilityData = await runGql(
+      graphql(`
+        mutation ($name: String!) {
+          netWorthCategoryCreate(
+            input: { liability: { name: $name, type: CREDIT_CARD } }
+          ) {
+            id
+          }
+        }
+      `),
+      { name: "Card" },
+    );
+    const liability = liabilityData.netWorthCategoryCreate.id;
+
+    await expect(
+      runGql(
+        graphql(`
+          mutation ($a: ID!, $l: ID!, $s: ID!) {
+            transactionCreate(
+              monthId: "apr-2025"
+              amount: { amount: -100, currency: "GBP" }
+              name: "conflict"
+              accountId: $a
+              liabilityId: $l
+              assetId: $s
+            ) {
+              id
+            }
+          }
+        `),
+        { a: main, l: liability, s: stock },
+      ),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: A transaction cannot both pay down a liability and invest into an asset]`,
+    );
+  });
+
+  it("transactionCreate rejects an inflow with an assetId", async () => {
+    await seedYear("2025", false);
+    const main = await createAsset();
+    await assign(main);
+    const stock = await createStockAsset("VWRL");
+
+    await expect(
+      runGql(
+        graphql(`
+          mutation ($a: ID!, $s: ID!) {
+            transactionCreate(
+              monthId: "apr-2025"
+              amount: { amount: 100, currency: "GBP" }
+              name: "bad"
+              accountId: $a
+              assetId: $s
+            ) {
+              id
+            }
+          }
+        `),
+        { a: main, s: stock },
+      ),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: Inflow transactions must not have a toAccountId, liabilityId, or assetId]`,
+    );
+  });
+
+  it("transactionUpdate can clear assetId by passing null", async () => {
+    await seedYear("2025", false);
+    const main = await createAsset();
+    await assign(main);
+    const stock = await createStockAsset("VWRL");
+
+    await runGql(
+      graphql(`
+        mutation ($a: ID!, $s: ID!) {
+          transactionCreate(
+            monthId: "apr-2025"
+            amount: { amount: -500, currency: "GBP" }
+            name: "VWRL buy"
+            accountId: $a
+            assetId: $s
+          ) {
+            id
+          }
+        }
+      `),
+      { a: main, s: stock },
+    );
+    const txId = await aprilTxId("VWRL buy");
+
+    const updated = await runGql(
+      graphql(`
+        mutation ($id: ID!) {
+          transactionUpdate(monthId: "apr-2025", id: $id, assetId: null) {
+            id
+            assetId
+          }
+        }
+      `),
+      { id: txId },
+    );
+    expect(updated.transactionUpdate.assetId).toBe(null);
+  });
 });

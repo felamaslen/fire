@@ -57,6 +57,13 @@
       "when": 1776526333552,
       "tag": "0007_planning_transactions_signed_amount_accountid",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1776530473476,
+      "tag": "0008_add_asset_id_to_planning_transactions",
+      "breakpoints": true
     }
   ]
 }

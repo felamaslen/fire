@@ -340,11 +340,15 @@ export const PlanningTransactions = pgTable(
       () => PlanningAccounts.accountId,
       { onDelete: "restrict" },
     ),
-    /** Liability this transaction pays down, if any. Only valid for outflows (`amount < 0`). */
+    /** Liability this transaction pays down, if any. Only valid for outflows (`amount < 0`). Mutually exclusive with `assetId`. */
     liabilityId: uuid("liabilityId").references(
       () => NetWorthCategoryLiabilities.id,
       { onDelete: "restrict" },
     ),
+    /** Asset (stock or pension) this transaction invests into, if any. Only valid for outflows (`amount < 0`). Mutually exclusive with `liabilityId`; asset type (STOCK / PENSION) is validated in the resolver. */
+    assetId: uuid("assetId").references(() => NetWorthCategoryAssets.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -364,7 +368,11 @@ export const PlanningTransactions = pgTable(
     ),
     check(
       "PlanningTransactions_inflow_ck",
-      sql`${t.amount} < 0 OR (${t.toAccountId} IS NULL AND ${t.liabilityId} IS NULL)`,
+      sql`${t.amount} < 0 OR (${t.toAccountId} IS NULL AND ${t.liabilityId} IS NULL AND ${t.assetId} IS NULL)`,
+    ),
+    check(
+      "PlanningTransactions_liabilityAssetExclusive_ck",
+      sql`${t.liabilityId} IS NULL OR ${t.assetId} IS NULL`,
     ),
   ],
 );
@@ -389,6 +397,10 @@ export const planningTransactionsRelations = relations(
     liability: one(NetWorthCategoryLiabilities, {
       fields: [PlanningTransactions.liabilityId],
       references: [NetWorthCategoryLiabilities.id],
+    }),
+    asset: one(NetWorthCategoryAssets, {
+      fields: [PlanningTransactions.assetId],
+      references: [NetWorthCategoryAssets.id],
     }),
   }),
 );
