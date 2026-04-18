@@ -58,14 +58,17 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
       const price = res.regularMarketPrice;
       const currency = res.currency;
       if (price == null || currency == null) return null;
-      const currencyCode = currency.toUpperCase();
+      // Yahoo reports LSE stocks in `GBp` / `GBX` (pence) — the price is
+      // already in minor units of GBP, so don't scale it.
+      const alreadyMinor = currency === "GBp" || currency === "GBX";
+      const currencyCode = alreadyMinor ? "GBP" : currency.toUpperCase();
       const { CURRENCIES } = await import("@/config");
       const scale = (CURRENCIES as Record<string, { scale: number }>)[
         currencyCode
       ]?.scale;
       if (scale == null) return null;
       const quote: Quote = {
-        priceMinorUnits: price * 10 ** scale,
+        priceMinorUnits: alreadyMinor ? price : price * 10 ** scale,
         currency: currencyCode,
         fetchedAt: new Date(),
       };

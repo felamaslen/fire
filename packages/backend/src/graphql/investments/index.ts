@@ -30,6 +30,7 @@ import {
 import {
   InvestmentTransaction,
   loadInvestmentTransactions,
+  loadInvestmentTransactionsConnection,
 } from "./transactions";
 
 /** The real-time unit price of a stock investment, as of `capturedAt`. @gqlType */
@@ -88,13 +89,25 @@ export class Investment {
     return new Investment(row.id as ID, row.name, asset, row.currency);
   }
 
-  /** Transactions booked against this investment, oldest-first.
+  /** Transactions booked against this investment, oldest-first. Full history — for large lists prefer `transactionsPaged`.
    *
    * @gqlField
    * @gqlAnnotate semanticNonNull
    */
   async transactions(): Promise<InvestmentTransaction[] | null> {
     return loadInvestmentTransactions(this.id);
+  }
+
+  /** Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default.
+   *
+   * @gqlField
+   * @gqlAnnotate semanticNonNull
+   */
+  async transactionsPaged(
+    first?: Int | null,
+    after?: ID | null,
+  ): Promise<Connection<InvestmentTransaction> | null> {
+    return loadInvestmentTransactionsConnection(this.id, first, after);
   }
 
   /** Stock-split events on this investment, oldest-first.

@@ -68,6 +68,19 @@ describe("fetchQuote", () => {
     expect(readCachedQuote("AAPL")).toEqual(result);
   });
 
+  it("treats GBp / GBX quotes as already being in pence", async () => {
+    server.use(
+      yahooQuoteHandler([
+        { symbol: "EQQQ.L", regularMarketPrice: 48145, currency: "GBp" },
+      ]),
+    );
+    const result = await fetchQuote("EQQQ.L");
+    expect(result).toMatchObject({
+      priceMinorUnits: 48145,
+      currency: "GBP",
+    });
+  });
+
   it("dedupes concurrent fetches for the same symbol", async () => {
     const hits = { count: 0 };
     server.use(
