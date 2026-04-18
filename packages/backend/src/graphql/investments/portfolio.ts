@@ -8,6 +8,7 @@ import {
   Investments,
   InvestmentTransactions,
 } from "@/db/schema/investments";
+import { readOrRefresh } from "@/tasks/yahoo";
 
 import type { Date as CalendarDate } from "../date";
 import { assertCurrencyCode, Money } from "../money";
@@ -86,10 +87,13 @@ async function loadHeldInvestments(
 ): Promise<HeldInvestment[]> {
   // Restrict to investments whose currency matches the portfolio's currency.
   const matchingInvestments = await db
-    .select({ id: Investments.id })
+    .select({ id: Investments.id, stockCode: Investments.stockCode })
     .from(Investments)
     .where(sql`${Investments.currency} = ${filters.currency}`);
   if (matchingInvestments.length === 0) return [];
+  const stockCodeById = new Map(
+    matchingInvestments.map((r) => [r.id, r.stockCode]),
+  );
   let investmentIds = matchingInvestments.map((r) => r.id);
   if (filters.filterInvestmentIdIn && filters.filterInvestmentIdIn.length > 0) {
     const allowed = new Set(filters.filterInvestmentIdIn);
@@ -139,13 +143,23 @@ async function loadHeldInvestments(
 
   return txRows.map((r) => {
     const prices = pricesByInvestment.get(r.investmentId) ?? [];
+    let priceLatest: number | null = prices[0] ?? null;
+    let pricePrevious: number | null = prices[1] ?? null;
+    const stockCode = stockCodeById.get(r.investmentId);
+    if (stockCode) {
+      const live = readOrRefresh(stockCode);
+      if (live && live.currency === filters.currency) {
+        pricePrevious = priceLatest;
+        priceLatest = live.priceMinorUnits;
+      }
+    }
     return {
       id: r.investmentId,
       currency: filters.currency,
       unitsHeld: Number(r.units),
       unitsPriceSum: Number(r.unitsPriceSum),
-      priceLatest: prices[0] ?? null,
-      pricePrevious: prices[1] ?? null,
+      priceLatest,
+      pricePrevious,
     };
   });
 }
@@ -340,9 +354,8 @@ export class Portfolio {
     return ((value.amount - cost.amount) / cost.amount) as Float;
   }
 
-  /** Change in portfolio value over the most recent pricing interval. `null` until enough price history exists. @gqlField */
+  /** Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. `null` until enough price history exists. @gqlField */
   async dailyGainValue(): Promise<Money | null> {
-    // TODO(real-time pricing): swap to live quotes when available.
     return this.aggregate((h) => {
       if (h.priceLatest === null || h.pricePrevious === null) return null;
       return (h.priceLatest - h.pricePrevious) * h.unitsHeld;
