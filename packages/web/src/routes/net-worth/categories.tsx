@@ -4,15 +4,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { toast } from "sonner";
 
 import { DeleteButton } from "@/components/delete-button";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -20,6 +20,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 import {
   type FragmentOf,
@@ -27,6 +32,7 @@ import {
   readFragment,
   type ResultOf,
 } from "../../graphql";
+import { entriesRefetch } from "./entries";
 
 const AssetRowDocument = graphql(`
   fragment AssetRow on NetWorthCategoryAsset {
@@ -187,11 +193,11 @@ function NetWorthCategoriesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <Accordion type="single" collapsible className="space-y-2">
       <AssetsSection data={assets} />
       <LiabilitiesSection data={liabilities} />
       <OptionsSection data={options} />
-    </div>
+    </Accordion>
   );
 }
 
@@ -212,27 +218,27 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
   });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Assets</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {ASSET_TYPES.map((group) => {
-          const rows = data.filter((d) => d.assetType === group);
-          if (rows.length === 0) return null;
-          return (
-            <div key={group} className="space-y-2">
-              <h3 className="text-sm font-medium text-muted-foreground">
-                {ASSET_TYPE_LABELS[group]}
-              </h3>
-              <div className="space-y-2">
-                {rows.map((d) => (
-                  <AssetRow key={d.id} data={d} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
+    <AccordionItem value="assets">
+      <AccordionTrigger>Assets</AccordionTrigger>
+      <AccordionContent className="space-y-4">
+        <Accordion type="single" collapsible className="space-y-2">
+          {ASSET_TYPES.map((group) => {
+            const rows = data.filter((d) => d.assetType === group);
+            if (rows.length === 0) return null;
+            return (
+              <AccordionItem key={group} value={group}>
+                <AccordionTrigger>{ASSET_TYPE_LABELS[group]}</AccordionTrigger>
+                <AccordionContent>
+                  <div className="space-y-2">
+                    {rows.map((d) => (
+                      <AssetRow key={d.id} data={d} />
+                    ))}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            );
+          })}
+        </Accordion>
         <form
           className="flex items-center gap-2 pt-2"
           onSubmit={(e) => {
@@ -272,8 +278,8 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
             Add
           </Button>
         </form>
-      </CardContent>
-    </Card>
+      </AccordionContent>
+    </AccordionItem>
   );
 }
 
@@ -288,12 +294,12 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
   });
 
   const form = useForm({
-    defaultValues: { name: asset.name, type: asset.assetType },
+    defaultValues: { name: asset.name },
     onSubmit: async ({ value }) => {
       await update({
         variables: {
           id: asset.id,
-          patch: { asset: { name: value.name, type: value.type } },
+          patch: { asset: { name: value.name } },
         },
       }).catch((err: Error) => toast.error(err.message));
       form.reset(value);
@@ -314,25 +320,6 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
             value={field.state.value}
             onChange={(e) => field.handleChange(e.target.value)}
           />
-        )}
-      </form.Field>
-      <form.Field name="type">
-        {(field) => (
-          <Select
-            value={field.state.value}
-            onValueChange={(v) => field.handleChange(v as AssetType)}
-          >
-            <SelectTrigger className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ASSET_TYPES.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {ASSET_TYPE_LABELS[t]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         )}
       </form.Field>
       <form.Subscribe selector={(s) => [s.canSubmit, s.isDirty]}>
@@ -393,27 +380,29 @@ function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
   });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Liabilities</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {LIABILITY_TYPES.map((group) => {
-          const rows = data.filter((d) => d.liabilityType === group);
-          if (rows.length === 0) return null;
-          return (
-            <div key={group} className="space-y-2">
-              <h3 className="text-sm font-medium text-muted-foreground">
-                {LIABILITY_TYPE_LABELS[group]}
-              </h3>
-              <div className="space-y-2">
-                {rows.map((d) => (
-                  <LiabilityRow key={d.id} data={d} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
+    <AccordionItem value="liabilities">
+      <AccordionTrigger>Liabilities</AccordionTrigger>
+      <AccordionContent className="space-y-4">
+        <Accordion type="single" collapsible className="space-y-2">
+          {LIABILITY_TYPES.map((group) => {
+            const rows = data.filter((d) => d.liabilityType === group);
+            if (rows.length === 0) return null;
+            return (
+              <AccordionItem key={group} value={group}>
+                <AccordionTrigger>
+                  {LIABILITY_TYPE_LABELS[group]}
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="space-y-2">
+                    {rows.map((d) => (
+                      <LiabilityRow key={d.id} data={d} />
+                    ))}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            );
+          })}
+        </Accordion>
         <form
           className="flex items-center gap-2 pt-2"
           onSubmit={(e) => {
@@ -482,9 +471,8 @@ function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
                         <TooltipContent>
                           Exclude this loan from net-worth totals and
                           debt-payoff projections. Use for loans you're still
-                          tracking but don't want included in calculations
-                          (e.g. a 0% interest-free arrangement you're happy to
-                          carry).
+                          tracking but don't want included in calculations (e.g.
+                          a 0% interest-free arrangement you're happy to carry).
                         </TooltipContent>
                       </Tooltip>
                     )}
@@ -497,8 +485,8 @@ function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
             Add
           </Button>
         </form>
-      </CardContent>
-    </Card>
+      </AccordionContent>
+    </AccordionItem>
   );
 }
 
@@ -508,18 +496,22 @@ function LiabilityRow({
   data: FragmentOf<typeof LiabilityRowDocument>;
 }) {
   const liability = readFragment(LiabilityRowDocument, data);
+  // Liability `skip` feeds `NetWorthEntry.totalLiabilities` / `totalNet`, so
+  // any toggle must invalidate every visible entry total — refetch the
+  // entries grid alongside the category list.
   const [update] = useMutation(NetWorthCategoryUpdateDocument, {
+    refetchQueries: entriesRefetch,
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
-    refetchQueries: refetch,
+    refetchQueries: [...refetch, ...entriesRefetch],
     onCompleted: () => toast.success("Category deleted"),
   });
 
+  const isLoan = liability.liabilityType === "LOAN";
   const form = useForm({
     defaultValues: {
       name: liability.name,
-      type: liability.liabilityType,
       interestRate: decimalToPercent(liability.interestRate),
       skip: liability.skip ?? false,
     },
@@ -530,12 +522,10 @@ function LiabilityRow({
           patch: {
             liability: {
               name: value.name,
-              type: value.type,
-              interestRate:
-                value.type === "LOAN"
-                  ? percentToDecimal(value.interestRate)
-                  : null,
-              skip: value.type === "LOAN" ? value.skip : null,
+              interestRate: isLoan
+                ? percentToDecimal(value.interestRate)
+                : null,
+              skip: isLoan ? value.skip : null,
             },
           },
         },
@@ -560,68 +550,43 @@ function LiabilityRow({
           />
         )}
       </form.Field>
-      <form.Field name="type">
-        {(field) => (
-          <Select
-            value={field.state.value}
-            onValueChange={(v) => field.handleChange(v as LiabilityType)}
-          >
-            <SelectTrigger className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {LIABILITY_TYPES.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {LIABILITY_TYPE_LABELS[t]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </form.Field>
-      <form.Subscribe selector={(s) => s.values.type}>
-        {(type) =>
-          type === "LOAN" && (
-            <>
-              <form.Field name="interestRate">
-                {(field) => (
-                  <Input
-                    inputMode="decimal"
-                    className="w-28"
-                    aria-label="Interest rate (%)"
-                    endAdornment="%"
-                    value={field.state.value}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                  />
-                )}
-              </form.Field>
-              <form.Field name="skip">
-                {(field) => (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
-                        <Checkbox
-                          checked={field.state.value}
-                          onCheckedChange={(v) =>
-                            field.handleChange(v === true)
-                          }
-                        />
-                        Skip
-                      </label>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      Exclude this loan from net-worth totals and debt-payoff
-                      projections. Use for loans you're still tracking but
-                      don't want included in calculations (e.g. a 0%
-                      interest-free arrangement you're happy to carry).
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-              </form.Field>
-            </>
-          )
-        }
-      </form.Subscribe>
+      {isLoan && (
+        <>
+          <form.Field name="interestRate">
+            {(field) => (
+              <Input
+                inputMode="decimal"
+                className="w-28"
+                aria-label="Interest rate (%)"
+                endAdornment="%"
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+              />
+            )}
+          </form.Field>
+          <form.Field name="skip">
+            {(field) => (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <label className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground">
+                    <Checkbox
+                      checked={field.state.value}
+                      onCheckedChange={(v) => field.handleChange(v === true)}
+                    />
+                    Skip
+                  </label>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Exclude this loan from net-worth totals and debt-payoff
+                  projections. Use for loans you're still tracking but don't
+                  want included in calculations (e.g. a 0% interest-free
+                  arrangement you're happy to carry).
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </form.Field>
+        </>
+      )}
       <form.Subscribe selector={(s) => [s.canSubmit, s.isDirty]}>
         {([canSubmit, isDirty]) => (
           <Button
@@ -660,11 +625,9 @@ function OptionsSection({ data }: { data: OptionSelection[] }) {
   });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Options</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
+    <AccordionItem value="options">
+      <AccordionTrigger>Options</AccordionTrigger>
+      <AccordionContent className="space-y-2">
         {data.map((d) => (
           <OptionRow key={d.id} data={d} />
         ))}
@@ -688,8 +651,8 @@ function OptionsSection({ data }: { data: OptionSelection[] }) {
             Add
           </Button>
         </form>
-      </CardContent>
-    </Card>
+      </AccordionContent>
+    </AccordionItem>
   );
 }
 
