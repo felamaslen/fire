@@ -1,4 +1,5 @@
 import {
+  earningMonthCoverage,
   monthId,
   monthsInFYYear,
   parseMonthId,
@@ -94,4 +95,53 @@ it("yearsOverlapping caps an open-ended range at today + 10y", () => {
   // Last year in the list should be roughly (thisYear + 10); allow ±1 for FY rounding.
   expect(years[years.length - 1]).toBeGreaterThanOrEqual(thisYear + 9);
   expect(years[years.length - 1]).toBeLessThanOrEqual(thisYear + 10);
+});
+
+it("earningMonthCoverage is 1 for a fully-covered month", () => {
+  expect(
+    earningMonthCoverage(
+      new Date(Date.UTC(2025, 3, 1)), // 1 Apr
+      new Date(Date.UTC(2025, 3, 30)), // 30 Apr
+      new Date(Date.UTC(2025, 3, 1)),
+    ),
+  ).toBe(1);
+});
+
+it("earningMonthCoverage pro-rates when the earning starts mid-month", () => {
+  // 16 Apr – 30 Apr = 15 days of 30 = 0.5
+  expect(
+    earningMonthCoverage(
+      new Date(Date.UTC(2025, 3, 16)),
+      null,
+      new Date(Date.UTC(2025, 3, 1)),
+    ),
+  ).toBeCloseTo(15 / 30);
+});
+
+it("earningMonthCoverage pro-rates when the earning ends mid-month", () => {
+  // 1 Apr – 15 Apr = 15 days of 30 = 0.5
+  expect(
+    earningMonthCoverage(
+      new Date(Date.UTC(2025, 3, 1)),
+      new Date(Date.UTC(2025, 3, 15)),
+      new Date(Date.UTC(2025, 3, 1)),
+    ),
+  ).toBeCloseTo(15 / 30);
+});
+
+it("earningMonthCoverage returns 0 when the earning doesn't overlap the month", () => {
+  expect(
+    earningMonthCoverage(
+      new Date(Date.UTC(2025, 4, 1)), // 1 May
+      new Date(Date.UTC(2025, 4, 10)),
+      new Date(Date.UTC(2025, 3, 1)), // April
+    ),
+  ).toBe(0);
+  expect(
+    earningMonthCoverage(
+      new Date(Date.UTC(2025, 2, 1)), // 1 Mar
+      new Date(Date.UTC(2025, 2, 31)),
+      new Date(Date.UTC(2025, 3, 1)), // April
+    ),
+  ).toBe(0);
 });

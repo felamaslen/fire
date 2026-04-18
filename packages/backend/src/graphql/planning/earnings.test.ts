@@ -675,3 +675,51 @@ it("materialising an earnings deduction copies studentLoanLiabilityId onto the S
   )!;
   expect(slAdj.liabilityId).toBe(liabilityId);
 });
+
+it("pro-rates the predicted take when an earning starts or ends mid-month", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+
+  // Mid-month start (16 Apr), mid-month end (15 Jun).
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Contract"
+          start: "2025-04-16"
+          end: "2025-06-15"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+
+  // April (16 days of 30, coverage = 16/30) and June (15 of 30, coverage =
+  // 15/30) should show pro-rata'd gross + deductions. May is full coverage.
+  // Every other month has no overlap and stays empty.
+  expect(await balanceTable("2025")).toMatchInlineSnapshot(`
+    "
+    MONTH    ACCOUNT VALUE START VALUE END
+    apr-2025 Main    10000       11046.65 
+    may-2025 Main    11046.65    13139.95 
+    jun-2025 Main    13139.95    14186.6  
+    jul-2025 Main    14186.6     14186.6  
+    aug-2025 Main    14186.6     14186.6  
+    sep-2025 Main    14186.6     14186.6  
+    oct-2025 Main    14186.6     14186.6  
+    nov-2025 Main    14186.6     14186.6  
+    dec-2025 Main    14186.6     14186.6  
+    jan-2026 Main    14186.6     14186.6  
+    feb-2026 Main    14186.6     14186.6  
+    mar-2026 Main    14186.6     14186.6  "
+  `);
+});

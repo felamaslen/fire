@@ -374,8 +374,8 @@ it("transactionUpdate on a predicted bill writes a per-month override (this mont
   // April should now reflect the override; other months keep the predicted amount.
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
-    NAME      AMOUNT SOURCE EDIT     ID                           
-    Broadband -175   actual editable {"kind":"bill","id":"<uuid>"}"
+    NAME      AMOUNT SOURCE EDIT     ID                                                
+    Broadband -175   actual editable {"kind":"bill","id":"<uuid>","monthId":"apr-2025"}"
   `);
 });
 
@@ -553,11 +553,11 @@ it("transactionUpdate on a predicted earnings deduction materialises the payslip
   // NIC + student loan), each prefixed with the earning's name.
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
-    NAME                   AMOUNT  SOURCE    EDIT     ID                                          
-    Day job — gross        5000    predicted editable {"kind":"earn","part":"gross","id":"<uuid>"}
-    Day job — income tax   -952.67 predicted editable {"kind":"earn","part":"tax","id":"<uuid>"}  
-    Day job — NIC          -267.55 predicted editable {"kind":"earn","part":"nic","id":"<uuid>"}  
-    Day job — student loan -245.29 predicted editable {"kind":"earn","part":"sl","id":"<uuid>"}   "
+    NAME                   AMOUNT  SOURCE    EDIT     ID                                                               
+    Day job — gross        5000    predicted editable {"kind":"earn","part":"gross","id":"<uuid>","monthId":"apr-2025"}
+    Day job — income tax   -952.67 predicted editable {"kind":"earn","part":"tax","id":"<uuid>","monthId":"apr-2025"}  
+    Day job — NIC          -267.55 predicted editable {"kind":"earn","part":"nic","id":"<uuid>","monthId":"apr-2025"}  
+    Day job — student loan -245.29 predicted editable {"kind":"earn","part":"sl","id":"<uuid>","monthId":"apr-2025"}   "
   `);
 
   const nicId = await aprilTxId("Day job — NIC");
