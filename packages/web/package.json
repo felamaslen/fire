@@ -24,6 +24,8 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-form": "^1.29.0",
     "@tanstack/react-router": "^1.133.0",
+    "@types/apollo-upload-client": "^19.0.0",
+    "apollo-upload-client": "^19.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
