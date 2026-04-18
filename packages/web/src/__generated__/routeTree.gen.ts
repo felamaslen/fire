@@ -10,11 +10,13 @@
 
 import { Route as rootRouteImport } from './../routes/__root'
 import { Route as NetWorthRouteImport } from './../routes/net-worth'
+import { Route as InvestmentsRouteImport } from './../routes/investments'
 import { Route as IndexRouteImport } from './../routes/index'
 import { Route as PlanningIndexRouteImport } from './../routes/planning/index'
 import { Route as PlanningYearRouteImport } from './../routes/planning/$year'
 import { Route as NetWorthEntriesRouteImport } from './../routes/net-worth/entries'
 import { Route as NetWorthCategoriesRouteImport } from './../routes/net-worth/categories'
+import { Route as InvestmentsIdRouteImport } from './../routes/investments/$id'
 import { Route as PlanningYearTaxRatesRouteImport } from './../routes/planning/$year/tax-rates'
 import { Route as PlanningYearPayslipsRouteImport } from './../routes/planning/$year/payslips'
 import { Route as PlanningYearEarningsRouteImport } from './../routes/planning/$year/earnings'
@@ -26,6 +28,11 @@ import { Route as NetWorthEntriesIdEditRouteImport } from './../routes/net-worth
 const NetWorthRoute = NetWorthRouteImport.update({
   id: '/net-worth',
   path: '/net-worth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InvestmentsRoute = InvestmentsRouteImport.update({
+  id: '/investments',
+  path: '/investments',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -52,6 +59,11 @@ const NetWorthCategoriesRoute = NetWorthCategoriesRouteImport.update({
   id: '/categories',
   path: '/categories',
   getParentRoute: () => NetWorthRoute,
+} as any)
+const InvestmentsIdRoute = InvestmentsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => InvestmentsRoute,
 } as any)
 const PlanningYearTaxRatesRoute = PlanningYearTaxRatesRouteImport.update({
   id: '/tax-rates',
@@ -91,7 +103,9 @@ const NetWorthEntriesIdEditRoute = NetWorthEntriesIdEditRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/investments': typeof InvestmentsRouteWithChildren
   '/net-worth': typeof NetWorthRouteWithChildren
+  '/investments/$id': typeof InvestmentsIdRoute
   '/net-worth/categories': typeof NetWorthCategoriesRoute
   '/net-worth/entries': typeof NetWorthEntriesRouteWithChildren
   '/planning/$year': typeof PlanningYearRouteWithChildren
@@ -106,7 +120,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/investments': typeof InvestmentsRouteWithChildren
   '/net-worth': typeof NetWorthRouteWithChildren
+  '/investments/$id': typeof InvestmentsIdRoute
   '/net-worth/categories': typeof NetWorthCategoriesRoute
   '/net-worth/entries': typeof NetWorthEntriesRouteWithChildren
   '/planning/$year': typeof PlanningYearRouteWithChildren
@@ -122,7 +138,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/investments': typeof InvestmentsRouteWithChildren
   '/net-worth': typeof NetWorthRouteWithChildren
+  '/investments/$id': typeof InvestmentsIdRoute
   '/net-worth/categories': typeof NetWorthCategoriesRoute
   '/net-worth/entries': typeof NetWorthEntriesRouteWithChildren
   '/planning/$year': typeof PlanningYearRouteWithChildren
@@ -139,7 +157,9 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/investments'
     | '/net-worth'
+    | '/investments/$id'
     | '/net-worth/categories'
     | '/net-worth/entries'
     | '/planning/$year'
@@ -154,7 +174,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/investments'
     | '/net-worth'
+    | '/investments/$id'
     | '/net-worth/categories'
     | '/net-worth/entries'
     | '/planning/$year'
@@ -169,7 +191,9 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/investments'
     | '/net-worth'
+    | '/investments/$id'
     | '/net-worth/categories'
     | '/net-worth/entries'
     | '/planning/$year'
@@ -185,6 +209,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  InvestmentsRoute: typeof InvestmentsRouteWithChildren
   NetWorthRoute: typeof NetWorthRouteWithChildren
   PlanningYearRoute: typeof PlanningYearRouteWithChildren
   PlanningIndexRoute: typeof PlanningIndexRoute
@@ -197,6 +222,13 @@ declare module '@tanstack/react-router' {
       path: '/net-worth'
       fullPath: '/net-worth'
       preLoaderRoute: typeof NetWorthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/investments': {
+      id: '/investments'
+      path: '/investments'
+      fullPath: '/investments'
+      preLoaderRoute: typeof InvestmentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -233,6 +265,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/net-worth/categories'
       preLoaderRoute: typeof NetWorthCategoriesRouteImport
       parentRoute: typeof NetWorthRoute
+    }
+    '/investments/$id': {
+      id: '/investments/$id'
+      path: '/$id'
+      fullPath: '/investments/$id'
+      preLoaderRoute: typeof InvestmentsIdRouteImport
+      parentRoute: typeof InvestmentsRoute
     }
     '/planning/$year/tax-rates': {
       id: '/planning/$year/tax-rates'
@@ -286,6 +325,18 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface InvestmentsRouteChildren {
+  InvestmentsIdRoute: typeof InvestmentsIdRoute
+}
+
+const InvestmentsRouteChildren: InvestmentsRouteChildren = {
+  InvestmentsIdRoute: InvestmentsIdRoute,
+}
+
+const InvestmentsRouteWithChildren = InvestmentsRoute._addFileChildren(
+  InvestmentsRouteChildren,
+)
+
 interface NetWorthEntriesRouteChildren {
   NetWorthEntriesNewRoute: typeof NetWorthEntriesNewRoute
   NetWorthEntriesIdEditRoute: typeof NetWorthEntriesIdEditRoute
@@ -336,6 +387,7 @@ const PlanningYearRouteWithChildren = PlanningYearRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  InvestmentsRoute: InvestmentsRouteWithChildren,
   NetWorthRoute: NetWorthRouteWithChildren,
   PlanningYearRoute: PlanningYearRouteWithChildren,
   PlanningIndexRoute: PlanningIndexRoute,
