@@ -49,6 +49,11 @@ enum PlanningBillsFrequency {
   YEARLY
 }
 
+"""
+The underlying instrument an `Investment` represents: a listed stock or a fund.
+"""
+union InvestmentAsset = InvestmentFund | InvestmentStock
+
 """Country-specific tax parameters captured on a PlanningYear."""
 union PlanningYearTaxRates = PlanningYearTaxRatesUK
 
@@ -58,6 +63,24 @@ A reusable bucket used to classify NetWorthValues (assets, liabilities, or optio
 interface NetWorthCategory {
   id: ID!
   name: String!
+}
+
+"""
+Identifies the underlying instrument when creating or updating an `Investment`. Exactly one field must be set.
+"""
+input InvestmentAssetInput @oneOf {
+  fund: InvestmentFundInput
+  stock: InvestmentStockInput
+}
+
+input InvestmentFundInput {
+  """Link to the fund's product page."""
+  url: String!
+}
+
+input InvestmentStockInput {
+  """Ticker on the relevant exchange (e.g. `SMT.L`, `AAPL`)."""
+  code: String!
 }
 
 """
@@ -289,6 +312,36 @@ type Currency {
   name: String!
 }
 
+"""A tradable holding — either a listed stock or a fund."""
+type Investment {
+  """What kind of instrument this investment represents."""
+  asset: InvestmentAsset!
+  """
+  ISO-4217 code of the currency every price and transaction for this investment is quoted in.
+  """
+  currency: String!
+  id: ID!
+  name: String!
+  """
+  Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet.
+  """
+  unitPriceCached: Money
+}
+
+"""
+A fund identified by a URL to its product page (e.g. a fund platform's page).
+"""
+type InvestmentFund {
+  """Link to the fund's product page."""
+  url: String!
+}
+
+"""A listed security identified by its ticker on the relevant exchange."""
+type InvestmentStock {
+  """Ticker on the relevant exchange (e.g. `SMT.L`, `AAPL`)."""
+  code: String!
+}
+
 """
 A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for £123.45).
 """
@@ -417,6 +470,31 @@ type Mutation {
     toAccountId: ID
     ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ): PlanningEarning!
+  """Create a new investment."""
+  investmentCreate(
+    """What kind of instrument this investment represents."""
+    asset: InvestmentAssetInput!
+    """
+    ISO-4217 currency code every price and transaction for this investment will be quoted in.
+    """
+    currency: String!
+    name: String!
+  ): Investment!
+  """
+  Delete an investment and all its transactions, stock splits, and prices.
+  """
+  investmentDelete(id: ID!): Void!
+  """
+  Partially update an investment. Omitted (or `null`) fields are left unchanged.
+  """
+  investmentUpdate(
+    """
+    New underlying instrument. When set, the supplied variant fully replaces the previous one (e.g. switching from a stock to a fund).
+    """
+    asset: InvestmentAssetInput
+    id: ID!
+    name: String
+  ): Investment!
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """
@@ -1034,6 +1112,8 @@ type Query {
   Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
   """
   earnings(after: ID, first: Int): PlanningEarningConnection @semanticNonNull
+  """All investments recorded on the server, most-recently-created first."""
+  investments: [Investment!] @semanticNonNull
   """Paginated list of net-worth entries, newest first."""
   netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """
