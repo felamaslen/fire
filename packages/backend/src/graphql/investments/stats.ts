@@ -6,13 +6,14 @@ import {
   Investments,
   InvestmentTransactions,
 } from "@/db/schema/investments";
+import { readOrRefresh } from "@/tasks/yahoo";
 
 /**
  * Aggregated numbers for an investment (optionally scoped to a single wrapper), computed from the raw transactions and the cached price history.
  *
  * All money values are in the investment's currency, in fractional units (e.g. pence for GBP).
  *
- * TODO(real-time pricing): `priceLatest` / `pricePrevious` today use the two most recent `InvestmentPrices` rows. Once yahoo-quote fetching lands (stage 3), plumb the live quote through so `dailyGainValue` compares yesterday's close with today's live quote rather than the two most recent cached closes.
+ * When a live Yahoo quote is cached for the investment's ticker, it is treated as `priceLatest` and the most recent cached close is shifted into `pricePrevious` so `dailyGainValue` reflects today's move against yesterday's close.
  */
 export type InvestmentStats = {
   currency: string;
@@ -42,7 +43,10 @@ export async function loadInvestmentStats(
   assetId?: string,
 ): Promise<InvestmentStats> {
   const [investmentRow] = await db
-    .select({ currency: Investments.currency })
+    .select({
+      currency: Investments.currency,
+      stockCode: Investments.stockCode,
+    })
     .from(Investments)
     .where(eq(Investments.id, investmentId));
   if (!investmentRow) {
@@ -83,6 +87,20 @@ export async function loadInvestmentStats(
     .orderBy(desc(InvestmentPrices.date))
     .limit(2);
 
+  let priceLatest = priceRows[0]?.priceAdjusted ?? null;
+  let pricePrevious = priceRows[1]?.priceAdjusted ?? null;
+
+  // When a live quote is cached for a stock investment, treat it as the latest
+  // price and shift the most recent cached close into the "previous" slot so
+  // `dailyGain*` tracks today's move against yesterday's close.
+  if (investmentRow.stockCode) {
+    const live = readOrRefresh(investmentRow.stockCode);
+    if (live && live.currency === investmentRow.currency) {
+      pricePrevious = priceLatest;
+      priceLatest = live.priceMinorUnits;
+    }
+  }
+
   return {
     currency: investmentRow.currency,
     unitsHeld,
@@ -91,8 +109,8 @@ export async function loadInvestmentStats(
     reinvestedCostSum,
     taxesSum,
     feesSum,
-    priceLatest: priceRows[0]?.priceAdjusted ?? null,
-    pricePrevious: priceRows[1]?.priceAdjusted ?? null,
+    priceLatest,
+    pricePrevious,
   };
 }
 
@@ -135,11 +153,7 @@ export function percentGain(s: InvestmentStats): number | null {
   return g / c;
 }
 
-/**
- * `(latest_price - previous_price) × units_held`. `null` if fewer than two cached prices or no units held.
- *
- * TODO(real-time pricing): when a live quote is available, use it as `latest` and yesterday's close as `previous`.
- */
+/** `(latest_price - previous_price) × units_held`. `null` when fewer than two prices are known. */
 export function dailyGainValue(s: InvestmentStats): number | null {
   if (s.priceLatest === null || s.pricePrevious === null) return null;
   return (s.priceLatest - s.pricePrevious) * s.unitsHeld;

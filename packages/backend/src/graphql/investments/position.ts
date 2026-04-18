@@ -94,15 +94,13 @@ export class InvestmentPosition {
     return percentGain(this.s) as Float | null;
   }
 
-  /** Change in market value of the held position over the most recent pricing interval. `null` until enough price history exists to compute it. @gqlField */
+  /** Change in market value of the held position over the most recent pricing interval. When a live quote is available, compares it against yesterday's close; otherwise compares the two most recent cached closes. `null` until enough price history exists to compute it. @gqlField */
   dailyGainValue(): Money | null {
-    // TODO(real-time pricing): once the live-quote cache is in (stage 3), compare today's live quote against yesterday's close instead of the two most recent cached closes.
     return maybeMoney(dailyGainValue(this.s), this.s.currency);
   }
 
   /** Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it. @gqlField */
   dailyGainPercent(): Float | null {
-    // TODO(real-time pricing): same as `dailyGainValue`.
     return dailyGainPercent(this.s) as Float | null;
   }
 

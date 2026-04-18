@@ -544,7 +544,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: GraphQLFloat
                 },
                 dailyGainValue: {
-                    description: "Change in market value of the held position over the most recent pricing interval. `null` until enough price history exists to compute it.",
+                    description: "Change in market value of the held position over the most recent pricing interval. When a live quote is available, compares it against yesterday's close; otherwise compares the two most recent cached closes. `null` until enough price history exists to compute it.",
                     name: "dailyGainValue",
                     type: MoneyType
                 },
@@ -1547,7 +1547,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: GraphQLFloat
                 },
                 dailyGainValue: {
-                    description: "Change in portfolio value over the most recent pricing interval. `null` until enough price history exists.",
+                    description: "Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. `null` until enough price history exists.",
                     name: "dailyGainValue",
                     type: MoneyType
                 },
