@@ -10,6 +10,24 @@ import { env } from "@/env";
 
 vi.mock("@/db/client");
 
+/**
+ * Freeze the clock at a deterministic instant for every test. Anything that
+ * depends on "today" (UK FY derivation, `planningYearCurrent`, etc.) can now
+ * be snapshotted without replicating the calculation in the test file.
+ *
+ * 2026-04-18 is a post-cutover date → UK FY starts 2026.
+ */
+export const TEST_NOW = new Date("2026-04-18T12:00:00Z");
+export const TEST_FY = 2026;
+
+beforeAll(() => {
+  vi.useFakeTimers({ now: TEST_NOW, shouldAdvanceTime: true });
+});
+
+afterAll(() => {
+  vi.useRealTimers();
+});
+
 const ADMIN_URL = "postgres://fire:fire@localhost:5433/postgres";
 const TEMPLATE_DB = "fire_template";
 
