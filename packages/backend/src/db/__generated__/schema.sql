@@ -76,6 +76,21 @@ CREATE TYPE "public"."planningBillsFrequency" AS ENUM (
   'QUARTERLY',
   'YEARLY'
 );
+CREATE TABLE "InvestmentPrices" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "investmentId" uuid NOT NULL,
+  "date" date NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL,
+  "priceAdjusted" DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentPrices_price_ck"
+    CHECK ("InvestmentPrices"."price" >= 0),
+  CONSTRAINT "InvestmentPrices_priceAdjusted_ck"
+    CHECK ("InvestmentPrices"."priceAdjusted" >= 0)
+);
+
 CREATE TABLE "InvestmentStockSplits" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
@@ -458,6 +473,11 @@ CREATE TABLE "PlanningYears" (
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
 
+ALTER TABLE "InvestmentPrices"
+ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk"
+  FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
 ALTER TABLE "InvestmentStockSplits"
 ADD CONSTRAINT "InvestmentStockSplits_investmentId_Investments_id_fk"
   FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
@@ -640,6 +660,10 @@ ADD CONSTRAINT "PlanningYearUKTaxRates_year_PlanningYears_year_fk"
   FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year")
     ON DELETE CASCADE
     ON UPDATE NO ACTION;
+CREATE UNIQUE INDEX "InvestmentPrices_investmentId_date_uq" ON "InvestmentPrices" USING btree (
+  "investmentId",
+  "date"
+);
 CREATE UNIQUE INDEX "InvestmentStockSplits_investmentId_date_uq" ON "InvestmentStockSplits" USING btree (
   "investmentId",
   "date"
