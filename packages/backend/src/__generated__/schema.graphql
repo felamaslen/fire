@@ -320,7 +320,9 @@ type Currency {
   name: String!
 }
 
-"""A tradable holding — either a listed stock or a fund."""
+"""
+A tradable holding — either a listed stock or a fund. `position` gives the aggregate across every wrapper that holds this investment; per-wrapper numbers live on each `wrappers[].position`.
+"""
 type Investment {
   """What kind of instrument this investment represents."""
   asset: InvestmentAsset!
@@ -330,14 +332,20 @@ type Investment {
   currency: String!
   id: ID!
   name: String!
+  """Holdings, cost basis, and gain/loss aggregated across every wrapper."""
+  position: InvestmentPosition!
   """Stock-split events on this investment, oldest-first."""
   stockSplits: [InvestmentStockSplit!] @semanticNonNull
   """Transactions booked against this investment, oldest-first."""
   transactions: [InvestmentTransaction!] @semanticNonNull
   """
-  Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet.
+  Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.
   """
   unitPriceCached: Money
+  """
+  Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.
+  """
+  wrappers: [InvestmentWrapper!] @semanticNonNull
 }
 
 """Target allocation of one wrapper's value to a specific investment."""
@@ -368,6 +376,66 @@ A fund identified by a URL to its product page (e.g. a fund platform's page).
 type InvestmentFund {
   """Link to the fund's product page."""
   url: String!
+}
+
+"""
+Holdings, cost basis, and gain/loss for an `Investment` — either the aggregate across every wrapper (`Investment.position`) or filtered to a single wrapper (`InvestmentWrapper.position`). Same shape in both cases.
+
+All money values are in the parent investment's currency.
+"""
+type InvestmentPosition {
+  """
+  Average price paid per share currently held, excluding fees and taxes. `null` when no units are held.
+  """
+  costBasis: Money
+  """
+  Average price paid per share currently held, including fees and taxes. `null` when no units are held.
+  """
+  costBasisWithFees: Money
+  """
+  Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it.
+  """
+  dailyGainPercent: Float
+  """
+  Change in market value of the held position over the most recent pricing interval. `null` until enough price history exists to compute it.
+  """
+  dailyGainValue: Money
+  """
+  Unrealised gain as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.
+  """
+  percentGain: Float
+  """DRIP (dividend-reinvestment) activity on this position."""
+  reinvested: InvestmentReinvested!
+  """
+  Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it.
+  """
+  totalCost: Money!
+  """
+  Unrealised gain on the held position — `totalValue - totalCost`. `null` until at least one price is known.
+  """
+  totalGain: Money
+  """
+  Current market value of units held. `null` until at least one price is known for the investment.
+  """
+  totalValue: Money
+  """Net units held."""
+  units: Int!
+}
+
+"""
+Summary of DRIP (dividend-reinvestment) activity for one `InvestmentPosition`.
+"""
+type InvestmentReinvested {
+  """
+  Total cost of DRIP units (sum of `units × price` for drip transactions).
+  """
+  cost: Money!
+  """Units acquired via dividend reinvestments."""
+  units: Int!
+  """
+  Current market value of the reinvested units. `null` until at least one price is known.
+  """
+  value: Money
 }
 
 """A listed security identified by its ticker on the relevant exchange."""
@@ -412,6 +480,18 @@ type InvestmentTransaction {
   Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.
   """
   units: Int!
+}
+
+"""
+One wrapper's slice of an `Investment`. Holdings and stats are on `position`; the wrapper itself is on `asset`.
+"""
+type InvestmentWrapper {
+  """
+  The wrapper (a `STOCK` or `PENSION` net-worth asset) this slice belongs to.
+  """
+  asset: NetWorthCategoryAsset!
+  """Holdings, cost basis, and gain/loss filtered to this wrapper."""
+  position: InvestmentPosition!
 }
 
 """
