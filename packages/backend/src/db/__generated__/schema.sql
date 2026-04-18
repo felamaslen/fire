@@ -726,3 +726,72 @@ CREATE UNIQUE INDEX "PlanningMonths_year_month_uq" ON "PlanningMonths" USING btr
   "year",
   date_trunc('month', "date"::TIMESTAMP)
 );
+CREATE VIEW "public"."InvestmentPortfolioDailyBreakdown" AS
+  (
+    WITH
+      "priceRange" AS (
+        SELECT MIN(date) AS "startDate", MAX(date) AS "endDate"
+        FROM "InvestmentPrices"
+      ),
+      days AS (
+        SELECT
+          generate_series(
+            "startDate",
+            "endDate",
+            '1 day'::INTERVAL
+          )::date AS date
+        FROM "priceRange"
+        WHERE "startDate" IS NOT NULL
+      ),
+      holdings AS (
+        SELECT DISTINCT "assetId", "investmentId"
+        FROM "InvestmentTransactions"
+      ),
+      "unitsByDay" AS (
+        SELECT
+          h."assetId",
+          h."investmentId",
+          d.date,
+          COALESCE(
+            (
+              SELECT SUM(t.units)
+              FROM "InvestmentTransactions" AS t
+              WHERE
+                t."assetId" = h."assetId"
+                AND t."investmentId" = h."investmentId"
+                AND t.date <= d.date
+            ),
+            0
+          ) AS units
+        FROM
+          holdings AS h
+          CROSS JOIN days AS d
+      ),
+      "priceByDay" AS (
+        SELECT
+          h."investmentId",
+          d.date,
+          (
+            SELECT p.price
+            FROM "InvestmentPrices" AS p
+            WHERE p."investmentId" = h."investmentId" AND p.date <= d.date
+            ORDER BY p.date DESC
+            LIMIT 1
+          ) AS price
+        FROM
+          (SELECT DISTINCT "investmentId" FROM holdings) AS h
+          CROSS JOIN days AS d
+      )
+    SELECT
+      i.currency,
+      u."assetId",
+      u.date,
+      SUM(u.units * p.price) AS amount
+    FROM
+      "unitsByDay" AS u
+      JOIN "Investments" AS i ON i.id = u."investmentId"
+      JOIN "priceByDay" AS p
+        ON p."investmentId" = u."investmentId" AND p.date = u.date
+    WHERE p.price IS NOT NULL AND u.units != 0
+    GROUP BY i.currency, u."assetId", u.date
+  );
