@@ -262,6 +262,24 @@ describe("Investment aggregates and wrappers", () => {
     expect(firstInvestment(data)?.position?.units).toBe(0);
   });
 
+  it("reports realised gain for a fully-sold position as (sell proceeds - buy cost) / buy cost", async () => {
+    const id = await createStock();
+    const assetId = await createAsset();
+    // Bought 10 @ £5 → £50 capital in.
+    await buy(id, assetId, "2024-01-01", 10, 5);
+    // Sold all 10 @ £7 → £70 proceeds. Realised gain £20, +40%.
+    await buy(id, assetId, "2024-02-01", -10, 7);
+    await setPrice(id, "2024-02-01", 700);
+
+    const data = await runGql(AGG_QUERY, {});
+    const p = firstInvestment(data)?.position;
+    expect(p?.units).toBe(0);
+    expect(p?.totalCost?.amount).toBeCloseTo(50);
+    expect(p?.totalValue?.amount).toBeCloseTo(70);
+    expect(p?.totalGain?.amount).toBeCloseTo(20);
+    expect(p?.percentGain).toBeCloseTo(0.4);
+  });
+
   it("returns null daily gain when fewer than two prices exist", async () => {
     const id = await createStock();
     const assetId = await createAsset();
