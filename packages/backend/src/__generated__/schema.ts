@@ -402,6 +402,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "start",
                     type: new GraphQLNonNull(DateType)
                 },
+                studentLoanLiability: {
+                    description: "Liability the predicted student-loan deduction pays down. Null when `studentLoanPlan2` is false or no liability has been linked.",
+                    name: "studentLoanLiability",
+                    type: NetWorthCategoryLiabilityType
+                },
                 studentLoanPlan2: {
                     description: "Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply (e.g. non-UK earnings).",
                     name: "studentLoanPlan2",
@@ -1795,6 +1800,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         start: {
                             type: new GraphQLNonNull(DateType)
                         },
+                        studentLoanLiabilityId: {
+                            description: "Liability the predicted student-loan deduction pays down. May only be set when `studentLoanPlan2` is true.",
+                            type: GraphQLID
+                        },
                         studentLoanPlan2: {
                             description: "Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply.",
                             type: GraphQLBoolean
@@ -1808,7 +1817,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
+                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.ukTaxCodes);
                     }
                 },
                 earningsDelete: {
@@ -1856,6 +1865,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         start: {
                             type: DateType
                         },
+                        studentLoanLiabilityId: {
+                            description: "New linked liability; pass null explicitly to clear. Must be null whenever `studentLoanPlan2` ends up false (after this patch applies).",
+                            type: GraphQLID
+                        },
                         studentLoanPlan2: {
                             type: GraphQLBoolean
                         },
@@ -1868,7 +1881,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
+                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.ukTaxCodes);
                     }
                 },
                 netWorthCategoryCreate: {

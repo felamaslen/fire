@@ -440,6 +440,7 @@ async function materialiseEarningAsPayslip(
     part: "tax" | "nic" | "sl";
     name: string;
     amount: number;
+    liabilityId: string | null;
   }[] = [];
   // Names mirror the predicted transactions built in `balance.ts` so the
   // grid looks identical before and after a line gets materialised.
@@ -448,18 +449,21 @@ async function materialiseEarningAsPayslip(
       part: "tax",
       name: `${earning.name} — income tax`,
       amount: -perMonth(take.incomeTax),
+      liabilityId: null,
     });
   if (take.nic > 0)
     adjustments.push({
       part: "nic",
       name: `${earning.name} — NIC`,
       amount: -perMonth(take.nic),
+      liabilityId: null,
     });
   if (take.studentLoan > 0)
     adjustments.push({
       part: "sl",
       name: `${earning.name} — student loan`,
       amount: -perMonth(take.studentLoan),
+      liabilityId: earning.studentLoanLiabilityId,
     });
 
   if (edit.patchAmount != null) {
@@ -477,6 +481,8 @@ async function materialiseEarningAsPayslip(
           part: parsed.part,
           name: `${earning.name} — ${adjustmentLabel[parsed.part]}`,
           amount: signedOverride,
+          liabilityId:
+            parsed.part === "sl" ? earning.studentLoanLiabilityId : null,
         });
     }
   }
@@ -500,6 +506,7 @@ async function materialiseEarningAsPayslip(
         payslipId: payslip.id,
         amount: a.amount,
         name: a.name,
+        liabilityId: a.liabilityId,
       });
     }
   });

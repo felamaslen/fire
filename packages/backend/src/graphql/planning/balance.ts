@@ -385,7 +385,7 @@ export function monthTransactionsFor(
           ),
           isProvisional: true,
           isEditable: true,
-          liabilityId: null,
+          liabilityId: (e.studentLoanLiabilityId ?? null) as ID | null,
         });
       }
     }
