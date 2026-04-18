@@ -25,6 +25,10 @@ export type InvestmentStats = {
   unitsPriceSum: number;
   /** Σ (units × price) across DRIP buys only. */
   reinvestedCostSum: number;
+  /** Σ (units × price) across buys only (units > 0). */
+  buyCostSum: number;
+  /** Σ (|units| × price) across sells only (units < 0). */
+  sellValueSum: number;
   /** Σ taxes across all transactions (always non-negative). */
   taxesSum: number;
   /** Σ fees across all transactions (always non-negative). */
@@ -67,6 +71,8 @@ export async function loadInvestmentStats(
   let reinvestedUnits = 0;
   let unitsPriceSum = 0;
   let reinvestedCostSum = 0;
+  let buyCostSum = 0;
+  let sellValueSum = 0;
   let taxesSum = 0;
   let feesSum = 0;
   for (const r of txRows) {
@@ -74,6 +80,8 @@ export async function loadInvestmentStats(
     unitsPriceSum += r.units * r.price;
     taxesSum += r.taxes;
     feesSum += r.fees;
+    if (r.units > 0) buyCostSum += r.units * r.price;
+    else if (r.units < 0) sellValueSum += Math.abs(r.units) * r.price;
     if (r.drip && r.units > 0) {
       reinvestedUnits += r.units;
       reinvestedCostSum += r.units * r.price;
@@ -107,11 +115,18 @@ export async function loadInvestmentStats(
     reinvestedUnits,
     unitsPriceSum,
     reinvestedCostSum,
+    buyCostSum,
+    sellValueSum,
     taxesSum,
     feesSum,
     priceLatest,
     pricePrevious,
   };
+}
+
+/** True when transactions exist but no units are currently held (fully sold out). */
+export function isFullySold(s: InvestmentStats): boolean {
+  return s.unitsHeld === 0 && (s.buyCostSum > 0 || s.sellValueSum > 0);
 }
 
 /**
@@ -128,14 +143,16 @@ export function costBasisWithFees(s: InvestmentStats): number | null {
   return (s.unitsPriceSum + s.taxesSum + s.feesSum) / s.unitsHeld;
 }
 
-/** Current market value of held units, `null` if no price is cached. */
+/** Current market value of the position. For a fully-sold position this is the total realised sell proceeds; otherwise it's `unitsHeld × priceLatest`. `null` when no price is available for a held position. */
 export function totalValue(s: InvestmentStats): number | null {
+  if (isFullySold(s)) return s.sellValueSum;
   if (s.priceLatest === null) return null;
   return s.unitsHeld * s.priceLatest;
 }
 
-/** Net capital in for held units = `Σ units × price`. Matches `cost basis × units_held`. */
+/** Capital deployed into the position. For a fully-sold position this is the gross sum spent on buys; otherwise it's the net capital in for the units currently held (`Σ signed_units × price`). */
 export function totalCost(s: InvestmentStats): number {
+  if (isFullySold(s)) return s.buyCostSum;
   return s.unitsPriceSum;
 }
 
