@@ -3,6 +3,14 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { Figure, FigureDocument } from "@/components/figure";
 import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/cn";
 
 import {
@@ -66,7 +74,7 @@ const PlanningYearViewDocument = graphql(
           }
         }
       }
-      planningYears {
+      planningYears(last: 9) {
         edges {
           node {
             id
@@ -103,145 +111,225 @@ function PlanningYearPage() {
       </main>
     );
   }
+  const allYears = data.planningYears?.edges.map((e) => e.node.id) ?? [];
   return (
-    <main className="space-y-6 p-8">
-      <Header
-        year={year}
-        allYears={data.planningYears?.edges.map((e) => e.node) ?? []}
-      />
-      <PlanningTable data={data.planningYear} />
+    <main className="flex min-h-svh flex-col">
+      <div className="space-y-6 p-8 pb-24">
+        <Header year={year} />
+        <PlanningTable data={data.planningYear} />
+      </div>
+      <YearFooter current={year} years={allYears} />
     </main>
   );
 }
 
-function Header({
-  year,
-  allYears,
-}: {
-  year: string;
-  allYears: { id: string }[];
-}) {
-  const years = [...allYears.map((y) => y.id)].sort();
-  const idx = years.indexOf(year);
-  const prev = idx > 0 ? years[idx - 1] : null;
-  const next = idx >= 0 && idx < years.length - 1 ? years[idx + 1] : null;
+function Header({ year }: { year: string }) {
   return (
     <div className="flex items-baseline gap-3">
       <h1 className="text-2xl font-semibold tracking-tight">
-        Planning · FY {year}
+        Planning · {fyLabel(year)}
       </h1>
-      <nav className="ml-auto flex items-center gap-1">
-        {prev && (
-          <Button asChild variant="outline" size="sm">
-            <Link to="/planning/$year" params={{ year: prev }}>
-              ← {prev}
-            </Link>
-          </Button>
-        )}
-        {next && (
-          <Button asChild variant="outline" size="sm">
-            <Link to="/planning/$year" params={{ year: next }}>
-              {next} →
-            </Link>
-          </Button>
-        )}
-      </nav>
     </div>
   );
+}
+
+function YearFooter({ current, years }: { current: string; years: string[] }) {
+  return (
+    <nav className="sticky bottom-0 z-40 border-t bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <ul className="flex flex-wrap items-center gap-1">
+        {years.map((y) => {
+          const isCurrent = y === current;
+          return (
+            <li key={y}>
+              <Button
+                asChild
+                size="sm"
+                variant={isCurrent ? "default" : "outline"}
+                aria-current={isCurrent ? "page" : undefined}
+              >
+                <Link to="/planning/$year" params={{ year: y }}>
+                  {fyLabelShort(y)}
+                </Link>
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}
+
+/** Full UK FY label: `2026` → `FY2026/27`. Used for the page title. */
+function fyLabel(year: string): string {
+  const n = Number(year);
+  const next = String((n + 1) % 100).padStart(2, "0");
+  return `FY${year}/${next}`;
+}
+
+/** Compact UK FY label: `2026` → `FY26/27`. Used for year-switcher buttons. */
+function fyLabelShort(year: string): string {
+  const n = Number(year);
+  const start = String(n % 100).padStart(2, "0");
+  const next = String((n + 1) % 100).padStart(2, "0");
+  return `FY${start}/${next}`;
 }
 
 function PlanningTable({ data }: { data: PlanningYearData }) {
   const accounts = data.accounts;
 
-  if (accounts.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No planning accounts assigned yet. Assign assets via{" "}
-        <code>planningAccountAssign</code> to see them here.
-      </p>
-    );
-  }
+  // Excel-like: sticky header row, sticky first column, hairline gridlines on
+  // every cell border, tabular figures aligned right, dense rows.
+  const cellBorder = "border-r border-b border-border";
+  const monoRight = "text-right font-mono tabular-nums tracking-tight";
 
   return (
-    <div className="overflow-x-auto rounded-md border">
-      <table className="min-w-full text-sm">
-        <thead>
-          <tr className="bg-muted/50">
-            <th className="sticky left-0 z-10 bg-muted/50 px-3 py-2 text-left font-medium">
-              Month
-            </th>
+    <div className="max-h-[calc(100svh-10rem)] overflow-auto rounded-md border bg-background">
+      <Table className="border-separate border-spacing-0 text-xs">
+        <TableHeader className="bg-muted">
+          <TableRow className="hover:bg-muted">
+            <TableHead
+              className={cn(
+                "sticky top-0 left-0 z-30 w-8 min-w-8 max-w-8 bg-muted",
+                cellBorder,
+              )}
+            />
             {accounts.map((a) => (
-              <th
+              <TableHead
                 key={a.id}
-                className="min-w-64 px-3 py-2 text-left font-medium"
+                className={cn(
+                  "sticky top-0 z-20 min-w-56 bg-muted",
+                  cellBorder,
+                )}
               >
-                {a.name}
-              </th>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate">{a.name}</span>
+                </div>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.months.map((month) => (
-            <tr key={month.id} className="border-t align-top">
-              <th className="sticky left-0 z-10 bg-background px-3 py-2 text-left font-medium">
-                {formatMonth(month.date)}
-              </th>
-              {month.accounts.map((cell) => (
-                <td key={cell.id} className="border-l px-3 py-2">
-                  <MonthAccountCell data={cell} />
-                </td>
-              ))}
-            </tr>
+          </TableRow>
+          <TableRow className="hover:bg-muted">
+            <TableHead
+              className={cn(
+                "sticky top-10 left-0 z-30 bg-muted text-[10px] font-normal text-muted-foreground uppercase",
+                cellBorder,
+              )}
+            />
+            {accounts.map((a) => (
+              <TableHead
+                key={a.id}
+                className={cn(
+                  "sticky top-10 z-20 bg-muted text-[10px] font-normal text-muted-foreground uppercase",
+                  cellBorder,
+                )}
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span>Start</span>
+                  <span>End</span>
+                </div>
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {data.months.map((month, i) => (
+            <TableRow key={month.id} className="align-top">
+              <TableHead
+                scope="row"
+                className={cn(
+                  "sticky left-0 z-10 w-8 min-w-8 max-w-8 bg-background p-0 text-center align-middle font-medium",
+                  cellBorder,
+                )}
+              >
+                <span className="flex h-20 items-center justify-center [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
+                  {formatMonth(month.date)}
+                </span>
+              </TableHead>
+              {accounts.length === 0
+                ? // Empty-state CTA: one cell spans the entire body next to the
+                  // month column so the grid keeps its shape but stays useful.
+                  i === 0 && (
+                    <TableCell
+                      rowSpan={data.months.length}
+                      className={cn(
+                        "bg-muted/20 p-8 text-center align-middle",
+                        cellBorder,
+                      )}
+                    >
+                      <div className="mx-auto flex max-w-sm flex-col items-center gap-2">
+                        <p className="text-sm text-muted-foreground">
+                          No planning accounts yet. Add one to start projecting
+                          balances across the year.
+                        </p>
+                        <Button asChild size="sm">
+                          <Link
+                            to="/planning/$year"
+                            params={{ year: String(data.id) }}
+                          >
+                            Manage accounts
+                          </Link>
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )
+                : month.accounts.map((cell) => (
+                    <TableCell
+                      key={cell.id}
+                      className={cn("min-w-56 p-0", cellBorder)}
+                    >
+                      <MonthAccountCell data={cell} monoRight={monoRight} />
+                    </TableCell>
+                  ))}
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
 
 function MonthAccountCell({
   data,
+  monoRight,
 }: {
   data: FragmentOf<typeof PlanningMonthAccountCellDocument>;
+  monoRight: string;
 }) {
   const cell = readFragment(PlanningMonthAccountCellDocument, data);
   return (
-    <div className="space-y-1">
-      <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
-        <span>Start</span>
-        <Figure data={cell.valueStart} className="tabular-nums" />
+    <div className="divide-y divide-border">
+      <div className="flex items-baseline justify-between gap-2 bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+        <Figure data={cell.valueStart} className={monoRight} />
+        <Figure data={cell.valueEnd} className={cn(monoRight, "font-medium")} />
       </div>
-      <ul className="space-y-0.5">
+      <ul>
         {cell.transactions.length === 0 && (
-          <li className="text-xs text-muted-foreground">—</li>
+          <li className="px-2 py-1 text-[10px] text-muted-foreground">—</li>
         )}
         {cell.transactions.map((tx) => (
-          <TransactionRow key={tx.id} data={tx} />
+          <TransactionRow key={tx.id} data={tx} monoRight={monoRight} />
         ))}
       </ul>
-      <div className="flex items-baseline justify-between gap-2 border-t pt-1 text-xs font-medium">
-        <span>End</span>
-        <Figure data={cell.valueEnd} className="tabular-nums" />
-      </div>
     </div>
   );
 }
 
 function TransactionRow({
   data,
+  monoRight,
 }: {
   data: FragmentOf<typeof PlanningTransactionRowDocument>;
+  monoRight: string;
 }) {
   const tx = readFragment(PlanningTransactionRowDocument, data);
   return (
     <li
       className={cn(
-        "flex items-baseline justify-between gap-2 text-xs",
+        "flex items-baseline justify-between gap-2 px-2 py-1",
         tx.isProvisional && "italic text-muted-foreground",
       )}
     >
       <span className="truncate">{tx.name}</span>
-      <Figure data={tx.amount} className="tabular-nums" />
+      <Figure data={tx.amount} className={monoRight} />
     </li>
   );
 }
