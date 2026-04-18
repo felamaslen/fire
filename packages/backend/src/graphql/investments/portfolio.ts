@@ -1,14 +1,13 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, inArray, sql } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
-import { HOME_CURRENCY } from "@/config";
+import { CURRENCIES, HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import {
   InvestmentPrices,
   Investments,
   InvestmentTransactions,
 } from "@/db/schema/investments";
-import { NetWorthCurrencyRates, NetWorthEntries } from "@/db/schema/net-worth";
 
 import type { Date as CalendarDate } from "../date";
 import { assertCurrencyCode, Money } from "../money";
@@ -66,48 +65,6 @@ type Filters = {
   currency: string;
 };
 
-async function loadLatestFxRatesToCurrency(
-  targetCurrency: string,
-): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
-  map.set(targetCurrency, 1);
-  const rows = await db
-    .select({
-      currency: NetWorthCurrencyRates.currency,
-      rate: NetWorthCurrencyRates.rate,
-      date: NetWorthEntries.date,
-    })
-    .from(NetWorthCurrencyRates)
-    .innerJoin(
-      NetWorthEntries,
-      eq(NetWorthEntries.id, NetWorthCurrencyRates.entryId),
-    )
-    .where(sql`${NetWorthCurrencyRates.base} = ${targetCurrency}`)
-    .orderBy(desc(NetWorthEntries.date));
-  for (const r of rows) {
-    if (!map.has(r.currency)) {
-      map.set(r.currency, Number(r.rate));
-    }
-  }
-  return map;
-}
-
-function convert(
-  amountMinor: number,
-  fromCurrency: string,
-  toCurrency: string,
-  rates: Map<string, number>,
-  fromScale: number,
-  toScale: number,
-): number | null {
-  if (fromCurrency === toCurrency) return amountMinor;
-  const rate = rates.get(fromCurrency);
-  if (rate === undefined) return null;
-  const major = amountMinor / 10 ** fromScale;
-  const targetMajor = major * rate;
-  return targetMajor * 10 ** toScale;
-}
-
 type HeldInvestment = {
   id: string;
   currency: string;
@@ -120,21 +77,27 @@ type HeldInvestment = {
 async function loadHeldInvestments(
   filters: Filters,
 ): Promise<HeldInvestment[]> {
-  const conditions = [];
+  // Restrict to investments whose currency matches the portfolio's currency.
+  const matchingInvestments = await db
+    .select({ id: Investments.id })
+    .from(Investments)
+    .where(sql`${Investments.currency} = ${filters.currency}`);
+  if (matchingInvestments.length === 0) return [];
+  let investmentIds = matchingInvestments.map((r) => r.id);
   if (filters.filterInvestmentIdIn && filters.filterInvestmentIdIn.length > 0) {
-    conditions.push(
-      inArray(
-        InvestmentTransactions.investmentId,
-        filters.filterInvestmentIdIn,
-      ),
-    );
+    const allowed = new Set(filters.filterInvestmentIdIn);
+    investmentIds = investmentIds.filter((id) => allowed.has(id));
   }
+  if (investmentIds.length === 0) return [];
+
+  const conditions = [
+    inArray(InvestmentTransactions.investmentId, investmentIds),
+  ];
   if (filters.filterAssetIdIn && filters.filterAssetIdIn.length > 0) {
     conditions.push(
       inArray(InvestmentTransactions.assetId, filters.filterAssetIdIn),
     );
   }
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   const txRows = await db
     .select({
@@ -146,34 +109,24 @@ async function loadHeldInvestments(
         ),
     })
     .from(InvestmentTransactions)
-    .where(where)
+    .where(and(...conditions))
     .groupBy(InvestmentTransactions.investmentId);
 
   if (txRows.length === 0) return [];
 
-  const investmentIds = txRows.map((r) => r.investmentId);
-  const invRows = await db
-    .select({ id: Investments.id, currency: Investments.currency })
-    .from(Investments)
-    .where(inArray(Investments.id, investmentIds));
-  const currencyById = new Map(invRows.map((r) => [r.id, r.currency]));
-
+  const heldIds = txRows.map((r) => r.investmentId);
   const priceRows = await db
     .select({
       investmentId: InvestmentPrices.investmentId,
-      date: InvestmentPrices.date,
       priceAdjusted: InvestmentPrices.priceAdjusted,
     })
     .from(InvestmentPrices)
-    .where(inArray(InvestmentPrices.investmentId, investmentIds))
+    .where(inArray(InvestmentPrices.investmentId, heldIds))
     .orderBy(InvestmentPrices.investmentId, desc(InvestmentPrices.date));
-  const pricesByInvestment = new Map<
-    string,
-    { date: Date; priceAdjusted: number }[]
-  >();
+  const pricesByInvestment = new Map<string, number[]>();
   for (const p of priceRows) {
     const list = pricesByInvestment.get(p.investmentId) ?? [];
-    list.push(p);
+    list.push(p.priceAdjusted);
     pricesByInvestment.set(p.investmentId, list);
   }
 
@@ -181,32 +134,27 @@ async function loadHeldInvestments(
     const prices = pricesByInvestment.get(r.investmentId) ?? [];
     return {
       id: r.investmentId,
-      currency: currencyById.get(r.investmentId) ?? HOME_CURRENCY,
+      currency: filters.currency,
       unitsHeld: Number(r.units),
       unitsPriceSum: Number(r.unitsPriceSum),
-      priceLatest: prices[0]?.priceAdjusted ?? null,
-      pricePrevious: prices[1]?.priceAdjusted ?? null,
+      priceLatest: prices[0] ?? null,
+      pricePrevious: prices[1] ?? null,
     };
   });
 }
 
 async function loadDailySeriesMinor(
   filters: Filters,
-  rates: Map<string, number>,
-  scaleTarget: number,
-  scaleBy: Map<string, number>,
 ): Promise<Map<string, number>> {
-  // Build a per-day total in target currency (fractional units).
-  // Reproduces the view's logic but with arbitrary filters.
   const held = await loadHeldInvestments(filters);
   if (held.length === 0) return new Map();
 
   const investmentIds = held.map((h) => h.id);
-  const conditions = [
+  const txConditions = [
     inArray(InvestmentTransactions.investmentId, investmentIds),
   ];
   if (filters.filterAssetIdIn && filters.filterAssetIdIn.length > 0) {
-    conditions.push(
+    txConditions.push(
       inArray(InvestmentTransactions.assetId, filters.filterAssetIdIn),
     );
   }
@@ -217,7 +165,7 @@ async function loadDailySeriesMinor(
       units: InvestmentTransactions.units,
     })
     .from(InvestmentTransactions)
-    .where(and(...conditions));
+    .where(and(...txConditions));
 
   const priceRows = await db
     .select({
@@ -231,7 +179,6 @@ async function loadDailySeriesMinor(
 
   if (priceRows.length === 0) return new Map();
 
-  // Build per-investment sorted (date, units_cum) and (date, price) arrays.
   const txByInv = new Map<string, { date: Date; unitsCum: number }[]>();
   for (const t of [...txRows].sort(
     (a, b) =>
@@ -261,7 +208,7 @@ async function loadDailySeriesMinor(
   const msDay = 86400 * 1000;
   for (let d = minDate.getTime(); d <= maxDate.getTime(); d += msDay) {
     const day = new Date(d);
-    let totalTargetMinor = 0;
+    let totalMinor = 0;
     for (const inv of held) {
       const units = lastOnOrBefore(
         txByInv.get(inv.id) ?? [],
@@ -278,21 +225,9 @@ async function loadDailySeriesMinor(
         null,
       );
       if (price === null || units === 0) continue;
-      const rawMinor = units * price;
-      const fromScale = scaleBy.get(inv.currency) ?? scaleTarget;
-      const converted = convert(
-        rawMinor,
-        inv.currency,
-        filters.currency,
-        rates,
-        fromScale,
-        scaleTarget,
-      );
-      if (converted === null) continue;
-      totalTargetMinor += converted;
+      totalMinor += units * price;
     }
-    const key = day.toISOString().slice(0, 10);
-    totals.set(key, totalTargetMinor);
+    totals.set(day.toISOString().slice(0, 10), totalMinor);
   }
   return totals;
 }
@@ -329,10 +264,10 @@ function periodStart(
   return d;
 }
 
-/** Aggregated portfolio view — filter by wrappers and/or investments, converted into `currency` (defaults to the home currency). @gqlType */
+/** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
   constructor(
-    /** ISO-4217 code every aggregate on this `Portfolio` is expressed in. @gqlField */
+    /** ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers. @gqlField */
     public readonly currency: string,
     private readonly filterAssetIdIn: string[] | null,
     private readonly filterInvestmentIdIn: string[] | null,
@@ -346,7 +281,11 @@ export class Portfolio {
     };
   }
 
-  /** Current market value of the filtered portfolio. Zero when nothing is held; `null` when conversion to `currency` is impossible for some holding. @gqlField */
+  private get scale(): number {
+    return CURRENCIES[this.currency as keyof typeof CURRENCIES].scale;
+  }
+
+  /** Current market value of the filtered portfolio. Zero when nothing is held. @gqlField */
   async totalValue(): Promise<Money | null> {
     return this.aggregate((h) =>
       h.priceLatest === null ? null : h.unitsHeld * h.priceLatest,
@@ -364,11 +303,9 @@ export class Portfolio {
     const value = await this.totalValue();
     if (value === null) return null;
     const cost = await this.totalCost();
-    const { CURRENCIES } = await import("@/config");
-    const scale = CURRENCIES[this.currency as keyof typeof CURRENCIES].scale;
     const diffMajor = value.amount - cost.amount;
     return Money.fromMinorDenomination(
-      Math.round(diffMajor * 10 ** scale),
+      Math.round(diffMajor * 10 ** this.scale),
       this.currency,
     );
   }
@@ -411,14 +348,14 @@ export class Portfolio {
     period: PortfolioTimePeriod,
     length?: Int | null,
   ): Promise<PortfolioTimeseries> {
-    const { days, totals, scale } = await this.buildDaily(period, length ?? 0);
+    const { days, totals } = await this.buildDaily(period, length ?? 0);
     const picked = downsample(days, MAX_POINTS);
     return {
       currency: this.currency,
       initialDate: days[0] ?? new Date(),
       points: picked.map((d) => ({
         x: daysBetween(days[0], d) as Int,
-        y: Math.round((totals.get(isoDate(d)) ?? 0) / 10 ** scale) as Int,
+        y: Math.round((totals.get(isoDate(d)) ?? 0) / 10 ** this.scale) as Int,
       })),
     };
   }
@@ -428,12 +365,12 @@ export class Portfolio {
     period: PortfolioTimePeriod,
     length?: Int | null,
   ): Promise<PortfolioCandlestick> {
-    const { days, totals, scale } = await this.buildDaily(period, length ?? 0);
+    const { days, totals } = await this.buildDaily(period, length ?? 0);
     const buckets = bucketIndices(days.length, MAX_POINTS);
     const points: PortfolioCandlestickPoint[] = buckets.map((range) => {
       const slice = days.slice(range.start, range.end + 1);
       const values = slice.map(
-        (d) => (totals.get(isoDate(d)) ?? 0) / 10 ** scale,
+        (d) => (totals.get(isoDate(d)) ?? 0) / 10 ** this.scale,
       );
       const from = values[0];
       const to = values[values.length - 1];
@@ -457,22 +394,10 @@ export class Portfolio {
   private async buildDaily(
     period: PortfolioTimePeriod,
     length: number,
-  ): Promise<{ days: Date[]; totals: Map<string, number>; scale: number }> {
-    const { CURRENCIES } = await import("@/config");
-    const scaleTarget =
-      CURRENCIES[this.currency as keyof typeof CURRENCIES].scale;
-    const scaleBy = new Map<string, number>(
-      Object.entries(CURRENCIES).map(([c, v]) => [c, v.scale]),
-    );
-    const rates = await loadLatestFxRatesToCurrency(this.currency);
-    const fullTotals = await loadDailySeriesMinor(
-      this.filters,
-      rates,
-      scaleTarget,
-      scaleBy,
-    );
+  ): Promise<{ days: Date[]; totals: Map<string, number> }> {
+    const fullTotals = await loadDailySeriesMinor(this.filters);
     if (fullTotals.size === 0) {
-      return { days: [], totals: new Map(), scale: scaleTarget };
+      return { days: [], totals: new Map() };
     }
     const today = new Date();
     const start = periodStart(today, period, length);
@@ -481,36 +406,18 @@ export class Portfolio {
       const d = new Date(`${key}T00:00:00Z`);
       if (d >= start && d <= today) days.push(d);
     }
-    return { days, totals: fullTotals, scale: scaleTarget };
+    return { days, totals: fullTotals };
   }
 
   private async aggregate(
     compute: (h: HeldInvestment) => number | null,
   ): Promise<Money | null> {
-    const { CURRENCIES } = await import("@/config");
-    const scaleTarget =
-      CURRENCIES[this.currency as keyof typeof CURRENCIES].scale;
-    const scaleBy = new Map<string, number>(
-      Object.entries(CURRENCIES).map(([c, v]) => [c, v.scale]),
-    );
-    const rates = await loadLatestFxRatesToCurrency(this.currency);
     const held = await loadHeldInvestments(this.filters);
     let total = 0;
     for (const h of held) {
       const rawMinor = compute(h);
       if (rawMinor === null) return null;
-      if (rawMinor === 0) continue;
-      const fromScale = scaleBy.get(h.currency) ?? scaleTarget;
-      const converted = convert(
-        rawMinor,
-        h.currency,
-        this.currency,
-        rates,
-        fromScale,
-        scaleTarget,
-      );
-      if (converted === null) return null;
-      total += converted;
+      total += rawMinor;
     }
     return Money.fromMinorDenomination(total, this.currency);
   }
@@ -527,7 +434,6 @@ function daysBetween(a: Date, b: Date): number {
 function downsample<T>(xs: T[], max: number): T[] {
   if (xs.length <= max) return xs;
   const out: T[] = [];
-  // Preserve first and last; evenly pick the rest.
   for (let i = 0; i < max - 1; i++) {
     const idx = Math.floor((i * (xs.length - 1)) / (max - 1));
     out.push(xs[idx]);
@@ -549,12 +455,11 @@ function bucketIndices(
     const end = Math.min(Math.floor(((i + 1) * n) / max) - 1, n - 1);
     out.push({ start, end: Math.max(end, start) });
   }
-  // Ensure last bucket ends at n-1
   out[out.length - 1].end = n - 1;
   return out;
 }
 
-/** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments, with all money values expressed in `currency` (defaults to the home currency).
+/** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are in `currency` (defaults to the server's home currency); investments held in any other currency are excluded.
  *
  * @gqlQueryField
  * @gqlAnnotate semanticNonNull
@@ -562,7 +467,7 @@ function bucketIndices(
 export async function portfolio(
   filterAssetIdIn?: ID[] | null,
   filterInvestmentIdIn?: ID[] | null,
-  /** ISO-4217 code to express all aggregates in. Defaults to the server's home currency. */
+  /** ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency. */
   currency?: string | null,
 ): Promise<Portfolio | null> {
   const target = currency ?? HOME_CURRENCY;

@@ -1354,12 +1354,14 @@ type Pong {
 }
 
 """
-Aggregated portfolio view — filter by wrappers and/or investments, converted into `currency` (defaults to the home currency).
+Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded.
 """
 type Portfolio {
   """Candlestick buckets of portfolio total over the requested period."""
   candlestick(length: Int, period: PortfolioTimePeriod!): PortfolioCandlestick!
-  """ISO-4217 code every aggregate on this `Portfolio` is expressed in."""
+  """
+  ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
+  """
   currency: String!
   """
   Fractional change in portfolio value over the most recent pricing interval. `null` until enough price history exists, or when the previous total is zero.
@@ -1384,7 +1386,7 @@ type Portfolio {
   """Unrealised gain on the filtered portfolio — `totalValue - totalCost`."""
   totalGain: Money
   """
-  Current market value of the filtered portfolio. Zero when nothing is held; `null` when conversion to `currency` is impossible for some holding.
+  Current market value of the filtered portfolio. Zero when nothing is held.
   """
   totalValue: Money
 }
@@ -1483,11 +1485,11 @@ type Query {
   """
   planningYears(after: ID, before: ID, first: Int, last: Int): PlanningYearConnection @semanticNonNull
   """
-  Aggregated view of the portfolio, optionally filtered by wrappers and/or investments, with all money values expressed in `currency` (defaults to the home currency).
+  Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are in `currency` (defaults to the server's home currency); investments held in any other currency are excluded.
   """
   portfolio(
     """
-    ISO-4217 code to express all aggregates in. Defaults to the server's home currency.
+    ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency.
     """
     currency: String
     filterAssetIdIn: [ID!]
