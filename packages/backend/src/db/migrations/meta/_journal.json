@@ -78,6 +78,13 @@
       "when": 1776541501444,
       "tag": "0010_allow_zero_amount_transactions",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776546675599,
+      "tag": "0011_create_investments_table",
+      "breakpoints": true
     }
   ]
 }
