@@ -1398,13 +1398,27 @@ type Portfolio {
   """
   currency: String!
   """
-  Fractional change in portfolio value over the most recent pricing interval. `null` until enough price history exists, or when the previous total is zero.
+  Fractional change in portfolio value over the most recent pricing interval. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists, or when the previous total is zero.
   """
-  dailyGainPercent: Float
+  dailyGainPercent(
+    """
+    When `true`, ignore any live quote and compare the two most recent cached closes.
+    """
+    skipLive: Boolean
+  ): Float
   """
-  Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. `null` until enough price history exists.
+  Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists.
   """
-  dailyGainValue: Money
+  dailyGainValue(
+    """
+    When `true`, ignore any live quote and compare the two most recent cached closes.
+    """
+    skipLive: Boolean
+  ): Money
+  """
+  Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key.
+  """
+  id: ID!
   """
   When this portfolio is scoped to exactly one investment (as emitted by `Query.portfolios`), the investment it represents. `null` for aggregate portfolios covering multiple investments.
   """

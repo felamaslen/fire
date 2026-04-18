@@ -1590,14 +1590,37 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 dailyGainPercent: {
-                    description: "Fractional change in portfolio value over the most recent pricing interval. `null` until enough price history exists, or when the previous total is zero.",
+                    description: "Fractional change in portfolio value over the most recent pricing interval. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists, or when the previous total is zero.",
                     name: "dailyGainPercent",
-                    type: GraphQLFloat
+                    type: GraphQLFloat,
+                    args: {
+                        skipLive: {
+                            description: "When `true`, ignore any live quote and compare the two most recent cached closes.",
+                            type: GraphQLBoolean
+                        }
+                    },
+                    resolve(source, args) {
+                        return source.dailyGainPercent(args.skipLive);
+                    }
                 },
                 dailyGainValue: {
-                    description: "Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. `null` until enough price history exists.",
+                    description: "Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists.",
                     name: "dailyGainValue",
-                    type: MoneyType
+                    type: MoneyType,
+                    args: {
+                        skipLive: {
+                            description: "When `true`, ignore any live quote and compare the two most recent cached closes.",
+                            type: GraphQLBoolean
+                        }
+                    },
+                    resolve(source, args) {
+                        return source.dailyGainValue(args.skipLive);
+                    }
+                },
+                id: {
+                    description: "Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key.",
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
                 },
                 investment: {
                     description: "When this portfolio is scoped to exactly one investment (as emitted by `Query.portfolios`), the investment it represents. `null` for aggregate portfolios covering multiple investments.",

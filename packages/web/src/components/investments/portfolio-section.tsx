@@ -15,6 +15,7 @@ const PortfolioChartDocument = graphql(`
     $candlestick: Boolean!
   ) {
     portfolio {
+      id
       currency
       totalValue { amount currency }
       totalGain { amount currency }
@@ -33,6 +34,7 @@ const PortfolioChartDocument = graphql(`
     portfolios @skip(if: $candlestick) {
       edges {
         node {
+          id
           investment { id name }
           timeseries(period: $period, length: $length) {
             initialDate

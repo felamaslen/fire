@@ -10,6 +10,7 @@ import {
   InvestmentForm,
   InvestmentFormDocument,
 } from "@/components/investments/investment-form";
+import { PortfolioHeadline } from "@/components/investments/portfolio-headline";
 import { PortfolioSection } from "@/components/investments/portfolio-section";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
@@ -129,6 +130,9 @@ function InvestmentsDialogLayout() {
           ← Home
         </Link>
       </header>
+      <Suspense fallback={null}>
+        <PortfolioHeadline />
+      </Suspense>
       <PortfolioSection />
       <Suspense fallback={<Spinner />}>
         <InvestmentsList />
