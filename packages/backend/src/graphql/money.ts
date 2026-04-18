@@ -86,3 +86,15 @@ export function getMoneyInputFractionalAmount(input: MoneyInput): {
   const amount = Math.round(input.amount * 10 ** scale);
   return { currency: input.currency, amount };
 }
+
+/**
+ * Validate a MoneyInput and return the amount in the currency's minor denomination without rounding. Suitable for sub-penny-precision fields stored as `double precision` (e.g. `InvestmentPrices.price`).
+ */
+export function getMoneyInputFractionalAmountDouble(input: MoneyInput): {
+  currency: CurrencyCode;
+  amount: number;
+} {
+  assertCurrencyCode(input.currency);
+  const { scale } = CURRENCIES[input.currency];
+  return { currency: input.currency, amount: input.amount * 10 ** scale };
+}

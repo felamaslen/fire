@@ -1,0 +1,2 @@
+ALTER TABLE "NetWorthValueOptions" ALTER COLUMN "priceStrike" SET DATA TYPE double precision;--> statement-breakpoint
+ALTER TABLE "NetWorthValueOptions" ALTER COLUMN "priceMarket" SET DATA TYPE double precision;

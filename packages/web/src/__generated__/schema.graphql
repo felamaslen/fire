@@ -49,6 +49,26 @@ enum PlanningBillsFrequency {
   YEARLY
 }
 
+"""
+Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.
+"""
+enum PortfolioTimePeriod {
+  MONTH
+  YEAR
+  YTD
+}
+
+"""Ascending or descending order for a sort input."""
+enum SortDirection {
+  ASC
+  DESC
+}
+
+"""
+The underlying instrument an `Investment` represents: a listed stock or a fund.
+"""
+union InvestmentAsset = InvestmentFund | InvestmentStock
+
 """Country-specific tax parameters captured on a PlanningYear."""
 union PlanningYearTaxRates = PlanningYearTaxRatesUK
 
@@ -58,6 +78,41 @@ A reusable bucket used to classify NetWorthValues (assets, liabilities, or optio
 interface NetWorthCategory {
   id: ID!
   name: String!
+}
+
+input InvestmentAllocationInput {
+  """
+  Target fraction of the wrapper's value allocated to this investment. `0 < allocation <= 1`.
+  """
+  allocation: Float!
+  investmentId: ID!
+}
+
+"""
+Identifies the underlying instrument when creating or updating an `Investment`. Exactly one field must be set.
+"""
+input InvestmentAssetInput @oneOf {
+  fund: InvestmentFundInput
+  stock: InvestmentStockInput
+}
+
+input InvestmentFundInput {
+  """Link to the fund's product page."""
+  url: String!
+}
+
+"""
+Choose how to order `Query.investments`. Exactly one field must be set. When omitted entirely the list is newest-first by creation time.
+"""
+input InvestmentSort @oneOf {
+  gainAbs: SortDirection
+  gainPercent: SortDirection
+  value: SortDirection
+}
+
+input InvestmentStockInput {
+  """Ticker on the relevant exchange (e.g. `SMT.L`, `AAPL`)."""
+  code: String!
 }
 
 """
@@ -290,6 +345,230 @@ type Currency {
 }
 
 """
+A tradable holding — either a listed stock or a fund. `position` gives the aggregate across every wrapper that holds this investment; per-wrapper numbers live on each `wrappers[].position`.
+"""
+type Investment {
+  """What kind of instrument this investment represents."""
+  asset: InvestmentAsset!
+  """
+  ISO-4217 code of the currency every price and transaction for this investment is quoted in.
+  """
+  currency: String!
+  id: ID!
+  name: String!
+  """Holdings, cost basis, and gain/loss aggregated across every wrapper."""
+  position: InvestmentPosition!
+  """Stock-split events on this investment, oldest-first."""
+  stockSplits: [InvestmentStockSplit!] @semanticNonNull
+  """
+  Transactions booked against this investment, oldest-first. Full history — for large lists prefer `transactionsPaged`.
+  """
+  transactions: [InvestmentTransaction!] @semanticNonNull
+  """
+  Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default.
+  """
+  transactionsPaged(after: ID, first: Int): InvestmentTransactionConnection @semanticNonNull
+  """
+  Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.
+  """
+  unitPriceCached: Money
+  """
+  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).
+  """
+  unitPriceLatest: InvestmentPriceLatest
+  """
+  Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.
+  """
+  wrappers: [InvestmentWrapper!] @semanticNonNull
+}
+
+"""Target allocation of one wrapper's value to a specific investment."""
+type InvestmentAllocation {
+  """
+  Target fraction of the wrapper's value allocated to the investment. `0 < allocation <= 1`.
+  """
+  allocation: Float!
+  asset: NetWorthCategoryAsset!
+  investment: Investment!
+}
+
+"""
+Allocations configured for a single wrapper, plus the portfolio-wide cash allocation share that applies across the whole portfolio.
+"""
+type InvestmentAllocationsResult {
+  """
+  Portfolio-wide target cash fraction (applies across all wrappers in aggregate). `null` when no cash allocation has been configured yet.
+  """
+  cash: Float
+  """Per-investment allocations for the wrapper. Sums to 1."""
+  investments: [InvestmentAllocation!]!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type InvestmentConnection {
+  edges: [InvestmentEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type InvestmentEdge {
+  cursor: ID!
+  node: Investment!
+}
+
+"""
+A fund identified by a URL to its product page (e.g. a fund platform's page).
+"""
+type InvestmentFund {
+  """Link to the fund's product page."""
+  url: String!
+}
+
+"""
+Holdings, cost basis, and gain/loss for an `Investment` — either the aggregate across every wrapper (`Investment.position`) or filtered to a single wrapper (`InvestmentWrapper.position`). Same shape in both cases.
+
+All money values are in the parent investment's currency.
+"""
+type InvestmentPosition {
+  """
+  Average price paid per share currently held, excluding fees and taxes. `null` when no units are held.
+  """
+  costBasis: Money
+  """
+  Average price paid per share currently held, including fees and taxes. `null` when no units are held.
+  """
+  costBasisWithFees: Money
+  """
+  Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it.
+  """
+  dailyGainPercent: Float
+  """
+  Change in market value of the held position over the most recent pricing interval. When a live quote is available, compares it against yesterday's close; otherwise compares the two most recent cached closes. `null` until enough price history exists to compute it.
+  """
+  dailyGainValue: Money
+  """
+  Unrealised gain as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.
+  """
+  percentGain: Float
+  """DRIP (dividend-reinvestment) activity on this position."""
+  reinvested: InvestmentReinvested!
+  """
+  Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it.
+  """
+  totalCost: Money!
+  """
+  Unrealised gain on the held position — `totalValue - totalCost`. `null` until at least one price is known.
+  """
+  totalGain: Money
+  """
+  Current market value of units held. `null` until at least one price is known for the investment.
+  """
+  totalValue: Money
+  """Net units held."""
+  units: Int!
+}
+
+"""The real-time unit price of a stock investment, as of `capturedAt`."""
+type InvestmentPriceLatest {
+  """When the quote was captured."""
+  capturedAt: DateTime!
+  """Live quote, in the currency reported by the quote provider."""
+  price: Money!
+}
+
+"""
+Summary of DRIP (dividend-reinvestment) activity for one `InvestmentPosition`.
+"""
+type InvestmentReinvested {
+  """
+  Total cost of DRIP units (sum of `units × price` for drip transactions).
+  """
+  cost: Money!
+  """Units acquired via dividend reinvestments."""
+  units: Int!
+  """
+  Current market value of the reinvested units. `null` until at least one price is known.
+  """
+  value: Money
+}
+
+"""A listed security identified by its ticker on the relevant exchange."""
+type InvestmentStock {
+  """Ticker on the relevant exchange (e.g. `SMT.L`, `AAPL`)."""
+  code: String!
+}
+
+"""
+A stock-split event recorded against an `Investment`. `units_post = units_pre * ratio`, so ratio > 1 is a forward split and 0 < ratio < 1 is a reverse split.
+"""
+type InvestmentStockSplit {
+  """Calendar date the split took effect."""
+  date: Date!
+  id: ID!
+  """
+  Split ratio. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split.
+  """
+  ratio: Float!
+}
+
+"""
+One buy, sell, or dividend-reinvestment booked against an `Investment` and a wrapper (a net-worth asset of type `STOCK` or `PENSION`).
+"""
+type InvestmentTransaction {
+  """Wrapper the transaction books into (a `STOCK` or `PENSION` asset)."""
+  asset: NetWorthCategoryAsset!
+  """Calendar date the trade was executed."""
+  date: Date!
+  """
+  True when this transaction represents a dividend reinvestment rather than a cash buy.
+  """
+  drip: Boolean!
+  """Broker / platform fees paid on the trade."""
+  fees: Money!
+  id: ID!
+  """Unit price at execution."""
+  price: Money!
+  """Taxes paid on the trade."""
+  taxes: Money!
+  """
+  Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.
+  """
+  units: Int!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type InvestmentTransactionConnection {
+  edges: [InvestmentTransactionEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type InvestmentTransactionEdge {
+  cursor: ID!
+  node: InvestmentTransaction!
+}
+
+"""
+One wrapper's slice of an `Investment`. Holdings and stats are on `position`; the wrapper itself is on `asset`.
+"""
+type InvestmentWrapper {
+  """
+  The wrapper (a `STOCK` or `PENSION` net-worth asset) this slice belongs to.
+  """
+  asset: NetWorthCategoryAsset!
+  """Holdings, cost basis, and gain/loss filtered to this wrapper."""
+  position: InvestmentPosition!
+}
+
+"""
 A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for £123.45).
 """
 type Money {
@@ -417,6 +696,97 @@ type Mutation {
     toAccountId: ID
     ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ): PlanningEarning!
+  """
+  Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to exactly 1.
+  """
+  investmentAllocationsSet(
+    allocations: [InvestmentAllocationInput!]!
+    """
+    Wrapper (`STOCK` or `PENSION` net-worth asset) whose allocations are being set.
+    """
+    assetId: ID!
+  ): InvestmentAllocationsResult!
+  """
+  Set the portfolio-wide target cash allocation (applies across every wrapper in aggregate). `0 <= allocation <= 1`.
+  """
+  investmentCashAllocationSet(allocation: Float!): Float!
+  """Create a new investment."""
+  investmentCreate(
+    """What kind of instrument this investment represents."""
+    asset: InvestmentAssetInput!
+    """
+    ISO-4217 currency code every price and transaction for this investment will be quoted in.
+    """
+    currency: String!
+    name: String!
+  ): Investment!
+  """
+  Delete an investment and all its transactions, stock splits, and prices.
+  """
+  investmentDelete(id: ID!): Void!
+  """
+  Record a stock split on an investment. Historic `unitPriceCached` values are retroactively adjusted.
+  """
+  investmentStockSplitCreate(
+    """Calendar date the split took effect."""
+    date: Date!
+    investmentId: ID!
+    """
+    Positive split ratio. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split.
+    """
+    ratio: Float!
+  ): InvestmentStockSplit!
+  """
+  Delete a stock split. Historic `unitPriceCached` values are recomputed as though the split never happened.
+  """
+  investmentStockSplitDelete(id: ID!): Void!
+  """
+  Partial update to a stock split. Omitted / null fields are left unchanged.
+  """
+  investmentStockSplitUpdate(date: Date, id: ID!, ratio: Float): InvestmentStockSplit!
+  """Book a new buy, sell, or dividend-reinvestment against an investment."""
+  investmentTransactionCreate(
+    """
+    Wrapper to book the trade into. Must be a `STOCK` or `PENSION` net-worth asset.
+    """
+    assetId: ID!
+    """Calendar date the trade was executed."""
+    date: Date!
+    """
+    Set `true` to mark this as a dividend reinvestment rather than a cash buy. Defaults to `false`.
+    """
+    drip: Boolean
+    """
+    Broker / platform fees paid. Must match the investment's currency. Defaults to 0.
+    """
+    fees: MoneyInput
+    investmentId: ID!
+    """Unit price at execution. Must match the investment's currency."""
+    price: MoneyInput!
+    """
+    Taxes paid on the trade. Must match the investment's currency. Defaults to 0.
+    """
+    taxes: MoneyInput
+    """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
+    units: Int!
+  ): InvestmentTransaction!
+  """Delete a transaction."""
+  investmentTransactionDelete(id: ID!): Void!
+  """
+  Partial update to a transaction. Omitted / null fields are left unchanged.
+  """
+  investmentTransactionUpdate(assetId: ID, date: Date, drip: Boolean, fees: MoneyInput, id: ID!, price: MoneyInput, taxes: MoneyInput, units: Int): InvestmentTransaction!
+  """
+  Partially update an investment. Omitted (or `null`) fields are left unchanged.
+  """
+  investmentUpdate(
+    """
+    New underlying instrument. When set, the supplied variant fully replaces the previous one (e.g. switching from a stock to a fund).
+    """
+    asset: InvestmentAssetInput
+    id: ID!
+    name: String
+  ): Investment!
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """
@@ -1017,6 +1387,101 @@ type Pong {
   pong: String!
 }
 
+"""
+Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded.
+"""
+type Portfolio {
+  """Candlestick buckets of portfolio total over the requested period."""
+  candlestick(length: Int, period: PortfolioTimePeriod!): PortfolioCandlestick!
+  """
+  ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
+  """
+  currency: String!
+  """
+  Fractional change in portfolio value over the most recent pricing interval. `null` until enough price history exists, or when the previous total is zero.
+  """
+  dailyGainPercent: Float
+  """
+  Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. `null` until enough price history exists.
+  """
+  dailyGainValue: Money
+  """
+  When this portfolio is scoped to exactly one investment (as emitted by `Query.portfolios`), the investment it represents. `null` for aggregate portfolios covering multiple investments.
+  """
+  investment: Investment
+  """
+  Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero.
+  """
+  percentGain: Float
+  """
+  Daily-sampled line series of portfolio total over the requested period.
+  """
+  timeseries(length: Int, period: PortfolioTimePeriod!): PortfolioTimeseries!
+  """
+  Net capital-in for currently held units (excluding fees and taxes). Each buy adds its consideration, each sell subtracts it.
+  """
+  totalCost: Money!
+  """Unrealised gain on the filtered portfolio — `totalValue - totalCost`."""
+  totalGain: Money
+  """
+  Current market value of the filtered portfolio. Zero when nothing is held.
+  """
+  totalValue: Money
+}
+
+"""
+OHLC-style time series of portfolio total, downsampled to at most 300 buckets while always preserving the first and last bucket.
+"""
+type PortfolioCandlestick {
+  currency: String!
+  initialDate: Date!
+  points: [PortfolioCandlestickPoint!]!
+}
+
+"""
+One OHLC candlestick bucket. `from` / `to` are the portfolio total at the bucket's start / end; `lo` / `hi` are the minimum / maximum across the bucket. All values are in major units of `currency`.
+"""
+type PortfolioCandlestickPoint {
+  from: Int!
+  hi: Int!
+  lo: Int!
+  to: Int!
+  x: Int!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type PortfolioConnection {
+  edges: [PortfolioEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type PortfolioEdge {
+  cursor: ID!
+  node: Portfolio!
+}
+
+"""
+Daily-valued time series of portfolio total, downsampled to at most 300 points while always preserving the first and last sample.
+"""
+type PortfolioTimeseries {
+  currency: String!
+  initialDate: Date!
+  points: [PortfolioTimeseriesPoint!]!
+}
+
+"""
+One line-chart sample: `x` days since the series' `initialDate`, `y` in major units of `currency`.
+"""
+type PortfolioTimeseriesPoint {
+  x: Int!
+  y: Int!
+}
+
 type Query {
   """
   Every registered bill, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
@@ -1034,6 +1499,19 @@ type Query {
   Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
   """
   earnings(after: ID, first: Int): PlanningEarningConnection @semanticNonNull
+  """
+  Allocations configured for one wrapper. When `assetId` is `null`, portfolio-wide allocations (weighted across wrappers) — **not yet implemented**, returns an error.
+  """
+  investmentAllocations(
+    """
+    The wrapper whose allocations to return. Pass `null` to aggregate across the whole portfolio (coming in a later release).
+    """
+    assetId: ID
+  ): InvestmentAllocationsResult @semanticNonNull
+  """
+  Paginated list of investments, sorted by the requested key. Computed sorts (`value`, `gainAbs`, `gainPercent`) use current cached values; cursors are only stable while those values don't change.
+  """
+  investments(after: ID, first: Int, sort: InvestmentSort): InvestmentConnection @semanticNonNull
   """Paginated list of net-worth entries, newest first."""
   netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """
@@ -1060,6 +1538,29 @@ type Query {
   Every planning year the user can reasonably work in, ordered oldest first. The range spans from the first `NetWorthEntry`'s FY up to 5 FYs past today (or past the most-recent entry, whichever is later); when no entries exist yet it starts at the current FY. Years without any stored data are synthesised on the fly. Supports forward (`first` / `after`) and backward (`last` / `before`) pagination.
   """
   planningYears(after: ID, before: ID, first: Int, last: Int): PlanningYearConnection @semanticNonNull
+  """
+  Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are in `currency` (defaults to the server's home currency); investments held in any other currency are excluded.
+  """
+  portfolio(
+    """
+    ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency.
+    """
+    currency: String
+    filterAssetIdIn: [ID!]
+    filterInvestmentIdIn: [ID!]
+  ): Portfolio @semanticNonNull
+  """
+  One portfolio slice per investment held in the matching wrappers. Use this for stacked-per-investment charts: each edge's `node` is a single-investment `Portfolio`, and `node.investment` identifies which investment that slice represents.
+  """
+  portfolios(
+    after: ID
+    """
+    ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency.
+    """
+    currency: String
+    filterAssetIdIn: [ID!]
+    first: Int
+  ): PortfolioConnection @semanticNonNull
 }
 
 """

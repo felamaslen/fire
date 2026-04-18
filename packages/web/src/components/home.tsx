@@ -21,6 +21,9 @@ export function Home() {
         <Button asChild variant="outline">
           <Link to="/planning">Planning</Link>
         </Button>
+        <Button asChild variant="outline">
+          <Link to="/investments">Investments</Link>
+        </Button>
       </div>
     </main>
   );

@@ -7,15 +7,20 @@ import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
-import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
+import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, defaultFieldResolver, GraphQLInputObjectType } from "graphql";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
+import { investmentAllocations as queryInvestmentAllocationsResolver, investmentAllocationsSet as mutationInvestmentAllocationsSetResolver, investmentCashAllocationSet as mutationInvestmentCashAllocationSetResolver } from "./../graphql/investments/allocations";
+import { investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
+import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResolver } from "./../graphql/investments/portfolio";
+import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
+import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
 import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
@@ -461,6 +466,447 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 }
             };
         }
+    });
+    const InvestmentFundType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentFund",
+        description: "A fund identified by a URL to its product page (e.g. a fund platform's page).",
+        fields() {
+            return {
+                url: {
+                    description: "Link to the fund's product page.",
+                    name: "url",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const InvestmentStockType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentStock",
+        description: "A listed security identified by its ticker on the relevant exchange.",
+        fields() {
+            return {
+                code: {
+                    description: "Ticker on the relevant exchange (e.g. `SMT.L`, `AAPL`).",
+                    name: "code",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const InvestmentAssetType: GraphQLUnionType = new GraphQLUnionType({
+        name: "InvestmentAsset",
+        description: "The underlying instrument an `Investment` represents: a listed stock or a fund.",
+        types() {
+            return [InvestmentFundType, InvestmentStockType];
+        }
+    });
+    const InvestmentReinvestedType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentReinvested",
+        description: "Summary of DRIP (dividend-reinvestment) activity for one `InvestmentPosition`.",
+        fields() {
+            return {
+                cost: {
+                    description: "Total cost of DRIP units (sum of `units \u00D7 price` for drip transactions).",
+                    name: "cost",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                units: {
+                    description: "Units acquired via dividend reinvestments.",
+                    name: "units",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                value: {
+                    description: "Current market value of the reinvested units. `null` until at least one price is known.",
+                    name: "value",
+                    type: MoneyType
+                }
+            };
+        }
+    });
+    const InvestmentPositionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentPosition",
+        description: "Holdings, cost basis, and gain/loss for an `Investment` \u2014 either the aggregate across every wrapper (`Investment.position`) or filtered to a single wrapper (`InvestmentWrapper.position`). Same shape in both cases.\n\nAll money values are in the parent investment's currency.",
+        fields() {
+            return {
+                costBasis: {
+                    description: "Average price paid per share currently held, excluding fees and taxes. `null` when no units are held.",
+                    name: "costBasis",
+                    type: MoneyType
+                },
+                costBasisWithFees: {
+                    description: "Average price paid per share currently held, including fees and taxes. `null` when no units are held.",
+                    name: "costBasisWithFees",
+                    type: MoneyType
+                },
+                dailyGainPercent: {
+                    description: "Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it.",
+                    name: "dailyGainPercent",
+                    type: GraphQLFloat
+                },
+                dailyGainValue: {
+                    description: "Change in market value of the held position over the most recent pricing interval. When a live quote is available, compares it against yesterday's close; otherwise compares the two most recent cached closes. `null` until enough price history exists to compute it.",
+                    name: "dailyGainValue",
+                    type: MoneyType
+                },
+                percentGain: {
+                    description: "Unrealised gain as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.",
+                    name: "percentGain",
+                    type: GraphQLFloat
+                },
+                reinvested: {
+                    description: "DRIP (dividend-reinvestment) activity on this position.",
+                    name: "reinvested",
+                    type: new GraphQLNonNull(InvestmentReinvestedType)
+                },
+                totalCost: {
+                    description: "Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it.",
+                    name: "totalCost",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                totalGain: {
+                    description: "Unrealised gain on the held position \u2014 `totalValue - totalCost`. `null` until at least one price is known.",
+                    name: "totalGain",
+                    type: MoneyType
+                },
+                totalValue: {
+                    description: "Current market value of units held. `null` until at least one price is known for the investment.",
+                    name: "totalValue",
+                    type: MoneyType
+                },
+                units: {
+                    description: "Net units held.",
+                    name: "units",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
+    const InvestmentStockSplitType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentStockSplit",
+        description: "A stock-split event recorded against an `Investment`. `units_post = units_pre * ratio`, so ratio > 1 is a forward split and 0 < ratio < 1 is a reverse split.",
+        fields() {
+            return {
+                date: {
+                    description: "Calendar date the split took effect.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                ratio: {
+                    description: "Split ratio. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split.",
+                    name: "ratio",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                }
+            };
+        }
+    });
+    const InvestmentTransactionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentTransaction",
+        description: "One buy, sell, or dividend-reinvestment booked against an `Investment` and a wrapper (a net-worth asset of type `STOCK` or `PENSION`).",
+        fields() {
+            return {
+                asset: {
+                    description: "Wrapper the transaction books into (a `STOCK` or `PENSION` asset).",
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                date: {
+                    description: "Calendar date the trade was executed.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                drip: {
+                    description: "True when this transaction represents a dividend reinvestment rather than a cash buy.",
+                    name: "drip",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                fees: {
+                    description: "Broker / platform fees paid on the trade.",
+                    name: "fees",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                price: {
+                    description: "Unit price at execution.",
+                    name: "price",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                taxes: {
+                    description: "Taxes paid on the trade.",
+                    name: "taxes",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                units: {
+                    description: "Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.",
+                    name: "units",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
+    const InvestmentTransactionEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentTransactionEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(InvestmentTransactionType)
+                }
+            };
+        }
+    });
+    const InvestmentTransactionConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentTransactionConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentTransactionEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const DateTimeType: GraphQLScalarType = new GraphQLScalarType({
+        description: "ISO-8601 date-time. Serialises as an ISO-8601 string over the wire.",
+        name: "DateTime",
+        ...config.scalars.DateTime
+    });
+    const InvestmentPriceLatestType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentPriceLatest",
+        description: "The real-time unit price of a stock investment, as of `capturedAt`.",
+        fields() {
+            return {
+                capturedAt: {
+                    description: "When the quote was captured.",
+                    name: "capturedAt",
+                    type: new GraphQLNonNull(DateTimeType)
+                },
+                price: {
+                    description: "Live quote, in the currency reported by the quote provider.",
+                    name: "price",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
+    const InvestmentWrapperType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentWrapper",
+        description: "One wrapper's slice of an `Investment`. Holdings and stats are on `position`; the wrapper itself is on `asset`.",
+        fields() {
+            return {
+                asset: {
+                    description: "The wrapper (a `STOCK` or `PENSION` net-worth asset) this slice belongs to.",
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                position: {
+                    description: "Holdings, cost basis, and gain/loss filtered to this wrapper.",
+                    name: "position",
+                    type: new GraphQLNonNull(InvestmentPositionType)
+                }
+            };
+        }
+    });
+    const InvestmentType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Investment",
+        description: "A tradable holding \u2014 either a listed stock or a fund. `position` gives the aggregate across every wrapper that holds this investment; per-wrapper numbers live on each `wrappers[].position`.",
+        fields() {
+            return {
+                asset: {
+                    description: "What kind of instrument this investment represents.",
+                    name: "asset",
+                    type: new GraphQLNonNull(InvestmentAssetType)
+                },
+                currency: {
+                    description: "ISO-4217 code of the currency every price and transaction for this investment is quoted in.",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                position: {
+                    description: "Holdings, cost basis, and gain/loss aggregated across every wrapper.",
+                    name: "position",
+                    type: new GraphQLNonNull(InvestmentPositionType)
+                },
+                stockSplits: {
+                    description: "Stock-split events on this investment, oldest-first.",
+                    name: "stockSplits",
+                    type: new GraphQLList(new GraphQLNonNull(InvestmentStockSplitType)),
+                    resolve(source, args, context, info) {
+                        return assertNonNull(defaultFieldResolver(source, args, context, info));
+                    }
+                },
+                transactions: {
+                    description: "Transactions booked against this investment, oldest-first. Full history \u2014 for large lists prefer `transactionsPaged`.",
+                    name: "transactions",
+                    type: new GraphQLList(new GraphQLNonNull(InvestmentTransactionType)),
+                    resolve(source, args, context, info) {
+                        return assertNonNull(defaultFieldResolver(source, args, context, info));
+                    }
+                },
+                transactionsPaged: {
+                    description: "Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default.",
+                    name: "transactionsPaged",
+                    type: InvestmentTransactionConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(source, args) {
+                        return assertNonNull(source.transactionsPaged(args.first, args.after));
+                    }
+                },
+                unitPriceCached: {
+                    description: "Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.",
+                    name: "unitPriceCached",
+                    type: MoneyType
+                },
+                unitPriceLatest: {
+                    description: "Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).",
+                    name: "unitPriceLatest",
+                    type: InvestmentPriceLatestType
+                },
+                wrappers: {
+                    description: "Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.",
+                    name: "wrappers",
+                    type: new GraphQLList(new GraphQLNonNull(InvestmentWrapperType)),
+                    resolve(source, args, context, info) {
+                        return assertNonNull(defaultFieldResolver(source, args, context, info));
+                    }
+                }
+            };
+        }
+    });
+    const InvestmentAllocationType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentAllocation",
+        description: "Target allocation of one wrapper's value to a specific investment.",
+        fields() {
+            return {
+                allocation: {
+                    description: "Target fraction of the wrapper's value allocated to the investment. `0 < allocation <= 1`.",
+                    name: "allocation",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                asset: {
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                investment: {
+                    name: "investment",
+                    type: new GraphQLNonNull(InvestmentType)
+                }
+            };
+        }
+    });
+    const InvestmentAllocationsResultType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentAllocationsResult",
+        description: "Allocations configured for a single wrapper, plus the portfolio-wide cash allocation share that applies across the whole portfolio.",
+        fields() {
+            return {
+                cash: {
+                    description: "Portfolio-wide target cash fraction (applies across all wrappers in aggregate). `null` when no cash allocation has been configured yet.",
+                    name: "cash",
+                    type: GraphQLFloat
+                },
+                investments: {
+                    description: "Per-investment allocations for the wrapper. Sums to 1.",
+                    name: "investments",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentAllocationType)))
+                }
+            };
+        }
+    });
+    const InvestmentEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(InvestmentType)
+                }
+            };
+        }
+    });
+    const InvestmentConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const SortDirectionType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Ascending or descending order for a sort input.",
+        name: "SortDirection",
+        values: {
+            ASC: {
+                value: "ASC"
+            },
+            DESC: {
+                value: "DESC"
+            }
+        }
+    });
+    const InvestmentSortType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Choose how to order `Query.investments`. Exactly one field must be set. When omitted entirely the list is newest-first by creation time.",
+        name: "InvestmentSort",
+        fields() {
+            return {
+                gainAbs: {
+                    name: "gainAbs",
+                    type: SortDirectionType
+                },
+                gainPercent: {
+                    name: "gainPercent",
+                    type: SortDirectionType
+                },
+                value: {
+                    name: "value",
+                    type: SortDirectionType
+                }
+            };
+        },
+        isOneOf: true
     });
     const NetWorthCurrencyRateType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthCurrencyRate",
@@ -1018,6 +1464,217 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PortfolioCandlestickPointType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioCandlestickPoint",
+        description: "One OHLC candlestick bucket. `from` / `to` are the portfolio total at the bucket's start / end; `lo` / `hi` are the minimum / maximum across the bucket. All values are in major units of `currency`.",
+        fields() {
+            return {
+                from: {
+                    name: "from",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                hi: {
+                    name: "hi",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                lo: {
+                    name: "lo",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                to: {
+                    name: "to",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                x: {
+                    name: "x",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
+    const PortfolioCandlestickType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioCandlestick",
+        description: "OHLC-style time series of portfolio total, downsampled to at most 300 buckets while always preserving the first and last bucket.",
+        fields() {
+            return {
+                currency: {
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                initialDate: {
+                    name: "initialDate",
+                    type: new GraphQLNonNull(DateType)
+                },
+                points: {
+                    name: "points",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioCandlestickPointType)))
+                }
+            };
+        }
+    });
+    const PortfolioTimePeriodType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.",
+        name: "PortfolioTimePeriod",
+        values: {
+            MONTH: {
+                value: "MONTH"
+            },
+            YEAR: {
+                value: "YEAR"
+            },
+            YTD: {
+                value: "YTD"
+            }
+        }
+    });
+    const PortfolioTimeseriesPointType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioTimeseriesPoint",
+        description: "One line-chart sample: `x` days since the series' `initialDate`, `y` in major units of `currency`.",
+        fields() {
+            return {
+                x: {
+                    name: "x",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                y: {
+                    name: "y",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
+    const PortfolioTimeseriesType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioTimeseries",
+        description: "Daily-valued time series of portfolio total, downsampled to at most 300 points while always preserving the first and last sample.",
+        fields() {
+            return {
+                currency: {
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                initialDate: {
+                    name: "initialDate",
+                    type: new GraphQLNonNull(DateType)
+                },
+                points: {
+                    name: "points",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioTimeseriesPointType)))
+                }
+            };
+        }
+    });
+    const PortfolioType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Portfolio",
+        description: "Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded.",
+        fields() {
+            return {
+                candlestick: {
+                    description: "Candlestick buckets of portfolio total over the requested period.",
+                    name: "candlestick",
+                    type: new GraphQLNonNull(PortfolioCandlestickType),
+                    args: {
+                        length: {
+                            type: GraphQLInt
+                        },
+                        period: {
+                            type: new GraphQLNonNull(PortfolioTimePeriodType)
+                        }
+                    },
+                    resolve(source, args) {
+                        return source.candlestick(args.period, args.length);
+                    }
+                },
+                currency: {
+                    description: "ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                dailyGainPercent: {
+                    description: "Fractional change in portfolio value over the most recent pricing interval. `null` until enough price history exists, or when the previous total is zero.",
+                    name: "dailyGainPercent",
+                    type: GraphQLFloat
+                },
+                dailyGainValue: {
+                    description: "Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. `null` until enough price history exists.",
+                    name: "dailyGainValue",
+                    type: MoneyType
+                },
+                investment: {
+                    description: "When this portfolio is scoped to exactly one investment (as emitted by `Query.portfolios`), the investment it represents. `null` for aggregate portfolios covering multiple investments.",
+                    name: "investment",
+                    type: InvestmentType
+                },
+                percentGain: {
+                    description: "Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero.",
+                    name: "percentGain",
+                    type: GraphQLFloat
+                },
+                timeseries: {
+                    description: "Daily-sampled line series of portfolio total over the requested period.",
+                    name: "timeseries",
+                    type: new GraphQLNonNull(PortfolioTimeseriesType),
+                    args: {
+                        length: {
+                            type: GraphQLInt
+                        },
+                        period: {
+                            type: new GraphQLNonNull(PortfolioTimePeriodType)
+                        }
+                    },
+                    resolve(source, args) {
+                        return source.timeseries(args.period, args.length);
+                    }
+                },
+                totalCost: {
+                    description: "Net capital-in for currently held units (excluding fees and taxes). Each buy adds its consideration, each sell subtracts it.",
+                    name: "totalCost",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                totalGain: {
+                    description: "Unrealised gain on the filtered portfolio \u2014 `totalValue - totalCost`.",
+                    name: "totalGain",
+                    type: MoneyType
+                },
+                totalValue: {
+                    description: "Current market value of the filtered portfolio. Zero when nothing is held.",
+                    name: "totalValue",
+                    type: MoneyType
+                }
+            };
+        }
+    });
+    const PortfolioEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PortfolioType)
+                }
+            };
+        }
+    });
+    const PortfolioConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
     const QueryType: GraphQLObjectType = new GraphQLObjectType({
         name: "Query",
         fields() {
@@ -1068,6 +1725,39 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryEarningsResolver(args.first, args.after));
+                    }
+                },
+                investmentAllocations: {
+                    description: "Allocations configured for one wrapper. When `assetId` is `null`, portfolio-wide allocations (weighted across wrappers) \u2014 **not yet implemented**, returns an error.",
+                    name: "investmentAllocations",
+                    type: InvestmentAllocationsResultType,
+                    args: {
+                        assetId: {
+                            description: "The wrapper whose allocations to return. Pass `null` to aggregate across the whole portfolio (coming in a later release).",
+                            type: GraphQLID
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryInvestmentAllocationsResolver(args.assetId));
+                    }
+                },
+                investments: {
+                    description: "Paginated list of investments, sorted by the requested key. Computed sorts (`value`, `gainAbs`, `gainPercent`) use current cached values; cursors are only stable while those values don't change.",
+                    name: "investments",
+                    type: InvestmentConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        },
+                        sort: {
+                            type: InvestmentSortType
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryInvestmentsResolver(args.first, args.after, args.sort));
                     }
                 },
                 netWorth: {
@@ -1193,6 +1883,49 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     resolve(_source, args) {
                         return assertNonNull(queryPlanningYearsResolver(args.first, args.after, args.last, args.before));
                     }
+                },
+                portfolio: {
+                    description: "Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are in `currency` (defaults to the server's home currency); investments held in any other currency are excluded.",
+                    name: "portfolio",
+                    type: PortfolioType,
+                    args: {
+                        currency: {
+                            description: "ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency.",
+                            type: GraphQLString
+                        },
+                        filterAssetIdIn: {
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        },
+                        filterInvestmentIdIn: {
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryPortfolioResolver(args.filterAssetIdIn, args.filterInvestmentIdIn, args.currency));
+                    }
+                },
+                portfolios: {
+                    description: "One portfolio slice per investment held in the matching wrappers. Use this for stacked-per-investment charts: each edge's `node` is a single-investment `Portfolio`, and `node.investment` identifies which investment that slice represents.",
+                    name: "portfolios",
+                    type: PortfolioConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        currency: {
+                            description: "ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency.",
+                            type: GraphQLString
+                        },
+                        filterAssetIdIn: {
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        },
+                        first: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryPortfoliosResolver(args.filterAssetIdIn, args.currency, args.first, args.after));
+                    }
                 }
             };
         }
@@ -1247,6 +1980,63 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 }
             };
         }
+    });
+    const InvestmentAllocationInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        name: "InvestmentAllocationInput",
+        fields() {
+            return {
+                allocation: {
+                    description: "Target fraction of the wrapper's value allocated to this investment. `0 < allocation <= 1`.",
+                    name: "allocation",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                investmentId: {
+                    name: "investmentId",
+                    type: new GraphQLNonNull(GraphQLID)
+                }
+            };
+        }
+    });
+    const InvestmentFundInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        name: "InvestmentFundInput",
+        fields() {
+            return {
+                url: {
+                    description: "Link to the fund's product page.",
+                    name: "url",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const InvestmentStockInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        name: "InvestmentStockInput",
+        fields() {
+            return {
+                code: {
+                    description: "Ticker on the relevant exchange (e.g. `SMT.L`, `AAPL`).",
+                    name: "code",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const InvestmentAssetInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Identifies the underlying instrument when creating or updating an `Investment`. Exactly one field must be set.",
+        name: "InvestmentAssetInput",
+        fields() {
+            return {
+                fund: {
+                    name: "fund",
+                    type: InvestmentFundInputType
+                },
+                stock: {
+                    name: "stock",
+                    type: InvestmentStockInputType
+                }
+            };
+        },
+        isOneOf: true
     });
     const NetWorthCategoryAssetInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
         description: "Create payload for an asset category.",
@@ -1914,6 +2704,231 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.ukTaxCodes);
                     }
                 },
+                investmentAllocationsSet: {
+                    description: "Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to exactly 1.",
+                    name: "investmentAllocationsSet",
+                    type: new GraphQLNonNull(InvestmentAllocationsResultType),
+                    args: {
+                        allocations: {
+                            type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentAllocationInputType)))
+                        },
+                        assetId: {
+                            description: "Wrapper (`STOCK` or `PENSION` net-worth asset) whose allocations are being set.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentAllocationsSetResolver(args.assetId, args.allocations);
+                    }
+                },
+                investmentCashAllocationSet: {
+                    description: "Set the portfolio-wide target cash allocation (applies across every wrapper in aggregate). `0 <= allocation <= 1`.",
+                    name: "investmentCashAllocationSet",
+                    type: new GraphQLNonNull(GraphQLFloat),
+                    args: {
+                        allocation: {
+                            type: new GraphQLNonNull(GraphQLFloat)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentCashAllocationSetResolver(args.allocation);
+                    }
+                },
+                investmentCreate: {
+                    description: "Create a new investment.",
+                    name: "investmentCreate",
+                    type: new GraphQLNonNull(InvestmentType),
+                    args: {
+                        asset: {
+                            description: "What kind of instrument this investment represents.",
+                            type: new GraphQLNonNull(InvestmentAssetInputType)
+                        },
+                        currency: {
+                            description: "ISO-4217 currency code every price and transaction for this investment will be quoted in.",
+                            type: new GraphQLNonNull(GraphQLString)
+                        },
+                        name: {
+                            type: new GraphQLNonNull(GraphQLString)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentCreateResolver(args.name, args.currency, args.asset);
+                    }
+                },
+                investmentDelete: {
+                    description: "Delete an investment and all its transactions, stock splits, and prices.",
+                    name: "investmentDelete",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentDeleteResolver(args.id);
+                    }
+                },
+                investmentStockSplitCreate: {
+                    description: "Record a stock split on an investment. Historic `unitPriceCached` values are retroactively adjusted.",
+                    name: "investmentStockSplitCreate",
+                    type: new GraphQLNonNull(InvestmentStockSplitType),
+                    args: {
+                        date: {
+                            description: "Calendar date the split took effect.",
+                            type: new GraphQLNonNull(DateType)
+                        },
+                        investmentId: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        ratio: {
+                            description: "Positive split ratio. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split.",
+                            type: new GraphQLNonNull(GraphQLFloat)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentStockSplitCreateResolver(args.investmentId, args.date, args.ratio);
+                    }
+                },
+                investmentStockSplitDelete: {
+                    description: "Delete a stock split. Historic `unitPriceCached` values are recomputed as though the split never happened.",
+                    name: "investmentStockSplitDelete",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentStockSplitDeleteResolver(args.id);
+                    }
+                },
+                investmentStockSplitUpdate: {
+                    description: "Partial update to a stock split. Omitted / null fields are left unchanged.",
+                    name: "investmentStockSplitUpdate",
+                    type: new GraphQLNonNull(InvestmentStockSplitType),
+                    args: {
+                        date: {
+                            type: DateType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        ratio: {
+                            type: GraphQLFloat
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentStockSplitUpdateResolver(args.id, args.date, args.ratio);
+                    }
+                },
+                investmentTransactionCreate: {
+                    description: "Book a new buy, sell, or dividend-reinvestment against an investment.",
+                    name: "investmentTransactionCreate",
+                    type: new GraphQLNonNull(InvestmentTransactionType),
+                    args: {
+                        assetId: {
+                            description: "Wrapper to book the trade into. Must be a `STOCK` or `PENSION` net-worth asset.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        date: {
+                            description: "Calendar date the trade was executed.",
+                            type: new GraphQLNonNull(DateType)
+                        },
+                        drip: {
+                            description: "Set `true` to mark this as a dividend reinvestment rather than a cash buy. Defaults to `false`.",
+                            type: GraphQLBoolean
+                        },
+                        fees: {
+                            description: "Broker / platform fees paid. Must match the investment's currency. Defaults to 0.",
+                            type: MoneyInputType
+                        },
+                        investmentId: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        price: {
+                            description: "Unit price at execution. Must match the investment's currency.",
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
+                        taxes: {
+                            description: "Taxes paid on the trade. Must match the investment's currency. Defaults to 0.",
+                            type: MoneyInputType
+                        },
+                        units: {
+                            description: "Signed number of units traded. Positive = buy / DRIP, negative = sell.",
+                            type: new GraphQLNonNull(GraphQLInt)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentTransactionCreateResolver(args.investmentId, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                    }
+                },
+                investmentTransactionDelete: {
+                    description: "Delete a transaction.",
+                    name: "investmentTransactionDelete",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentTransactionDeleteResolver(args.id);
+                    }
+                },
+                investmentTransactionUpdate: {
+                    description: "Partial update to a transaction. Omitted / null fields are left unchanged.",
+                    name: "investmentTransactionUpdate",
+                    type: new GraphQLNonNull(InvestmentTransactionType),
+                    args: {
+                        assetId: {
+                            type: GraphQLID
+                        },
+                        date: {
+                            type: DateType
+                        },
+                        drip: {
+                            type: GraphQLBoolean
+                        },
+                        fees: {
+                            type: MoneyInputType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        price: {
+                            type: MoneyInputType
+                        },
+                        taxes: {
+                            type: MoneyInputType
+                        },
+                        units: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentTransactionUpdateResolver(args.id, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                    }
+                },
+                investmentUpdate: {
+                    description: "Partially update an investment. Omitted (or `null`) fields are left unchanged.",
+                    name: "investmentUpdate",
+                    type: new GraphQLNonNull(InvestmentType),
+                    args: {
+                        asset: {
+                            description: "New underlying instrument. When set, the supplied variant fully replaces the previous one (e.g. switching from a stock to a fund).",
+                            type: InvestmentAssetInputType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        name: {
+                            type: GraphQLString
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentUpdateResolver(args.id, args.name, args.asset);
+                    }
+                },
                 netWorthCategoryCreate: {
                     description: "Create a new category (asset, liability, or option).",
                     name: "netWorthCategoryCreate",
@@ -2235,11 +3250,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
-    const DateTimeType: GraphQLScalarType = new GraphQLScalarType({
-        description: "ISO-8601 date-time. Serialises as an ISO-8601 string over the wire.",
-        name: "DateTime",
-        ...config.scalars.DateTime
-    });
     return new GraphQLSchema({
         directives: [...specifiedDirectives, new GraphQLDirective({
                 name: "constraint",
@@ -2258,6 +3268,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
     });
 }
