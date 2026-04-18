@@ -23,7 +23,12 @@ import {
 } from "../money";
 import { VOID, type Void } from "../void";
 import { ensurePlanningMonth, type PlanningTransaction } from "./index";
-import { earningMonthCoverage, parseMonthId, planningMonthKey } from "./months";
+import {
+  earningMonthCoverage,
+  monthYearLabel,
+  parseMonthId,
+  planningMonthKey,
+} from "./months";
 import { computeUKTake } from "./tax";
 
 /**
@@ -499,12 +504,12 @@ async function materialiseEarningAsPayslip(
   // The payslip's `name` is shown as the gross-row label in the cell, so only
   // honour `patchName` when the user is actually editing the gross line. For
   // every other edit (and when no name is supplied) fall back to
-  // `<earning name> — <pay-date ISO>`.
+  // `<earning name> — <MM/YYYY>` so the row matches its predicted label.
   const payslipDate = lastDayOfMonth(date);
   const payslipName =
     parsed.part === "gross" && edit.patchName != null
       ? edit.patchName
-      : `${earning.name} — ${payslipDate.toISOString().slice(0, 10)}`;
+      : `${earning.name} — ${monthYearLabel(date)}`;
 
   await db.transaction(async (tx) => {
     const [payslip] = await tx
