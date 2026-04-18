@@ -99,6 +99,10 @@ input NetWorthCategoryLiabilityInput {
   """Optional link to the asset this liability funds."""
   assetId: ID
   """
+  `PlanningAccount.id` this liability is billed from — only valid when `type` is `CREDIT_CARD`.
+  """
+  billedFromAccountId: ID
+  """
   Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN.
   """
   interestRate: Float
@@ -114,6 +118,10 @@ Partial update for a liability category; unset fields are left unchanged.
 input NetWorthCategoryLiabilityPatch {
   """Link to the asset this liability funds."""
   assetId: ID
+  """
+  `PlanningAccount.id` this liability is billed from — only valid when the liability is a credit card. Pass null explicitly to clear.
+  """
+  billedFromAccountId: ID
   """Decimal-fraction annual rate (e.g. 0.0525 = 5.25%)."""
   interestRate: Float
   name: String
@@ -607,6 +615,10 @@ A reusable bucket for liabilities (credit card, mortgage, personal loan, ...).
 type NetWorthCategoryLiability implements NetWorthCategory {
   """The asset this liability is funding (for LTV calcs), if any."""
   asset: NetWorthCategoryAsset
+  """
+  Planning account this liability is billed from (credit cards only). When set, the planner emits predicted monthly payment transactions on that account.
+  """
+  billedFromAccount: PlanningAccount
   id: ID!
   """
   Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.

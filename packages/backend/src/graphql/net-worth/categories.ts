@@ -12,8 +12,10 @@ import {
   NetWorthCategoryOptions,
   NetWorthValues,
 } from "@/db/schema/net-worth";
+import { PlanningAccounts } from "@/db/schema/planning";
 
 import { buildConnection, type Connection } from "../pagination";
+import { PlanningAccount } from "../planning/index";
 import { VOID, type Void } from "../void";
 
 /** Kind of asset a category represents. @gqlEnum */
@@ -78,6 +80,7 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
     /** When true, the liability is hidden from aggregate totals. @gqlField */
     public readonly skip: boolean,
     private readonly assetId: string | null,
+    private readonly billedFromAccountId: string | null,
     private readonly createdAt: Date,
   ) {}
 
@@ -91,6 +94,7 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
       row.interestRate === null ? null : (Number(row.interestRate) as Float),
       row.skip,
       row.categoryAssetId,
+      row.billedFromAccountId,
       row.createdAt,
     );
   }
@@ -107,6 +111,31 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
       `NetWorthCategoryAsset ${this.assetId} referenced by NetWorthCategoryLiability ${this.id} is missing`,
     );
     return NetWorthCategoryAsset.load(row);
+  }
+
+  /** Planning account this liability is billed from (credit cards only). When set, the planner emits predicted monthly payment transactions on that account. @gqlField */
+  async billedFromAccount(): Promise<PlanningAccount | null> {
+    if (!this.billedFromAccountId) return null;
+    const [row] = await db
+      .select({
+        account: PlanningAccounts,
+        asset: NetWorthCategoryAssets,
+      })
+      .from(PlanningAccounts)
+      .innerJoin(
+        NetWorthCategoryAssets,
+        eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
+      )
+      .where(eq(PlanningAccounts.accountId, this.billedFromAccountId));
+    assert(
+      row,
+      `PlanningAccount ${this.billedFromAccountId} referenced by NetWorthCategoryLiability ${this.id} is missing`,
+    );
+    return new PlanningAccount({
+      assetId: row.account.accountId,
+      alias: row.account.alias,
+      asset: NetWorthCategoryAsset.load(row.asset),
+    });
   }
 }
 
@@ -288,6 +317,8 @@ export type NetWorthCategoryLiabilityInput = {
   assetId?: ID | null;
   /** Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN. */
   interestRate?: Float | null;
+  /** `PlanningAccount.id` this liability is billed from — only valid when `type` is `CREDIT_CARD`. */
+  billedFromAccountId?: ID | null;
   /** Hide this liability from aggregate totals. Defaults to false. */
   skip?: boolean | null;
 };
@@ -326,6 +357,8 @@ export type NetWorthCategoryLiabilityPatch = {
   assetId?: ID | null;
   /** Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). */
   interestRate?: Float | null;
+  /** `PlanningAccount.id` this liability is billed from — only valid when the liability is a credit card. Pass null explicitly to clear. */
+  billedFromAccountId?: ID | null;
   /** Hide this liability from aggregate totals. */
   skip?: boolean | null;
 };
@@ -371,6 +404,11 @@ function validateLiabilityInput(input: NetWorthCategoryLiabilityInput): void {
     input.interestRate !== null && input.interestRate !== undefined;
   assert(!isLoan || hasRate, "interestRate is required when type is LOAN");
   assert(isLoan || !hasRate, "interestRate must be null when type is not LOAN");
+  const hasBilledFrom = input.billedFromAccountId != null;
+  assert(
+    !hasBilledFrom || input.type === "CREDIT_CARD",
+    "billedFromAccountId is only valid when type is CREDIT_CARD",
+  );
 }
 
 /** Create a new category (asset, liability, or option). @gqlMutationField */
@@ -396,6 +434,7 @@ export async function netWorthCategoryCreate(
           input.liability.interestRate == null
             ? null
             : String(input.liability.interestRate),
+        billedFromAccountId: input.liability.billedFromAccountId ?? null,
         skip: input.liability.skip ?? false,
       })
       .returning();
@@ -445,6 +484,9 @@ export async function netWorthCategoryUpdate(
               ? null
               : String(patch.liability.interestRate),
         }),
+        ...(patch.liability.billedFromAccountId !== undefined && {
+          billedFromAccountId: patch.liability.billedFromAccountId,
+        }),
         ...(patch.liability.skip != null && { skip: patch.liability.skip }),
         updatedAt: new Date(),
       })
@@ -455,6 +497,10 @@ export async function netWorthCategoryUpdate(
     assert(
       !isLoan === (row.interestRate === null),
       "interestRate must be non-null iff type is LOAN",
+    );
+    assert(
+      row.billedFromAccountId === null || row.type === "CREDIT_CARD",
+      "billedFromAccountId is only valid when type is CREDIT_CARD",
     );
     return NetWorthCategoryLiability.load(row);
   }

@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { currencyCode } from "./currency";
+import { PlanningAccounts } from "./planning";
 
 /** Kind of asset a NetWorthCategoryAsset represents. */
 export const netWorthCategoryAssetType = pgEnum("netWorthCategoryAssetType", [
@@ -145,6 +146,11 @@ export const NetWorthCategoryLiabilities = pgTable(
     ),
     /** Annual interest rate as a decimal (0.0525 = 5.25%). Required iff type=LOAN. */
     interestRate: numeric("interestRate", { precision: 6, scale: 4 }),
+    /** Planning account this liability is billed from (e.g. a credit card paid off from a current account). When set, the planner emits predicted monthly payment transactions on that account. Only valid for `CREDIT_CARD` type — enforced by check constraint. */
+    billedFromAccountId: uuid("billedFromAccountId").references(
+      () => PlanningAccounts.accountId,
+      { onDelete: "set null" },
+    ),
     /** When true, the liability is hidden from aggregate totals (e.g. a closed credit card). */
     skip: boolean("skip").notNull().default(false),
     createdAt: timestamp("createdAt", { withTimezone: true })
@@ -160,6 +166,10 @@ export const NetWorthCategoryLiabilities = pgTable(
       sql`(${t.type} = 'LOAN' AND ${t.interestRate} IS NOT NULL)
            OR (${t.type} <> 'LOAN' AND ${t.interestRate} IS NULL)`,
     ),
+    check(
+      "NetWorthCategoryLiabilities_billedFromAccount_ck",
+      sql`${t.billedFromAccountId} IS NULL OR ${t.type} = 'CREDIT_CARD'`,
+    ),
   ],
 );
 
@@ -169,6 +179,10 @@ export const netWorthCategoryLiabilitiesRelations = relations(
     categoryAsset: one(NetWorthCategoryAssets, {
       fields: [NetWorthCategoryLiabilities.categoryAssetId],
       references: [NetWorthCategoryAssets.id],
+    }),
+    billedFromAccount: one(PlanningAccounts, {
+      fields: [NetWorthCategoryLiabilities.billedFromAccountId],
+      references: [PlanningAccounts.accountId],
     }),
     values: many(NetWorthValues),
   }),

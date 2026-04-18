@@ -4,9 +4,13 @@ import { and, eq, gte, isNull, lte, or } from "drizzle-orm";
 import type { ID } from "grats";
 import { z } from "zod";
 
+import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import type { CurrencyCode } from "@/db/schema/currency";
-import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
+import {
+  NetWorthCategoryAssets,
+  NetWorthCategoryLiabilities,
+} from "@/db/schema/net-worth";
 import {
   PlanningBills,
   PlanningEarnings,
@@ -58,6 +62,12 @@ const txIdSchema = z.discriminatedUnion("kind", [
     id: z.string(),
     monthId: z.string(),
   }),
+  /** Credit-card payment prediction for a month — `id` is the liability id. `monthId` scopes the virtual row to a specific month; editing materialises a real `PlanningTransactions` row with the liability id set, which then suppresses this prediction for that month. */
+  z.object({
+    kind: z.literal("liab"),
+    id: z.string(),
+    monthId: z.string(),
+  }),
 ]);
 
 export type PlanningTransactionId = z.infer<typeof txIdSchema>;
@@ -101,7 +111,6 @@ export async function transactionCreate(
 ): Promise<PlanningTransaction> {
   const { year, date } = monthKey(monthId);
   const { currency, amount: minor } = getMoneyInputFractionalAmount(amount);
-  assert(minor !== 0, "Transaction amount must be non-zero");
   if (minor > 0) {
     assert(
       toAccountId == null && liabilityId == null && assetId == null,
@@ -194,29 +203,16 @@ export async function transactionUpdate(
       );
       if (assetId != null) await assertInvestableAsset(assetId);
       await ensurePlanningMonth(year, date);
-      let amountPatch: { amount: number; currency: CurrencyCode } | null = null;
-      if (patchAmount) {
-        // `EditTransactionForm` sends a positive magnitude; preserve the
-        // stored sign so clients don't have to know whether the row is an
-        // inflow or an outflow.
-        const [existing] = await db
-          .select({ amount: PlanningTransactions.amount })
-          .from(PlanningTransactions)
-          .where(eq(PlanningTransactions.id, parsed.id));
-        assert(existing, `Transaction ${parsed.id} not found`);
-        const sign = existing.amount < 0 ? -1 : 1;
-        amountPatch = {
-          amount: sign * Math.abs(patchAmount.amount),
-          currency: patchAmount.currency,
-        };
-      }
+      // `EditTransactionForm` sends a signed amount — the sign is whatever
+      // the user picked via the direction toggle. We store it verbatim; the
+      // DB's `inflow_ck` rejects disallowed sign/link combinations.
       await db
         .update(PlanningTransactions)
         .set({
           year,
           date,
           ...(name != null && { name }),
-          ...(amountPatch && amountPatch),
+          ...(patchAmount && patchAmount),
           ...(accountId != null && { accountId }),
           ...(toAccountId !== undefined && { toAccountId }),
           ...(liabilityId !== undefined && { liabilityId }),
@@ -241,19 +237,11 @@ export async function transactionUpdate(
       break;
     }
     case "adj": {
-      const [existing] = await db
-        .select()
-        .from(PlanningPayslipAdjustments)
-        .where(eq(PlanningPayslipAdjustments.id, parsed.id));
-      assert(existing, `Adjustment ${parsed.id} not found`);
-      const sign = existing.amount < 0 ? -1 : 1;
       await db
         .update(PlanningPayslipAdjustments)
         .set({
           ...(name != null && { name }),
-          ...(patchAmount && {
-            amount: sign * Math.abs(patchAmount.amount),
-          }),
+          ...(patchAmount && { amount: patchAmount.amount }),
           updatedAt: new Date(),
         })
         .where(eq(PlanningPayslipAdjustments.id, parsed.id));
@@ -282,6 +270,14 @@ export async function transactionUpdate(
     case "earn": {
       await materialiseEarningAsPayslip(year, date, parsed, {
         patchAmount: patchAmount?.amount ?? null,
+        patchName: name ?? null,
+      });
+      break;
+    }
+    case "liab": {
+      await materialiseCreditCardPrediction(year, date, parsed.id, {
+        patchAmount: patchAmount?.amount ?? null,
+        patchCurrency: patchAmount?.currency ?? null,
         patchName: name ?? null,
       });
       break;
@@ -358,7 +354,8 @@ async function reloadTransaction(
       };
     }
     case "bill":
-    case "earn": {
+    case "earn":
+    case "liab": {
       // Derived kinds materialise into new rows with different composite ids
       // (the derived row is replaced, not mutated in place). We return a
       // placeholder carrying the original `id` so Apollo can invalidate the
@@ -434,6 +431,12 @@ export async function transactionDelete(
       });
       break;
     }
+    case "liab":
+      // Deleting a still-predicted credit-card row is a no-op: there's no
+      // materialised row to remove. The prediction will reappear on the next
+      // load because no manual tx with this `liabilityId` exists. Users who
+      // want to suppress the prediction should edit it to zero instead.
+      break;
   }
   return VOID;
 }
@@ -610,3 +613,45 @@ const adjustmentLabel = {
   Exclude<Extract<PlanningTransactionId, { part: string }>["part"], "gross">,
   string
 >;
+
+/** Materialise a credit-card spend prediction as a real `PlanningTransactions` row so the user's edit is durable and the prediction for this month is suppressed. Amount is stored as a non-positive outflow on the liability's `billedFromAccountId`. */
+async function materialiseCreditCardPrediction(
+  year: number,
+  date: Date,
+  liabilityId: string,
+  edit: {
+    patchAmount: number | null;
+    patchCurrency: CurrencyCode | null;
+    patchName: string | null;
+  },
+): Promise<void> {
+  const [liability] = await db
+    .select()
+    .from(NetWorthCategoryLiabilities)
+    .where(eq(NetWorthCategoryLiabilities.id, liabilityId));
+  assert(liability, `Liability ${liabilityId} not found`);
+  assert(
+    liability.type === "CREDIT_CARD",
+    `Liability ${liabilityId} is not a credit card`,
+  );
+  assert(
+    liability.billedFromAccountId,
+    `Liability ${liabilityId} has no billedFromAccount`,
+  );
+  // Store whatever signed value the edit form sent — the direction toggle
+  // lets the user pick +/-. Amount=0 explicitly overrides the prediction to
+  // zero for this month.
+  const minor = edit.patchAmount ?? 0;
+  await ensurePlanningMonth(year, date);
+  await db.insert(PlanningTransactions).values({
+    year,
+    date,
+    amount: minor,
+    currency: edit.patchCurrency ?? HOME_CURRENCY,
+    name: edit.patchName ?? liability.name,
+    accountId: liability.billedFromAccountId,
+    toAccountId: null,
+    liabilityId,
+    assetId: null,
+  });
+}

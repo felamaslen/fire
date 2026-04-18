@@ -569,13 +569,18 @@ function TransactionRow({
     refetchQueries: "active",
   });
 
-  const onSaveEdit = async (patch: { name: string; amount: number }) => {
+  const onSaveEdit = async (patch: {
+    name: string;
+    amount: number;
+    direction: "+" | "-";
+  }) => {
+    const signed = patch.direction === "+" ? patch.amount : -patch.amount;
     await update({
       variables: {
         monthId,
         id: tx.id,
         name: patch.name,
-        amount: { amount: patch.amount, currency: tx.amount.currency },
+        amount: { amount: signed, currency: tx.amount.currency },
       },
     });
     toast.success("Saved");
@@ -620,6 +625,7 @@ function TransactionRow({
                   initial={{
                     name: tx.name,
                     amount: Math.abs(tx.amount.amount),
+                    direction: tx.amount.amount < 0 ? "-" : "+",
                   }}
                   onSubmit={onSaveEdit}
                   onCancel={() => setEditOpen(false)}
@@ -773,18 +779,23 @@ function EditTransactionForm({
   onSubmit,
   onCancel,
 }: {
-  initial: { name: string; amount: number };
-  onSubmit: (v: { name: string; amount: number }) => void | Promise<void>;
+  initial: { name: string; amount: number; direction: "+" | "-" };
+  onSubmit: (v: {
+    name: string;
+    amount: number;
+    direction: "+" | "-";
+  }) => void | Promise<void>;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initial.name);
   const [amount, setAmount] = useState(String(initial.amount));
+  const [direction, setDirection] = useState<"+" | "-">(initial.direction);
   const parsed = Number(amount);
-  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed < 0;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (disabled) return;
-    await onSubmit({ name: name.trim(), amount: parsed });
+    await onSubmit({ name: name.trim(), amount: parsed, direction });
   };
   return (
     <form onSubmit={submit} className="space-y-3">
@@ -794,15 +805,30 @@ function EditTransactionForm({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Amount</Label>
-        <Input
-          type="number"
-          inputMode="decimal"
-          step="0.01"
-          min="0"
-          currency="GBP"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
+        <div className="flex items-center gap-2">
+          <Select
+            value={direction}
+            onValueChange={(v) => setDirection(v as "+" | "-")}
+          >
+            <SelectTrigger className="w-14 rounded-r-none border-r-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="-">−</SelectItem>
+              <SelectItem value="+">+</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            currency="GBP"
+            className="rounded-l-none"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </div>
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>
@@ -845,7 +871,7 @@ function CreateTransactionForm({
   const [liabilityId, setLiabilityId] = useState("__none__");
   const [assetId, setAssetId] = useState("__none__");
   const parsed = Number(amount);
-  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed < 0;
   const isInflow = direction === "+";
   const hasLiability = !isInflow && liabilityId !== "__none__";
   const hasAsset = !isInflow && assetId !== "__none__";
