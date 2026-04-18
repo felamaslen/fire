@@ -83,6 +83,13 @@ export function earningMonthCoverage(
   return overlapDays / monthDays;
 }
 
+/** `MM/YYYY` label for a UTC-anchored date — e.g. `04/2025` for an April
+ * 2025 payslip. Used as the tail of transaction / payslip names. */
+export function monthYearLabel(date: Date): string {
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${month}/${date.getUTCFullYear()}`;
+}
+
 /** Add `n` calendar months to a UTC-anchored date. Equivalent to date-fns
  * `addMonths`, but computed in UTC so dates at UTC-midnight don't drift by
  * the local TZ offset around DST boundaries. */

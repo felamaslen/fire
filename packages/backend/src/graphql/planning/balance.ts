@@ -26,7 +26,12 @@ import { UnreachableCaseError } from "@/errors";
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
 import type { PlanningTransaction } from "./index";
-import { addMonthsUTC, earningMonthCoverage, monthId } from "./months";
+import {
+  addMonthsUTC,
+  earningMonthCoverage,
+  monthId,
+  monthYearLabel,
+} from "./months";
 import { computeUKTake } from "./tax";
 import { encodePlanningTransactionId } from "./transactions";
 
@@ -337,7 +342,7 @@ export function monthTransactionsFor(
           id: e.id,
           monthId: monthKey,
         }),
-        name: `${e.name} — gross`,
+        name: `${e.name} — ${monthYearLabel(monthStart)}`,
         amount: Money.fromMinorDenomination(perMonth(take.gross), e.currency),
         isProvisional: true,
         isEditable: true,

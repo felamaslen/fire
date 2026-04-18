@@ -446,7 +446,7 @@ it("transactionUpdate on a predicted earnings transaction materialises a payslip
     { a: main },
   );
 
-  const grossId = await aprilTxId("Day job — gross");
+  const grossId = await aprilTxId("Day job — 04/2025");
 
   // User edits the predicted gross for April — the planner creates an actual
   // payslip for that month, mirroring the tax/NI deductions, with the new gross.
@@ -554,7 +554,7 @@ it("transactionUpdate on a predicted earnings deduction materialises the payslip
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
     NAME                   AMOUNT  SOURCE    EDIT     ID                                                               
-    Day job — gross        5000    predicted editable {"kind":"earn","part":"gross","id":"<uuid>","monthId":"apr-2025"}
+    Day job — 04/2025      5000    predicted editable {"kind":"earn","part":"gross","id":"<uuid>","monthId":"apr-2025"}
     Day job — income tax   -952.67 predicted editable {"kind":"earn","part":"tax","id":"<uuid>","monthId":"apr-2025"}  
     Day job — NIC          -267.55 predicted editable {"kind":"earn","part":"nic","id":"<uuid>","monthId":"apr-2025"}  
     Day job — student loan -245.29 predicted editable {"kind":"earn","part":"sl","id":"<uuid>","monthId":"apr-2025"}   "
@@ -589,7 +589,7 @@ it("transactionUpdate on a predicted earnings deduction materialises the payslip
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
     NAME                   AMOUNT  SOURCE EDIT     ID                          
-    Day job — 2025-04-30   5000    actual editable {"kind":"pay","id":"<uuid>"}
+    Day job — 04/2025      5000    actual editable {"kind":"pay","id":"<uuid>"}
     Day job — income tax   -952.67 actual editable {"kind":"adj","id":"<uuid>"}
     NIC (April adjustment) -400    actual editable {"kind":"adj","id":"<uuid>"}
     Day job — student loan -245.29 actual editable {"kind":"adj","id":"<uuid>"}"
