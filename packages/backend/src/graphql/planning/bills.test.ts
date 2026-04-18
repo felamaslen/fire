@@ -137,7 +137,21 @@ it("billCreate deducts from valueEnd every month the bill collects", async () =>
     `),
     { a: accountIdFrom },
   );
-  expect(result.billCreate.map((y) => y.id)).toEqual(["2025"]);
+  expect(result.billCreate.map((y) => y.id)).toMatchInlineSnapshot(`
+    [
+      "2025",
+      "2026",
+      "2027",
+      "2028",
+      "2029",
+      "2030",
+      "2031",
+      "2032",
+      "2033",
+      "2034",
+      "2035",
+    ]
+  `);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
@@ -193,7 +207,21 @@ it("billUpdate resizes the deduction for every collecting month", async () => {
     `),
     { id: billId },
   );
-  expect(result.billUpdate.map((y) => y.id)).toEqual(["2025"]);
+  expect(result.billUpdate.map((y) => y.id)).toMatchInlineSnapshot(`
+    [
+      "2025",
+      "2026",
+      "2027",
+      "2028",
+      "2029",
+      "2030",
+      "2031",
+      "2032",
+      "2033",
+      "2034",
+      "2035",
+    ]
+  `);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
@@ -248,7 +276,21 @@ it("billDelete restores balances to the baseline", async () => {
     `),
     { id: billId },
   );
-  expect(result.billDelete.map((y) => y.id)).toEqual(["2025"]);
+  expect(result.billDelete.map((y) => y.id)).toMatchInlineSnapshot(`
+    [
+      "2025",
+      "2026",
+      "2027",
+      "2028",
+      "2029",
+      "2030",
+      "2031",
+      "2032",
+      "2033",
+      "2034",
+      "2035",
+    ]
+  `);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "

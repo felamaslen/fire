@@ -17,7 +17,11 @@ import {
 } from "@/db/schema/planning";
 
 import { getMoneyInputFractionalAmount, type MoneyInput } from "../money";
-import { type PlanningYear, planningYearsForYears } from "./index";
+import {
+  ensurePlanningMonth,
+  type PlanningYear,
+  planningYearsForYears,
+} from "./index";
 import {
   monthId as monthLabel,
   parseMonthId,
@@ -87,6 +91,7 @@ export async function transactionCreate(
   const { year, date } = monthKey(monthId);
   const { currency, amount: minor } = getMoneyInputFractionalAmount(amount);
   assert(minor >= 0, "Transaction amount must be a positive magnitude");
+  await ensurePlanningMonth(year, date);
   await db.insert(PlanningTransactions).values({
     year,
     date,
@@ -134,6 +139,7 @@ export async function transactionUpdate(
   switch (parsed.kind) {
     case "tx":
     case "to": {
+      await ensurePlanningMonth(year, date);
       await db
         .update(PlanningTransactions)
         .set({
@@ -293,6 +299,7 @@ async function upsertBillOverride(
   amount: number | null,
   currency: CurrencyCode | null,
 ): Promise<void> {
+  await ensurePlanningMonth(year, date);
   await db
     .insert(PlanningMonthBills)
     .values({ year, date, billId, amount, currency })

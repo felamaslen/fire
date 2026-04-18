@@ -561,13 +561,17 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   type: NetWorthAssetType!
 }
 
-"""A cursor-paginated list of NetWorthCategory, newest first."""
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
 type NetWorthCategoryConnection {
   edges: [NetWorthCategoryEdge!]!
   pageInfo: PageInfo!
 }
 
-"""An edge within a NetWorthCategoryConnection."""
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
 type NetWorthCategoryEdge {
   cursor: ID!
   node: NetWorthCategory!
@@ -631,13 +635,17 @@ type NetWorthEntry {
   values: [NetWorthValue!]!
 }
 
-"""A cursor-paginated list of NetWorthEntry, newest first."""
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
 type NetWorthEntryConnection {
   edges: [NetWorthEntryEdge!]!
   pageInfo: PageInfo!
 }
 
-"""An edge within a NetWorthEntryConnection."""
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
 type NetWorthEntryEdge {
   cursor: ID!
   node: NetWorthEntry!
@@ -699,13 +707,17 @@ type PlanningBill {
   start: Date!
 }
 
-"""A cursor-paginated list of `PlanningBill`, newest-`start` first."""
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
 type PlanningBillConnection {
   edges: [PlanningBillEdge!]!
   pageInfo: PageInfo!
 }
 
-"""An edge within a `PlanningBillConnection`."""
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
 type PlanningBillEdge {
   cursor: ID!
   node: PlanningBill!
@@ -734,13 +746,17 @@ type PlanningEarning {
   ukTaxCodes: [PlanningEarningUKTaxCode!]!
 }
 
-"""A cursor-paginated list of `PlanningEarning`, newest-`start` first."""
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
 type PlanningEarningConnection {
   edges: [PlanningEarningEdge!]!
   pageInfo: PageInfo!
 }
 
-"""An edge within a `PlanningEarningConnection`."""
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
 type PlanningEarningEdge {
   cursor: ID!
   node: PlanningEarning!
@@ -828,6 +844,22 @@ type PlanningYear {
 }
 
 """
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type PlanningYearConnection {
+  edges: [PlanningYearEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type PlanningYearEdge {
+  cursor: ID!
+  node: PlanningYear!
+}
+
+"""
 UK-specific tax parameters captured on a PlanningYear. Rates are decimals (0–1); thresholds are in fractional units of GBP.
 """
 type PlanningYearTaxRatesUK {
@@ -889,17 +921,17 @@ type Query {
   """Call this to check that the GraphQL server is working properly"""
   ping: Pong @semanticNonNull
   """
-  Look up a planning year by its id (the starting calendar year, e.g. `"2025"`).
+  Look up a planning year by its id (the starting calendar year, e.g. `"2025"`). Returns a synthetic year (months generated, tax rates null) when no data has been written for this year yet. Only returns null when `id` isn't a 4-digit year.
   """
   planningYear(id: ID!): PlanningYear
   """
-  The planning year whose range covers today. UK financial years run 6 April → 5 April; dates before 6 April count against the previous calendar year.
-  
-  Returns `null` when no year record has been configured yet for the current FY — the client should prompt the user to set one up, or fall back to `planningYears` to pick a recent one.
+  The planning year to land the user on by default — the UK financial year covering today (6 April → 5 April cutover: dates before 6 April belong to the previous FY). Always returns a year, even when no planning data has been recorded yet (the result is synthetic in that case).
   """
-  planningYearCurrent: PlanningYear
-  """List every configured planning year."""
-  planningYears: [PlanningYear!]
+  planningYearCurrent: PlanningYear @semanticNonNull
+  """
+  Every planning year the user can reasonably work in, ordered oldest first. The range spans from the first `NetWorthEntry`'s FY up to 5 FYs past today (or past the most-recent entry, whichever is later); when no entries exist yet it starts at the current FY. Years without any stored data are synthesised on the fly. Supports forward (`first` / `after`) and backward (`last` / `before`) pagination.
+  """
+  planningYears(after: ID, before: ID, first: Int, last: Int): PlanningYearConnection @semanticNonNull
 }
 
 """
