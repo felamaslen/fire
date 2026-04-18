@@ -52,7 +52,7 @@ Every table gets:
 
 1. **Always add a migration** when any file under `src/db/schema/` changes. No schema-source change ships without its corresponding migration.
 2. **Drizzle first.** Edit the schema file(s) under `src/db/schema/` — never write SQL migrations by hand.
-3. **Generate with a descriptive name.** Run `pnpm --filter backend db:generate --name=<snake_case_name>`. The name must describe the change, not a timestamp or random word — examples: `create_net_worth_tables`, `add_interest_rate_to_liability_categories`, `drop_unused_option_category`. Never accept Drizzle's default random name; pass `--name` every time.
+3. **Generate with a descriptive name.** Run `pnpm --filter backend db:generate --name=<snake_case_name>`. The name must describe the change, not a timestamp or random word — examples: `create_net_worth_tables`, `add_interest_rate_to_liability_categories`, `drop_unused_option_category`. Never accept Drizzle's default random name; pass `--name` every time. Migration names are **lowercase only** — never include uppercase letters, even when the referenced column/table is camelCase (`add_asset_id_to_planning_transactions`, not `add_assetId_to_planning_transactions`).
 4. **Commit both** the schema change and the generated migration in the same commit.
 5. **Apply.** `pnpm --filter backend db:migrate` runs pending migrations against the `DATABASE_URL` in `.env`.
 6. **Never hand-edit** a generated migration file. If the generated SQL is wrong, adjust the Drizzle schema and regenerate (after deleting the bad migration if it hasn't been applied anywhere yet).
