@@ -167,7 +167,7 @@ const TransactionUpdateDocument = graphql(`
 const TransactionDeleteDocument = graphql(`
   mutation PlanningTransactionDelete($monthId: ID!, $id: ID!) {
     transactionDelete(monthId: $monthId, id: $id) {
-      id
+      _
     }
   }
 `);
