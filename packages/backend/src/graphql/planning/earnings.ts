@@ -19,8 +19,12 @@ import {
   type MoneyInput,
 } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
-import type { PageInfo } from "../net-worth/index";
-import { decodeCursor, encodeCursor } from "../pagination";
+import {
+  buildConnection,
+  type Connection,
+  decodeCursor,
+  encodeCursor,
+} from "../pagination";
 import {
   PlanningAccount,
   type PlanningYear,
@@ -122,22 +126,6 @@ function formatAttributes(p: {
   if (p.studentLoanPlan2) parts.push("student loan plan 2");
   return parts.join(", ");
 }
-
-/** An edge within a `PlanningEarningConnection`. @gqlType */
-export type PlanningEarningEdge = {
-  /** @gqlField */
-  cursor: ID;
-  /** @gqlField */
-  node: PlanningEarning;
-};
-
-/** A cursor-paginated list of `PlanningEarning`, newest-`start` first. @gqlType */
-export type PlanningEarningConnection = {
-  /** @gqlField */
-  edges: PlanningEarningEdge[];
-  /** @gqlField */
-  pageInfo: PageInfo;
-};
 
 /** A UK tax code active on a `PlanningEarning` over a date range. Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually. @gqlType */
 export class PlanningEarningUKTaxCode {
@@ -322,7 +310,7 @@ const DEFAULT_PAGE_SIZE = 20;
 export async function earnings(
   first?: Int | null,
   after?: ID | null,
-): Promise<PlanningEarningConnection | null> {
+): Promise<Connection<PlanningEarning> | null> {
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const cursor = after ? decodeCursor(after) : null;
 
@@ -346,18 +334,10 @@ export async function earnings(
   const hasExtra = rows.length > limit;
   const page = hasExtra ? rows.slice(0, limit) : rows;
 
-  const edges: PlanningEarningEdge[] = page.map((row) => ({
-    cursor: encodeCursor(row.start.toISOString(), row.id),
-    node: PlanningEarning.load(row),
-  }));
-
-  return {
-    edges,
-    pageInfo: {
-      hasNextPage: hasExtra,
-      hasPreviousPage: cursor != null,
-      startCursor: edges.length > 0 ? edges[0].cursor : null,
-      endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
-    },
-  };
+  const startByNode = new Map(page.map((row) => [row.id, row.start]));
+  return buildConnection<PlanningEarning>(
+    page.map((row) => PlanningEarning.load(row)),
+    (node) => encodeCursor(startByNode.get(node.id)!.toISOString(), node.id),
+    { hasNextPage: hasExtra, hasPreviousPage: cursor != null },
+  );
 }

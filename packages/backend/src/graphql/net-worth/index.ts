@@ -65,34 +65,6 @@ export type NetWorthValue = {
   categoryOptionId: string | null;
 };
 
-/** Pagination state for a cursor-paginated connection. @gqlType */
-export type PageInfo = {
-  /** @gqlField */
-  hasNextPage: boolean;
-  /** @gqlField */
-  hasPreviousPage: boolean;
-  /** @gqlField */
-  startCursor: ID | null;
-  /** @gqlField */
-  endCursor: ID | null;
-};
-
-/** An edge within a NetWorthEntryConnection. @gqlType */
-export type NetWorthEntryEdge = {
-  /** @gqlField */
-  cursor: ID;
-  /** @gqlField */
-  node: NetWorthEntry;
-};
-
-/** A cursor-paginated list of NetWorthEntry, newest first. @gqlType */
-export type NetWorthEntryConnection = {
-  /** @gqlField */
-  edges: NetWorthEntryEdge[];
-  /** @gqlField */
-  pageInfo: PageInfo;
-};
-
 function toNetWorthValue(
   row: typeof NetWorthValues.$inferSelect,
 ): NetWorthValue {
@@ -104,7 +76,12 @@ function toNetWorthValue(
   };
 }
 
-import { decodeCursor, encodeCursor } from "../pagination";
+import {
+  buildConnection,
+  type Connection,
+  decodeCursor,
+  encodeCursor,
+} from "../pagination";
 
 function entryCursor(entry: { date: Date | string; id: string }): ID {
   const c =
@@ -341,7 +318,7 @@ export async function netWorth(
   after?: ID | null,
   last?: Int | null,
   before?: ID | null,
-): Promise<NetWorthEntryConnection | null> {
+): Promise<Connection<NetWorthEntry> | null> {
   assert(
     first == null || last == null,
     "Pass either `first` or `last`, not both.",
@@ -390,19 +367,14 @@ export async function netWorth(
   const page = hasExtra ? rows.slice(0, limit) : rows;
   const ordered = forward ? page : [...page].reverse();
 
-  const edges: NetWorthEntryEdge[] = ordered.map((row) => ({
-    cursor: entryCursor(row),
-    node: NetWorthEntry.load(row),
-  }));
-
-  const pageInfo: PageInfo = {
-    hasNextPage: forward ? hasExtra : cursor != null,
-    hasPreviousPage: forward ? cursor != null : hasExtra,
-    startCursor: edges.length > 0 ? edges[0].cursor : null,
-    endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
-  };
-
-  return { edges, pageInfo };
+  return buildConnection(
+    ordered.map((row) => NetWorthEntry.load(row)),
+    (node) => entryCursor({ date: node.date, id: node.id }),
+    {
+      hasNextPage: forward ? hasExtra : cursor != null,
+      hasPreviousPage: forward ? cursor != null : hasExtra,
+    },
+  );
 }
 
 /** A line item recorded against an asset category. @gqlInput */

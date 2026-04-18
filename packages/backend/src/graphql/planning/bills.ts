@@ -15,8 +15,12 @@ import {
   type MoneyInput,
 } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
-import type { PageInfo } from "../net-worth/index";
-import { decodeCursor, encodeCursor } from "../pagination";
+import {
+  buildConnection,
+  type Connection,
+  decodeCursor,
+  encodeCursor,
+} from "../pagination";
 import {
   PlanningAccount,
   type PlanningYear,
@@ -85,22 +89,6 @@ export class PlanningBill {
     });
   }
 }
-
-/** An edge within a `PlanningBillConnection`. @gqlType */
-export type PlanningBillEdge = {
-  /** @gqlField */
-  cursor: ID;
-  /** @gqlField */
-  node: PlanningBill;
-};
-
-/** A cursor-paginated list of `PlanningBill`, newest-`start` first. @gqlType */
-export type PlanningBillConnection = {
-  /** @gqlField */
-  edges: PlanningBillEdge[];
-  /** @gqlField */
-  pageInfo: PageInfo;
-};
 
 /** Assert the right number and per-entry shape for the given frequency: MONTHLY takes one bare day `D`; QUARTERLY takes four `M-D`; YEARLY takes one `M-D`. Digit-range validity is enforced by the `@constraint` directive before this runs. */
 function assertCollectionDateShape(
@@ -298,7 +286,7 @@ const DEFAULT_PAGE_SIZE = 20;
 export async function bills(
   first?: Int | null,
   after?: ID | null,
-): Promise<PlanningBillConnection | null> {
+): Promise<Connection<PlanningBill> | null> {
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const cursor = after ? decodeCursor(after) : null;
 
@@ -322,18 +310,10 @@ export async function bills(
   const hasExtra = rows.length > limit;
   const page = hasExtra ? rows.slice(0, limit) : rows;
 
-  const edges: PlanningBillEdge[] = page.map((row) => ({
-    cursor: encodeCursor(row.start.toISOString(), row.id),
-    node: PlanningBill.load(row),
-  }));
-
-  return {
-    edges,
-    pageInfo: {
-      hasNextPage: hasExtra,
-      hasPreviousPage: cursor != null,
-      startCursor: edges.length > 0 ? edges[0].cursor : null,
-      endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
-    },
-  };
+  const startByNode = new Map(page.map((row) => [row.id, row.start]));
+  return buildConnection<PlanningBill>(
+    page.map((row) => PlanningBill.load(row)),
+    (node) => encodeCursor(startByNode.get(node.id)!.toISOString(), node.id),
+    { hasNextPage: hasExtra, hasPreviousPage: cursor != null },
+  );
 }
