@@ -466,34 +466,42 @@ async function materialiseEarningAsPayslip(
       liabilityId: earning.studentLoanLiabilityId,
     });
 
-  if (edit.patchAmount != null) {
+  if (parsed.part === "gross") {
+    if (edit.patchAmount != null) gross = Math.abs(edit.patchAmount);
+  } else {
     const signedOverride =
-      parsed.part === "gross"
-        ? Math.abs(edit.patchAmount)
-        : -Math.abs(edit.patchAmount);
-    if (parsed.part === "gross") {
-      gross = signedOverride;
+      edit.patchAmount != null ? -Math.abs(edit.patchAmount) : null;
+    const existing = adjustments.find((a) => a.part === parsed.part);
+    if (existing) {
+      if (signedOverride != null) existing.amount = signedOverride;
+      if (edit.patchName != null) existing.name = edit.patchName;
     } else {
-      const existing = adjustments.find((a) => a.part === parsed.part);
-      if (existing) existing.amount = signedOverride;
-      else
-        adjustments.push({
-          part: parsed.part,
-          name: `${earning.name} — ${adjustmentLabel[parsed.part]}`,
-          amount: signedOverride,
-          liabilityId:
-            parsed.part === "sl" ? earning.studentLoanLiabilityId : null,
-        });
+      adjustments.push({
+        part: parsed.part,
+        name:
+          edit.patchName ?? `${earning.name} — ${adjustmentLabel[parsed.part]}`,
+        amount: signedOverride ?? 0,
+        liabilityId:
+          parsed.part === "sl" ? earning.studentLoanLiabilityId : null,
+      });
     }
   }
 
-  const payslipName = edit.patchName ?? `${earning.name} — gross`;
+  // The payslip's `name` is shown as the gross-row label in the cell, so only
+  // honour `patchName` when the user is actually editing the gross line. For
+  // every other edit (and when no name is supplied) fall back to
+  // `<earning name> — <pay-date ISO>`.
+  const payslipDate = lastDayOfMonth(date);
+  const payslipName =
+    parsed.part === "gross" && edit.patchName != null
+      ? edit.patchName
+      : `${earning.name} — ${payslipDate.toISOString().slice(0, 10)}`;
 
   await db.transaction(async (tx) => {
     const [payslip] = await tx
       .insert(PlanningPayslips)
       .values({
-        date: lastDayOfMonth(date),
+        date: payslipDate,
         amountGross: gross,
         currency: earning.currency,
         name: payslipName,
