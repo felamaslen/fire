@@ -84,6 +84,7 @@ type HeldInvestment = {
 
 async function loadHeldInvestments(
   filters: Filters,
+  opts: { skipLive?: boolean } = {},
 ): Promise<HeldInvestment[]> {
   // Restrict to investments whose currency matches the portfolio's currency.
   const matchingInvestments = await db
@@ -146,7 +147,7 @@ async function loadHeldInvestments(
     let priceLatest: number | null = prices[0] ?? null;
     let pricePrevious: number | null = prices[1] ?? null;
     const stockCode = stockCodeById.get(r.investmentId);
-    if (stockCode) {
+    if (stockCode && !opts.skipLive) {
       const live = readOrRefresh(stockCode);
       if (live && live.currency === filters.currency) {
         pricePrevious = priceLatest;
@@ -294,6 +295,17 @@ export class Portfolio {
     private readonly filterInvestmentIdIn: string[] | null,
   ) {}
 
+  /** Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key. @gqlField */
+  get id(): ID {
+    const assets = this.filterAssetIdIn
+      ? [...this.filterAssetIdIn].sort().join(",")
+      : "*";
+    const investments = this.filterInvestmentIdIn
+      ? [...this.filterInvestmentIdIn].sort().join(",")
+      : "*";
+    return `portfolio:${this.currency}:${assets}:${investments}` as ID;
+  }
+
   private get filters(): Filters {
     return {
       filterAssetIdIn: this.filterAssetIdIn,
@@ -354,22 +366,35 @@ export class Portfolio {
     return ((value.amount - cost.amount) / cost.amount) as Float;
   }
 
-  /** Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. `null` until enough price history exists. @gqlField */
-  async dailyGainValue(): Promise<Money | null> {
-    return this.aggregate((h) => {
-      if (h.priceLatest === null || h.pricePrevious === null) return null;
-      return (h.priceLatest - h.pricePrevious) * h.unitsHeld;
-    });
+  /** Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists. @gqlField */
+  async dailyGainValue(
+    /** When `true`, ignore any live quote and compare the two most recent cached closes. */
+    skipLive?: boolean | null,
+  ): Promise<Money | null> {
+    return this.aggregate(
+      (h) => {
+        if (h.priceLatest === null || h.pricePrevious === null) return null;
+        return (h.priceLatest - h.pricePrevious) * h.unitsHeld;
+      },
+      { skipLive: skipLive ?? false },
+    );
   }
 
-  /** Fractional change in portfolio value over the most recent pricing interval. `null` until enough price history exists, or when the previous total is zero. @gqlField */
-  async dailyGainPercent(): Promise<Float | null> {
+  /** Fractional change in portfolio value over the most recent pricing interval. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists, or when the previous total is zero. @gqlField */
+  async dailyGainPercent(
+    /** When `true`, ignore any live quote and compare the two most recent cached closes. */
+    skipLive?: boolean | null,
+  ): Promise<Float | null> {
+    const opts = { skipLive: skipLive ?? false };
     const [curr, prev] = await Promise.all([
-      this.aggregate((h) =>
-        h.priceLatest === null ? null : h.unitsHeld * h.priceLatest,
+      this.aggregate(
+        (h) => (h.priceLatest === null ? null : h.unitsHeld * h.priceLatest),
+        opts,
       ),
-      this.aggregate((h) =>
-        h.pricePrevious === null ? null : h.unitsHeld * h.pricePrevious,
+      this.aggregate(
+        (h) =>
+          h.pricePrevious === null ? null : h.unitsHeld * h.pricePrevious,
+        opts,
       ),
     ]);
     if (curr === null || prev === null) return null;
@@ -445,8 +470,9 @@ export class Portfolio {
 
   private async aggregate(
     compute: (h: HeldInvestment) => number | null,
+    opts: { skipLive?: boolean } = {},
   ): Promise<Money | null> {
-    const held = await loadHeldInvestments(this.filters);
+    const held = await loadHeldInvestments(this.filters, opts);
     let total = 0;
     for (const h of held) {
       const rawMinor = compute(h);
