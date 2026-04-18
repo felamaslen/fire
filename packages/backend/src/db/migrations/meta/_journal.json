@@ -127,6 +127,13 @@
       "when": 1776546862318,
       "tag": "0017_create_investment_allocations_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1776547025920,
+      "tag": "0018_create_investment_portfolio_daily_breakdown_view",
+      "breakpoints": true
     }
   ]
 }
