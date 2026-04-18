@@ -549,22 +549,23 @@ function TransactionRow({
   return (
     <li
       className={cn(
-        "group/row flex items-center gap-1 px-2 py-1",
+        "group/row relative flex items-center gap-1 px-2 py-1",
         tx.isProvisional && "italic text-muted-foreground",
       )}
     >
       <span className="flex-1 truncate">{tx.name}</span>
       <Figure data={tx.amount} className={monoRight} />
       {tx.isEditable && (
+        // Absolutely-positioned overlay so the row never reserves horizontal
+        // space for the action icons — they only appear on hover (or while a
+        // delete confirmation is open). The small gradient fade on the left
+        // keeps the amount from bleeding under the buttons at dense widths.
         <span
           className={cn(
-            "flex items-center gap-0.5 transition-opacity",
-            // While delete confirmation is open, keep the icons visible even
-            // if the pointer leaves the row — otherwise the confirm button
-            // disappears before the user can click it.
+            "pointer-events-none absolute inset-y-0 right-0 flex items-center gap-0.5 bg-gradient-to-l from-background via-background to-transparent pr-2 pl-6 transition-opacity",
             deletePending
-              ? "opacity-100"
-              : "opacity-0 group-hover/row:opacity-100",
+              ? "pointer-events-auto opacity-100"
+              : "opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
           )}
         >
           {!deletePending && (
