@@ -117,7 +117,7 @@ export function PortfolioHeadline() {
 function signColor(amount: number | null | undefined): string {
   if (amount == null || amount === 0) return "";
   return amount > 0
-    ? "text-emerald-600 dark:text-emerald-400"
+    ? "text-sky-600 dark:text-sky-400"
     : "text-red-600 dark:text-red-400";
 }
 

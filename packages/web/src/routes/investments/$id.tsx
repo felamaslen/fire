@@ -7,6 +7,10 @@ import { toast } from "sonner";
 
 import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
+import {
+  InvestmentForm,
+  InvestmentFormDocument,
+} from "@/components/investments/investment-form";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -64,6 +68,7 @@ const InvestmentDetailDocument = graphql(
               totalGain { ...Figure }
               percentGain
             }
+            ...InvestmentForm
           }
         }
       }
@@ -81,7 +86,7 @@ const InvestmentDetailDocument = graphql(
       }
     }
   `,
-  [FigureDocument],
+  [FigureDocument, InvestmentFormDocument],
 );
 
 const InvestmentTransactionsDocument = graphql(
@@ -232,16 +237,13 @@ function InvestmentDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
+      <InvestmentForm
+        existing={investment}
+        onDone={() => {}}
+        onCancel={null}
+        refetchQueries={[{ query: InvestmentDetailDocument }]}
+      />
       <header className="space-y-1">
-        <h2 className="text-xl font-semibold">{investment.name}</h2>
-        <p className="text-xs text-muted-foreground">
-          {investment.asset.__typename === "InvestmentStock"
-            ? investment.asset.code
-            : investment.asset.__typename === "InvestmentFund"
-              ? investment.asset.url
-              : ""}{" "}
-          · {investment.currency}
-        </p>
         <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
           <Stat
             label="Units"

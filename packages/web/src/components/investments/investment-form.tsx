@@ -89,10 +89,13 @@ function initialFromExisting(
 export function InvestmentForm({
   existing,
   onDone,
+  onCancel,
   refetchQueries,
 }: {
   existing?: ResultOf<typeof InvestmentFormDocument> | null;
   onDone: () => void;
+  /** Optional cancel handler — when `null`, the Cancel button is hidden (e.g. when the form is embedded rather than a modal). */
+  onCancel?: (() => void) | null;
   refetchQueries: unknown;
 }) {
   const { data: homeData } = useSuspenseQuery(HomeCurrencyDocument);
@@ -230,9 +233,11 @@ export function InvestmentForm({
       </form.Subscribe>
 
       <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onDone}>
-          Cancel
-        </Button>
+        {onCancel !== null && (
+          <Button type="button" variant="outline" onClick={onCancel ?? onDone}>
+            Cancel
+          </Button>
+        )}
         <form.Subscribe selector={(s) => s.isSubmitting}>
           {(submitting) => (
             <Button type="submit" disabled={submitting}>
