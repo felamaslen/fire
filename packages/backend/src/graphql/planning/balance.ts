@@ -211,6 +211,13 @@ export async function loadPlanningYearData(
     if (r.adjustment) entry.adjustments.push(r.adjustment);
     payslipsById.set(r.payslip.id, entry);
   }
+  // Order adjustments deterministically by id — Postgres returns rows in
+  // whatever order suits it, which shifts when a row is updated and jumps
+  // around visually in the grid. `id` is a uuidv7 so sorting by it is
+  // equivalent to creation order.
+  for (const entry of payslipsById.values()) {
+    entry.adjustments.sort((a, b) => a.id.localeCompare(b.id));
+  }
 
   const billsById = new Map<
     string,
