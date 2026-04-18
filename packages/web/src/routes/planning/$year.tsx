@@ -521,14 +521,18 @@ function TransactionRow({
   const [editOpen, setEditOpen] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [update] = useMutation(TransactionUpdateDocument, {
-    refetchQueries: [
-      { query: PlanningYearViewDocument, variables: { id: year } },
-    ],
+    // `"active"` refetches every currently-watched query. A derived-earnings
+    // edit can materialise a payslip, so any open `/planning/$year/payslips`
+    // dialog (or anything else observing this data) also needs to see the
+    // new row without us having to name every downstream query here.
+    refetchQueries: "active",
   });
   const [remove] = useMutation(TransactionDeleteDocument, {
-    refetchQueries: [
-      { query: PlanningYearViewDocument, variables: { id: year } },
-    ],
+    // `"active"` refetches every currently-watched query. A derived-earnings
+    // edit can materialise a payslip, so any open `/planning/$year/payslips`
+    // dialog (or anything else observing this data) also needs to see the
+    // new row without us having to name every downstream query here.
+    refetchQueries: "active",
   });
 
   const onSaveEdit = async (patch: { name: string; amount: number }) => {
@@ -675,9 +679,11 @@ function CreateTransactionTrigger({
 }) {
   const [open, setOpen] = useState(false);
   const [create] = useMutation(TransactionCreateDocument, {
-    refetchQueries: [
-      { query: PlanningYearViewDocument, variables: { id: year } },
-    ],
+    // `"active"` refetches every currently-watched query. A derived-earnings
+    // edit can materialise a payslip, so any open `/planning/$year/payslips`
+    // dialog (or anything else observing this data) also needs to see the
+    // new row without us having to name every downstream query here.
+    refetchQueries: "active",
   });
 
   const onSubmit = async (v: {

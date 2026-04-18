@@ -368,6 +368,10 @@ type Mutation {
     pensionSalarySacrifice: Float
     start: Date!
     """
+    Liability the predicted student-loan deduction pays down. May only be set when `studentLoanPlan2` is true.
+    """
+    studentLoanLiabilityId: ID
+    """
     Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply.
     """
     studentLoanPlan2: Boolean
@@ -394,6 +398,10 @@ type Mutation {
     pensionReliefAtSource: Float
     pensionSalarySacrifice: Float
     start: Date
+    """
+    New linked liability; pass null explicitly to clear. Must be null whenever `studentLoanPlan2` ends up false (after this patch applies).
+    """
+    studentLoanLiabilityId: ID
     studentLoanPlan2: Boolean
     """
     New destination planning account (`PlanningAccount.id`) the net earnings land in.
@@ -760,6 +768,10 @@ type PlanningEarning {
   """
   pensionSalarySacrifice: Float
   start: Date!
+  """
+  Liability the predicted student-loan deduction pays down. Null when `studentLoanPlan2` is false or no liability has been linked.
+  """
+  studentLoanLiability: NetWorthCategoryLiability
   """
   Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply (e.g. non-UK earnings).
   """
