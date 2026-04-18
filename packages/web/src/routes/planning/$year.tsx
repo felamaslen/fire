@@ -47,6 +47,9 @@ const PlanningMonthAccountCellDocument = graphql(
     fragment PlanningMonthAccountCell on PlanningMonthAccount {
       id
       name
+      valueStart {
+        ...Figure
+      }
       valueEnd {
         ...Figure
       }
@@ -301,9 +304,22 @@ function PlanningTable({ data }: { data: PlanningYearData }) {
                 : month.accounts.map((cell) => (
                     <TableCell
                       key={cell.id}
-                      className={cn("min-w-56 p-0", cellBorder)}
+                      className={cn(
+                        // `h-px` is a CSS trick: `height: 1px` on a <td>
+                        // doesn't actually shrink the cell (the row still
+                        // expands to the tallest content), but it gives the
+                        // inner div a concrete base to resolve `h-full`
+                        // against — letting the transactions list flex-grow
+                        // and pin the end-balance row at the bottom.
+                        "h-px min-w-56 p-0",
+                        cellBorder,
+                      )}
                     >
-                      <MonthAccountCell data={cell} monoRight={monoRight} />
+                      <MonthAccountCell
+                        data={cell}
+                        monoRight={monoRight}
+                        showStart={i === 0}
+                      />
                     </TableCell>
                   ))}
             </TableRow>
@@ -317,14 +333,24 @@ function PlanningTable({ data }: { data: PlanningYearData }) {
 function MonthAccountCell({
   data,
   monoRight,
+  showStart,
 }: {
   data: FragmentOf<typeof PlanningMonthAccountCellDocument>;
   monoRight: string;
+  showStart: boolean;
 }) {
   const cell = readFragment(PlanningMonthAccountCellDocument, data);
   return (
-    <div className="divide-y divide-border">
-      <ul>
+    <div className="flex h-full flex-col divide-y divide-border">
+      {showStart && (
+        <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
+          <Figure
+            data={cell.valueStart}
+            className={cn(monoRight, "font-medium")}
+          />
+        </div>
+      )}
+      <ul className="flex-1">
         {cell.transactions.length === 0 && (
           <li className="px-2 py-1 text-[10px] text-muted-foreground">—</li>
         )}
