@@ -74,7 +74,7 @@ async function setPrice(
   investmentId: string,
   date: string,
   amount: number,
-  currency = "GBP",
+  currency: "GBP" | "USD" = "GBP",
 ): Promise<void> {
   const { db } = await import("@/db");
   const { InvestmentPrices } = await import("@/db/schema/investments");

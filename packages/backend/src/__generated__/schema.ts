@@ -1489,7 +1489,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const PortfolioType: GraphQLObjectType = new GraphQLObjectType({
         name: "Portfolio",
-        description: "Aggregated portfolio view \u2014 filter by wrappers and/or investments, converted into `currency` (defaults to the home currency).",
+        description: "Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded.",
         fields() {
             return {
                 candlestick: {
@@ -1509,7 +1509,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 currency: {
-                    description: "ISO-4217 code every aggregate on this `Portfolio` is expressed in.",
+                    description: "ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.",
                     name: "currency",
                     type: new GraphQLNonNull(GraphQLString)
                 },
@@ -1555,7 +1555,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: MoneyType
                 },
                 totalValue: {
-                    description: "Current market value of the filtered portfolio. Zero when nothing is held; `null` when conversion to `currency` is impossible for some holding.",
+                    description: "Current market value of the filtered portfolio. Zero when nothing is held.",
                     name: "totalValue",
                     type: MoneyType
                 }
@@ -1772,12 +1772,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 portfolio: {
-                    description: "Aggregated view of the portfolio, optionally filtered by wrappers and/or investments, with all money values expressed in `currency` (defaults to the home currency).",
+                    description: "Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are in `currency` (defaults to the server's home currency); investments held in any other currency are excluded.",
                     name: "portfolio",
                     type: PortfolioType,
                     args: {
                         currency: {
-                            description: "ISO-4217 code to express all aggregates in. Defaults to the server's home currency.",
+                            description: "ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency.",
                             type: GraphQLString
                         },
                         filterAssetIdIn: {
