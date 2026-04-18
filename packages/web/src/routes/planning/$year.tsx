@@ -133,6 +133,11 @@ function Header({ year }: { year: string }) {
             Manage accounts
           </Link>
         </Button>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/planning/$year/earnings" params={{ year }}>
+            Manage earnings
+          </Link>
+        </Button>
       </nav>
     </div>
   );
