@@ -108,33 +108,174 @@ describe("planningYearSet", () => {
 });
 
 describe("planningYears / planningYear queries", () => {
-  it("lists configured years and resolves a single year by id", async () => {
+  // Clock is frozen at 2026-04-18 in test/setup.ts → today's UK FY is 2026.
+  const listDoc = graphql(`
+    query ($first: Int, $after: ID, $last: Int, $before: ID) {
+      planningYears(
+        first: $first
+        after: $after
+        last: $last
+        before: $before
+      ) {
+        edges {
+          node {
+            id
+          }
+        }
+        pageInfo {
+          hasNextPage
+          hasPreviousPage
+          startCursor
+          endCursor
+        }
+      }
+    }
+  `);
+
+  it("returns today's FY plus the 5-FY future horizon when there are no net-worth entries", async () => {
+    const data = await runGql(listDoc, { first: 10 });
+    expect(data.planningYears!.edges.map((e) => e.node.id))
+      .toMatchInlineSnapshot(`
+      [
+        "2026",
+        "2027",
+        "2028",
+        "2029",
+        "2030",
+        "2031",
+      ]
+    `);
+    expect(data.planningYears!.pageInfo).toMatchObject({
+      hasNextPage: false,
+      hasPreviousPage: false,
+    });
+  });
+
+  it("spans from the earliest NW entry's FY up to 5 FYs past today, ascending, and paginates forward with first/after", async () => {
+    // Seed net-worth entries at 2020-01 (FY19) and 2024-06 (FY24).
     await runGql(
       graphql(`
         mutation {
-          a: planningYearSet(year: "2023") {
+          a: netWorthCreate(date: "2020-01-15", values: []) {
             id
           }
-          b: planningYearSet(year: "2024") {
+          b: netWorthCreate(date: "2024-06-15", values: []) {
             id
           }
         }
       `),
       {},
     );
-    const list = await runGql(
+    const page1 = await runGql(listDoc, { first: 3 });
+    expect(page1.planningYears!.edges.map((e) => e.node.id))
+      .toMatchInlineSnapshot(`
+      [
+        "2019",
+        "2020",
+        "2021",
+      ]
+    `);
+    expect(page1.planningYears!.pageInfo).toMatchObject({
+      hasNextPage: true,
+      hasPreviousPage: false,
+    });
+
+    const page2 = await runGql(listDoc, {
+      first: 100,
+      after: page1.planningYears!.pageInfo.endCursor!,
+    });
+    expect(page2.planningYears!.edges.map((e) => e.node.id))
+      .toMatchInlineSnapshot(`
+      [
+        "2022",
+        "2023",
+        "2024",
+        "2025",
+        "2026",
+        "2027",
+        "2028",
+        "2029",
+        "2030",
+        "2031",
+      ]
+    `);
+    expect(page2.planningYears!.pageInfo).toMatchObject({
+      hasNextPage: false,
+      hasPreviousPage: true,
+    });
+  });
+
+  it("paginates backward with last/before", async () => {
+    await runGql(
+      graphql(`
+        mutation {
+          a: netWorthCreate(date: "2020-01-15", values: []) {
+            id
+          }
+        }
+      `),
+      {},
+    );
+    // Tail of the range, newest 3 items (still returned ascending).
+    const tail = await runGql(listDoc, { last: 3 });
+    expect(tail.planningYears!.edges.map((e) => e.node.id))
+      .toMatchInlineSnapshot(`
+      [
+        "2029",
+        "2030",
+        "2031",
+      ]
+    `);
+    expect(tail.planningYears!.pageInfo).toMatchObject({
+      hasNextPage: false,
+      hasPreviousPage: true,
+    });
+
+    // Step backward before the tail's first item.
+    const prev = await runGql(listDoc, {
+      last: 3,
+      before: tail.planningYears!.pageInfo.startCursor!,
+    });
+    expect(prev.planningYears!.edges.map((e) => e.node.id))
+      .toMatchInlineSnapshot(`
+      [
+        "2026",
+        "2027",
+        "2028",
+      ]
+    `);
+    expect(prev.planningYears!.pageInfo).toMatchObject({
+      hasNextPage: true,
+      hasPreviousPage: true,
+    });
+  });
+
+  it("synthesises a year with 12 months when no PlanningYears row exists", async () => {
+    const data = await runGql(
       graphql(`
         query {
-          planningYears {
+          planningYear(id: "2099") {
             id
+            months {
+              id
+            }
+            taxRates {
+              __typename
+            }
           }
         }
       `),
       {},
     );
-    expect(list.planningYears!.map((y) => y.id)).toEqual(["2023", "2024"]);
+    expect(data.planningYear!.id).toBe("2099");
+    expect(data.planningYear!.months).toHaveLength(12);
+    expect(data.planningYear!.months[0].id).toBe("apr-2099");
+    expect(data.planningYear!.months[11].id).toBe("mar-2100");
+    expect(data.planningYear!.taxRates).toBeNull();
+  });
 
-    const single = await runGql(
+  it("returns null only for ids that aren't 4-digit years", async () => {
+    const data = await runGql(
       graphql(`
         query ($id: ID!) {
           planningYear(id: $id) {
@@ -142,21 +283,9 @@ describe("planningYears / planningYear queries", () => {
           }
         }
       `),
-      { id: "2023" },
+      { id: "not-a-year" },
     );
-    expect(single.planningYear!.id).toBe("2023");
-
-    const missing = await runGql(
-      graphql(`
-        query ($id: ID!) {
-          planningYear(id: $id) {
-            id
-          }
-        }
-      `),
-      { id: "9999" },
-    );
-    expect(missing.planningYear).toBeNull();
+    expect(data.planningYear).toBeNull();
   });
 });
 
@@ -336,5 +465,50 @@ describe("planningAccountAssign / Unassign", () => {
       {},
     );
     expect(year.planningYear!.accounts).toEqual([]);
+  });
+});
+
+describe("planningYearCurrent", () => {
+  // Clock frozen at 2026-04-18 (post-6-Apr cutover) → today's UK FY is 2026.
+  const currentDoc = graphql(`
+    query {
+      planningYearCurrent {
+        id
+        months {
+          id
+        }
+        taxRates {
+          __typename
+        }
+      }
+    }
+  `);
+
+  it("returns today's UK FY synthetically when no data has been stored", async () => {
+    const data = await runGql(currentDoc, {});
+    expect(data.planningYearCurrent!.id).toMatchInlineSnapshot(`"2026"`);
+    expect(data.planningYearCurrent!.months).toHaveLength(12);
+    expect(data.planningYearCurrent!.months[0].id).toMatchInlineSnapshot(
+      `"apr-2026"`,
+    );
+    expect(data.planningYearCurrent!.taxRates).toBeNull();
+  });
+
+  it("picks up tax rates once a matching PlanningYears row has been written", async () => {
+    await runGql(
+      graphql(`
+        mutation ($rates: PlanningYearTaxRatesUKInput!) {
+          planningYearSet(year: "2026", taxRates: { uk: $rates }) {
+            id
+          }
+        }
+      `),
+      { rates: ukRates },
+    );
+    const data = await runGql(currentDoc, {});
+    expect(data.planningYearCurrent!.id).toBe("2026");
+    expect(data.planningYearCurrent!.taxRates).toEqual({
+      __typename: "PlanningYearTaxRatesUK",
+    });
   });
 });

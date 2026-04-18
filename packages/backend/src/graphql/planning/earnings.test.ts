@@ -152,7 +152,21 @@ it("earningsCreate projects a monthly take-home into valueEnd from the start mon
     `),
     { a: accountIdTo },
   );
-  expect(result.earningsCreate.map((y) => y.id)).toEqual(["2025"]);
+  expect(result.earningsCreate.map((y) => y.id)).toMatchInlineSnapshot(`
+    [
+      "2025",
+      "2026",
+      "2027",
+      "2028",
+      "2029",
+      "2030",
+      "2031",
+      "2032",
+      "2033",
+      "2034",
+      "2035",
+    ]
+  `);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
@@ -212,7 +226,21 @@ it("earningsUpdate reprojects balances when the gross changes", async () => {
     `),
     { id: earningId },
   );
-  expect(result.earningsUpdate.map((y) => y.id)).toEqual(["2025"]);
+  expect(result.earningsUpdate.map((y) => y.id)).toMatchInlineSnapshot(`
+    [
+      "2025",
+      "2026",
+      "2027",
+      "2028",
+      "2029",
+      "2030",
+      "2031",
+      "2032",
+      "2033",
+      "2034",
+      "2035",
+    ]
+  `);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
@@ -268,7 +296,21 @@ it("earningsDelete restores balances to the baseline", async () => {
     `),
     { id: earningId },
   );
-  expect(result.earningsDelete.map((y) => y.id)).toEqual(["2025"]);
+  expect(result.earningsDelete.map((y) => y.id)).toMatchInlineSnapshot(`
+    [
+      "2025",
+      "2026",
+      "2027",
+      "2028",
+      "2029",
+      "2030",
+      "2031",
+      "2032",
+      "2033",
+      "2034",
+      "2035",
+    ]
+  `);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "

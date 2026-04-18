@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert";
 
-import { eq, inArray } from "drizzle-orm";
-import type { ID } from "grats";
+import { eq, sql } from "drizzle-orm";
+import type { ID, Int } from "grats";
 
 import { db } from "@/db";
-import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
+import { NetWorthCategoryAssets, NetWorthEntries } from "@/db/schema/net-worth";
 import {
   PlanningAccounts,
   PlanningMonths,
@@ -15,6 +15,12 @@ import {
 import type { Date as CalendarDate } from "../date";
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
+import {
+  buildConnection,
+  type Connection,
+  decodeCursor,
+  encodeCursor,
+} from "../pagination";
 import { VOID, type Void } from "../void";
 import {
   loadPlanningAccountInfos,
@@ -46,21 +52,20 @@ export class PlanningYear {
     this.monthDates = data.monthDates;
   }
 
-  /** Load a planning year by its starting calendar year — returns null if the year isn't configured. Pre-fetches every row needed for downstream resolvers in a single batch. */
-  static async load(yearNumber: number): Promise<PlanningYear | null> {
-    const [[yearRow], monthRows, accounts] = await Promise.all([
-      db.select().from(PlanningYears).where(eq(PlanningYears.year, yearNumber)),
+  /** Load a planning year by its starting calendar year. Always returns a `PlanningYear`: if no `PlanningYears` row exists, the returned year is a synthetic view — months are generated from the year number, tax rates are null, and transactions/bills/earnings are whatever happens to overlap the FY. A `PlanningYears` row is only needed as a parent for tax-rate and month-scoped writes. */
+  static async load(yearNumber: number): Promise<PlanningYear> {
+    const [monthRows, accounts] = await Promise.all([
       db
         .select()
         .from(PlanningMonths)
         .where(eq(PlanningMonths.year, yearNumber)),
       loadPlanningAccountInfos(),
     ]);
-    if (!yearRow) return null;
     const yearData = await loadPlanningYearData(yearNumber, accounts);
-    const monthDates = monthRows
-      .map((r) => r.date)
-      .sort((a, b) => a.getTime() - b.getTime());
+    const monthDates =
+      monthRows.length > 0
+        ? monthRows.map((r) => r.date).sort((a, b) => a.getTime() - b.getTime())
+        : monthsInFYYear(yearNumber);
     return new PlanningYear({ yearData, monthDates });
   }
 
@@ -232,7 +237,7 @@ export class PlanningAccount {
 }
 
 /**
- * Look up a planning year by its id (the starting calendar year, e.g. `"2025"`).
+ * Look up a planning year by its id (the starting calendar year, e.g. `"2025"`). Returns a synthetic year (months generated, tax rates null) when no data has been written for this year yet. Only returns null when `id` isn't a 4-digit year.
  *
  * @gqlQueryField
  */
@@ -243,22 +248,105 @@ export async function planningYear(id: ID): Promise<PlanningYear | null> {
 }
 
 /**
- * List every configured planning year.
+ * The planning year to land the user on by default — the UK financial year covering today (6 April → 5 April cutover: dates before 6 April belong to the previous FY). Always returns a year, even when no planning data has been recorded yet (the result is synthetic in that case).
  *
  * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
  */
-export async function planningYears(): Promise<PlanningYear[] | null> {
-  const rows = await db.select().from(PlanningYears);
-  return Promise.all(
-    rows
-      .map((r) => r.year)
-      .sort((a, b) => a - b)
-      .map(async (y) => {
-        const loaded = await PlanningYear.load(y);
-        assert(loaded, `PlanningYear ${y} disappeared between queries`);
-        return loaded;
-      }),
+export async function planningYearCurrent(): Promise<PlanningYear | null> {
+  return PlanningYear.load(currentFYStart());
+}
+
+const PLANNING_YEARS_DEFAULT_PAGE_SIZE = 9;
+/** How many FYs past the last recorded / current year the planner projects into the future. */
+const PLANNING_YEARS_FUTURE_HORIZON = 5;
+
+/**
+ * Every planning year the user can reasonably work in, ordered oldest first. The range spans from the first `NetWorthEntry`'s FY up to 5 FYs past today (or past the most-recent entry, whichever is later); when no entries exist yet it starts at the current FY. Years without any stored data are synthesised on the fly. Supports forward (`first` / `after`) and backward (`last` / `before`) pagination.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function planningYears(
+  first?: Int | null,
+  after?: ID | null,
+  last?: Int | null,
+  before?: ID | null,
+): Promise<Connection<PlanningYear> | null> {
+  assert(
+    first == null || last == null,
+    "Pass either `first` or `last`, not both.",
   );
+  assert(
+    after == null || before == null,
+    "Pass either `after` or `before`, not both.",
+  );
+
+  // When neither `first` nor `last` is given, default to the tail of the
+  // range (`last: 9`) — users almost always want the most recent years.
+  const forward = first != null;
+  const limit = forward ? first : (last ?? PLANNING_YEARS_DEFAULT_PAGE_SIZE);
+  const cursorRaw = forward ? after : before;
+  const cursor = cursorRaw ? decodeCursor(cursorRaw) : null;
+  const cursorYear = cursor ? Number(cursor.c) : null;
+
+  const [bounds] = await db
+    .select({
+      min: sql<Date | null>`min(${NetWorthEntries.date})`,
+      max: sql<Date | null>`max(${NetWorthEntries.date})`,
+    })
+    .from(NetWorthEntries);
+
+  const today = currentFYStart();
+  const oldest = bounds?.min != null ? fyStartFor(new Date(bounds.min)) : today;
+  const latestAnchor =
+    bounds?.max != null
+      ? Math.max(today, fyStartFor(new Date(bounds.max)))
+      : today;
+  const newest = latestAnchor + PLANNING_YEARS_FUTURE_HORIZON;
+
+  // Ascending range.
+  const allYears: number[] = [];
+  for (let y = oldest; y <= newest; y++) allYears.push(y);
+
+  let page: number[];
+  let hasNextPage: boolean;
+  let hasPreviousPage: boolean;
+  if (forward) {
+    const startIdx =
+      cursorYear != null ? allYears.findIndex((y) => y > cursorYear) : 0;
+    const windowStart = startIdx === -1 ? allYears.length : startIdx;
+    page = allYears.slice(windowStart, windowStart + limit);
+    hasNextPage = windowStart + limit < allYears.length;
+    hasPreviousPage = windowStart > 0;
+  } else {
+    const endIdxExclusive =
+      cursorYear != null
+        ? (() => {
+            const idx = allYears.findIndex((y) => y >= cursorYear);
+            return idx === -1 ? allYears.length : idx;
+          })()
+        : allYears.length;
+    const windowStart = Math.max(0, endIdxExclusive - limit);
+    page = allYears.slice(windowStart, endIdxExclusive);
+    hasNextPage = endIdxExclusive < allYears.length;
+    hasPreviousPage = windowStart > 0;
+  }
+
+  const loaded = await Promise.all(page.map((y) => PlanningYear.load(y)));
+  return buildConnection<PlanningYear>(
+    loaded,
+    (node) => encodeCursor(String(node.yearNumber), String(node.yearNumber)),
+    { hasNextPage, hasPreviousPage },
+  );
+}
+
+/** FY-start calendar year for an arbitrary date — 6 April is the cutover. */
+function fyStartFor(d: Date): number {
+  const APRIL = 3;
+  const beforeCutover =
+    d.getMonth() < APRIL || (d.getMonth() === APRIL && d.getDate() < 6);
+  return beforeCutover ? d.getFullYear() - 1 : d.getFullYear();
 }
 
 /**
@@ -307,9 +395,7 @@ export async function planningYearSet(
     }
   });
 
-  const loaded = await PlanningYear.load(yearNumber);
-  assert(loaded, `Failed to reload PlanningYear ${yearNumber} after set`);
-  return loaded;
+  return PlanningYear.load(yearNumber);
 }
 
 /**
@@ -356,26 +442,44 @@ export async function planningAccountUnassign(assetId: ID): Promise<Void> {
 }
 
 /**
- * Resolve a list of starting-calendar-year numbers into the corresponding PlanningYear objects (those that exist in the DB).
+ * Resolve a list of starting-calendar-year numbers into `PlanningYear` objects. Since `PlanningYear.load` always synthesises a year, every requested year is returned (sorted ascending).
  */
 export async function planningYearsForYears(
   yearNumbers: number[],
 ): Promise<PlanningYear[]> {
   if (yearNumbers.length === 0) return [];
-  const rows = await db
-    .select()
-    .from(PlanningYears)
-    .where(inArray(PlanningYears.year, yearNumbers));
-  return Promise.all(
-    rows
-      .map((r) => r.year)
-      .sort((a, b) => a - b)
-      .map(async (y) => {
-        const loaded = await PlanningYear.load(y);
-        assert(loaded, `PlanningYear ${y} disappeared between queries`);
-        return loaded;
-      }),
-  );
+  const sorted = [...new Set(yearNumbers)].sort((a, b) => a - b);
+  return Promise.all(sorted.map((y) => PlanningYear.load(y)));
+}
+
+/**
+ * Ensure the `PlanningYears` and `PlanningMonths` rows backing `(year, date)` exist, creating them on demand. Safe to call from any year-scoped mutation before inserting into a table that FKs to `PlanningMonths` — the row isn't materialised until a mutation actually needs it, so `planningYears` / `planningYearCurrent` can keep returning synthetic years until the user writes something.
+ */
+export async function ensurePlanningMonth(
+  year: number,
+  date: Date,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(PlanningYears)
+      .values({ year })
+      .onConflictDoNothing({ target: PlanningYears.year });
+    await tx
+      .insert(PlanningMonths)
+      .values({ year, date })
+      .onConflictDoNothing({
+        target: [PlanningMonths.year, PlanningMonths.date],
+      });
+  });
+}
+
+/** The UK financial year covering today — dates before 6 April belong to the previous calendar year. */
+function currentFYStart(): number {
+  const now = new Date();
+  const APRIL = 3; // getMonth is 0-indexed
+  const beforeCutover =
+    now.getMonth() < APRIL || (now.getMonth() === APRIL && now.getDate() < 6);
+  return beforeCutover ? now.getFullYear() - 1 : now.getFullYear();
 }
 
 function parsePlanningYearId(id: string): number | null {

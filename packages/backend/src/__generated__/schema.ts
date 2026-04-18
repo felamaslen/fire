@@ -14,7 +14,7 @@ import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCr
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { ping as queryPingResolver } from "./../graphql/ping";
-import { planningYear as queryPlanningYearResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
+import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
 import { payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
@@ -837,6 +837,38 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PlanningYearEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningYearEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PlanningYearType)
+                }
+            };
+        }
+    });
+    const PlanningYearConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningYearConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
     const QueryType: GraphQLObjectType = new GraphQLObjectType({
         name: "Query",
         fields() {
@@ -955,7 +987,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 planningYear: {
-                    description: "Look up a planning year by its id (the starting calendar year, e.g. `\"2025\"`).",
+                    description: "Look up a planning year by its id (the starting calendar year, e.g. `\"2025\"`). Returns a synthetic year (months generated, tax rates null) when no data has been written for this year yet. Only returns null when `id` isn't a 4-digit year.",
                     name: "planningYear",
                     type: PlanningYearType,
                     args: {
@@ -967,12 +999,34 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return queryPlanningYearResolver(args.id);
                     }
                 },
-                planningYears: {
-                    description: "List every configured planning year.",
-                    name: "planningYears",
-                    type: new GraphQLList(new GraphQLNonNull(PlanningYearType)),
+                planningYearCurrent: {
+                    description: "The planning year to land the user on by default \u2014 the UK financial year covering today (6 April \u2192 5 April cutover: dates before 6 April belong to the previous FY). Always returns a year, even when no planning data has been recorded yet (the result is synthetic in that case).",
+                    name: "planningYearCurrent",
+                    type: PlanningYearType,
                     resolve() {
-                        return queryPlanningYearsResolver();
+                        return assertNonNull(queryPlanningYearCurrentResolver());
+                    }
+                },
+                planningYears: {
+                    description: "Every planning year the user can reasonably work in, ordered oldest first. The range spans from the first `NetWorthEntry`'s FY up to 5 FYs past today (or past the most-recent entry, whichever is later); when no entries exist yet it starts at the current FY. Years without any stored data are synthesised on the fly. Supports forward (`first` / `after`) and backward (`last` / `before`) pagination.",
+                    name: "planningYears",
+                    type: PlanningYearConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        before: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        },
+                        last: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryPlanningYearsResolver(args.first, args.after, args.last, args.before));
                     }
                 }
             };
@@ -2011,6 +2065,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }
