@@ -49,6 +49,7 @@ export const Investments = pgTable(
 export const investmentsRelations = relations(Investments, ({ many }) => ({
   transactions: many(InvestmentTransactions),
   stockSplits: many(InvestmentStockSplits),
+  prices: many(InvestmentPrices),
 }));
 
 /** One buy / sell / dividend-reinvestment against an `Investments` row, booked against a net-worth asset (STOCK or PENSION — validated in the resolver). */
@@ -146,6 +147,49 @@ export const investmentStockSplitsRelations = relations(
   ({ one }) => ({
     investment: one(Investments, {
       fields: [InvestmentStockSplits.investmentId],
+      references: [Investments.id],
+    }),
+  }),
+);
+
+/** One historic price quote for an investment on a given day. `priceAdjusted` reflects `price` corrected for any stock splits that occurred **after** `date`, and is maintained by the `InvestmentPrices_setAdjusted_trg` / `InvestmentStockSplits_recomputePrices_trg` triggers (added in migration `0016`). Currency must match the parent `Investments.currency` — asserted in app code at write time. */
+export const InvestmentPrices = pgTable(
+  "InvestmentPrices",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    investmentId: uuid("investmentId")
+      .notNull()
+      .references(() => Investments.id, { onDelete: "cascade" }),
+    date: date("date", { mode: "date" }).notNull(),
+    /** Raw observed unit price, in fractional units of `currency`. Floating-point — sub-penny tick sizes are expected. */
+    price: doublePrecision("price").notNull(),
+    /** Split-adjusted unit price, in fractional units of `currency`. Equal to `price * product(ratio for every later split)`. Maintained by trigger — do not write directly; any value supplied on INSERT / UPDATE is overwritten. */
+    priceAdjusted: doublePrecision("priceAdjusted").notNull().default(0),
+    currency: currencyCode("currency").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check("InvestmentPrices_price_ck", sql`${t.price} >= 0`),
+    check("InvestmentPrices_priceAdjusted_ck", sql`${t.priceAdjusted} >= 0`),
+    uniqueIndex("InvestmentPrices_investmentId_date_uq").on(
+      t.investmentId,
+      t.date,
+    ),
+  ],
+);
+
+export const investmentPricesRelations = relations(
+  InvestmentPrices,
+  ({ one }) => ({
+    investment: one(Investments, {
+      fields: [InvestmentPrices.investmentId],
       references: [Investments.id],
     }),
   }),
