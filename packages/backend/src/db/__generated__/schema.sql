@@ -236,8 +236,8 @@ CREATE TABLE "PlanningEarnings" (
   "currency" "CurrencyCode" NOT NULL,
   "countryCode" "CountryCode" NOT NULL,
   "pensionSalarySacrifice" DOUBLE PRECISION,
-  "pensionReliefAtSource" DOUBLE PRECISION NOT NULL,
-  "pensionNetPay" DOUBLE PRECISION NOT NULL,
+  "pensionReliefAtSource" DOUBLE PRECISION,
+  "pensionNetPay" DOUBLE PRECISION,
   "studentLoanPlan2" BOOLEAN DEFAULT FALSE NOT NULL,
   "studentLoanLiabilityId" uuid,
   "toAccountId" uuid NOT NULL,
@@ -254,9 +254,15 @@ CREATE TABLE "PlanningEarnings" (
       OR "PlanningEarnings"."pensionSalarySacrifice" BETWEEN 0 AND 1
     ),
   CONSTRAINT "PlanningEarnings_pensionReliefAtSource_ck"
-    CHECK ("PlanningEarnings"."pensionReliefAtSource" BETWEEN 0 AND 1),
+    CHECK (
+      "PlanningEarnings"."pensionReliefAtSource" IS NULL
+      OR "PlanningEarnings"."pensionReliefAtSource" BETWEEN 0 AND 1
+    ),
   CONSTRAINT "PlanningEarnings_pensionNetPay_ck"
-    CHECK ("PlanningEarnings"."pensionNetPay" BETWEEN 0 AND 1),
+    CHECK (
+      "PlanningEarnings"."pensionNetPay" IS NULL
+      OR "PlanningEarnings"."pensionNetPay" BETWEEN 0 AND 1
+    ),
   CONSTRAINT "PlanningEarnings_studentLoanLiability_ck"
     CHECK (
       "PlanningEarnings"."studentLoanLiabilityId" IS NULL

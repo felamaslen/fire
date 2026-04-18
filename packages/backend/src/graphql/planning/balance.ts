@@ -356,8 +356,8 @@ export function monthTransactionsFor(
         gross: e.amountGross,
         pension: {
           sacrifice: e.pensionSalarySacrifice,
-          netPay: e.pensionNetPay,
-          relief: e.pensionReliefAtSource,
+          netPay: e.pensionNetPay ?? 0,
+          relief: e.pensionReliefAtSource ?? 0,
         },
         studentLoanPlan2: e.studentLoanPlan2,
         rates: data.rates,

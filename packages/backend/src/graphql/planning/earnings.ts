@@ -134,8 +134,8 @@ export class PlanningEarning {
 
 function formatAttributes(p: {
   pensionSalarySacrifice: number | null;
-  pensionNetPay: number;
-  pensionReliefAtSource: number;
+  pensionNetPay: number | null;
+  pensionReliefAtSource: number | null;
   studentLoanPlan2: boolean;
 }): string {
   const parts: string[] = [];
@@ -143,10 +143,10 @@ function formatAttributes(p: {
   if (p.pensionSalarySacrifice && p.pensionSalarySacrifice > 0) {
     parts.push(`${pct(p.pensionSalarySacrifice)} salary sacrifice`);
   }
-  if (p.pensionNetPay > 0) {
+  if (p.pensionNetPay && p.pensionNetPay > 0) {
     parts.push(`${pct(p.pensionNetPay)} net pay pension`);
   }
-  if (p.pensionReliefAtSource > 0) {
+  if (p.pensionReliefAtSource && p.pensionReliefAtSource > 0) {
     parts.push(`${pct(p.pensionReliefAtSource)} relief-at-source pension`);
   }
   if (p.studentLoanPlan2) parts.push("student loan plan 2");
@@ -240,8 +240,8 @@ export async function earningsCreate(
         currency,
         countryCode,
         pensionSalarySacrifice: pensionSalarySacrifice ?? null,
-        pensionReliefAtSource: pensionReliefAtSource ?? 0,
-        pensionNetPay: pensionNetPay ?? 0,
+        pensionReliefAtSource: pensionReliefAtSource ?? null,
+        pensionNetPay: pensionNetPay ?? null,
         studentLoanPlan2: slp2,
         studentLoanLiabilityId: studentLoanLiabilityId ?? null,
         toAccountId: toAccountId,
@@ -318,10 +318,10 @@ export async function earningsUpdate(
           pensionSalarySacrifice,
         }),
         ...(pensionReliefAtSource !== undefined && {
-          pensionReliefAtSource: pensionReliefAtSource ?? 0,
+          pensionReliefAtSource,
         }),
         ...(pensionNetPay !== undefined && {
-          pensionNetPay: pensionNetPay ?? 0,
+          pensionNetPay,
         }),
         ...(studentLoanPlan2 !== undefined && {
           studentLoanPlan2: studentLoanPlan2 ?? false,
