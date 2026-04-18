@@ -1,18 +1,10 @@
-import { useMutation } from "@apollo/client/react";
+import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { useForm } from "@tanstack/react-form";
-import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 import { graphql, type ResultOf } from "../../graphql";
 
@@ -33,11 +25,9 @@ export const InvestmentFormDocument = graphql(`
   }
 `);
 
-export const InvestmentCurrenciesDocument = graphql(`
-  query InvestmentCurrencies {
-    currencies {
-      code
-    }
+const HomeCurrencyDocument = graphql(`
+  query HomeCurrency {
+    currencyDefault
   }
 `);
 
@@ -75,11 +65,12 @@ type FormValues = {
 
 function initialFromExisting(
   existing: ResultOf<typeof InvestmentFormDocument> | null,
+  homeCurrency: string,
 ): FormValues {
   if (!existing) {
     return {
       name: "",
-      currency: "GBP",
+      currency: homeCurrency,
       kind: "stock",
       stockCode: "",
       fundUrl: "",
@@ -104,15 +95,8 @@ export function InvestmentForm({
   onDone: () => void;
   refetchQueries: unknown;
 }) {
-  const [currencies] = useState<string[]>([
-    "GBP",
-    "USD",
-    "EUR",
-    "CHF",
-    "JPY",
-    "AUD",
-    "CAD",
-  ]);
+  const { data: homeData } = useSuspenseQuery(HomeCurrencyDocument);
+  const homeCurrency = homeData.currencyDefault ?? "GBP";
 
   const [createFn] = useMutation(InvestmentCreateDocument, {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,7 +110,7 @@ export function InvestmentForm({
   });
 
   const form = useForm({
-    defaultValues: initialFromExisting(existing ?? null),
+    defaultValues: initialFromExisting(existing ?? null, homeCurrency),
     onSubmit: async ({ value }) => {
       const asset =
         value.kind === "stock"
@@ -178,28 +162,10 @@ export function InvestmentForm({
       </form.Field>
 
       {!existing && (
-        <form.Field name="currency">
-          {(field) => (
-            <div className="space-y-1">
-              <Label htmlFor={field.name}>Currency</Label>
-              <Select
-                value={field.state.value}
-                onValueChange={(v) => field.handleChange(v)}
-              >
-                <SelectTrigger id={field.name}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {currencies.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-        </form.Field>
+        <div className="space-y-1">
+          <Label htmlFor="currency">Currency</Label>
+          <Input id="currency" value={homeCurrency} disabled />
+        </div>
       )}
 
       <form.Field name="kind">
