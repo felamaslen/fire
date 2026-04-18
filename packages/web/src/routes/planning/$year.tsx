@@ -52,6 +52,7 @@ const PlanningTransactionRowDocument = graphql(
       isProvisional
       isEditable
       liabilityId
+      assetId
       amount {
         amount
         currency
@@ -118,6 +119,11 @@ export const PlanningYearViewDocument = graphql(
               id
               name
             }
+            ... on NetWorthCategoryAsset {
+              id
+              name
+              assetType: type
+            }
           }
         }
       }
@@ -134,6 +140,7 @@ const TransactionCreateDocument = graphql(`
     $accountId: ID!
     $toAccountId: ID
     $liabilityId: ID
+    $assetId: ID
   ) {
     transactionCreate(
       monthId: $monthId
@@ -142,6 +149,7 @@ const TransactionCreateDocument = graphql(`
       accountId: $accountId
       toAccountId: $toAccountId
       liabilityId: $liabilityId
+      assetId: $assetId
     ) {
       id
     }
@@ -206,6 +214,16 @@ function PlanningYearPage() {
     .filter(
       (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",
     );
+  // Only STOCK / PENSION assets can receive investment transactions — other
+  // types (cash, property, etc.) aren't investable and would be rejected by
+  // the server.
+  const investableAssets: AssetOption[] = (data.netWorthCategories?.edges ?? [])
+    .map((e) => e.node)
+    .filter(
+      (n): n is AssetOption =>
+        n.__typename === "NetWorthCategoryAsset" &&
+        (n.assetType === "STOCK" || n.assetType === "PENSION"),
+    );
   return (
     <main className="flex min-h-svh flex-col">
       <div className="space-y-6 p-8 pb-24">
@@ -214,6 +232,7 @@ function PlanningYearPage() {
           data={data.planningYear}
           year={year}
           liabilities={liabilities}
+          investableAssets={investableAssets}
         />
       </div>
       <YearFooter current={year} years={allYears} />
@@ -227,6 +246,13 @@ type LiabilityOption = Extract<
     ResultOf<typeof PlanningYearViewDocument>["netWorthCategories"]
   >["edges"][number]["node"],
   { __typename: "NetWorthCategoryLiability" }
+>;
+
+type AssetOption = Extract<
+  NonNullable<
+    ResultOf<typeof PlanningYearViewDocument>["netWorthCategories"]
+  >["edges"][number]["node"],
+  { __typename: "NetWorthCategoryAsset" }
 >;
 
 function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
@@ -329,10 +355,12 @@ function PlanningTable({
   data,
   year,
   liabilities,
+  investableAssets,
 }: {
   data: PlanningYearData;
   year: string;
   liabilities: LiabilityOption[];
+  investableAssets: AssetOption[];
 }) {
   const accounts = data.accounts;
 
@@ -436,6 +464,7 @@ function PlanningTable({
                           accountId={accounts[j].id}
                           accounts={accounts}
                           liabilities={liabilities}
+                          investableAssets={investableAssets}
                         />
                       </TableCell>
                     ))}
@@ -457,6 +486,7 @@ function MonthAccountCell({
   accountId,
   accounts,
   liabilities,
+  investableAssets,
 }: {
   data: FragmentOf<typeof PlanningMonthAccountCellDocument>;
   monoRight: string;
@@ -466,6 +496,7 @@ function MonthAccountCell({
   accountId: string;
   accounts: PlanningYearData["accounts"];
   liabilities: LiabilityOption[];
+  investableAssets: AssetOption[];
 }) {
   const cell = readFragment(PlanningMonthAccountCellDocument, data);
   return (
@@ -498,6 +529,7 @@ function MonthAccountCell({
             accountId={accountId}
             accounts={accounts}
             liabilities={liabilities}
+            investableAssets={investableAssets}
           />
         </li>
       </ul>
@@ -670,12 +702,14 @@ function CreateTransactionTrigger({
   accountId,
   accounts,
   liabilities,
+  investableAssets,
 }: {
   monthId: string;
   year: string;
   accountId: string;
   accounts: PlanningYearData["accounts"];
   liabilities: LiabilityOption[];
+  investableAssets: AssetOption[];
 }) {
   const [open, setOpen] = useState(false);
   const [create] = useMutation(TransactionCreateDocument, {
@@ -692,6 +726,7 @@ function CreateTransactionTrigger({
     direction: "+" | "-";
     toAccountId: string | null;
     liabilityId: string | null;
+    assetId: string | null;
   }) => {
     const signed = v.direction === "+" ? v.amount : -v.amount;
     await create({
@@ -702,6 +737,7 @@ function CreateTransactionTrigger({
         amount: { amount: signed, currency: "GBP" },
         toAccountId: v.direction === "+" ? null : v.toAccountId,
         liabilityId: v.direction === "+" ? null : v.liabilityId,
+        assetId: v.direction === "+" ? null : v.assetId,
       },
     });
     toast.success("Transaction added");
@@ -722,6 +758,7 @@ function CreateTransactionTrigger({
         <CreateTransactionForm
           accounts={accounts}
           liabilities={liabilities}
+          investableAssets={investableAssets}
           excludeAccountId={accountId}
           onSubmit={onSubmit}
           onCancel={() => setOpen(false)}
@@ -782,12 +819,14 @@ function EditTransactionForm({
 function CreateTransactionForm({
   accounts,
   liabilities,
+  investableAssets,
   excludeAccountId,
   onSubmit,
   onCancel,
 }: {
   accounts: PlanningYearData["accounts"];
   liabilities: LiabilityOption[];
+  investableAssets: AssetOption[];
   excludeAccountId: string;
   onSubmit: (v: {
     name: string;
@@ -795,6 +834,7 @@ function CreateTransactionForm({
     direction: "+" | "-";
     toAccountId: string | null;
     liabilityId: string | null;
+    assetId: string | null;
   }) => void | Promise<void>;
   onCancel: () => void;
 }) {
@@ -803,9 +843,12 @@ function CreateTransactionForm({
   const [direction, setDirection] = useState<"+" | "-">("-");
   const [toAccountId, setToAccountId] = useState("__none__");
   const [liabilityId, setLiabilityId] = useState("__none__");
+  const [assetId, setAssetId] = useState("__none__");
   const parsed = Number(amount);
   const disabled = !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
   const isInflow = direction === "+";
+  const hasLiability = !isInflow && liabilityId !== "__none__";
+  const hasAsset = !isInflow && assetId !== "__none__";
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (disabled) return;
@@ -815,6 +858,7 @@ function CreateTransactionForm({
       direction,
       toAccountId: toAccountId === "__none__" ? null : toAccountId,
       liabilityId: liabilityId === "__none__" ? null : liabilityId,
+      assetId: assetId === "__none__" ? null : assetId,
     });
   };
   const transferTargets = accounts.filter((a) => a.id !== excludeAccountId);
@@ -880,7 +924,7 @@ function CreateTransactionForm({
         <Select
           value={isInflow ? "__none__" : liabilityId}
           onValueChange={setLiabilityId}
-          disabled={isInflow}
+          disabled={isInflow || hasAsset}
         >
           <SelectTrigger className="w-full">
             <SelectValue />
@@ -890,6 +934,26 @@ function CreateTransactionForm({
             {liabilities.map((l) => (
               <SelectItem key={l.id} value={l.id}>
                 {l.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Invests into asset (optional)</Label>
+        <Select
+          value={isInflow ? "__none__" : assetId}
+          onValueChange={setAssetId}
+          disabled={isInflow || hasLiability}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">None</SelectItem>
+            {investableAssets.map((a) => (
+              <SelectItem key={a.id} value={a.id}>
+                {a.name}
               </SelectItem>
             ))}
           </SelectContent>
