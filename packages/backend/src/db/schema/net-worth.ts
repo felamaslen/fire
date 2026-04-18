@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   index,
   numeric,
   pgEnum,
@@ -291,10 +292,10 @@ export const NetWorthValueOptions = pgTable("NetWorthValueOptions", {
   units: bigint("units", { mode: "number" }).notNull(),
   /** Currency of `priceStrike` and `priceMarket`. */
   currency: currencyCode("currency").notNull(),
-  /** Strike price, in fractional units of `currency`. */
-  priceStrike: bigint("priceStrike", { mode: "number" }).notNull(),
-  /** Most-recent market price, in fractional units of `currency`. Null if unknown. */
-  priceMarket: bigint("priceMarket", { mode: "number" }),
+  /** Strike price, in fractional units of `currency`. Floating-point — sub-penny tick sizes are expected. */
+  priceStrike: doublePrecision("priceStrike").notNull(),
+  /** Most-recent market price, in fractional units of `currency`. Null if unknown. Floating-point — sub-penny tick sizes are expected. */
+  priceMarket: doublePrecision("priceMarket"),
   /** How many of the held units have vested (<= units). */
   vested: bigint("vested", { mode: "number" }).notNull(),
   createdAt: timestamp("createdAt", { withTimezone: true })
