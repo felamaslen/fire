@@ -562,12 +562,14 @@ it("transactionUpdate on a predicted earnings deduction materialises the payslip
 
   const nicId = await aprilTxId("Day job — NIC");
 
-  // User edits just the NIC line. The planner should materialise a payslip
-  // that includes:
-  //   - the gross line (not missing)
-  //   - the edited NIC at the new magnitude (not duplicated)
-  //   - the other deductions that were present before (tax, student loan)
-  // — all carrying the earning's name as a prefix.
+  // User edits the NIC line, bumping the magnitude AND renaming it. The
+  // planner should materialise a payslip that includes:
+  //   - the gross line (not missing); the payslip row itself carries the
+  //     pay-date as its name, NOT the NIC rename.
+  //   - the edited NIC at the new magnitude, wearing the user's name
+  //     (not duplicated).
+  //   - the other deductions that were present before (tax, student loan),
+  //     still carrying the earning's name as a prefix.
   await runGql(
     graphql(`
       mutation ($id: ID!) {
@@ -575,6 +577,7 @@ it("transactionUpdate on a predicted earnings deduction materialises the payslip
           monthId: "apr-2025"
           id: $id
           amount: { amount: 400, currency: "GBP" }
+          name: "NIC (April adjustment)"
         ) {
           id
         }
@@ -586,9 +589,9 @@ it("transactionUpdate on a predicted earnings deduction materialises the payslip
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
     NAME                   AMOUNT  SOURCE EDIT     ID                          
-    Day job — gross        5000    actual editable {"kind":"pay","id":"<uuid>"}
+    Day job — 2025-04-30   5000    actual editable {"kind":"pay","id":"<uuid>"}
     Day job — income tax   -952.67 actual editable {"kind":"adj","id":"<uuid>"}
-    Day job — NIC          -400    actual editable {"kind":"adj","id":"<uuid>"}
+    NIC (April adjustment) -400    actual editable {"kind":"adj","id":"<uuid>"}
     Day job — student loan -245.29 actual editable {"kind":"adj","id":"<uuid>"}"
   `);
 });
