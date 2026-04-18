@@ -322,6 +322,8 @@ type Investment {
   currency: String!
   id: ID!
   name: String!
+  """Transactions booked against this investment, oldest-first."""
+  transactions: [InvestmentTransaction!] @semanticNonNull
   """
   Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet.
   """
@@ -340,6 +342,31 @@ type InvestmentFund {
 type InvestmentStock {
   """Ticker on the relevant exchange (e.g. `SMT.L`, `AAPL`)."""
   code: String!
+}
+
+"""
+One buy, sell, or dividend-reinvestment booked against an `Investment` and a wrapper (a net-worth asset of type `STOCK` or `PENSION`).
+"""
+type InvestmentTransaction {
+  """Wrapper the transaction books into (a `STOCK` or `PENSION` asset)."""
+  asset: NetWorthCategoryAsset!
+  """Calendar date the trade was executed."""
+  date: Date!
+  """
+  True when this transaction represents a dividend reinvestment rather than a cash buy.
+  """
+  drip: Boolean!
+  """Broker / platform fees paid on the trade."""
+  fees: Money!
+  id: ID!
+  """Unit price at execution."""
+  price: Money!
+  """Taxes paid on the trade."""
+  taxes: Money!
+  """
+  Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.
+  """
+  units: Int!
 }
 
 """
@@ -484,6 +511,38 @@ type Mutation {
   Delete an investment and all its transactions, stock splits, and prices.
   """
   investmentDelete(id: ID!): Void!
+  """Book a new buy, sell, or dividend-reinvestment against an investment."""
+  investmentTransactionCreate(
+    """
+    Wrapper to book the trade into. Must be a `STOCK` or `PENSION` net-worth asset.
+    """
+    assetId: ID!
+    """Calendar date the trade was executed."""
+    date: Date!
+    """
+    Set `true` to mark this as a dividend reinvestment rather than a cash buy. Defaults to `false`.
+    """
+    drip: Boolean
+    """
+    Broker / platform fees paid. Must match the investment's currency. Defaults to 0.
+    """
+    fees: MoneyInput
+    investmentId: ID!
+    """Unit price at execution. Must match the investment's currency."""
+    price: MoneyInput!
+    """
+    Taxes paid on the trade. Must match the investment's currency. Defaults to 0.
+    """
+    taxes: MoneyInput
+    """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
+    units: Int!
+  ): InvestmentTransaction!
+  """Delete a transaction."""
+  investmentTransactionDelete(id: ID!): Void!
+  """
+  Partial update to a transaction. Omitted / null fields are left unchanged.
+  """
+  investmentTransactionUpdate(assetId: ID, date: Date, drip: Boolean, fees: MoneyInput, id: ID!, price: MoneyInput, taxes: MoneyInput, units: Int): InvestmentTransaction!
   """
   Partially update an investment. Omitted (or `null`) fields are left unchanged.
   """

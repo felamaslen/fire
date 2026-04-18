@@ -7,7 +7,7 @@ import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
-import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
+import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, defaultFieldResolver, GraphQLInputObjectType } from "graphql";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
@@ -17,6 +17,7 @@ import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategory
 import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
+import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
 import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
@@ -496,6 +497,53 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             return [InvestmentFundType, InvestmentStockType];
         }
     });
+    const InvestmentTransactionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentTransaction",
+        description: "One buy, sell, or dividend-reinvestment booked against an `Investment` and a wrapper (a net-worth asset of type `STOCK` or `PENSION`).",
+        fields() {
+            return {
+                asset: {
+                    description: "Wrapper the transaction books into (a `STOCK` or `PENSION` asset).",
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                date: {
+                    description: "Calendar date the trade was executed.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                drip: {
+                    description: "True when this transaction represents a dividend reinvestment rather than a cash buy.",
+                    name: "drip",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                fees: {
+                    description: "Broker / platform fees paid on the trade.",
+                    name: "fees",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                price: {
+                    description: "Unit price at execution.",
+                    name: "price",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                taxes: {
+                    description: "Taxes paid on the trade.",
+                    name: "taxes",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                units: {
+                    description: "Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.",
+                    name: "units",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
     const InvestmentType: GraphQLObjectType = new GraphQLObjectType({
         name: "Investment",
         description: "A tradable holding \u2014 either a listed stock or a fund.",
@@ -518,6 +566,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                transactions: {
+                    description: "Transactions booked against this investment, oldest-first.",
+                    name: "transactions",
+                    type: new GraphQLList(new GraphQLNonNull(InvestmentTransactionType)),
+                    resolve(source, args, context, info) {
+                        return assertNonNull(defaultFieldResolver(source, args, context, info));
+                    }
                 },
                 unitPriceCached: {
                     description: "Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet.",
@@ -2062,6 +2118,94 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationInvestmentDeleteResolver(args.id);
                     }
                 },
+                investmentTransactionCreate: {
+                    description: "Book a new buy, sell, or dividend-reinvestment against an investment.",
+                    name: "investmentTransactionCreate",
+                    type: new GraphQLNonNull(InvestmentTransactionType),
+                    args: {
+                        assetId: {
+                            description: "Wrapper to book the trade into. Must be a `STOCK` or `PENSION` net-worth asset.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        date: {
+                            description: "Calendar date the trade was executed.",
+                            type: new GraphQLNonNull(DateType)
+                        },
+                        drip: {
+                            description: "Set `true` to mark this as a dividend reinvestment rather than a cash buy. Defaults to `false`.",
+                            type: GraphQLBoolean
+                        },
+                        fees: {
+                            description: "Broker / platform fees paid. Must match the investment's currency. Defaults to 0.",
+                            type: MoneyInputType
+                        },
+                        investmentId: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        price: {
+                            description: "Unit price at execution. Must match the investment's currency.",
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
+                        taxes: {
+                            description: "Taxes paid on the trade. Must match the investment's currency. Defaults to 0.",
+                            type: MoneyInputType
+                        },
+                        units: {
+                            description: "Signed number of units traded. Positive = buy / DRIP, negative = sell.",
+                            type: new GraphQLNonNull(GraphQLInt)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentTransactionCreateResolver(args.investmentId, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                    }
+                },
+                investmentTransactionDelete: {
+                    description: "Delete a transaction.",
+                    name: "investmentTransactionDelete",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentTransactionDeleteResolver(args.id);
+                    }
+                },
+                investmentTransactionUpdate: {
+                    description: "Partial update to a transaction. Omitted / null fields are left unchanged.",
+                    name: "investmentTransactionUpdate",
+                    type: new GraphQLNonNull(InvestmentTransactionType),
+                    args: {
+                        assetId: {
+                            type: GraphQLID
+                        },
+                        date: {
+                            type: DateType
+                        },
+                        drip: {
+                            type: GraphQLBoolean
+                        },
+                        fees: {
+                            type: MoneyInputType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        price: {
+                            type: MoneyInputType
+                        },
+                        taxes: {
+                            type: MoneyInputType
+                        },
+                        units: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentTransactionUpdateResolver(args.id, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                    }
+                },
                 investmentUpdate: {
                     description: "Partially update an investment. Omitted (or `null`) fields are left unchanged.",
                     name: "investmentUpdate",
@@ -2426,6 +2570,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentFundType, InvestmentStockType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentFundType, InvestmentStockType, InvestmentTransactionType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }

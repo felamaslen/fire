@@ -9,6 +9,10 @@ import { InvestmentPrices, Investments } from "@/db/schema/investments";
 
 import { assertCurrencyCode, Money } from "../money";
 import { VOID, type Void } from "../void";
+import {
+  InvestmentTransaction,
+  loadInvestmentTransactions,
+} from "./transactions";
 
 /** A listed security identified by its ticker on the relevant exchange. @gqlType */
 export class InvestmentStock {
@@ -54,6 +58,15 @@ export class Investment {
           ),
           new InvestmentFund(row.fundLink));
     return new Investment(row.id as ID, row.name, asset, row.currency);
+  }
+
+  /** Transactions booked against this investment, oldest-first.
+   *
+   * @gqlField
+   * @gqlAnnotate semanticNonNull
+   */
+  async transactions(): Promise<InvestmentTransaction[] | null> {
+    return loadInvestmentTransactions(this.id);
   }
 
   /** Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet. @gqlField */
