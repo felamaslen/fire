@@ -22,11 +22,7 @@ import {
   type PlanningYear,
   planningYearsForYears,
 } from "./index";
-import {
-  monthId as monthLabel,
-  parseMonthId,
-  planningMonthKey,
-} from "./months";
+import { parseMonthId, planningMonthKey } from "./months";
 import { computeUKTake } from "./tax";
 
 /**
@@ -349,18 +345,24 @@ async function materialiseEarningAsPayslip(
     name: string;
     amount: number;
   }[] = [];
+  // Names mirror the predicted transactions built in `balance.ts` so the
+  // grid looks identical before and after a line gets materialised.
   if (take.incomeTax > 0)
     adjustments.push({
       part: "tax",
-      name: "Income tax",
+      name: `${earning.name} — income tax`,
       amount: -perMonth(take.incomeTax),
     });
   if (take.nic > 0)
-    adjustments.push({ part: "nic", name: "NIC", amount: -perMonth(take.nic) });
+    adjustments.push({
+      part: "nic",
+      name: `${earning.name} — NIC`,
+      amount: -perMonth(take.nic),
+    });
   if (take.studentLoan > 0)
     adjustments.push({
       part: "sl",
-      name: "Student loan",
+      name: `${earning.name} — student loan`,
       amount: -perMonth(take.studentLoan),
     });
 
@@ -377,14 +379,13 @@ async function materialiseEarningAsPayslip(
       else
         adjustments.push({
           part: parsed.part,
-          name: adjustmentLabel[parsed.part],
+          name: `${earning.name} — ${adjustmentLabel[parsed.part]}`,
           amount: signedOverride,
         });
     }
   }
 
-  const payslipName =
-    edit.patchName ?? `${earning.name} — ${monthLabel(date)} (predicted)`;
+  const payslipName = edit.patchName ?? `${earning.name} — gross`;
 
   await db.transaction(async (tx) => {
     const [payslip] = await tx
@@ -409,9 +410,9 @@ async function materialiseEarningAsPayslip(
 }
 
 const adjustmentLabel = {
-  tax: "Income tax",
+  tax: "income tax",
   nic: "NIC",
-  sl: "Student loan",
+  sl: "student loan",
 } satisfies Record<
   Exclude<Extract<PlanningTransactionId, { part: string }>["part"], "gross">,
   string
