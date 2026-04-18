@@ -13,9 +13,14 @@ const formatterCache = new Map<string, Intl.NumberFormat>();
 function formatter(currency: string): Intl.NumberFormat {
   let f = formatterCache.get(currency);
   if (!f) {
-    f = new Intl.NumberFormat(undefined, {
+    // `en-GB` locale is pinned so SSR and CSR produce identical output
+    // regardless of Node's / the browser's default locale.
+    // `currencySign: "accounting"` wraps negatives in parentheses, e.g.
+    // `£(2,702.35)` instead of `-£2,702.35`.
+    f = new Intl.NumberFormat("en-GB", {
       style: "currency",
       currency,
+      currencySign: "accounting",
       maximumFractionDigits: 2,
     });
     formatterCache.set(currency, f);
