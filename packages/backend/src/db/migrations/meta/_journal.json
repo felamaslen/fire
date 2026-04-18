@@ -85,6 +85,13 @@
       "when": 1776546675599,
       "tag": "0011_create_investments_table",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776546712881,
+      "tag": "0012_create_investment_transactions_table",
+      "breakpoints": true
     }
   ]
 }
