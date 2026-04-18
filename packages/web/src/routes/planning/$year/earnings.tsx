@@ -48,6 +48,10 @@ const PlanningEarningsDialogDocument = graphql(
             pensionNetPay
             pensionSalarySacrifice
             studentLoanPlan2
+            studentLoanLiability {
+              id
+              name
+            }
             ukTaxCodes {
               start
               end
@@ -67,6 +71,17 @@ const PlanningEarningsDialogDocument = graphql(
           name
         }
       }
+      netWorthCategories(first: 100) {
+        edges {
+          node {
+            __typename
+            ... on NetWorthCategoryLiability {
+              id
+              name
+            }
+          }
+        }
+      }
     }
   `,
   [FigureDocument],
@@ -84,6 +99,7 @@ const PlanningEarningsCreateDocument = graphql(`
     $end: Date
     $pensionSalarySacrifice: Float
     $studentLoanPlan2: Boolean
+    $studentLoanLiabilityId: ID
     $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ) {
     earningsCreate(
@@ -97,6 +113,7 @@ const PlanningEarningsCreateDocument = graphql(`
       end: $end
       pensionSalarySacrifice: $pensionSalarySacrifice
       studentLoanPlan2: $studentLoanPlan2
+      studentLoanLiabilityId: $studentLoanLiabilityId
       ukTaxCodes: $ukTaxCodes
     ) {
       id
@@ -116,6 +133,7 @@ const PlanningEarningsUpdateDocument = graphql(`
     $end: Date
     $pensionSalarySacrifice: Float
     $studentLoanPlan2: Boolean
+    $studentLoanLiabilityId: ID
     $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ) {
     earningsUpdate(
@@ -129,6 +147,7 @@ const PlanningEarningsUpdateDocument = graphql(`
       end: $end
       pensionSalarySacrifice: $pensionSalarySacrifice
       studentLoanPlan2: $studentLoanPlan2
+      studentLoanLiabilityId: $studentLoanLiabilityId
       ukTaxCodes: $ukTaxCodes
     ) {
       id
@@ -155,6 +174,10 @@ type Earning = NonNullable<
 type AccountOption = NonNullable<
   PlanningEarningsData["planningYear"]
 >["accounts"][number];
+type LiabilityOption = Extract<
+  NonNullable<PlanningEarningsData["netWorthCategories"]>["edges"][number]["node"],
+  { __typename: "NetWorthCategoryLiability" }
+>;
 
 type RefetchEntry =
   | {
@@ -181,6 +204,8 @@ type FormValues = {
   pensionNetPayPct: string;
   pensionSalarySacrificePct: string;
   studentLoanPlan2: boolean;
+  /** Empty string = no liability linked. Only meaningful when `studentLoanPlan2` is true. */
+  studentLoanLiabilityId: string;
   taxCodes: TaxCodeEntry[];
 };
 
@@ -194,6 +219,7 @@ const emptyForm: FormValues = {
   pensionNetPayPct: "0",
   pensionSalarySacrificePct: "",
   studentLoanPlan2: false,
+  studentLoanLiabilityId: "",
   taxCodes: [],
 };
 
@@ -217,6 +243,7 @@ function earningToForm(earning: Earning): FormValues {
         ? ""
         : String(earning.pensionSalarySacrifice * 100),
     studentLoanPlan2: earning.studentLoanPlan2 ?? false,
+    studentLoanLiabilityId: earning.studentLoanLiability?.id ?? "",
     // Codes arrive unsorted; chain them by start date.
     taxCodes: [...earning.ukTaxCodes]
       .sort((a, b) => a.start.localeCompare(b.start))
@@ -273,6 +300,13 @@ function PlanningEarningsDialog() {
 
   const earnings: Earning[] = data.earnings?.edges.map((e) => e.node) ?? [];
   const accounts: AccountOption[] = data.planningYear?.accounts ?? [];
+  const liabilities: LiabilityOption[] = (
+    data.netWorthCategories?.edges ?? []
+  )
+    .map((e) => e.node)
+    .filter(
+      (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",
+    );
 
   const close = () =>
     void navigate({ to: "/planning/$year", params: { year } });
@@ -300,6 +334,7 @@ function PlanningEarningsDialog() {
                 key={e.id}
                 earning={e}
                 accounts={accounts}
+                liabilities={liabilities}
                 refetch={refetch}
               />
             ))}
@@ -309,7 +344,11 @@ function PlanningEarningsDialog() {
               Assign a planning account first so earnings have somewhere to land.
             </p>
           ) : (
-            <AddEarningForm accounts={accounts} refetch={refetch} />
+            <AddEarningForm
+              accounts={accounts}
+              liabilities={liabilities}
+              refetch={refetch}
+            />
           )}
         </div>
         <div className="flex justify-end">
@@ -325,10 +364,12 @@ function PlanningEarningsDialog() {
 function EarningRow({
   earning,
   accounts,
+  liabilities,
   refetch,
 }: {
   earning: Earning;
   accounts: AccountOption[];
+  liabilities: LiabilityOption[];
   refetch: RefetchEntry[];
 }) {
   const [editing, setEditing] = useState(false);
@@ -347,6 +388,7 @@ function EarningRow({
         <EditEarningForm
           earning={earning}
           accounts={accounts}
+          liabilities={liabilities}
           refetch={refetch}
           onDone={() => setEditing(false)}
         />
@@ -394,9 +436,11 @@ function EarningRow({
 
 function AddEarningForm({
   accounts,
+  liabilities,
   refetch,
 }: {
   accounts: AccountOption[];
+  liabilities: LiabilityOption[];
   refetch: RefetchEntry[];
 }) {
   const [values, setValues] = useState<FormValues>(emptyForm);
@@ -423,6 +467,10 @@ function AddEarningForm({
             ? null
             : pctToFraction(values.pensionSalarySacrificePct),
         studentLoanPlan2: values.studentLoanPlan2,
+        studentLoanLiabilityId:
+          values.studentLoanPlan2 && values.studentLoanLiabilityId !== ""
+            ? values.studentLoanLiabilityId
+            : null,
         toAccountId: values.toAccountId,
         ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
       },
@@ -438,6 +486,7 @@ function AddEarningForm({
         values={values}
         setValues={setValues}
         accounts={accounts}
+        liabilities={liabilities}
       />
       <div className="flex justify-end">
         <Button type="submit" disabled={disabled}>
@@ -451,11 +500,13 @@ function AddEarningForm({
 function EditEarningForm({
   earning,
   accounts,
+  liabilities,
   refetch,
   onDone,
 }: {
   earning: Earning;
   accounts: AccountOption[];
+  liabilities: LiabilityOption[];
   refetch: RefetchEntry[];
   onDone: () => void;
 }) {
@@ -483,6 +534,11 @@ function EditEarningForm({
             ? null
             : pctToFraction(values.pensionSalarySacrificePct),
         studentLoanPlan2: values.studentLoanPlan2,
+        studentLoanLiabilityId: values.studentLoanPlan2
+          ? values.studentLoanLiabilityId === ""
+            ? null
+            : values.studentLoanLiabilityId
+          : null,
         toAccountId: values.toAccountId,
         ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
       },
@@ -498,6 +554,7 @@ function EditEarningForm({
         values={values}
         setValues={setValues}
         accounts={accounts}
+        liabilities={liabilities}
       />
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onDone}>
@@ -515,10 +572,12 @@ function EarningFormFields({
   values,
   setValues,
   accounts,
+  liabilities,
 }: {
   values: FormValues;
   setValues: React.Dispatch<React.SetStateAction<FormValues>>;
   accounts: AccountOption[];
+  liabilities: LiabilityOption[];
 }) {
   const patch = (p: Partial<FormValues>) => setValues((v) => ({ ...v, ...p }));
   return (
@@ -601,10 +660,49 @@ function EarningFormFields({
         <label className="mt-2 flex items-center gap-2">
           <Checkbox
             checked={values.studentLoanPlan2}
-            onCheckedChange={(v) => patch({ studentLoanPlan2: v === true })}
+            onCheckedChange={(v) => {
+              const next = v === true;
+              // Clear any linked liability when plan 2 is disabled — the
+              // backend rejects the pair.
+              patch({
+                studentLoanPlan2: next,
+                ...(next ? {} : { studentLoanLiabilityId: "" }),
+              });
+            }}
           />
           <span>Repaying Student Loan plan 2</span>
         </label>
+        {values.studentLoanPlan2 && (
+          <div className="mt-2 space-y-1">
+            <Label className="text-xs">
+              Linked liability (optional)
+            </Label>
+            <Select
+              value={
+                values.studentLoanLiabilityId === ""
+                  ? "__none__"
+                  : values.studentLoanLiabilityId
+              }
+              onValueChange={(v) =>
+                patch({
+                  studentLoanLiabilityId: v === "__none__" ? "" : v,
+                })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="No liability" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">No liability</SelectItem>
+                {liabilities.map((l) => (
+                  <SelectItem key={l.id} value={l.id}>
+                    {l.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </details>
       <UKTaxCodesField
         earningStart={values.start}
