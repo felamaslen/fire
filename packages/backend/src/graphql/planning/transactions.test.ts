@@ -595,3 +595,81 @@ it("transactionUpdate on a predicted earnings deduction materialises the payslip
     Day job — student loan -245.29 actual editable {"kind":"adj","id":"<uuid>"}"
   `);
 });
+
+it("transactionUpdate on a payslip adjustment keeps every other adjustment in its original position", async () => {
+  await seedYear();
+  const main = await createAsset();
+  await assign(main);
+  await recordSnapshot(main, "2025-03-31", 1_000_000);
+
+  // Explicit ids in deliberately non-insertion order so Postgres's physical
+  // row order (which historically matched insertion order in tests) differs
+  // from the lexicographic id order — the only stable ordering available.
+  // Without the fix, the adjustments come back in insertion order on first
+  // read and then shuffle again after the UPDATE below.
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        payslipCreate(
+          date: "2025-04-30"
+          amountGross: { amount: 3000, currency: "GBP" }
+          name: "April payslip"
+          toAccountId: $a
+          adjustments: [
+            {
+              id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+              amount: { amount: -200, currency: "GBP" }
+              name: "NIC"
+            }
+            {
+              id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+              amount: { amount: -400, currency: "GBP" }
+              name: "Income tax"
+            }
+            {
+              id: "cccccccc-cccc-cccc-cccc-cccccccccccc"
+              amount: { amount: -100, currency: "GBP" }
+              name: "Student loan"
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: main },
+  );
+
+  const before = await aprilTransactions();
+
+  const nicId = await aprilTxId("NIC");
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        transactionUpdate(
+          monthId: "apr-2025"
+          id: $id
+          amount: { amount: 250, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `),
+    { id: nicId },
+  );
+
+  // Row order must stay: gross → tax → NIC → student loan. A previous bug
+  // shuffled updated rows to the end because Postgres returned adjustments
+  // in storage order after an UPDATE.
+  expect(await aprilTransactions()).toMatchInlineSnapshot(`
+    "
+    NAME          AMOUNT SOURCE EDIT     ID                          
+    April payslip 3000   actual editable {"kind":"pay","id":"<uuid>"}
+    Income tax    -400   actual editable {"kind":"adj","id":"<uuid>"}
+    NIC           -250   actual editable {"kind":"adj","id":"<uuid>"}
+    Student loan  -100   actual editable {"kind":"adj","id":"<uuid>"}"
+  `);
+
+  // Only the NIC amount should have changed vs. the pre-edit snapshot.
+  expect(before.replace("-200", "-250")).toBe(await aprilTransactions());
+});
