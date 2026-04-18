@@ -40,7 +40,7 @@ import { InvestmentsPageDocument } from "../investments";
 
 const InvestmentDetailDocument = graphql(
   `
-    query InvestmentDetail {
+    query InvestmentDetail($txFirst: Int, $txAfter: ID) {
       investment: investments {
         edges {
           node {
@@ -57,15 +57,24 @@ const InvestmentDetailDocument = graphql(
                 url
               }
             }
-            transactions {
-              id
-              date
-              units
-              drip
-              price { ...Figure }
-              taxes { ...Figure }
-              fees { ...Figure }
-              asset { id name }
+            transactionsPaged(first: $txFirst, after: $txAfter) {
+              edges {
+                cursor
+                node {
+                  id
+                  date
+                  units
+                  drip
+                  price { ...Figure }
+                  taxes { ...Figure }
+                  fees { ...Figure }
+                  asset { id name }
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
             }
             position {
               units
@@ -162,7 +171,10 @@ type AssetEdge = NonNullable<
 >["edges"][number];
 
 function InvestmentDetail({ id }: { id: string }) {
-  const { data, refetch } = useSuspenseQuery(InvestmentDetailDocument);
+  const { data, refetch, fetchMore } = useSuspenseQuery(
+    InvestmentDetailDocument,
+    { variables: { txFirst: 15, txAfter: null } },
+  );
   const investment = data.investment?.edges
     .map((e) => e.node)
     .find((n) => n.id === id);
@@ -233,9 +245,19 @@ function InvestmentDetail({ id }: { id: string }) {
       <TransactionsSection
         investmentId={investment.id}
         currency={investment.currency}
-        transactions={investment.transactions ?? []}
+        transactions={investment.transactionsPaged?.edges.map((e) => e.node) ?? []}
+        hasNextPage={investment.transactionsPaged?.pageInfo.hasNextPage ?? false}
+        endCursor={investment.transactionsPaged?.pageInfo.endCursor ?? null}
         wrappers={wrappers}
         onMutate={() => void refetch()}
+        onLoadMore={() =>
+          void fetchMore({
+            variables: {
+              txFirst: 15,
+              txAfter: investment.transactionsPaged?.pageInfo.endCursor,
+            },
+          })
+        }
       />
     </div>
   );
@@ -244,26 +266,32 @@ function InvestmentDetail({ id }: { id: string }) {
 type TransactionRow = NonNullable<
   NonNullable<
     ResultOf<typeof InvestmentDetailDocument>["investment"]
-  >["edges"][number]["node"]["transactions"]
->[number];
+  >["edges"][number]["node"]["transactionsPaged"]
+>["edges"][number]["node"];
 
 function TransactionsSection({
   investmentId,
   currency,
   transactions,
   wrappers,
+  hasNextPage,
+  endCursor,
   onMutate,
+  onLoadMore,
 }: {
   investmentId: string;
   currency: string;
   transactions: TransactionRow[];
   wrappers: { id: string; name: string; type: string }[];
+  hasNextPage: boolean;
+  endCursor: string | null;
   onMutate: () => void;
+  onLoadMore: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [deleteTx] = useMutation(InvestmentTransactionDeleteDocument, {
     refetchQueries: [
-      { query: InvestmentDetailDocument },
+      { query: InvestmentDetailDocument, variables: { txFirst: 15, txAfter: null } },
       { query: InvestmentsPageDocument, variables: { first: 100 } },
     ],
     onCompleted: () => toast.success("Transaction removed"),
@@ -284,6 +312,7 @@ function TransactionsSection({
           investmentId={investmentId}
           currency={currency}
           wrappers={wrappers}
+          defaultAssetId={transactions[0]?.asset.id ?? wrappers[0]?.id ?? ""}
           onDone={() => {
             setAdding(false);
             onMutate();
@@ -326,6 +355,14 @@ function TransactionsSection({
           </TableBody>
         </Table>
       )}
+
+      {hasNextPage && endCursor && (
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={onLoadMore}>
+            Load more
+          </Button>
+        </div>
+      )}
     </section>
   );
 }
@@ -334,18 +371,20 @@ function AddTransactionForm({
   investmentId,
   currency,
   wrappers,
+  defaultAssetId,
   onDone,
   onCancel,
 }: {
   investmentId: string;
   currency: string;
   wrappers: { id: string; name: string; type: string }[];
+  defaultAssetId: string;
   onDone: () => void;
   onCancel: () => void;
 }) {
   const [createTx] = useMutation(InvestmentTransactionCreateDocument, {
     refetchQueries: [
-      { query: InvestmentDetailDocument },
+      { query: InvestmentDetailDocument, variables: { txFirst: 15, txAfter: null } },
       { query: InvestmentsPageDocument, variables: { first: 100 } },
     ],
     awaitRefetchQueries: true,
@@ -353,7 +392,7 @@ function AddTransactionForm({
 
   const form = useForm({
     defaultValues: {
-      assetId: wrappers[0]?.id ?? "",
+      assetId: defaultAssetId,
       date: new Date().toISOString().slice(0, 10),
       units: 0,
       priceAmount: 0,
@@ -445,10 +484,11 @@ function AddTransactionForm({
       <form.Field name="priceAmount">
         {(field) => (
           <div className="space-y-1">
-            <Label>Unit price ({currency})</Label>
+            <Label>Unit price</Label>
             <Input
               type="number"
               step="any"
+              currency={currency}
               value={field.state.value}
               onChange={(e) => field.handleChange(Number(e.target.value))}
             />
@@ -458,10 +498,11 @@ function AddTransactionForm({
       <form.Field name="taxesAmount">
         {(field) => (
           <div className="space-y-1">
-            <Label>Taxes ({currency})</Label>
+            <Label>Taxes</Label>
             <Input
               type="number"
               step="any"
+              currency={currency}
               value={field.state.value}
               onChange={(e) => field.handleChange(Number(e.target.value))}
             />
@@ -471,10 +512,11 @@ function AddTransactionForm({
       <form.Field name="feesAmount">
         {(field) => (
           <div className="space-y-1">
-            <Label>Fees ({currency})</Label>
+            <Label>Fees</Label>
             <Input
               type="number"
               step="any"
+              currency={currency}
               value={field.state.value}
               onChange={(e) => field.handleChange(Number(e.target.value))}
             />

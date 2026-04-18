@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, lt, or } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { ID, Int } from "grats";
 
@@ -16,6 +16,12 @@ import {
   type MoneyInput,
 } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
+import {
+  buildConnection,
+  type Connection,
+  decodeCursor,
+  encodeCursor,
+} from "../pagination";
 import { VOID, type Void } from "../void";
 
 /** One buy, sell, or dividend-reinvestment booked against an `Investment` and a wrapper (a net-worth asset of type `STOCK` or `PENSION`). @gqlType */
@@ -241,6 +247,50 @@ export async function investmentTransactionDelete(id: ID): Promise<Void> {
   return VOID;
 }
 
+/** Paginated transactions for an investment, newest-first. Defaults to the 15 most recent. */
+export async function loadInvestmentTransactionsConnection(
+  investmentId: string,
+  first?: Int | null,
+  after?: ID | null,
+): Promise<Connection<InvestmentTransaction>> {
+  const limit = first ?? 15;
+  const cursor = after ? decodeCursor(after) : null;
+
+  const conditions = [eq(InvestmentTransactions.investmentId, investmentId)];
+  if (cursor) {
+    const cursorDate = new Date(cursor.c);
+    conditions.push(
+      or(
+        lt(InvestmentTransactions.date, cursorDate),
+        and(
+          eq(InvestmentTransactions.date, cursorDate),
+          lt(InvestmentTransactions.id, cursor.i),
+        ),
+      )!,
+    );
+  }
+
+  const rows = await db
+    .select()
+    .from(InvestmentTransactions)
+    .where(and(...conditions))
+    .orderBy(desc(InvestmentTransactions.date), desc(InvestmentTransactions.id))
+    .limit(limit + 1);
+
+  const hasNextPage = rows.length > limit;
+  const page = hasNextPage ? rows.slice(0, limit) : rows;
+  const nodes = page.map(InvestmentTransaction.load);
+
+  return buildConnection<InvestmentTransaction>(
+    nodes,
+    (node) => {
+      const row = page.find((r) => r.id === node.id)!;
+      return encodeCursor(row.date.toISOString(), row.id);
+    },
+    { hasNextPage, hasPreviousPage: cursor != null },
+  );
+}
+
 /** Load the transactions for an investment, oldest-first. */
 export async function loadInvestmentTransactions(
   investmentId: string,
@@ -251,7 +301,10 @@ export async function loadInvestmentTransactions(
     .select()
     .from(InvestmentTransactions)
     .where(eq(InvestmentTransactions.investmentId, investmentId))
-    .orderBy(order(InvestmentTransactions.date));
+    .orderBy(
+      order(InvestmentTransactions.date),
+      order(InvestmentTransactions.id),
+    );
   return rows.map(InvestmentTransaction.load);
 }
 

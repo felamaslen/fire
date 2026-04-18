@@ -360,8 +360,14 @@ type Investment {
   position: InvestmentPosition!
   """Stock-split events on this investment, oldest-first."""
   stockSplits: [InvestmentStockSplit!] @semanticNonNull
-  """Transactions booked against this investment, oldest-first."""
+  """
+  Transactions booked against this investment, oldest-first. Full history — for large lists prefer `transactionsPaged`.
+  """
   transactions: [InvestmentTransaction!] @semanticNonNull
+  """
+  Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default.
+  """
+  transactionsPaged(after: ID, first: Int): InvestmentTransactionConnection @semanticNonNull
   """
   Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.
   """
@@ -532,6 +538,22 @@ type InvestmentTransaction {
   Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.
   """
   units: Int!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type InvestmentTransactionConnection {
+  edges: [InvestmentTransactionEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type InvestmentTransactionEdge {
+  cursor: ID!
+  node: InvestmentTransaction!
 }
 
 """
