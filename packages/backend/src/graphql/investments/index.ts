@@ -5,10 +5,16 @@ import { GraphQLError } from "graphql";
 import type { ID } from "grats";
 
 import { db } from "@/db";
-import { InvestmentPrices, Investments } from "@/db/schema/investments";
+import { Investments } from "@/db/schema/investments";
 
 import { assertCurrencyCode, Money } from "../money";
 import { VOID, type Void } from "../void";
+import {
+  InvestmentPosition,
+  InvestmentWrapper,
+  loadInvestmentWrappers,
+} from "./position";
+import { loadInvestmentStats } from "./stats";
 import {
   InvestmentStockSplit,
   loadInvestmentStockSplits,
@@ -39,7 +45,7 @@ export class InvestmentFund {
 /** The underlying instrument an `Investment` represents: a listed stock or a fund. @gqlUnion */
 export type InvestmentAsset = InvestmentStock | InvestmentFund;
 
-/** A tradable holding — either a listed stock or a fund. @gqlType */
+/** A tradable holding — either a listed stock or a fund. `position` gives the aggregate across every wrapper that holds this investment; per-wrapper numbers live on each `wrappers[].position`. @gqlType */
 export class Investment {
   constructor(
     /** @gqlField */
@@ -82,19 +88,26 @@ export class Investment {
     return loadInvestmentStockSplits(this.id);
   }
 
-  /** Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet. @gqlField */
+  /** Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet. @gqlField */
   async unitPriceCached(): Promise<Money | null> {
-    const [row] = await db
-      .select({
-        priceAdjusted: InvestmentPrices.priceAdjusted,
-        currency: InvestmentPrices.currency,
-      })
-      .from(InvestmentPrices)
-      .where(eq(InvestmentPrices.investmentId, this.id))
-      .orderBy(desc(InvestmentPrices.date))
-      .limit(1);
-    if (!row) return null;
-    return Money.fromMinorDenomination(row.priceAdjusted, row.currency);
+    const s = await loadInvestmentStats(this.id);
+    if (s.priceLatest === null) return null;
+    return Money.fromMinorDenomination(s.priceLatest, s.currency);
+  }
+
+  /** Holdings, cost basis, and gain/loss aggregated across every wrapper. @gqlField */
+  async position(): Promise<InvestmentPosition> {
+    const s = await loadInvestmentStats(this.id);
+    return new InvestmentPosition(s);
+  }
+
+  /** Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.
+   *
+   * @gqlField
+   * @gqlAnnotate semanticNonNull
+   */
+  async wrappers(): Promise<InvestmentWrapper[] | null> {
+    return loadInvestmentWrappers(this.id);
   }
 }
 

@@ -499,6 +499,87 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             return [InvestmentFundType, InvestmentStockType];
         }
     });
+    const InvestmentReinvestedType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentReinvested",
+        description: "Summary of DRIP (dividend-reinvestment) activity for one `InvestmentPosition`.",
+        fields() {
+            return {
+                cost: {
+                    description: "Total cost of DRIP units (sum of `units \u00D7 price` for drip transactions).",
+                    name: "cost",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                units: {
+                    description: "Units acquired via dividend reinvestments.",
+                    name: "units",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                value: {
+                    description: "Current market value of the reinvested units. `null` until at least one price is known.",
+                    name: "value",
+                    type: MoneyType
+                }
+            };
+        }
+    });
+    const InvestmentPositionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentPosition",
+        description: "Holdings, cost basis, and gain/loss for an `Investment` \u2014 either the aggregate across every wrapper (`Investment.position`) or filtered to a single wrapper (`InvestmentWrapper.position`). Same shape in both cases.\n\nAll money values are in the parent investment's currency.",
+        fields() {
+            return {
+                costBasis: {
+                    description: "Average price paid per share currently held, excluding fees and taxes. `null` when no units are held.",
+                    name: "costBasis",
+                    type: MoneyType
+                },
+                costBasisWithFees: {
+                    description: "Average price paid per share currently held, including fees and taxes. `null` when no units are held.",
+                    name: "costBasisWithFees",
+                    type: MoneyType
+                },
+                dailyGainPercent: {
+                    description: "Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it.",
+                    name: "dailyGainPercent",
+                    type: GraphQLFloat
+                },
+                dailyGainValue: {
+                    description: "Change in market value of the held position over the most recent pricing interval. `null` until enough price history exists to compute it.",
+                    name: "dailyGainValue",
+                    type: MoneyType
+                },
+                percentGain: {
+                    description: "Unrealised gain as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.",
+                    name: "percentGain",
+                    type: GraphQLFloat
+                },
+                reinvested: {
+                    description: "DRIP (dividend-reinvestment) activity on this position.",
+                    name: "reinvested",
+                    type: new GraphQLNonNull(InvestmentReinvestedType)
+                },
+                totalCost: {
+                    description: "Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it.",
+                    name: "totalCost",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                totalGain: {
+                    description: "Unrealised gain on the held position \u2014 `totalValue - totalCost`. `null` until at least one price is known.",
+                    name: "totalGain",
+                    type: MoneyType
+                },
+                totalValue: {
+                    description: "Current market value of units held. `null` until at least one price is known for the investment.",
+                    name: "totalValue",
+                    type: MoneyType
+                },
+                units: {
+                    description: "Net units held.",
+                    name: "units",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
     const InvestmentStockSplitType: GraphQLObjectType = new GraphQLObjectType({
         name: "InvestmentStockSplit",
         description: "A stock-split event recorded against an `Investment`. `units_post = units_pre * ratio`, so ratio > 1 is a forward split and 0 < ratio < 1 is a reverse split.",
@@ -568,9 +649,27 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const InvestmentWrapperType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentWrapper",
+        description: "One wrapper's slice of an `Investment`. Holdings and stats are on `position`; the wrapper itself is on `asset`.",
+        fields() {
+            return {
+                asset: {
+                    description: "The wrapper (a `STOCK` or `PENSION` net-worth asset) this slice belongs to.",
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                position: {
+                    description: "Holdings, cost basis, and gain/loss filtered to this wrapper.",
+                    name: "position",
+                    type: new GraphQLNonNull(InvestmentPositionType)
+                }
+            };
+        }
+    });
     const InvestmentType: GraphQLObjectType = new GraphQLObjectType({
         name: "Investment",
-        description: "A tradable holding \u2014 either a listed stock or a fund.",
+        description: "A tradable holding \u2014 either a listed stock or a fund. `position` gives the aggregate across every wrapper that holds this investment; per-wrapper numbers live on each `wrappers[].position`.",
         fields() {
             return {
                 asset: {
@@ -591,6 +690,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
                 },
+                position: {
+                    description: "Holdings, cost basis, and gain/loss aggregated across every wrapper.",
+                    name: "position",
+                    type: new GraphQLNonNull(InvestmentPositionType)
+                },
                 stockSplits: {
                     description: "Stock-split events on this investment, oldest-first.",
                     name: "stockSplits",
@@ -608,9 +712,17 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 unitPriceCached: {
-                    description: "Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet.",
+                    description: "Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.",
                     name: "unitPriceCached",
                     type: MoneyType
+                },
+                wrappers: {
+                    description: "Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.",
+                    name: "wrappers",
+                    type: new GraphQLList(new GraphQLNonNull(InvestmentWrapperType)),
+                    resolve(source, args, context, info) {
+                        return assertNonNull(defaultFieldResolver(source, args, context, info));
+                    }
                 }
             };
         }
@@ -2754,6 +2866,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentFundType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentFundType, InvestmentPositionType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }
