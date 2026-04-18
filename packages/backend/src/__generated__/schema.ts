@@ -153,6 +153,59 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const NetWorthLiabilityTypeType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Kind of liability a category represents.",
+        name: "NetWorthLiabilityType",
+        values: {
+            CREDIT_CARD: {
+                value: "CREDIT_CARD"
+            },
+            LOAN: {
+                value: "LOAN"
+            },
+            MISC: {
+                value: "MISC"
+            }
+        }
+    });
+    const NetWorthCategoryLiabilityType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCategoryLiability",
+        description: "A reusable bucket for liabilities (credit card, mortgage, personal loan, ...).",
+        fields() {
+            return {
+                asset: {
+                    description: "The asset this liability is funding (for LTV calcs), if any.",
+                    name: "asset",
+                    type: NetWorthCategoryAssetType
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                interestRate: {
+                    description: "Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.",
+                    name: "interestRate",
+                    type: GraphQLFloat
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                skip: {
+                    description: "When true, the liability is hidden from aggregate totals.",
+                    name: "skip",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                type: {
+                    name: "type",
+                    type: new GraphQLNonNull(NetWorthLiabilityTypeType)
+                }
+            };
+        },
+        interfaces() {
+            return [NetWorthCategoryType];
+        }
+    });
     const PlanningBillType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningBill",
         description: "A recurring bill that projects forward into future months' balances as a provisional outgoing transaction until an actual transaction is recorded for that month.",
@@ -185,6 +238,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 id: {
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
+                },
+                liability: {
+                    description: "Liability this bill services \u2014 e.g. a credit-card paid off by a monthly direct debit, or a mortgage principal. Null if the bill isn't tied to a liability.",
+                    name: "liability",
+                    type: NetWorthCategoryLiabilityType
                 },
                 name: {
                     name: "name",
@@ -415,59 +473,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLFloat)
                 }
             };
-        }
-    });
-    const NetWorthLiabilityTypeType: GraphQLEnumType = new GraphQLEnumType({
-        description: "Kind of liability a category represents.",
-        name: "NetWorthLiabilityType",
-        values: {
-            CREDIT_CARD: {
-                value: "CREDIT_CARD"
-            },
-            LOAN: {
-                value: "LOAN"
-            },
-            MISC: {
-                value: "MISC"
-            }
-        }
-    });
-    const NetWorthCategoryLiabilityType: GraphQLObjectType = new GraphQLObjectType({
-        name: "NetWorthCategoryLiability",
-        description: "A reusable bucket for liabilities (credit card, mortgage, personal loan, ...).",
-        fields() {
-            return {
-                asset: {
-                    description: "The asset this liability is funding (for LTV calcs), if any.",
-                    name: "asset",
-                    type: NetWorthCategoryAssetType
-                },
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                interestRate: {
-                    description: "Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.",
-                    name: "interestRate",
-                    type: GraphQLFloat
-                },
-                name: {
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                skip: {
-                    description: "When true, the liability is hidden from aggregate totals.",
-                    name: "skip",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                type: {
-                    name: "type",
-                    type: new GraphQLNonNull(NetWorthLiabilityTypeType)
-                }
-            };
-        },
-        interfaces() {
-            return [NetWorthCategoryType];
         }
     });
     const NetWorthCategoryOptionType: GraphQLObjectType = new GraphQLObjectType({

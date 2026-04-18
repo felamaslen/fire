@@ -708,6 +708,10 @@ type PlanningBill {
   """Planning account (asset + alias) the bill is paid from."""
   fromAccount: PlanningAccount!
   id: ID!
+  """
+  Liability this bill services — e.g. a credit-card paid off by a monthly direct debit, or a mortgage principal. Null if the bill isn't tied to a liability.
+  """
+  liability: NetWorthCategoryLiability
   name: String!
   """First day the bill is in effect."""
   start: Date!
