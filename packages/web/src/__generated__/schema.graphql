@@ -273,6 +273,14 @@ input PlanningYearTaxRatesUKInput {
   thresholdStudentLoanPlan2: Float!
 }
 
+"""Metadata for a currency supported by the server."""
+type Currency {
+  """ISO-4217 three-letter code (e.g. `"USD"`)."""
+  code: String!
+  """Human-readable currency name (e.g. `"United States dollar"`)."""
+  name: String!
+}
+
 """
 A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for £123.45).
 """
@@ -859,9 +867,13 @@ type Query {
   """
   bills(after: ID, first: Int): PlanningBillConnection @semanticNonNull
   """
+  Every currency code the server accepts for money inputs, paired with a human-readable name. Use this to populate currency pickers.
+  """
+  currencies: [Currency!] @semanticNonNull
+  """
   ISO-4217 code of the server's configured home currency (e.g. `"GBP"`). Used by clients as the default currency when the user has not configured any currency rates on an entry.
   """
-  currencyDefault: String!
+  currencyDefault: String @semanticNonNull
   """
   Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
   """
