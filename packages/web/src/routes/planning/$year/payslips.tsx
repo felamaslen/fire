@@ -1,7 +1,7 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Pencil, Plus, X } from "lucide-react";
-import { useState } from "react";
+import { FileText, Paperclip, Pencil, Plus, Upload, X } from "lucide-react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 
 import { DeleteButton } from "@/components/delete-button";
@@ -12,6 +12,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,6 +41,7 @@ const PlanningPayslipsDialogDocument = graphql(
               currency
               ...Figure
             }
+            fileUrl
             toAccount {
               id
               name
@@ -89,6 +91,7 @@ const PlanningPayslipCreateDocument = graphql(`
     $name: String!
     $toAccountId: ID!
     $adjustments: [PayslipAdjustmentInput!]
+    $file: Upload
   ) {
     payslipCreate(
       date: $date
@@ -96,6 +99,7 @@ const PlanningPayslipCreateDocument = graphql(`
       name: $name
       toAccountId: $toAccountId
       adjustments: $adjustments
+      file: $file
     ) {
       id
     }
@@ -110,6 +114,7 @@ const PlanningPayslipUpdateDocument = graphql(`
     $name: String
     $toAccountId: ID
     $adjustments: [PayslipAdjustmentInput!]
+    $file: Upload
   ) {
     payslipUpdate(
       id: $id
@@ -118,6 +123,7 @@ const PlanningPayslipUpdateDocument = graphql(`
       name: $name
       toAccountId: $toAccountId
       adjustments: $adjustments
+      file: $file
     ) {
       id
     }
@@ -172,9 +178,18 @@ type FormValues = {
   amount: string;
   toAccountId: string;
   adjustments: AdjustmentEntry[];
+  file: File | null;
 };
 
 const CURRENCY = "GBP";
+
+const FILES_ORIGIN = new URL(
+  import.meta.env.VITE_GRAPHQL_URL ?? "http://localhost:4000/graphql",
+).origin;
+
+function resolveFileUrl(fileUrl: string): string {
+  return /^https?:\/\//.test(fileUrl) ? fileUrl : `${FILES_ORIGIN}${fileUrl}`;
+}
 
 const emptyForm: FormValues = {
   name: "",
@@ -182,6 +197,7 @@ const emptyForm: FormValues = {
   amount: "",
   toAccountId: "",
   adjustments: [],
+  file: null,
 };
 
 function payslipToForm(p: Payslip): FormValues {
@@ -197,6 +213,7 @@ function payslipToForm(p: Payslip): FormValues {
       sign: a.amount.amount < 0 ? "-" : "+",
       liabilityId: a.liability?.id ?? "",
     })),
+    file: null,
   };
 }
 
@@ -366,6 +383,12 @@ function PayslipRow({
           </div>
         )}
       </div>
+      {payslip.fileUrl && (
+        <PdfPreviewDialog
+          url={resolveFileUrl(payslip.fileUrl)}
+          label={`View ${payslip.name} file`}
+        />
+      )}
       <Button
         variant="ghost"
         size="icon"
@@ -404,6 +427,7 @@ function AddPayslipForm({
         amountGross: { amount: Number(values.amount), currency: CURRENCY },
         toAccountId: values.toAccountId,
         adjustments: adjustmentsForMutation(values.adjustments),
+        file: values.file,
       },
     });
     toast.success(`Added ${values.name.trim()}`);
@@ -458,6 +482,7 @@ function EditPayslipForm({
         amountGross: { amount: Number(values.amount), currency: CURRENCY },
         toAccountId: values.toAccountId,
         adjustments: adjustmentsForMutation(values.adjustments),
+        ...(values.file ? { file: values.file } : {}),
       },
     });
     toast.success(`Updated ${values.name.trim()}`);
@@ -472,6 +497,7 @@ function EditPayslipForm({
         setValues={setValues}
         accounts={accounts}
         liabilities={liabilities}
+        existingFileUrl={payslip.fileUrl}
       />
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onDone}>
@@ -490,11 +516,13 @@ function PayslipFormFields({
   setValues,
   accounts,
   liabilities,
+  existingFileUrl,
 }: {
   values: FormValues;
   setValues: React.Dispatch<React.SetStateAction<FormValues>>;
   accounts: AccountOption[];
   liabilities: LiabilityOption[];
+  existingFileUrl?: string | null;
 }) {
   const patch = (p: Partial<FormValues>) => setValues((v) => ({ ...v, ...p }));
   return (
@@ -548,7 +576,147 @@ function PayslipFormFields({
         liabilities={liabilities}
         onChange={(adjustments) => patch({ adjustments })}
       />
+      <FileField
+        file={values.file}
+        existingFileUrl={existingFileUrl ?? null}
+        onChange={(file) => patch({ file })}
+      />
     </>
+  );
+}
+
+function PdfPreviewDialog({
+  url,
+  label,
+  children,
+}: {
+  url: string;
+  label: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        {children ?? (
+          <Button variant="ghost" size="icon" aria-label={label}>
+            <FileText className="size-4" />
+          </Button>
+        )}
+      </DialogTrigger>
+      <DialogContent className="max-w-4xl p-0 sm:max-w-4xl">
+        <DialogHeader className="flex-row items-center justify-between gap-2 space-y-0 border-b px-4 py-3">
+          <DialogTitle className="text-sm">{label}</DialogTitle>
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="mr-8 text-xs underline underline-offset-2"
+          >
+            Open in new tab
+          </a>
+        </DialogHeader>
+        <iframe src={url} title={label} className="h-[80vh] w-full" />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FileField({
+  file,
+  existingFileUrl,
+  onChange,
+}: {
+  file: File | null;
+  existingFileUrl: string | null;
+  onChange: (file: File | null) => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+  const inputId = `payslip-file-${useId()}`;
+
+  const accept = (f: File | null | undefined): f is File => {
+    if (!f) return false;
+    if (
+      f.type !== "application/pdf" &&
+      !f.name.toLowerCase().endsWith(".pdf")
+    ) {
+      toast.error("Only PDF files are supported.");
+      return false;
+    }
+    return true;
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer.files[0];
+    if (accept(f)) onChange(f);
+  };
+
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+      className={`rounded-md border border-dashed p-3 text-xs transition-colors ${
+        dragging ? "border-primary bg-primary/5" : "bg-muted/20"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <Paperclip className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          {file ? (
+            <span className="truncate font-medium">{file.name}</span>
+          ) : existingFileUrl ? (
+            <PdfPreviewDialog
+              url={resolveFileUrl(existingFileUrl)}
+              label="View current file"
+            >
+              <button
+                type="button"
+                className="truncate text-left font-medium underline underline-offset-2"
+              >
+                Current file (preview)
+              </button>
+            </PdfPreviewDialog>
+          ) : (
+            <span className="text-muted-foreground">
+              Drop a PDF here, or choose a file.
+            </span>
+          )}
+        </div>
+        <input
+          id={inputId}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0] ?? null;
+            if (f && accept(f)) onChange(f);
+            e.target.value = "";
+          }}
+        />
+        <Button type="button" variant="outline" size="sm" asChild>
+          <label htmlFor={inputId} className="cursor-pointer">
+            <Upload className="mr-1 size-3" />
+            {file || existingFileUrl ? "Replace" : "Choose"}
+          </label>
+        </Button>
+        {file && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => onChange(null)}
+            aria-label="Clear selected file"
+          >
+            <X className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
