@@ -1,13 +1,19 @@
 import { strict as assert } from "node:assert";
 
-import { desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { GraphQLError } from "graphql";
-import type { ID } from "grats";
+import type { ID, Int } from "grats";
 
 import { db } from "@/db";
 import { Investments } from "@/db/schema/investments";
 
 import { assertCurrencyCode, Money } from "../money";
+import {
+  buildConnection,
+  type Connection,
+  decodeCursor,
+  encodeCursor,
+} from "../pagination";
 import { VOID, type Void } from "../void";
 import {
   InvestmentPosition,
@@ -188,15 +194,101 @@ export async function investmentDelete(id: ID): Promise<Void> {
   return VOID;
 }
 
-/** All investments recorded on the server, most-recently-created first.
+/** Ascending or descending order for a sort input. @gqlEnum */
+export type SortDirection = "ASC" | "DESC";
+
+/** Choose how to order `Query.investments`. Exactly one field must be set. When omitted entirely the list is newest-first by creation time. @gqlInput */
+export type InvestmentSort =
+  | { value: SortDirection }
+  | { gainAbs: SortDirection }
+  | { gainPercent: SortDirection };
+
+type SortKey = "createdAt" | "value" | "gainAbs" | "gainPercent";
+
+const DEFAULT_PAGE_SIZE = 50;
+
+function parseSortInput(sort: InvestmentSort | null | undefined): {
+  key: SortKey;
+  direction: SortDirection;
+} {
+  if (sort == null) return { key: "createdAt", direction: "DESC" };
+  if ("value" in sort) return { key: "value", direction: sort.value };
+  if ("gainAbs" in sort) return { key: "gainAbs", direction: sort.gainAbs };
+  return { key: "gainPercent", direction: sort.gainPercent };
+}
+
+/** Paginated list of investments, sorted by the requested key. Computed sorts (`value`, `gainAbs`, `gainPercent`) use current cached values; cursors are only stable while those values don't change.
  *
  * @gqlQueryField
  * @gqlAnnotate semanticNonNull
  */
-export async function investments(): Promise<Investment[] | null> {
-  const rows = await db
-    .select()
-    .from(Investments)
-    .orderBy(desc(Investments.createdAt));
-  return rows.map(Investment.load);
+export async function investments(
+  first?: Int | null,
+  after?: ID | null,
+  sort?: InvestmentSort | null,
+): Promise<Connection<Investment> | null> {
+  const limit = first ?? DEFAULT_PAGE_SIZE;
+  const afterCursor = after ? decodeCursor(after) : null;
+  const { key, direction } = parseSortInput(sort);
+
+  const rows = await db.select().from(Investments);
+
+  // Only load stats for rows when the caller actually needs them to sort.
+  const enriched: {
+    row: (typeof rows)[number];
+    sortable: number;
+    raw: string;
+  }[] =
+    key === "createdAt"
+      ? rows.map((row) => ({
+          row,
+          sortable: row.createdAt.getTime(),
+          raw: String(row.createdAt.getTime()),
+        }))
+      : await Promise.all(
+          rows.map(async (row) => {
+            const s = await loadInvestmentStats(row.id);
+            const totalValue =
+              s.priceLatest === null ? null : s.unitsHeld * s.priceLatest;
+            const totalGain =
+              totalValue === null ? null : totalValue - s.unitsPriceSum;
+            const percentGain =
+              totalGain === null || s.unitsPriceSum === 0
+                ? null
+                : totalGain / s.unitsPriceSum;
+            const sortable =
+              key === "value"
+                ? (totalValue ?? Number.NEGATIVE_INFINITY)
+                : key === "gainAbs"
+                  ? (totalGain ?? Number.NEGATIVE_INFINITY)
+                  : (percentGain ?? Number.NEGATIVE_INFINITY);
+            return { row, sortable, raw: String(sortable) };
+          }),
+        );
+
+  const multiplier = direction === "ASC" ? 1 : -1;
+  enriched.sort((a, b) => {
+    const d = (a.sortable - b.sortable) * multiplier;
+    if (d !== 0) return d;
+    return a.row.id.localeCompare(b.row.id);
+  });
+
+  let startIndex = 0;
+  if (afterCursor) {
+    const idx = enriched.findIndex((e) => e.row.id === afterCursor.i);
+    if (idx === -1) throw new GraphQLError("cursor references unknown row");
+    startIndex = idx + 1;
+  }
+  const slice = enriched.slice(startIndex, startIndex + limit + 1);
+  const hasNextPage = slice.length > limit;
+  const page = hasNextPage ? slice.slice(0, limit) : slice;
+
+  return buildConnection<Investment>(
+    page.map((p) => Investment.load(p.row)),
+    (_node) => {
+      const entry = page.find((p) => p.row.id === _node.id)!;
+      return encodeCursor(entry.raw, entry.row.id);
+    },
+    { hasNextPage, hasPreviousPage: afterCursor != null },
+  );
 }
