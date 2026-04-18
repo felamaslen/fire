@@ -11,6 +11,7 @@ import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, Gra
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
+import { investmentAllocations as queryInvestmentAllocationsResolver, investmentAllocationsSet as mutationInvestmentAllocationsSetResolver, investmentCashAllocationSet as mutationInvestmentCashAllocationSetResolver } from "./../graphql/investments/allocations";
 import { investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
@@ -610,6 +611,45 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet.",
                     name: "unitPriceCached",
                     type: MoneyType
+                }
+            };
+        }
+    });
+    const InvestmentAllocationType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentAllocation",
+        description: "Target allocation of one wrapper's value to a specific investment.",
+        fields() {
+            return {
+                allocation: {
+                    description: "Target fraction of the wrapper's value allocated to the investment. `0 < allocation <= 1`.",
+                    name: "allocation",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                asset: {
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                investment: {
+                    name: "investment",
+                    type: new GraphQLNonNull(InvestmentType)
+                }
+            };
+        }
+    });
+    const InvestmentAllocationsResultType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentAllocationsResult",
+        description: "Allocations configured for a single wrapper, plus the portfolio-wide cash allocation share that applies across the whole portfolio.",
+        fields() {
+            return {
+                cash: {
+                    description: "Portfolio-wide target cash fraction (applies across all wrappers in aggregate). `null` when no cash allocation has been configured yet.",
+                    name: "cash",
+                    type: GraphQLFloat
+                },
+                investments: {
+                    description: "Per-investment allocations for the wrapper. Sums to 1.",
+                    name: "investments",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentAllocationType)))
                 }
             };
         }
@@ -1222,6 +1262,20 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return assertNonNull(queryEarningsResolver(args.first, args.after));
                     }
                 },
+                investmentAllocations: {
+                    description: "Allocations configured for one wrapper. When `assetId` is `null`, portfolio-wide allocations (weighted across wrappers) \u2014 **not yet implemented**, returns an error.",
+                    name: "investmentAllocations",
+                    type: InvestmentAllocationsResultType,
+                    args: {
+                        assetId: {
+                            description: "The wrapper whose allocations to return. Pass `null` to aggregate across the whole portfolio (coming in a later release).",
+                            type: GraphQLID
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryInvestmentAllocationsResolver(args.assetId));
+                    }
+                },
                 investments: {
                     description: "All investments recorded on the server, most-recently-created first.",
                     name: "investments",
@@ -1404,6 +1458,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 taxCode: {
                     name: "taxCode",
                     type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const InvestmentAllocationInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        name: "InvestmentAllocationInput",
+        fields() {
+            return {
+                allocation: {
+                    description: "Target fraction of the wrapper's value allocated to this investment. `0 < allocation <= 1`.",
+                    name: "allocation",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                investmentId: {
+                    name: "investmentId",
+                    type: new GraphQLNonNull(GraphQLID)
                 }
             };
         }
@@ -2115,6 +2185,36 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.ukTaxCodes);
                     }
                 },
+                investmentAllocationsSet: {
+                    description: "Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to exactly 1.",
+                    name: "investmentAllocationsSet",
+                    type: new GraphQLNonNull(InvestmentAllocationsResultType),
+                    args: {
+                        allocations: {
+                            type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentAllocationInputType)))
+                        },
+                        assetId: {
+                            description: "Wrapper (`STOCK` or `PENSION` net-worth asset) whose allocations are being set.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentAllocationsSetResolver(args.assetId, args.allocations);
+                    }
+                },
+                investmentCashAllocationSet: {
+                    description: "Set the portfolio-wide target cash allocation (applies across every wrapper in aggregate). `0 <= allocation <= 1`.",
+                    name: "investmentCashAllocationSet",
+                    type: new GraphQLNonNull(GraphQLFloat),
+                    args: {
+                        allocation: {
+                            type: new GraphQLNonNull(GraphQLFloat)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentCashAllocationSetResolver(args.allocation);
+                    }
+                },
                 investmentCreate: {
                     description: "Create a new investment.",
                     name: "investmentCreate",
@@ -2654,6 +2754,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentFundType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentFundType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }
