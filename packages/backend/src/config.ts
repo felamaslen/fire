@@ -1,120 +1,63 @@
-/** Per-currency metadata used to translate between major and minor denominations. */
+/** Per-currency metadata used to translate between major and minor denominations and to render human-readable currency names. */
 export const CURRENCIES = {
-  /** United Arab Emirates dirham */
-  AED: { scale: 2 }, // fils (1/100)
-  /** Argentine peso */
-  ARS: { scale: 2 }, // centavo (1/100)
-  /** Australian dollar */
-  AUD: { scale: 2 }, // cent (1/100)
-  /** Bangladeshi taka */
-  BDT: { scale: 2 }, // poisha (1/100)
-  /** Bahraini dinar */
-  BHD: { scale: 3 }, // fils (1/1000)
-  /** Brazilian real */
-  BRL: { scale: 2 }, // centavo (1/100)
-  /** Canadian dollar */
-  CAD: { scale: 2 }, // cent (1/100)
-  /** Swiss franc */
-  CHF: { scale: 2 }, // rappen / centime (1/100)
-  /** Chilean peso */
-  CLP: { scale: 0 }, // no minor unit (centavo withdrawn)
-  /** Chinese yuan renminbi */
-  CNY: { scale: 2 }, // fen (分, 1/100)
-  /** Colombian peso */
-  COP: { scale: 2 }, // centavo (1/100)
-  /** Czech koruna */
-  CZK: { scale: 2 }, // haléř (1/100 — no longer minted, still ISO's minor unit)
-  /** Danish krone */
-  DKK: { scale: 2 }, // øre (1/100 — no longer minted, still ISO's minor unit)
-  /** Egyptian pound */
-  EGP: { scale: 2 }, // piastre (1/100)
-  /** Euro */
-  EUR: { scale: 2 }, // cent (1/100)
-  /** Pound sterling */
-  GBP: { scale: 2 }, // penny (1/100)
-  /** Ghanaian cedi */
-  GHS: { scale: 2 }, // pesewa (1/100)
-  /** Hong Kong dollar */
-  HKD: { scale: 2 }, // cent (1/100)
-  /** Hungarian forint */
-  HUF: { scale: 2 }, // fillér (1/100 — no longer minted)
-  /** Israeli new shekel */
-  ILS: { scale: 2 }, // agora (1/100)
-  /** Indian rupee */
-  INR: { scale: 2 }, // paisa (1/100)
-  /** Icelandic króna */
-  ISK: { scale: 0 }, // no minor unit (eyrir withdrawn 2003)
-  /** Jordanian dinar */
-  JOD: { scale: 3 }, // fils (1/1000)
-  /** Japanese yen */
-  JPY: { scale: 0 }, // no minor unit (sen withdrawn 1953)
-  /** Kenyan shilling */
-  KES: { scale: 2 }, // cent (1/100)
-  /** South Korean won */
-  KRW: { scale: 0 }, // no minor unit (jeon withdrawn)
-  /** Kuwaiti dinar */
-  KWD: { scale: 3 }, // fils (1/1000)
-  /** Sri Lankan rupee */
-  LKR: { scale: 2 }, // cent (1/100)
-  /** Moroccan dirham */
-  MAD: { scale: 2 }, // centime (1/100)
-  /** Mexican peso */
-  MXN: { scale: 2 }, // centavo (1/100)
-  /** Malaysian ringgit */
-  MYR: { scale: 2 }, // sen (1/100)
-  /** Nigerian naira */
-  NGN: { scale: 2 }, // kobo (1/100)
-  /** Norwegian krone */
-  NOK: { scale: 2 }, // øre (1/100 — no longer minted, still ISO's minor unit)
-  /** New Zealand dollar */
-  NZD: { scale: 2 }, // cent (1/100)
-  /** Omani rial */
-  OMR: { scale: 3 }, // baisa (1/1000)
-  /** Peruvian sol */
-  PEN: { scale: 2 }, // céntimo (1/100)
-  /** Philippine peso */
-  PHP: { scale: 2 }, // sentimo (1/100)
-  /** Pakistani rupee */
-  PKR: { scale: 2 }, // paisa (1/100)
-  /** Polish złoty */
-  PLN: { scale: 2 }, // grosz (1/100)
-  /** Qatari riyal */
-  QAR: { scale: 2 }, // dirham (1/100)
-  /** Romanian leu */
-  RON: { scale: 2 }, // ban (1/100)
-  /** Serbian dinar */
-  RSD: { scale: 2 }, // para (1/100)
-  /** Russian ruble */
-  RUB: { scale: 2 }, // kopeck (1/100)
-  /** Saudi riyal */
-  SAR: { scale: 2 }, // halala (1/100)
-  /** Seychellois rupee */
-  SCR: { scale: 2 }, // cent (1/100)
-  /** Swedish krona */
-  SEK: { scale: 2 }, // öre (1/100)
-  /** Singapore dollar */
-  SGD: { scale: 2 }, // cent (1/100)
-  /** Thai baht */
-  THB: { scale: 2 }, // satang (1/100)
-  /** Tunisian dinar */
-  TND: { scale: 3 }, // millime (1/1000)
-  /** Turkish lira */
-  TRY: { scale: 2 }, // kuruş (1/100)
-  /** New Taiwan dollar */
-  TWD: { scale: 2 }, // fen (分, 1/100)
-  /** Ukrainian hryvnia */
-  UAH: { scale: 2 }, // kopiyka (1/100)
-  /** United States dollar */
-  USD: { scale: 2 }, // cent (1/100)
-  /** Uruguayan peso */
-  UYU: { scale: 2 }, // centésimo (1/100)
-  /** Venezuelan bolívar soberano */
-  VES: { scale: 2 }, // céntimo (1/100)
-  /** Vietnamese đồng */
-  VND: { scale: 0 }, // no minor unit (hào / xu withdrawn)
-  /** South African rand */
-  ZAR: { scale: 2 }, // cent (1/100)
-} as const satisfies Record<string, { scale: number }>;
+  AED: { scale: 2, name: "United Arab Emirates dirham" }, // fils (1/100)
+  ARS: { scale: 2, name: "Argentine peso" }, // centavo (1/100)
+  AUD: { scale: 2, name: "Australian dollar" }, // cent (1/100)
+  BDT: { scale: 2, name: "Bangladeshi taka" }, // poisha (1/100)
+  BHD: { scale: 3, name: "Bahraini dinar" }, // fils (1/1000)
+  BRL: { scale: 2, name: "Brazilian real" }, // centavo (1/100)
+  CAD: { scale: 2, name: "Canadian dollar" }, // cent (1/100)
+  CHF: { scale: 2, name: "Swiss franc" }, // rappen / centime (1/100)
+  CLP: { scale: 0, name: "Chilean peso" }, // no minor unit (centavo withdrawn)
+  CNY: { scale: 2, name: "Chinese yuan renminbi" }, // fen (分, 1/100)
+  COP: { scale: 2, name: "Colombian peso" }, // centavo (1/100)
+  CZK: { scale: 2, name: "Czech koruna" }, // haléř (1/100 — no longer minted, still ISO's minor unit)
+  DKK: { scale: 2, name: "Danish krone" }, // øre (1/100 — no longer minted, still ISO's minor unit)
+  EGP: { scale: 2, name: "Egyptian pound" }, // piastre (1/100)
+  EUR: { scale: 2, name: "Euro" }, // cent (1/100)
+  GBP: { scale: 2, name: "Pound sterling" }, // penny (1/100)
+  GHS: { scale: 2, name: "Ghanaian cedi" }, // pesewa (1/100)
+  HKD: { scale: 2, name: "Hong Kong dollar" }, // cent (1/100)
+  HUF: { scale: 2, name: "Hungarian forint" }, // fillér (1/100 — no longer minted)
+  ILS: { scale: 2, name: "Israeli new shekel" }, // agora (1/100)
+  INR: { scale: 2, name: "Indian rupee" }, // paisa (1/100)
+  ISK: { scale: 0, name: "Icelandic króna" }, // no minor unit (eyrir withdrawn 2003)
+  JOD: { scale: 3, name: "Jordanian dinar" }, // fils (1/1000)
+  JPY: { scale: 0, name: "Japanese yen" }, // no minor unit (sen withdrawn 1953)
+  KES: { scale: 2, name: "Kenyan shilling" }, // cent (1/100)
+  KRW: { scale: 0, name: "South Korean won" }, // no minor unit (jeon withdrawn)
+  KWD: { scale: 3, name: "Kuwaiti dinar" }, // fils (1/1000)
+  LKR: { scale: 2, name: "Sri Lankan rupee" }, // cent (1/100)
+  MAD: { scale: 2, name: "Moroccan dirham" }, // centime (1/100)
+  MXN: { scale: 2, name: "Mexican peso" }, // centavo (1/100)
+  MYR: { scale: 2, name: "Malaysian ringgit" }, // sen (1/100)
+  NGN: { scale: 2, name: "Nigerian naira" }, // kobo (1/100)
+  NOK: { scale: 2, name: "Norwegian krone" }, // øre (1/100 — no longer minted, still ISO's minor unit)
+  NZD: { scale: 2, name: "New Zealand dollar" }, // cent (1/100)
+  OMR: { scale: 3, name: "Omani rial" }, // baisa (1/1000)
+  PEN: { scale: 2, name: "Peruvian sol" }, // céntimo (1/100)
+  PHP: { scale: 2, name: "Philippine peso" }, // sentimo (1/100)
+  PKR: { scale: 2, name: "Pakistani rupee" }, // paisa (1/100)
+  PLN: { scale: 2, name: "Polish złoty" }, // grosz (1/100)
+  QAR: { scale: 2, name: "Qatari riyal" }, // dirham (1/100)
+  RON: { scale: 2, name: "Romanian leu" }, // ban (1/100)
+  RSD: { scale: 2, name: "Serbian dinar" }, // para (1/100)
+  RUB: { scale: 2, name: "Russian ruble" }, // kopeck (1/100)
+  SAR: { scale: 2, name: "Saudi riyal" }, // halala (1/100)
+  SCR: { scale: 2, name: "Seychellois rupee" }, // cent (1/100)
+  SEK: { scale: 2, name: "Swedish krona" }, // öre (1/100)
+  SGD: { scale: 2, name: "Singapore dollar" }, // cent (1/100)
+  THB: { scale: 2, name: "Thai baht" }, // satang (1/100)
+  TND: { scale: 3, name: "Tunisian dinar" }, // millime (1/1000)
+  TRY: { scale: 2, name: "Turkish lira" }, // kuruş (1/100)
+  TWD: { scale: 2, name: "New Taiwan dollar" }, // fen (分, 1/100)
+  UAH: { scale: 2, name: "Ukrainian hryvnia" }, // kopiyka (1/100)
+  USD: { scale: 2, name: "United States dollar" }, // cent (1/100)
+  UYU: { scale: 2, name: "Uruguayan peso" }, // centésimo (1/100)
+  VES: { scale: 2, name: "Venezuelan bolívar soberano" }, // céntimo (1/100)
+  VND: { scale: 0, name: "Vietnamese đồng" }, // no minor unit (hào / xu withdrawn)
+  ZAR: { scale: 2, name: "South African rand" }, // cent (1/100)
+} as const satisfies Record<string, { scale: number; name: string }>;
 
 /** ISO-4217 code of the home currency: the single currency all aggregate totals (`NetWorthEntry.totalAssets`, etc.) are expressed in, and the default used when no currency is specified on a client input. `satisfies` checks it's one of `CURRENCIES`; the `CurrencyCode` type itself is re-exported from `@/db/schema/currency` (derived from the Drizzle pgEnum). */
 export const HOME_CURRENCY = "GBP" satisfies keyof typeof CURRENCIES;
