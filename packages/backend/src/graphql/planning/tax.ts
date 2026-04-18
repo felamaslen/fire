@@ -115,6 +115,8 @@ export type UKTakeInput = {
   studentLoanPlan2: boolean;
   /** UK tax parameters (rates and band thresholds) for the applicable financial year. */
   rates: typeof PlanningYearUKTaxRates.$inferSelect;
+  /** HMRC tax code in effect for this projection — e.g. `1257L`, `K475`, `0T`, `BR`, `NT`. When null / unset, the year's default personal allowance (`rates.thresholdBasic`) is used with the high-income taper. */
+  taxCode?: string | null;
 };
 
 /** Output of `computeUKTake`. All values are annual integers in fractional units of GBP (pence). Deductions are returned as positive numbers; callers can render them as negatives. */
@@ -144,6 +146,7 @@ export function computeUKTake({
   pension,
   studentLoanPlan2,
   rates,
+  taxCode,
 }: UKTakeInput): UKTake {
   const sac = Math.round(gross * (pension.sacrifice ?? 0));
   const postSacrifice = gross - sac;
@@ -152,16 +155,28 @@ export function computeUKTake({
   const incomeTaxBase = postSacrifice - netPay;
   const studentLoanBase = postSacrifice - netPay;
 
-  const personalAllowance = Math.max(
-    0,
-    rates.thresholdBasic -
-      Math.max(
-        0,
-        Math.floor((incomeTaxBase - rates.thresholdPersonalAllowanceTaper) / 2),
-      ),
-  );
+  const parsed = parseUKTaxCode(taxCode, rates);
+  // Fall back to the year's default PA (with the high-income taper) only if
+  // no code override applies. Codes already bake the PA into their numeric
+  // prefix, so no taper on top of them.
+  const personalAllowance =
+    parsed.personalAllowance ??
+    Math.max(
+      0,
+      rates.thresholdBasic -
+        Math.max(
+          0,
+          Math.floor(
+            (incomeTaxBase - rates.thresholdPersonalAllowanceTaper) / 2,
+          ),
+        ),
+    );
 
-  const incomeTax = taxOnIncome(incomeTaxBase, personalAllowance, rates);
+  const incomeTax = parsed.noTax
+    ? 0
+    : parsed.flatRate != null
+      ? Math.round(Math.max(0, incomeTaxBase) * parsed.flatRate)
+      : taxOnIncome(incomeTaxBase, personalAllowance, rates);
 
   const nic = nicOnEarnings(postSacrifice, rates);
 
@@ -177,6 +192,72 @@ export function computeUKTake({
 
   const net = postSacrifice - incomeTax - nic - studentLoan;
   return { gross: postSacrifice, incomeTax, nic, studentLoan, net };
+}
+
+/**
+ * Interpret an HMRC tax code into a `{ personalAllowance, flatRate, noTax }` triple the main calculator can consume. Supports the most common forms:
+ *
+ * - `NNNN[LMN]` — personal allowance = prefix × 10 GBP (e.g. `1257L` → £12,570).
+ * - `K<N>` — negative personal allowance = −(N × 10) GBP (untaxed income adjustment).
+ * - `0T` — zero personal allowance, standard bands.
+ * - `BR` — all income at basic rate, no PA.
+ * - `D0` / `D1` — all income at higher / additional rate, no PA.
+ * - `NT` — no tax at all.
+ *
+ * Anything else (or a blank code) returns `{ personalAllowance: null }` so the caller falls back to the year's default with taper.
+ */
+export function parseUKTaxCode(
+  code: string | null | undefined,
+  rates: typeof PlanningYearUKTaxRates.$inferSelect,
+): {
+  /** Personal allowance in pence, or null to keep the caller's default. */
+  personalAllowance: number | null;
+  /** If set, apply a single flat rate to the whole taxable base. */
+  flatRate: number | null;
+  /** If true, income tax is zero regardless of base. */
+  noTax: boolean;
+} {
+  if (!code) {
+    return { personalAllowance: null, flatRate: null, noTax: false };
+  }
+  const normalised = code.trim().toUpperCase();
+  if (normalised === "NT") {
+    return { personalAllowance: 0, flatRate: null, noTax: true };
+  }
+  if (normalised === "0T") {
+    return { personalAllowance: 0, flatRate: null, noTax: false };
+  }
+  if (normalised === "BR") {
+    return { personalAllowance: 0, flatRate: rates.rateBasic, noTax: false };
+  }
+  if (normalised === "D0") {
+    return { personalAllowance: 0, flatRate: rates.rateHigher, noTax: false };
+  }
+  if (normalised === "D1") {
+    return {
+      personalAllowance: 0,
+      flatRate: rates.rateAdditional,
+      noTax: false,
+    };
+  }
+  const lmn = /^(\d+)[LMN]$/.exec(normalised);
+  if (lmn) {
+    // Prefix × 10 GBP → × 1000 pence.
+    return {
+      personalAllowance: Number(lmn[1]) * 1000,
+      flatRate: null,
+      noTax: false,
+    };
+  }
+  const k = /^K(\d+)$/.exec(normalised);
+  if (k) {
+    return {
+      personalAllowance: -Number(k[1]) * 1000,
+      flatRate: null,
+      noTax: false,
+    };
+  }
+  return { personalAllowance: null, flatRate: null, noTax: false };
 }
 
 function taxOnIncome(
