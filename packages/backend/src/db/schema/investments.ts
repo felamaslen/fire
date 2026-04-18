@@ -8,6 +8,7 @@ import {
   index,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -193,4 +194,72 @@ export const investmentPricesRelations = relations(
       references: [Investments.id],
     }),
   }),
+);
+
+/** Target allocation of a wrapper's value to a specific investment. PK is (`assetId`, `investmentId`) so each pairing appears at most once. The resolver enforces that per-asset allocations sum correctly; the DB only checks individual bounds. */
+export const InvestmentAllocations = pgTable(
+  "InvestmentAllocations",
+  {
+    assetId: uuid("assetId")
+      .notNull()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
+    investmentId: uuid("investmentId")
+      .notNull()
+      .references(() => Investments.id, { onDelete: "cascade" }),
+    /** Target fraction of the wrapper's value allocated to the investment. `0 < a <= 1`. Zero-weight allocations should be deleted, not stored. */
+    allocation: doublePrecision("allocation").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      name: "InvestmentAllocations_pk",
+      columns: [t.assetId, t.investmentId],
+    }),
+    check(
+      "InvestmentAllocations_allocation_ck",
+      sql`${t.allocation} > 0 AND ${t.allocation} <= 1`,
+    ),
+  ],
+);
+
+export const investmentAllocationsRelations = relations(
+  InvestmentAllocations,
+  ({ one }) => ({
+    asset: one(NetWorthCategoryAssets, {
+      fields: [InvestmentAllocations.assetId],
+      references: [NetWorthCategoryAssets.id],
+    }),
+    investment: one(Investments, {
+      fields: [InvestmentAllocations.investmentId],
+      references: [Investments.id],
+    }),
+  }),
+);
+
+/** Singleton row holding the portfolio-wide target cash allocation (applied across *all* assets in aggregate, not per-wrapper). The `singleton` column is pinned to `true` by a check constraint so there can only ever be one row. */
+export const InvestmentCashAllocation = pgTable(
+  "InvestmentCashAllocation",
+  {
+    singleton: boolean("singleton").primaryKey(),
+    /** Target fraction of the whole portfolio kept as cash. `0 <= a <= 1`. */
+    allocation: doublePrecision("allocation").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check("InvestmentCashAllocation_singleton_ck", sql`${t.singleton} = true`),
+    check(
+      "InvestmentCashAllocation_allocation_ck",
+      sql`${t.allocation} >= 0 AND ${t.allocation} <= 1`,
+    ),
+  ],
 );

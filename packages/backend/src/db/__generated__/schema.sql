@@ -76,6 +76,34 @@ CREATE TYPE "public"."planningBillsFrequency" AS ENUM (
   'QUARTERLY',
   'YEARLY'
 );
+CREATE TABLE "InvestmentAllocations" (
+  "assetId" uuid NOT NULL,
+  "investmentId" uuid NOT NULL,
+  "allocation" DOUBLE PRECISION NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentAllocations_pk" PRIMARY KEY ("assetId", "investmentId"),
+  CONSTRAINT "InvestmentAllocations_allocation_ck"
+    CHECK (
+      "InvestmentAllocations"."allocation" > 0
+      AND "InvestmentAllocations"."allocation" <= 1
+    )
+);
+
+CREATE TABLE "InvestmentCashAllocation" (
+  "singleton" BOOLEAN PRIMARY KEY NOT NULL,
+  "allocation" DOUBLE PRECISION NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentCashAllocation_singleton_ck"
+    CHECK ("InvestmentCashAllocation"."singleton" = TRUE),
+  CONSTRAINT "InvestmentCashAllocation_allocation_ck"
+    CHECK (
+      "InvestmentCashAllocation"."allocation" >= 0
+      AND "InvestmentCashAllocation"."allocation" <= 1
+    )
+);
+
 CREATE TABLE "InvestmentPrices" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
@@ -473,6 +501,16 @@ CREATE TABLE "PlanningYears" (
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
 
+ALTER TABLE "InvestmentAllocations"
+ADD CONSTRAINT "InvestmentAllocations_assetId_NetWorthCategoryAssets_id_fk"
+  FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "InvestmentAllocations"
+ADD CONSTRAINT "InvestmentAllocations_investmentId_Investments_id_fk"
+  FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
 ALTER TABLE "InvestmentPrices"
 ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk"
   FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
