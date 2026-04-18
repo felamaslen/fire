@@ -327,20 +327,20 @@ export const PlanningTransactions = pgTable(
       .default(sql`uuidv7()`),
     year: integer("year").notNull(),
     date: date("date", { mode: "date" }).notNull(),
-    /** Amount in fractional units of `currency`. */
+    /** Signed amount in fractional units of `currency`. Negative = outflow debited from `accountId` (optionally credited to `toAccountId`). Positive = ad-hoc inflow credited to `accountId` (no source account). */
     amount: bigint("amount", { mode: "number" }).notNull(),
     currency: currencyCode("currency").notNull(),
     name: text("name").notNull(),
-    /** Planning account the transaction is paid from. */
-    fromAccountId: uuid("fromAccountId")
+    /** Primary planning account. Debited when `amount < 0` (outflow / transfer) or credited when `amount > 0` (ad-hoc inflow). */
+    accountId: uuid("accountId")
       .notNull()
       .references(() => PlanningAccounts.accountId, { onDelete: "restrict" }),
-    /** Destination planning account if this is a transfer; null if it's an external outflow. */
+    /** Destination planning account for a transfer; null if it's an external outflow. Only valid for outflows (`amount < 0`). */
     toAccountId: uuid("toAccountId").references(
       () => PlanningAccounts.accountId,
       { onDelete: "restrict" },
     ),
-    /** Liability this transaction pays down, if any. */
+    /** Liability this transaction pays down, if any. Only valid for outflows (`amount < 0`). */
     liabilityId: uuid("liabilityId").references(
       () => NetWorthCategoryLiabilities.id,
       { onDelete: "restrict" },
@@ -360,7 +360,11 @@ export const PlanningTransactions = pgTable(
     }).onDelete("cascade"),
     check(
       "PlanningTransactions_accounts_ck",
-      sql`${t.toAccountId} IS NULL OR ${t.fromAccountId} <> ${t.toAccountId}`,
+      sql`${t.toAccountId} IS NULL OR ${t.accountId} <> ${t.toAccountId}`,
+    ),
+    check(
+      "PlanningTransactions_inflow_ck",
+      sql`${t.amount} < 0 OR (${t.toAccountId} IS NULL AND ${t.liabilityId} IS NULL)`,
     ),
   ],
 );
@@ -372,10 +376,10 @@ export const planningTransactionsRelations = relations(
       fields: [PlanningTransactions.year, PlanningTransactions.date],
       references: [PlanningMonths.year, PlanningMonths.date],
     }),
-    fromAccount: one(PlanningAccounts, {
-      fields: [PlanningTransactions.fromAccountId],
+    account: one(PlanningAccounts, {
+      fields: [PlanningTransactions.accountId],
       references: [PlanningAccounts.accountId],
-      relationName: "transactionsFrom",
+      relationName: "transactionsPrimary",
     }),
     toAccount: one(PlanningAccounts, {
       fields: [PlanningTransactions.toAccountId],

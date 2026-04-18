@@ -50,6 +50,13 @@
       "when": 1776524392226,
       "tag": "0006_pension_deductions_nullable",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1776526333552,
+      "tag": "0007_planning_transactions_signed_amount_accountid",
+      "breakpoints": true
     }
   ]
 }

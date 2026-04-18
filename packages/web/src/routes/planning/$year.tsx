@@ -131,7 +131,7 @@ const TransactionCreateDocument = graphql(`
     $monthId: ID!
     $amount: MoneyInput!
     $name: String!
-    $fromAccountId: ID!
+    $accountId: ID!
     $toAccountId: ID
     $liabilityId: ID
   ) {
@@ -139,7 +139,7 @@ const TransactionCreateDocument = graphql(`
       monthId: $monthId
       amount: $amount
       name: $name
-      fromAccountId: $fromAccountId
+      accountId: $accountId
       toAccountId: $toAccountId
       liabilityId: $liabilityId
     ) {
@@ -433,7 +433,7 @@ function PlanningTable({
                           showStart={i === 0}
                           monthId={month.id}
                           year={year}
-                          fromAccountId={accounts[j].id}
+                          accountId={accounts[j].id}
                           accounts={accounts}
                           liabilities={liabilities}
                         />
@@ -454,7 +454,7 @@ function MonthAccountCell({
   showStart,
   monthId,
   year,
-  fromAccountId,
+  accountId,
   accounts,
   liabilities,
 }: {
@@ -463,7 +463,7 @@ function MonthAccountCell({
   showStart: boolean;
   monthId: string;
   year: string;
-  fromAccountId: string;
+  accountId: string;
   accounts: PlanningYearData["accounts"];
   liabilities: LiabilityOption[];
 }) {
@@ -495,7 +495,7 @@ function MonthAccountCell({
           <CreateTransactionTrigger
             monthId={monthId}
             year={year}
-            fromAccountId={fromAccountId}
+            accountId={accountId}
             accounts={accounts}
             liabilities={liabilities}
           />
@@ -667,13 +667,13 @@ function InlineDeleteButton({
 function CreateTransactionTrigger({
   monthId,
   year,
-  fromAccountId,
+  accountId,
   accounts,
   liabilities,
 }: {
   monthId: string;
   year: string;
-  fromAccountId: string;
+  accountId: string;
   accounts: PlanningYearData["accounts"];
   liabilities: LiabilityOption[];
 }) {
@@ -689,17 +689,19 @@ function CreateTransactionTrigger({
   const onSubmit = async (v: {
     name: string;
     amount: number;
+    direction: "+" | "-";
     toAccountId: string | null;
     liabilityId: string | null;
   }) => {
+    const signed = v.direction === "+" ? v.amount : -v.amount;
     await create({
       variables: {
         monthId,
-        fromAccountId,
+        accountId,
         name: v.name,
-        amount: { amount: v.amount, currency: "GBP" },
-        toAccountId: v.toAccountId,
-        liabilityId: v.liabilityId,
+        amount: { amount: signed, currency: "GBP" },
+        toAccountId: v.direction === "+" ? null : v.toAccountId,
+        liabilityId: v.direction === "+" ? null : v.liabilityId,
       },
     });
     toast.success("Transaction added");
@@ -720,7 +722,7 @@ function CreateTransactionTrigger({
         <CreateTransactionForm
           accounts={accounts}
           liabilities={liabilities}
-          excludeAccountId={fromAccountId}
+          excludeAccountId={accountId}
           onSubmit={onSubmit}
           onCancel={() => setOpen(false)}
         />
@@ -790,6 +792,7 @@ function CreateTransactionForm({
   onSubmit: (v: {
     name: string;
     amount: number;
+    direction: "+" | "-";
     toAccountId: string | null;
     liabilityId: string | null;
   }) => void | Promise<void>;
@@ -797,16 +800,19 @@ function CreateTransactionForm({
 }) {
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
+  const [direction, setDirection] = useState<"+" | "-">("-");
   const [toAccountId, setToAccountId] = useState("__none__");
   const [liabilityId, setLiabilityId] = useState("__none__");
   const parsed = Number(amount);
   const disabled = !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+  const isInflow = direction === "+";
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (disabled) return;
     await onSubmit({
       name: name.trim(),
       amount: parsed,
+      direction,
       toAccountId: toAccountId === "__none__" ? null : toAccountId,
       liabilityId: liabilityId === "__none__" ? null : liabilityId,
     });
@@ -824,19 +830,38 @@ function CreateTransactionForm({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Amount</Label>
-        <Input
-          type="number"
-          inputMode="decimal"
-          step="0.01"
-          min="0"
-          currency="GBP"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
+        <div className="flex items-center gap-2">
+          <Select
+            value={direction}
+            onValueChange={(v) => setDirection(v as "+" | "-")}
+          >
+            <SelectTrigger className="w-14 rounded-r-none border-r-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="-">−</SelectItem>
+              <SelectItem value="+">+</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            currency="GBP"
+            className="-ml-2 flex-1 rounded-l-none"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </div>
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Transfer to (optional)</Label>
-        <Select value={toAccountId} onValueChange={setToAccountId}>
+        <Select
+          value={isInflow ? "__none__" : toAccountId}
+          onValueChange={setToAccountId}
+          disabled={isInflow}
+        >
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -852,7 +877,11 @@ function CreateTransactionForm({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Pays down liability (optional)</Label>
-        <Select value={liabilityId} onValueChange={setLiabilityId}>
+        <Select
+          value={isInflow ? "__none__" : liabilityId}
+          onValueChange={setLiabilityId}
+          disabled={isInflow}
+        >
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>

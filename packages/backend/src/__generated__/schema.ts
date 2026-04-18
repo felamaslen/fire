@@ -2107,20 +2107,20 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 transactionCreate: {
-                    description: "Record a manual transaction on a planning month. Amount is a positive magnitude; the direction is carried by which account is `fromAccountId` (and optionally `toAccountId` for internal transfers).",
+                    description: "Record a manual transaction on a planning month. `amount` is signed \u2014 negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId` and `liabilityId` to be null.",
                     name: "transactionCreate",
                     type: new GraphQLNonNull(PlanningTransactionType),
                     args: {
-                        amount: {
-                            description: "Positive magnitude. Sign is derived from which side of the transaction an account is on.",
-                            type: new GraphQLNonNull(MoneyInputType)
-                        },
-                        fromAccountId: {
-                            description: "Planning account (`PlanningAccount.id`) the transaction is paid from.",
+                        accountId: {
+                            description: "Primary planning account (`PlanningAccount.id`): debited when `amount` is negative (outflow) or credited when positive (ad-hoc inflow).",
                             type: new GraphQLNonNull(GraphQLID)
                         },
+                        amount: {
+                            description: "Signed amount: negative = outflow, positive = ad-hoc inflow.",
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
                         liabilityId: {
-                            description: "Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any.",
+                            description: "Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows.",
                             type: GraphQLID
                         },
                         monthId: {
@@ -2131,12 +2131,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLString)
                         },
                         toAccountId: {
-                            description: "Destination planning account (`PlanningAccount.id`) for a transfer.",
+                            description: "Destination planning account (`PlanningAccount.id`) for an internal transfer. Only valid for outflows.",
                             type: GraphQLID
                         }
                     },
                     resolve(_source, args) {
-                        return mutationTransactionCreateResolver(args.monthId, args.amount, args.name, args.fromAccountId, args.toAccountId, args.liabilityId);
+                        return mutationTransactionCreateResolver(args.monthId, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId);
                     }
                 },
                 transactionDelete: {
@@ -2162,13 +2162,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "transactionUpdate",
                     type: new GraphQLNonNull(PlanningTransactionType),
                     args: {
+                        accountId: {
+                            description: "New primary planning account (`PlanningAccount.id`). Manual transactions only.",
+                            type: GraphQLID
+                        },
                         amount: {
                             description: "New positive magnitude.",
                             type: MoneyInputType
-                        },
-                        fromAccountId: {
-                            description: "New paying planning account (`PlanningAccount.id`). Manual transactions only.",
-                            type: GraphQLID
                         },
                         id: {
                             description: "Composite id as returned on `PlanningTransaction.id`.",
@@ -2191,7 +2191,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationTransactionUpdateResolver(args.monthId, args.id, args.amount, args.name, args.fromAccountId, args.toAccountId, args.liabilityId);
+                        return mutationTransactionUpdateResolver(args.monthId, args.id, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId);
                     }
                 }
             };

@@ -498,23 +498,25 @@ type Mutation {
   """
   planningYearSet(taxRates: PlanningYearTaxRatesInput, year: ID!): PlanningYear!
   """
-  Record a manual transaction on a planning month. Amount is a positive magnitude; the direction is carried by which account is `fromAccountId` (and optionally `toAccountId` for internal transfers).
+  Record a manual transaction on a planning month. `amount` is signed — negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId` and `liabilityId` to be null.
   """
   transactionCreate(
     """
-    Positive magnitude. Sign is derived from which side of the transaction an account is on.
+    Primary planning account (`PlanningAccount.id`): debited when `amount` is negative (outflow) or credited when positive (ad-hoc inflow).
     """
+    accountId: ID!
+    """Signed amount: negative = outflow, positive = ad-hoc inflow."""
     amount: MoneyInput!
-    """Planning account (`PlanningAccount.id`) the transaction is paid from."""
-    fromAccountId: ID!
     """
-    Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any.
+    Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows.
     """
     liabilityId: ID
     """Planning month id, e.g. `"apr-2025"`."""
     monthId: ID!
     name: String!
-    """Destination planning account (`PlanningAccount.id`) for a transfer."""
+    """
+    Destination planning account (`PlanningAccount.id`) for an internal transfer. Only valid for outflows.
+    """
     toAccountId: ID
   ): PlanningTransaction!
   """
@@ -542,12 +544,12 @@ type Mutation {
   - `earn:…` — materialises this month's earnings prediction as a real payslip (gross + auto-populated tax/NIC/student-loan deductions), then applies the edit to the corresponding payslip line. Future months continue to be predicted from the earnings stream.
   """
   transactionUpdate(
+    """
+    New primary planning account (`PlanningAccount.id`). Manual transactions only.
+    """
+    accountId: ID
     """New positive magnitude."""
     amount: MoneyInput
-    """
-    New paying planning account (`PlanningAccount.id`). Manual transactions only.
-    """
-    fromAccountId: ID
     """Composite id as returned on `PlanningTransaction.id`."""
     id: ID!
     """

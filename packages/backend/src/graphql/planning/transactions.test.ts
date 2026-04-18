@@ -186,7 +186,7 @@ it("transactionCreate inserts a manual outgoing transaction on the target month"
           monthId: "apr-2025"
           amount: { amount: 500, currency: "GBP" }
           name: "Dentist"
-          fromAccountId: $a
+          accountId: $a
         ) {
           id
         }
@@ -215,7 +215,7 @@ it("transactionUpdate patches a manual transaction (name + amount)", async () =>
           monthId: "apr-2025"
           amount: { amount: 500, currency: "GBP" }
           name: "Dentist"
-          fromAccountId: $a
+          accountId: $a
         ) {
           id
         }
@@ -263,7 +263,7 @@ it("transactionUpdate can move a manual transaction to a different month and ass
           monthId: "apr-2025"
           amount: { amount: 500, currency: "GBP" }
           name: "Dentist"
-          fromAccountId: $a
+          accountId: $a
         ) {
           id
         }
@@ -276,7 +276,7 @@ it("transactionUpdate can move a manual transaction to a different month and ass
   await runGql(
     graphql(`
       mutation ($id: ID!, $to: ID!) {
-        transactionUpdate(monthId: "may-2025", id: $id, fromAccountId: $to) {
+        transactionUpdate(monthId: "may-2025", id: $id, accountId: $to) {
           id
         }
       }
@@ -304,7 +304,7 @@ it("transactionDelete removes a manual transaction", async () => {
           monthId: "apr-2025"
           amount: { amount: 500, currency: "GBP" }
           name: "Dentist"
-          fromAccountId: $a
+          accountId: $a
         ) {
           id
         }
@@ -346,7 +346,7 @@ it("transactionUpdate on a predicted bill writes a per-month override (this mont
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Broadband"
-          fromAccountId: $a
+          accountId: $a
         ) {
           id
         }
@@ -394,7 +394,7 @@ it("transactionDelete on a predicted bill skips it for this month (null override
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Broadband"
-          fromAccountId: $a
+          accountId: $a
         ) {
           id
         }

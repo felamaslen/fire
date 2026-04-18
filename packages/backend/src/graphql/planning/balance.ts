@@ -294,11 +294,11 @@ export function monthTransactionsFor(
   for (const tx of data.transactions) {
     if (tx.date.getTime() < monthStart.getTime()) continue;
     if (tx.date.getTime() >= monthEnd.getTime()) continue;
-    if (tx.fromAccountId === assetId) {
+    if (tx.accountId === assetId) {
       out.push({
         id: encodePlanningTransactionId({ kind: "tx", id: tx.id }),
         name: tx.name,
-        amount: Money.fromMinorDenomination(-tx.amount, tx.currency),
+        amount: Money.fromMinorDenomination(tx.amount, tx.currency),
         isProvisional: false,
         isEditable: true,
         liabilityId: null,
@@ -308,7 +308,7 @@ export function monthTransactionsFor(
       out.push({
         id: encodePlanningTransactionId({ kind: "to", id: tx.id }),
         name: tx.name,
-        amount: Money.fromMinorDenomination(tx.amount, tx.currency),
+        amount: Money.fromMinorDenomination(-tx.amount, tx.currency),
         isProvisional: false,
         isEditable: false,
         liabilityId: null,
