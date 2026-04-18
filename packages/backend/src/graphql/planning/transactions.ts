@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 
-import { eq } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, or } from "drizzle-orm";
 import type { ID } from "grats";
 import { z } from "zod";
 
@@ -9,6 +9,7 @@ import type { CurrencyCode } from "@/db/schema/currency";
 import {
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsUKTaxCodes,
   PlanningMonthBills,
   PlanningPayslipAdjustments,
   PlanningPayslips,
@@ -433,6 +434,19 @@ async function materialiseEarningAsPayslip(
     .from(PlanningYearUKTaxRates)
     .where(eq(PlanningYearUKTaxRates.year, year));
   assert(rates, `UK tax rates for year ${year} not found`);
+  const [activeCode] = await db
+    .select()
+    .from(PlanningEarningsUKTaxCodes)
+    .where(
+      and(
+        eq(PlanningEarningsUKTaxCodes.earningsId, parsed.id),
+        lte(PlanningEarningsUKTaxCodes.start, date),
+        or(
+          isNull(PlanningEarningsUKTaxCodes.end),
+          gte(PlanningEarningsUKTaxCodes.end, date),
+        ),
+      ),
+    );
   const take = computeUKTake({
     gross: earning.amountGross,
     pension: {
@@ -442,6 +456,7 @@ async function materialiseEarningAsPayslip(
     },
     studentLoanPlan2: earning.studentLoanPlan2,
     rates,
+    taxCode: activeCode?.taxCode ?? null,
   });
   // Keep the materialised payslip in sync with the projection that produced
   // the row the user just clicked on: pro-rata the monthly figures when the

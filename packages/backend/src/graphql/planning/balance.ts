@@ -15,6 +15,7 @@ import {
   PlanningAccounts,
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsUKTaxCodes,
   PlanningMonthBills,
   PlanningPayslipAdjustments,
   PlanningPayslips,
@@ -42,6 +43,7 @@ type TxRow = typeof PlanningTransactions.$inferSelect;
 type PayslipRow = typeof PlanningPayslips.$inferSelect;
 type AdjustmentRow = typeof PlanningPayslipAdjustments.$inferSelect;
 type EarningRow = typeof PlanningEarnings.$inferSelect;
+type TaxCodeRow = typeof PlanningEarningsUKTaxCodes.$inferSelect;
 type BillRow = typeof PlanningBills.$inferSelect;
 type OverrideRow = typeof PlanningMonthBills.$inferSelect;
 type RateRow = typeof PlanningYearUKTaxRates.$inferSelect;
@@ -59,7 +61,7 @@ export type PlanningYearData = {
   accounts: PlanningAccountInfo[];
   transactions: TxRow[];
   payslips: Array<{ payslip: PayslipRow; adjustments: AdjustmentRow[] }>;
-  earnings: EarningRow[];
+  earnings: Array<{ earning: EarningRow; taxCodes: TaxCodeRow[] }>;
   bills: Array<{
     bill: BillRow;
     overridesByMonthStartIso: Map<string, OverrideRow>;
@@ -101,7 +103,7 @@ export async function loadPlanningYearData(
   const fyEnd = new Date(Date.UTC(yearNumber + 1, 3, 1));
   const hasAccounts = assetIds.length > 0;
 
-  const [txs, payslipJoin, earnings, billJoin, rates, snapshotRows] =
+  const [txs, payslipJoin, earningJoin, billJoin, rates, snapshotRows] =
     await Promise.all([
       hasAccounts
         ? db
@@ -132,8 +134,15 @@ export async function loadPlanningYearData(
           >([]),
       hasAccounts
         ? db
-            .select()
+            .select({
+              earning: PlanningEarnings,
+              taxCode: PlanningEarningsUKTaxCodes,
+            })
             .from(PlanningEarnings)
+            .leftJoin(
+              PlanningEarningsUKTaxCodes,
+              eq(PlanningEarningsUKTaxCodes.earningsId, PlanningEarnings.id),
+            )
             .where(
               and(
                 inArray(PlanningEarnings.toAccountId, assetIds),
@@ -144,7 +153,9 @@ export async function loadPlanningYearData(
                 ),
               ),
             )
-        : Promise.resolve<EarningRow[]>([]),
+        : Promise.resolve<
+            Array<{ earning: EarningRow; taxCode: TaxCodeRow | null }>
+          >([]),
       hasAccounts
         ? db
             .select({ bill: PlanningBills, override: PlanningMonthBills })
@@ -236,6 +247,19 @@ export async function loadPlanningYearData(
     billsById.set(r.bill.id, entry);
   }
 
+  const earningsById = new Map<
+    string,
+    { earning: EarningRow; taxCodes: TaxCodeRow[] }
+  >();
+  for (const r of earningJoin) {
+    const entry = earningsById.get(r.earning.id) ?? {
+      earning: r.earning,
+      taxCodes: [],
+    };
+    if (r.taxCode) entry.taxCodes.push(r.taxCode);
+    earningsById.set(r.earning.id, entry);
+  }
+
   const snapshots: PlanningYearData["snapshots"] = [];
   for (const s of snapshotRows) {
     if (s.assetId == null) continue;
@@ -247,7 +271,7 @@ export async function loadPlanningYearData(
     accounts,
     transactions: txs,
     payslips: Array.from(payslipsById.values()),
-    earnings,
+    earnings: Array.from(earningsById.values()),
     bills: Array.from(billsById.values()),
     rates,
     snapshots,
@@ -323,7 +347,7 @@ export function monthTransactionsFor(
 
   // 3) Earnings predictions (skipped when a payslip covers this account+month)
   if (!hasPayslip && data.rates) {
-    for (const e of data.earnings) {
+    for (const { earning: e, taxCodes } of data.earnings) {
       if (e.toAccountId !== assetId) continue;
       const coverage = earningMonthCoverage(e.start, e.end, monthStart);
       if (coverage === 0) continue;
@@ -337,6 +361,7 @@ export function monthTransactionsFor(
         },
         studentLoanPlan2: e.studentLoanPlan2,
         rates: data.rates,
+        taxCode: activeTaxCode(taxCodes, monthStart),
       });
       // Annualised → monthly, then pro-rata'd when the earning only covers
       // part of the month (start or end falls mid-month).
@@ -528,6 +553,20 @@ function matchMonthDay(entries: string[], month: number): number | null {
   for (const entry of entries) {
     const [m, d] = entry.split("-");
     if (Number(m) === month) return Number(d);
+  }
+  return null;
+}
+
+/** Pick the tax code whose `[start, end]` covers `monthStart`, or null if none do. Multiple codes can be recorded over an earning's lifetime (a new HMRC code re-issued mid-year); we return the first match. */
+function activeTaxCode(
+  taxCodes: TaxCodeRow[],
+  monthStart: Date,
+): string | null {
+  const ms = monthStart.getTime();
+  for (const tc of taxCodes) {
+    const s = tc.start.getTime();
+    const e = tc.end?.getTime() ?? Number.POSITIVE_INFINITY;
+    if (s <= ms && ms <= e) return tc.taxCode;
   }
   return null;
 }

@@ -261,3 +261,78 @@ it("studentLoanPlan2=false zeros the student-loan deduction regardless of income
     }
   `);
 });
+
+it("applies the personal allowance encoded in an L tax code (e.g. 1000L → £10,000 PA)", () => {
+  const withoutCode = computeUKTake({
+    gross: 3_000_000,
+    pension: noPension,
+    studentLoanPlan2: false,
+    rates,
+  });
+  const withLowerPA = computeUKTake({
+    gross: 3_000_000,
+    pension: noPension,
+    studentLoanPlan2: false,
+    rates,
+    taxCode: "1000L",
+  });
+  // A smaller PA (£10,000 vs £12,570) means an extra £2,570 is taxed at 20%
+  // = £514 more income tax.
+  expect(withLowerPA.incomeTax - withoutCode.incomeTax).toBe(51_400);
+});
+
+it("`0T` taxes every pound from the first (no PA)", () => {
+  const result = computeUKTake({
+    gross: 3_000_000,
+    pension: noPension,
+    studentLoanPlan2: false,
+    rates,
+    taxCode: "0T",
+  });
+  // Whole base at basic rate: £30,000 × 20% = £6,000.
+  expect(result.incomeTax).toBe(600_000);
+});
+
+it("`BR` taxes the whole base at the basic rate regardless of bands", () => {
+  const result = computeUKTake({
+    // £60,000 — would spill into the higher band with a normal code.
+    gross: 6_000_000,
+    pension: noPension,
+    studentLoanPlan2: false,
+    rates,
+    taxCode: "BR",
+  });
+  // £60,000 × 20% = £12,000. The higher-rate band is suppressed.
+  expect(result.incomeTax).toBe(1_200_000);
+});
+
+it("`NT` yields zero income tax", () => {
+  const result = computeUKTake({
+    gross: 5_000_000,
+    pension: noPension,
+    studentLoanPlan2: false,
+    rates,
+    taxCode: "NT",
+  });
+  expect(result.incomeTax).toBe(0);
+});
+
+it("`K` codes treat the prefix as a negative allowance (extra taxable)", () => {
+  const base = computeUKTake({
+    gross: 3_000_000,
+    pension: noPension,
+    studentLoanPlan2: false,
+    rates,
+    taxCode: "0T",
+  });
+  const kCode = computeUKTake({
+    gross: 3_000_000,
+    pension: noPension,
+    studentLoanPlan2: false,
+    rates,
+    taxCode: "K475",
+  });
+  // K475 adds £4,750 of taxable income on top of an already-zero PA → +£950
+  // income tax at the basic rate.
+  expect(kCode.incomeTax - base.incomeTax).toBe(95_000);
+});

@@ -723,3 +723,58 @@ it("pro-rates the predicted take when an earning starts or ends mid-month", asyn
     mar-2026 Main    14186.6     14186.6  "
   `);
 });
+
+it("uses the earning's active UK tax code when projecting income tax", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+
+  // A `1000L` tax code (PA £10,000) shifts more income into the basic band than the year's default PA (£12,570), so income tax is higher than the default `-290.5 / month` used in the sibling tests on the same gross.
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+          ukTaxCodes: [{ start: "2025-04-01", taxCode: "1000L" }]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+
+  const data = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                name
+                amount {
+                  amount
+                }
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const apr = data.planningYear!.months.find((m) => m.id === "apr-2025")!;
+  const taxRow = apr.accounts[0].transactions.find((t) =>
+    t.name.endsWith("income tax"),
+  );
+  // 1000L: PA = £10,000. Taxable = £30k − £10k = £20k × 20% = £4,000/yr = £333.33/mo.
+  expect(taxRow?.amount.amount).toBe(-333.33);
+});
