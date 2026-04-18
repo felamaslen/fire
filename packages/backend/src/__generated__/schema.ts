@@ -18,7 +18,7 @@ import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategory
 import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
-import { portfolio as queryPortfolioResolver } from "./../graphql/investments/portfolio";
+import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResolver } from "./../graphql/investments/portfolio";
 import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
 import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
@@ -1523,6 +1523,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "dailyGainValue",
                     type: MoneyType
                 },
+                investment: {
+                    description: "When this portfolio is scoped to exactly one investment (as emitted by `Query.portfolios`), the investment it represents. `null` for aggregate portfolios covering multiple investments.",
+                    name: "investment",
+                    type: InvestmentType
+                },
                 percentGain: {
                     description: "Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero.",
                     name: "percentGain",
@@ -1558,6 +1563,38 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Current market value of the filtered portfolio. Zero when nothing is held.",
                     name: "totalValue",
                     type: MoneyType
+                }
+            };
+        }
+    });
+    const PortfolioEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PortfolioType)
+                }
+            };
+        }
+    });
+    const PortfolioConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
                 }
             };
         }
@@ -1789,6 +1826,29 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryPortfolioResolver(args.filterAssetIdIn, args.filterInvestmentIdIn, args.currency));
+                    }
+                },
+                portfolios: {
+                    description: "One portfolio slice per investment held in the matching wrappers. Use this for stacked-per-investment charts: each edge's `node` is a single-investment `Portfolio`, and `node.investment` identifies which investment that slice represents.",
+                    name: "portfolios",
+                    type: PortfolioConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        currency: {
+                            description: "ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency.",
+                            type: GraphQLString
+                        },
+                        filterAssetIdIn: {
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        },
+                        first: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryPortfoliosResolver(args.filterAssetIdIn, args.currency, args.first, args.after));
                     }
                 }
             };
@@ -3137,6 +3197,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
     });
 }

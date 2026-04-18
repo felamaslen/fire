@@ -168,6 +168,96 @@ describe("Query.portfolio aggregates", () => {
   });
 });
 
+describe("Query.portfolios", () => {
+  it("returns one edge per investment in the matching wrappers", async () => {
+    const asset = await createAsset();
+    const a = await createStock("A", "AAA");
+    const b = await createStock("B", "BBB");
+    await buy(a, asset, "2024-01-01", 10, 5);
+    await buy(b, asset, "2024-01-01", 5, 10);
+    await setPrice(a, "2024-01-01", 600);
+    await setPrice(b, "2024-01-01", 1200);
+
+    const doc = graphql(`
+      query {
+        portfolios {
+          edges {
+            node {
+              investment {
+                name
+              }
+              totalValue {
+                amount
+              }
+            }
+          }
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    const byName = new Map(
+      (data.portfolios?.edges ?? []).map((e) => [
+        e.node.investment?.name,
+        e.node.totalValue?.amount,
+      ]),
+    );
+    expect(byName.get("A")).toBe(10 * 6);
+    expect(byName.get("B")).toBe(5 * 12);
+  });
+
+  it("restricts to investments held in the supplied wrappers", async () => {
+    const isa = await createAsset("ISA");
+    const sipp = await createAsset("SIPP");
+    const a = await createStock("A", "AAA");
+    const b = await createStock("B", "BBB");
+    await buy(a, isa, "2024-01-01", 10, 5);
+    await buy(b, sipp, "2024-01-01", 5, 10);
+    await setPrice(a, "2024-01-01", 600);
+    await setPrice(b, "2024-01-01", 1200);
+
+    const doc = graphql(`
+      query ($assets: [ID!]) {
+        portfolios(filterAssetIdIn: $assets) {
+          edges {
+            node {
+              investment {
+                name
+              }
+            }
+          }
+        }
+      }
+    `);
+    const data = await runGql(doc, { assets: [isa] });
+    expect(data.portfolios?.edges.map((e) => e.node.investment?.name)).toEqual([
+      "A",
+    ]);
+  });
+
+  it("excludes investments that don't match the portfolio currency", async () => {
+    const asset = await createAsset();
+    const gbp = await createStock("GBP-stock", "GBS", "GBP");
+    await buy(gbp, asset, "2024-01-01", 10, 5, "GBP");
+    await setPrice(gbp, "2024-01-01", 500);
+
+    const doc = graphql(`
+      query {
+        portfolios(currency: "USD") {
+          edges {
+            node {
+              investment {
+                name
+              }
+            }
+          }
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    expect(data.portfolios?.edges).toEqual([]);
+  });
+});
+
 describe("Query.portfolio.timeseries and candlestick", () => {
   it("returns a daily timeseries in major units", async () => {
     const asset = await createAsset();

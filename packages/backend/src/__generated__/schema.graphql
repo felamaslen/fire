@@ -1372,6 +1372,10 @@ type Portfolio {
   """
   dailyGainValue: Money
   """
+  When this portfolio is scoped to exactly one investment (as emitted by `Query.portfolios`), the investment it represents. `null` for aggregate portfolios covering multiple investments.
+  """
+  investment: Investment
+  """
   Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero.
   """
   percentGain: Float
@@ -1409,6 +1413,22 @@ type PortfolioCandlestickPoint {
   lo: Int!
   to: Int!
   x: Int!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type PortfolioConnection {
+  edges: [PortfolioEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type PortfolioEdge {
+  cursor: ID!
+  node: Portfolio!
 }
 
 """
@@ -1495,6 +1515,18 @@ type Query {
     filterAssetIdIn: [ID!]
     filterInvestmentIdIn: [ID!]
   ): Portfolio @semanticNonNull
+  """
+  One portfolio slice per investment held in the matching wrappers. Use this for stacked-per-investment charts: each edge's `node` is a single-investment `Portfolio`, and `node.investment` identifies which investment that slice represents.
+  """
+  portfolios(
+    after: ID
+    """
+    ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency.
+    """
+    currency: String
+    filterAssetIdIn: [ID!]
+    first: Int
+  ): PortfolioConnection @semanticNonNull
 }
 
 """

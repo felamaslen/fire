@@ -11,6 +11,13 @@ import {
 
 import type { Date as CalendarDate } from "../date";
 import { assertCurrencyCode, Money } from "../money";
+import {
+  buildConnection,
+  type Connection,
+  decodeCursor,
+  encodeCursor,
+} from "../pagination";
+import { Investment } from "./index";
 
 /** Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
 export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD";
@@ -285,6 +292,20 @@ export class Portfolio {
     return CURRENCIES[this.currency as keyof typeof CURRENCIES].scale;
   }
 
+  /** When this portfolio is scoped to exactly one investment (as emitted by `Query.portfolios`), the investment it represents. `null` for aggregate portfolios covering multiple investments. @gqlField */
+  async investment(): Promise<Investment | null> {
+    if (!this.filterInvestmentIdIn || this.filterInvestmentIdIn.length !== 1) {
+      return null;
+    }
+    const id = this.filterInvestmentIdIn[0];
+    const { eq } = await import("drizzle-orm");
+    const [row] = await db
+      .select()
+      .from(Investments)
+      .where(eq(Investments.id, id));
+    return row ? Investment.load(row) : null;
+  }
+
   /** Current market value of the filtered portfolio. Zero when nothing is held. @gqlField */
   async totalValue(): Promise<Money | null> {
     return this.aggregate((h) =>
@@ -457,6 +478,76 @@ function bucketIndices(
   }
   out[out.length - 1].end = n - 1;
   return out;
+}
+
+const DEFAULT_PAGE_SIZE = 50;
+
+/** One portfolio slice per investment held in the matching wrappers. Use this for stacked-per-investment charts: each edge's `node` is a single-investment `Portfolio`, and `node.investment` identifies which investment that slice represents.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function portfolios(
+  filterAssetIdIn?: ID[] | null,
+  /** ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency. */
+  currency?: string | null,
+  first?: Int | null,
+  after?: ID | null,
+): Promise<Connection<Portfolio> | null> {
+  const target = currency ?? HOME_CURRENCY;
+  assertCurrencyCode(target);
+  const limit = first ?? DEFAULT_PAGE_SIZE;
+  const afterCursor = after ? decodeCursor(after) : null;
+
+  const conditions = [sql`${Investments.currency} = ${target}`];
+  if (filterAssetIdIn && filterAssetIdIn.length > 0) {
+    const rowsInWrapper = await db
+      .selectDistinct({ investmentId: InvestmentTransactions.investmentId })
+      .from(InvestmentTransactions)
+      .where(
+        inArray(InvestmentTransactions.assetId, filterAssetIdIn as string[]),
+      );
+    const ids = rowsInWrapper.map((r) => r.investmentId);
+    if (ids.length === 0) {
+      return buildConnection<Portfolio>([], () => "" as ID, {
+        hasNextPage: false,
+        hasPreviousPage: afterCursor != null,
+      });
+    }
+    conditions.push(inArray(Investments.id, ids));
+  }
+
+  const rows = await db
+    .select({ id: Investments.id })
+    .from(Investments)
+    .where(and(...conditions))
+    .orderBy(Investments.id);
+
+  let startIndex = 0;
+  if (afterCursor) {
+    const idx = rows.findIndex((r) => r.id === afterCursor.i);
+    if (idx === -1) {
+      return buildConnection<Portfolio>([], () => "" as ID, {
+        hasNextPage: false,
+        hasPreviousPage: true,
+      });
+    }
+    startIndex = idx + 1;
+  }
+  const slice = rows.slice(startIndex, startIndex + limit + 1);
+  const hasNextPage = slice.length > limit;
+  const page = hasNextPage ? slice.slice(0, limit) : slice;
+
+  const filterAssets = filterAssetIdIn ? (filterAssetIdIn as string[]) : null;
+  const nodes = page.map((r) => new Portfolio(target, filterAssets, [r.id]));
+  return buildConnection<Portfolio>(
+    nodes,
+    (node) => {
+      const idx = nodes.indexOf(node);
+      return encodeCursor(page[idx].id, page[idx].id);
+    },
+    { hasNextPage, hasPreviousPage: afterCursor != null },
+  );
 }
 
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are in `currency` (defaults to the server's home currency); investments held in any other currency are excluded.
