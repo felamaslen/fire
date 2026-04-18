@@ -1,5 +1,5 @@
 import { useSuspenseQuery } from "@apollo/client/react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 
 import { Figure, FigureDocument } from "@/components/figure";
 import { Button } from "@/components/ui/button";
@@ -56,7 +56,7 @@ const PlanningMonthAccountCellDocument = graphql(
   [FigureDocument, PlanningTransactionRowDocument],
 );
 
-const PlanningYearViewDocument = graphql(
+export const PlanningYearViewDocument = graphql(
   `
     query PlanningYearView($id: ID!) {
       planningYear(id: $id) {
@@ -119,6 +119,7 @@ function PlanningYearPage() {
         <PlanningTable data={data.planningYear} />
       </div>
       <YearFooter current={year} years={allYears} />
+      <Outlet />
     </main>
   );
 }
@@ -129,6 +130,13 @@ function Header({ year }: { year: string }) {
       <h1 className="text-2xl font-semibold tracking-tight">
         Planning · {fyLabel(year)}
       </h1>
+      <nav className="ml-auto flex items-center gap-2">
+        <Button asChild variant="outline" size="sm">
+          <Link to="/planning/$year/accounts" params={{ year }}>
+            Manage accounts
+          </Link>
+        </Button>
+      </nav>
     </div>
   );
 }
@@ -262,7 +270,7 @@ function PlanningTable({ data }: { data: PlanningYearData }) {
                         </p>
                         <Button asChild size="sm">
                           <Link
-                            to="/planning/$year"
+                            to="/planning/$year/accounts"
                             params={{ year: String(data.id) }}
                           >
                             Manage accounts
