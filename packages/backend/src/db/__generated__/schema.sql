@@ -76,6 +76,27 @@ CREATE TYPE "public"."planningBillsFrequency" AS ENUM (
   'QUARTERLY',
   'YEARLY'
 );
+CREATE TABLE "InvestmentTransactions" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "investmentId" uuid NOT NULL,
+  "assetId" uuid NOT NULL,
+  "units" BIGINT NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL,
+  "taxes" BIGINT DEFAULT 0 NOT NULL,
+  "fees" BIGINT DEFAULT 0 NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "date" date NOT NULL,
+  "drip" BOOLEAN DEFAULT FALSE NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentTransactions_price_ck"
+    CHECK ("InvestmentTransactions"."price" >= 0),
+  CONSTRAINT "InvestmentTransactions_taxes_ck"
+    CHECK ("InvestmentTransactions"."taxes" >= 0),
+  CONSTRAINT "InvestmentTransactions_fees_ck"
+    CHECK ("InvestmentTransactions"."fees" >= 0)
+);
+
 CREATE TABLE "Investments" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "name" text NOT NULL,
@@ -426,6 +447,16 @@ CREATE TABLE "PlanningYears" (
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
 
+ALTER TABLE "InvestmentTransactions"
+ADD CONSTRAINT "InvestmentTransactions_investmentId_Investments_id_fk"
+  FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "InvestmentTransactions"
+ADD CONSTRAINT "InvestmentTransactions_assetId_NetWorthCategoryAssets_id_fk"
+  FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id")
+    ON DELETE RESTRICT
+    ON UPDATE NO ACTION;
 ALTER TABLE "NetWorthCategoryLiabilities"
 ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" (
@@ -593,6 +624,12 @@ ADD CONSTRAINT "PlanningYearUKTaxRates_year_PlanningYears_year_fk"
   FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year")
     ON DELETE CASCADE
     ON UPDATE NO ACTION;
+CREATE INDEX "InvestmentTransactions_investmentId_idx" ON "InvestmentTransactions" USING btree (
+  "investmentId"
+);
+CREATE INDEX "InvestmentTransactions_assetId_idx" ON "InvestmentTransactions" USING btree (
+  "assetId"
+);
 CREATE UNIQUE INDEX "NetWorthEntries_month_uq" ON "NetWorthEntries" USING btree (
   date_trunc('month', "date"::TIMESTAMP)
 );
