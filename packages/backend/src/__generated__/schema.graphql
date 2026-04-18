@@ -65,6 +65,14 @@ interface NetWorthCategory {
   name: String!
 }
 
+input InvestmentAllocationInput {
+  """
+  Target fraction of the wrapper's value allocated to this investment. `0 < allocation <= 1`.
+  """
+  allocation: Float!
+  investmentId: ID!
+}
+
 """
 Identifies the underlying instrument when creating or updating an `Investment`. Exactly one field must be set.
 """
@@ -332,6 +340,28 @@ type Investment {
   unitPriceCached: Money
 }
 
+"""Target allocation of one wrapper's value to a specific investment."""
+type InvestmentAllocation {
+  """
+  Target fraction of the wrapper's value allocated to the investment. `0 < allocation <= 1`.
+  """
+  allocation: Float!
+  asset: NetWorthCategoryAsset!
+  investment: Investment!
+}
+
+"""
+Allocations configured for a single wrapper, plus the portfolio-wide cash allocation share that applies across the whole portfolio.
+"""
+type InvestmentAllocationsResult {
+  """
+  Portfolio-wide target cash fraction (applies across all wrappers in aggregate). `null` when no cash allocation has been configured yet.
+  """
+  cash: Float
+  """Per-investment allocations for the wrapper. Sums to 1."""
+  investments: [InvestmentAllocation!]!
+}
+
 """
 A fund identified by a URL to its product page (e.g. a fund platform's page).
 """
@@ -512,6 +542,20 @@ type Mutation {
     toAccountId: ID
     ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ): PlanningEarning!
+  """
+  Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to exactly 1.
+  """
+  investmentAllocationsSet(
+    allocations: [InvestmentAllocationInput!]!
+    """
+    Wrapper (`STOCK` or `PENSION` net-worth asset) whose allocations are being set.
+    """
+    assetId: ID!
+  ): InvestmentAllocationsResult!
+  """
+  Set the portfolio-wide target cash allocation (applies across every wrapper in aggregate). `0 <= allocation <= 1`.
+  """
+  investmentCashAllocationSet(allocation: Float!): Float!
   """Create a new investment."""
   investmentCreate(
     """What kind of instrument this investment represents."""
@@ -1206,6 +1250,15 @@ type Query {
   Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
   """
   earnings(after: ID, first: Int): PlanningEarningConnection @semanticNonNull
+  """
+  Allocations configured for one wrapper. When `assetId` is `null`, portfolio-wide allocations (weighted across wrappers) — **not yet implemented**, returns an error.
+  """
+  investmentAllocations(
+    """
+    The wrapper whose allocations to return. Pass `null` to aggregate across the whole portfolio (coming in a later release).
+    """
+    assetId: ID
+  ): InvestmentAllocationsResult @semanticNonNull
   """All investments recorded on the server, most-recently-created first."""
   investments: [Investment!] @semanticNonNull
   """Paginated list of net-worth entries, newest first."""
