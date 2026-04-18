@@ -1,5 +1,6 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { isSameMonth } from "date-fns/isSameMonth";
 import { AlertTriangle, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -41,6 +42,7 @@ import {
   readFragment,
   type ResultOf,
 } from "../../graphql";
+import { useToday } from "@/lib/use-today";
 
 const PlanningTransactionRowDocument = graphql(
   `
@@ -339,6 +341,8 @@ function PlanningTable({
   const cellBorder = "border-r border-b border-border";
   const monoRight = "text-right font-mono tabular-nums tracking-tight";
 
+  const today = useToday();
+
   return (
     <div className="max-h-[calc(100svh-10rem)] overflow-auto rounded-md border bg-background">
       <Table className="border-separate border-spacing-0 text-xs">
@@ -366,74 +370,78 @@ function PlanningTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {data.months.map((month, i) => (
-            <TableRow key={month.id} className="align-top">
-              <TableHead
-                scope="row"
-                className={cn(
-                  "sticky left-0 z-10 w-8 min-w-8 max-w-8 bg-background p-0 text-center align-middle font-medium",
-                  cellBorder,
-                )}
-              >
-                <span className="flex h-20 items-center justify-center [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
-                  {formatMonth(month.date)}
-                </span>
-              </TableHead>
-              {accounts.length === 0
-                ? // Empty-state CTA: one cell spans the entire body next to the
-                  // month column so the grid keeps its shape but stays useful.
-                  i === 0 && (
-                    <TableCell
-                      rowSpan={data.months.length}
-                      className={cn(
-                        "bg-muted/20 p-8 text-center align-middle",
-                        cellBorder,
-                      )}
-                    >
-                      <div className="mx-auto flex max-w-sm flex-col items-center gap-2">
-                        <p className="text-sm text-muted-foreground">
-                          No planning accounts yet. Add one to start projecting
-                          balances across the year.
-                        </p>
-                        <Button asChild size="sm">
-                          <Link
-                            to="/planning/$year/accounts"
-                            params={{ year: String(data.id) }}
-                          >
-                            Manage accounts
-                          </Link>
-                        </Button>
-                      </div>
-                    </TableCell>
-                  )
-                : month.accounts.map((cell, j) => (
-                    <TableCell
-                      key={cell.id}
-                      className={cn(
-                        // `h-px` is a CSS trick: `height: 1px` on a <td>
-                        // doesn't actually shrink the cell (the row still
-                        // expands to the tallest content), but it gives the
-                        // inner div a concrete base to resolve `h-full`
-                        // against — letting the transactions list flex-grow
-                        // and pin the end-balance row at the bottom.
-                        "h-px min-w-56 p-0",
-                        cellBorder,
-                      )}
-                    >
-                      <MonthAccountCell
-                        data={cell}
-                        monoRight={monoRight}
-                        showStart={i === 0}
-                        monthId={month.id}
-                        year={year}
-                        fromAccountId={accounts[j].id}
-                        accounts={accounts}
-                        liabilities={liabilities}
-                      />
-                    </TableCell>
-                  ))}
-            </TableRow>
-          ))}
+          {data.months.map((month, i) => {
+            const isCurrent = isSameMonth(new Date(month.date), today);
+            return (
+              <TableRow key={month.id} className="align-top">
+                <TableHead
+                  scope="row"
+                  className={cn(
+                    "sticky left-0 z-10 h-px w-8 min-w-8 max-w-8 bg-background p-0 text-center align-middle font-medium",
+                    isCurrent && "text-primary",
+                    cellBorder,
+                  )}
+                >
+                  <span className="flex h-full min-h-20 items-center justify-center [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
+                    {formatMonth(month.date)}
+                  </span>
+                </TableHead>
+                {accounts.length === 0
+                  ? // Empty-state CTA: one cell spans the entire body next to the
+                    // month column so the grid keeps its shape but stays useful.
+                    i === 0 && (
+                      <TableCell
+                        rowSpan={data.months.length}
+                        className={cn(
+                          "bg-muted/20 p-8 text-center align-middle",
+                          cellBorder,
+                        )}
+                      >
+                        <div className="mx-auto flex max-w-sm flex-col items-center gap-2">
+                          <p className="text-sm text-muted-foreground">
+                            No planning accounts yet. Add one to start
+                            projecting balances across the year.
+                          </p>
+                          <Button asChild size="sm">
+                            <Link
+                              to="/planning/$year/accounts"
+                              params={{ year: String(data.id) }}
+                            >
+                              Manage accounts
+                            </Link>
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )
+                  : month.accounts.map((cell, j) => (
+                      <TableCell
+                        key={cell.id}
+                        className={cn(
+                          // `h-px` is a CSS trick: `height: 1px` on a <td>
+                          // doesn't actually shrink the cell (the row still
+                          // expands to the tallest content), but it gives the
+                          // inner div a concrete base to resolve `h-full`
+                          // against — letting the transactions list flex-grow
+                          // and pin the end-balance row at the bottom.
+                          "h-px min-w-56 p-0",
+                          cellBorder,
+                        )}
+                      >
+                        <MonthAccountCell
+                          data={cell}
+                          monoRight={monoRight}
+                          showStart={i === 0}
+                          monthId={month.id}
+                          year={year}
+                          fromAccountId={accounts[j].id}
+                          accounts={accounts}
+                          liabilities={liabilities}
+                        />
+                      </TableCell>
+                    ))}
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>
@@ -466,7 +474,7 @@ function MonthAccountCell({
         <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
           <Figure
             data={cell.valueStart}
-            className={cn(monoRight, "font-medium")}
+            className={cn(monoRight, "font-bold")}
           />
         </div>
       )}
@@ -494,7 +502,7 @@ function MonthAccountCell({
         </li>
       </ul>
       <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
-        <Figure data={cell.valueEnd} className={cn(monoRight, "font-medium")} />
+        <Figure data={cell.valueEnd} className={cn(monoRight, "font-bold")} />
       </div>
     </div>
   );
