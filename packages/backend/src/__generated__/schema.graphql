@@ -367,6 +367,10 @@ type Investment {
   """
   unitPriceCached: Money
   """
+  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).
+  """
+  unitPriceLatest: InvestmentPriceLatest
+  """
   Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.
   """
   wrappers: [InvestmentWrapper!] @semanticNonNull
@@ -460,6 +464,14 @@ type InvestmentPosition {
   totalValue: Money
   """Net units held."""
   units: Int!
+}
+
+"""The real-time unit price of a stock investment, as of `capturedAt`."""
+type InvestmentPriceLatest {
+  """When the quote was captured."""
+  capturedAt: DateTime!
+  """Live quote, in the currency reported by the quote provider."""
+  price: Money!
 }
 
 """

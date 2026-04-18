@@ -6,7 +6,9 @@ import type { ID, Int } from "grats";
 
 import { db } from "@/db";
 import { Investments } from "@/db/schema/investments";
+import { readOrRefresh } from "@/tasks/yahoo";
 
+import type { DateTime } from "../date-time";
 import { assertCurrencyCode, Money } from "../money";
 import {
   buildConnection,
@@ -29,6 +31,16 @@ import {
   InvestmentTransaction,
   loadInvestmentTransactions,
 } from "./transactions";
+
+/** The real-time unit price of a stock investment, as of `capturedAt`. @gqlType */
+export class InvestmentPriceLatest {
+  constructor(
+    /** Live quote, in the currency reported by the quote provider. @gqlField */
+    public readonly price: Money,
+    /** When the quote was captured. @gqlField */
+    public readonly capturedAt: DateTime,
+  ) {}
+}
 
 /** A listed security identified by its ticker on the relevant exchange. @gqlType */
 export class InvestmentStock {
@@ -99,6 +111,17 @@ export class Investment {
     const s = await loadInvestmentStats(this.id);
     if (s.priceLatest === null) return null;
     return Money.fromMinorDenomination(s.priceLatest, s.currency);
+  }
+
+  /** Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes). @gqlField */
+  async unitPriceLatest(): Promise<InvestmentPriceLatest | null> {
+    if (!(this.asset instanceof InvestmentStock)) return null;
+    const quote = readOrRefresh(this.asset.code);
+    if (!quote) return null;
+    return new InvestmentPriceLatest(
+      Money.fromMinorDenomination(quote.priceMinorUnits, quote.currency),
+      quote.fetchedAt as DateTime,
+    );
   }
 
   /** Holdings, cost basis, and gain/loss aggregated across every wrapper. @gqlField */
