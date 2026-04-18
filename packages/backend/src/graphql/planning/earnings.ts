@@ -25,12 +25,8 @@ import {
   decodeCursor,
   encodeCursor,
 } from "../pagination";
-import {
-  PlanningAccount,
-  type PlanningYear,
-  planningYearsForYears,
-} from "./index";
-import { yearsOverlapping } from "./months";
+import { VOID, type Void } from "../void";
+import { PlanningAccount } from "./index";
 
 /** A stream of gross earnings (salary, contract income, …) paid into a specific asset account. @gqlType */
 export class PlanningEarning {
@@ -205,7 +201,7 @@ export async function earningsCreate(
   /** Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply. */
   studentLoanPlan2?: boolean | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
-): Promise<PlanningYear[]> {
+): Promise<PlanningEarning> {
   assertCountryCode(countryCode);
   const { currency, amount } = getMoneyInputFractionalAmount(amountGross);
   const row = await db.transaction(async (tx) => {
@@ -228,7 +224,7 @@ export async function earningsCreate(
     if (ukTaxCodes != null) await writeTaxCodes(tx, inserted.id, ukTaxCodes);
     return inserted;
   });
-  return planningYearsForYears(yearsOverlapping(row.start, row.end));
+  return PlanningEarning.load(row);
 }
 
 /**
@@ -250,7 +246,7 @@ export async function earningsUpdate(
   pensionSalarySacrifice?: Float | null,
   studentLoanPlan2?: boolean | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
-): Promise<PlanningYear[]> {
+): Promise<PlanningEarning> {
   const [existing] = await db
     .select()
     .from(PlanningEarnings)
@@ -297,12 +293,7 @@ export async function earningsUpdate(
     if (ukTaxCodes != null) await writeTaxCodes(tx, id, ukTaxCodes);
     return updated;
   });
-
-  const affected = new Set<number>([
-    ...yearsOverlapping(existing.start, existing.end),
-    ...yearsOverlapping(row.start, row.end),
-  ]);
-  return planningYearsForYears([...affected]);
+  return PlanningEarning.load(row);
 }
 
 /**
@@ -310,13 +301,9 @@ export async function earningsUpdate(
  *
  * @gqlMutationField
  */
-export async function earningsDelete(id: ID): Promise<PlanningYear[]> {
-  const [row] = await db
-    .delete(PlanningEarnings)
-    .where(eq(PlanningEarnings.id, id))
-    .returning();
-  if (!row) return [];
-  return planningYearsForYears(yearsOverlapping(row.start, row.end));
+export async function earningsDelete(id: ID): Promise<Void> {
+  await db.delete(PlanningEarnings).where(eq(PlanningEarnings.id, id));
+  return VOID;
 }
 
 const DEFAULT_PAGE_SIZE = 20;

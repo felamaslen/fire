@@ -146,7 +146,7 @@ it("payslipCreate lifts valueEnd for the payslip's month and every later month",
     mar-2026 Main    10000       10000    "
   `);
 
-  const result = await runGql(
+  await runGql(
     graphql(`
       mutation ($a: ID!) {
         payslipCreate(
@@ -165,7 +165,6 @@ it("payslipCreate lifts valueEnd for the payslip's month and every later month",
     `),
     { a: accountIdTo },
   );
-  expect(result.payslipCreate.map((y) => y.id)).toEqual(["2025"]);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
@@ -229,7 +228,7 @@ it("payslipUpdate moves the effect to the new month and resizes it", async () =>
 
   const payslipId = await firstPayslipId();
 
-  const result = await runGql(
+  await runGql(
     graphql(`
       mutation ($id: ID!) {
         payslipUpdate(
@@ -249,7 +248,6 @@ it("payslipUpdate moves the effect to the new month and resizes it", async () =>
     { id: payslipId },
   );
   // affected years = old date's year ∪ new date's year. Both are 2025 here.
-  expect(result.payslipUpdate.map((y) => y.id)).toEqual(["2025"]);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
@@ -312,17 +310,16 @@ it("payslipDelete restores balances to the baseline", async () => {
     mar-2026 Main    12500       12500    "
   `);
 
-  const result = await runGql(
+  await runGql(
     graphql(`
       mutation ($id: ID!) {
         payslipDelete(id: $id) {
-          id
+          _
         }
       }
     `),
     { id: payslipId },
   );
-  expect(result.payslipDelete.map((y) => y.id)).toEqual(["2025"]);
 
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "

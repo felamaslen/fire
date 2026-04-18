@@ -16,12 +16,13 @@ import {
   PlanningYearUKTaxRates,
 } from "@/db/schema/planning";
 
-import { getMoneyInputFractionalAmount, type MoneyInput } from "../money";
 import {
-  ensurePlanningMonth,
-  type PlanningYear,
-  planningYearsForYears,
-} from "./index";
+  getMoneyInputFractionalAmount,
+  Money,
+  type MoneyInput,
+} from "../money";
+import { VOID, type Void } from "../void";
+import { ensurePlanningMonth, type PlanningTransaction } from "./index";
 import { parseMonthId, planningMonthKey } from "./months";
 import { computeUKTake } from "./tax";
 
@@ -83,22 +84,32 @@ export async function transactionCreate(
   toAccountId?: ID | null,
   /** Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. */
   liabilityId?: ID | null,
-): Promise<PlanningYear[]> {
+): Promise<PlanningTransaction> {
   const { year, date } = monthKey(monthId);
   const { currency, amount: minor } = getMoneyInputFractionalAmount(amount);
   assert(minor >= 0, "Transaction amount must be a positive magnitude");
   await ensurePlanningMonth(year, date);
-  await db.insert(PlanningTransactions).values({
-    year,
-    date,
-    amount: minor,
-    currency,
-    name,
-    fromAccountId,
-    toAccountId: toAccountId ?? null,
-    liabilityId: liabilityId ?? null,
-  });
-  return planningYearsForYears([year]);
+  const [row] = await db
+    .insert(PlanningTransactions)
+    .values({
+      year,
+      date,
+      amount: minor,
+      currency,
+      name,
+      fromAccountId,
+      toAccountId: toAccountId ?? null,
+      liabilityId: liabilityId ?? null,
+    })
+    .returning();
+  return {
+    id: encodePlanningTransactionId({ kind: "tx", id: row.id }),
+    name: row.name,
+    amount: Money.fromMinorDenomination(-row.amount, row.currency),
+    isProvisional: false,
+    isEditable: true,
+    liabilityId: (row.liabilityId ?? null) as ID | null,
+  };
 }
 
 /**
@@ -126,7 +137,7 @@ export async function transactionUpdate(
   toAccountId?: ID | null,
   /** New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only. */
   liabilityId?: ID | null,
-): Promise<PlanningYear[]> {
+): Promise<PlanningTransaction> {
   const { year, date } = monthKey(monthId);
   const parsed = decodePlanningTransactionId(id);
   const patchAmount =
@@ -215,7 +226,92 @@ export async function transactionUpdate(
       break;
     }
   }
-  return planningYearsForYears([year]);
+  return reloadTransaction(parsed);
+}
+
+/** Fetch the current `PlanningTransaction` view of a row after an update. Derived kinds (`earn`, `bill`) materialise into concrete payslip / override rows, but we still return the source composite id so the caller's reference stays valid. */
+async function reloadTransaction(
+  parsed: PlanningTransactionId,
+): Promise<PlanningTransaction> {
+  switch (parsed.kind) {
+    case "tx":
+    case "to": {
+      const [row] = await db
+        .select()
+        .from(PlanningTransactions)
+        .where(eq(PlanningTransactions.id, parsed.id));
+      assert(row, `Transaction ${parsed.id} not found`);
+      const fromSide = parsed.kind === "tx";
+      return {
+        id: encodePlanningTransactionId(parsed),
+        name: row.name,
+        amount: Money.fromMinorDenomination(
+          fromSide ? -row.amount : row.amount,
+          row.currency,
+        ),
+        isProvisional: false,
+        isEditable: fromSide,
+        liabilityId: (row.liabilityId ?? null) as ID | null,
+      };
+    }
+    case "pay": {
+      const [row] = await db
+        .select()
+        .from(PlanningPayslips)
+        .where(eq(PlanningPayslips.id, parsed.id));
+      assert(row, `Payslip ${parsed.id} not found`);
+      return {
+        id: encodePlanningTransactionId(parsed),
+        name: row.name,
+        amount: Money.fromMinorDenomination(row.amountGross, row.currency),
+        isProvisional: false,
+        isEditable: true,
+        liabilityId: null,
+      };
+    }
+    case "adj": {
+      const [row] = await db
+        .select({
+          adjustment: PlanningPayslipAdjustments,
+          payslip: PlanningPayslips,
+        })
+        .from(PlanningPayslipAdjustments)
+        .innerJoin(
+          PlanningPayslips,
+          eq(PlanningPayslips.id, PlanningPayslipAdjustments.payslipId),
+        )
+        .where(eq(PlanningPayslipAdjustments.id, parsed.id));
+      assert(row, `Adjustment ${parsed.id} not found`);
+      return {
+        id: encodePlanningTransactionId(parsed),
+        name: row.adjustment.name,
+        amount: Money.fromMinorDenomination(
+          row.adjustment.amount,
+          row.payslip.currency,
+        ),
+        isProvisional: false,
+        isEditable: true,
+        liabilityId: (row.adjustment.liabilityId ?? null) as ID | null,
+      };
+    }
+    case "bill":
+    case "earn": {
+      // Derived kinds materialise into new rows with different composite ids
+      // (the derived row is replaced, not mutated in place). We return a
+      // placeholder carrying the original `id` so Apollo can invalidate the
+      // cached derived entry — clients should refetch the month view to pick
+      // up the fresh concrete row. The stub is flagged `isEditable: false`
+      // to discourage UIs from treating it as a real transaction.
+      return {
+        id: encodePlanningTransactionId(parsed),
+        name: "",
+        amount: Money.fromMinorDenomination(0, "GBP"),
+        isProvisional: true,
+        isEditable: false,
+        liabilityId: null,
+      };
+    }
+  }
 }
 
 /**
@@ -234,7 +330,7 @@ export async function transactionDelete(
   monthId: ID,
   /** Composite id as returned on `PlanningTransaction.id`. */
   id: ID,
-): Promise<PlanningYear[]> {
+): Promise<Void> {
   const { year, date } = monthKey(monthId);
   const parsed = decodePlanningTransactionId(id);
 
@@ -275,7 +371,7 @@ export async function transactionDelete(
       break;
     }
   }
-  return planningYearsForYears([year]);
+  return VOID;
 }
 
 function monthKey(monthId: string): { year: number; date: Date } {

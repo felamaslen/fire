@@ -330,11 +330,10 @@ it("mixes all sources — payslip + explicit transfer + credit-card payment + bi
     `),
     { from: current },
   );
-  // billCreate returns [PlanningYear!] — grab the bill's real id by querying it through the DB.
   const { PlanningBills } = await import("@/db/schema/planning");
   const [bill] = await db.select().from(PlanningBills);
   expect(bill).toBeDefined();
-  expect(billCreated.billCreate).toHaveLength(1);
+  expect(billCreated.billCreate.id).toBeDefined();
 
   // Override: May's internet bill actually came to £40.
   await db.insert(PlanningMonthBills).values({
