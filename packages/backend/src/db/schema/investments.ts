@@ -6,9 +6,11 @@ import {
   date,
   doublePrecision,
   index,
+  numeric,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -46,6 +48,7 @@ export const Investments = pgTable(
 
 export const investmentsRelations = relations(Investments, ({ many }) => ({
   transactions: many(InvestmentTransactions),
+  stockSplits: many(InvestmentStockSplits),
 }));
 
 /** One buy / sell / dividend-reinvestment against an `Investments` row, booked against a net-worth asset (STOCK or PENSION — validated in the resolver). */
@@ -101,6 +104,49 @@ export const investmentTransactionsRelations = relations(
     asset: one(NetWorthCategoryAssets, {
       fields: [InvestmentTransactions.assetId],
       references: [NetWorthCategoryAssets.id],
+    }),
+  }),
+);
+
+/** Stock-split event: `units_post = units_pre * ratio`. Ratio > 1 = forward split (e.g. `2` for 2-for-1), 0 < ratio < 1 = reverse split. Writes trigger a backfill of `InvestmentPrices.priceAdjusted` for rows dated before this split. */
+export const InvestmentStockSplits = pgTable(
+  "InvestmentStockSplits",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    investmentId: uuid("investmentId")
+      .notNull()
+      .references(() => Investments.id, { onDelete: "cascade" }),
+    date: date("date", { mode: "date" }).notNull(),
+    /** Split ratio as a positive decimal. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split. */
+    ratio: numeric("ratio", {
+      precision: 20,
+      scale: 10,
+      mode: "string",
+    }).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check("InvestmentStockSplits_ratio_ck", sql`${t.ratio} > 0`),
+    uniqueIndex("InvestmentStockSplits_investmentId_date_uq").on(
+      t.investmentId,
+      t.date,
+    ),
+  ],
+);
+
+export const investmentStockSplitsRelations = relations(
+  InvestmentStockSplits,
+  ({ one }) => ({
+    investment: one(Investments, {
+      fields: [InvestmentStockSplits.investmentId],
+      references: [Investments.id],
     }),
   }),
 );
