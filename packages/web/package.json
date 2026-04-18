@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "NODE_ENV=development vite --port 4001 dev --host 0.0.0.0",
+    "dev": "vite --port 4001 --host 0.0.0.0",
     "build": "vite build",
-    "start": "vite start",
+    "start": "vite preview --port 3000",
     "typecheck": "tsc --noEmit",
     "download-schema": "mkdir -p src/__generated__ && curl -fsSL http://localhost:4000/schema.graphql -o src/__generated__/schema.graphql",
     "codegen": "gql.tada generate-output && tsx scripts/generate-possible-types.ts"
@@ -24,7 +24,6 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-form": "^1.29.0",
     "@tanstack/react-router": "^1.133.0",
-    "@tanstack/react-start": "^1.133.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -39,6 +38,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "@tanstack/router-plugin": "^1.133.0",
+    "@types/node": "^24.12.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
