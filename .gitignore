@@ -29,3 +29,6 @@ Thumbs.db
 # Coverage
 coverage/
 .nyc_output/
+
+# Dev-only Yahoo quote cache (persisted across HMR reloads)
+.yahoo-cache.json
