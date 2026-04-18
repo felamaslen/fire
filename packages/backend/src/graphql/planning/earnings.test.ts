@@ -134,7 +134,7 @@ it("earningsCreate projects a monthly take-home into valueEnd from the start mon
   await assign(accountIdTo);
   await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
 
-  const result = await runGql(
+  await runGql(
     graphql(`
       mutation ($a: ID!) {
         earningsCreate(
@@ -152,22 +152,6 @@ it("earningsCreate projects a monthly take-home into valueEnd from the start mon
     `),
     { a: accountIdTo },
   );
-  expect(result.earningsCreate.map((y) => y.id)).toMatchInlineSnapshot(`
-    [
-      "2025",
-      "2026",
-      "2027",
-      "2028",
-      "2029",
-      "2030",
-      "2031",
-      "2032",
-      "2033",
-      "2034",
-      "2035",
-    ]
-  `);
-
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
     MONTH    ACCOUNT VALUE START VALUE END
@@ -213,7 +197,7 @@ it("earningsUpdate reprojects balances when the gross changes", async () => {
 
   const earningId = await firstEarningId();
 
-  const result = await runGql(
+  await runGql(
     graphql(`
       mutation ($id: ID!) {
         earningsUpdate(
@@ -226,22 +210,6 @@ it("earningsUpdate reprojects balances when the gross changes", async () => {
     `),
     { id: earningId },
   );
-  expect(result.earningsUpdate.map((y) => y.id)).toMatchInlineSnapshot(`
-    [
-      "2025",
-      "2026",
-      "2027",
-      "2028",
-      "2029",
-      "2030",
-      "2031",
-      "2032",
-      "2033",
-      "2034",
-      "2035",
-    ]
-  `);
-
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
     MONTH    ACCOUNT VALUE START VALUE END
@@ -286,32 +254,16 @@ it("earningsDelete restores balances to the baseline", async () => {
   );
   const earningId = await firstEarningId();
 
-  const result = await runGql(
+  await runGql(
     graphql(`
       mutation ($id: ID!) {
         earningsDelete(id: $id) {
-          id
+          _
         }
       }
     `),
     { id: earningId },
   );
-  expect(result.earningsDelete.map((y) => y.id)).toMatchInlineSnapshot(`
-    [
-      "2025",
-      "2026",
-      "2027",
-      "2028",
-      "2029",
-      "2030",
-      "2031",
-      "2032",
-      "2033",
-      "2034",
-      "2035",
-    ]
-  `);
-
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
     MONTH    ACCOUNT VALUE START VALUE END

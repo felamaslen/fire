@@ -27,12 +27,8 @@ import {
   decodeCursor,
   encodeCursor,
 } from "../pagination";
-import {
-  PlanningAccount,
-  type PlanningYear,
-  planningYearsForYears,
-} from "./index";
-import { yearsOverlapping } from "./months";
+import { VOID, type Void } from "../void";
+import { PlanningAccount } from "./index";
 
 /** How often a `PlanningBill` recurs. @gqlEnum */
 export type PlanningBillsFrequency = "MONTHLY" | "QUARTERLY" | "YEARLY";
@@ -188,7 +184,7 @@ export async function billCreate(
   liabilityId?: ID | null,
   /** Last day the bill is in effect; null / omitted for ongoing. */
   end?: CalendarDate | null,
-): Promise<PlanningYear[]> {
+): Promise<PlanningBill> {
   assertCollectionDateShape(frequency, collectionDate);
   const { currency, amount: minor } = getMoneyInputFractionalAmount(amount);
   const [row] = await db
@@ -205,7 +201,7 @@ export async function billCreate(
       liabilityId: liabilityId ?? null,
     })
     .returning();
-  return planningYearsForYears(yearsOverlapping(row.start, row.end));
+  return PlanningBill.load(row);
 }
 
 /**
@@ -234,7 +230,7 @@ export async function billUpdate(
   liabilityId?: ID | null,
   /** New last day in effect; pass null explicitly to mark ongoing. */
   end?: CalendarDate | null,
-): Promise<PlanningYear[]> {
+): Promise<PlanningBill> {
   const [existing] = await db
     .select()
     .from(PlanningBills)
@@ -271,12 +267,7 @@ export async function billUpdate(
     })
     .where(eq(PlanningBills.id, id))
     .returning();
-
-  const affectedYears = new Set<number>([
-    ...yearsOverlapping(existing.start, existing.end),
-    ...yearsOverlapping(row.start, row.end),
-  ]);
-  return planningYearsForYears([...affectedYears]);
+  return PlanningBill.load(row);
 }
 
 /**
@@ -284,13 +275,9 @@ export async function billUpdate(
  *
  * @gqlMutationField
  */
-export async function billDelete(id: ID): Promise<PlanningYear[]> {
-  const [row] = await db
-    .delete(PlanningBills)
-    .where(eq(PlanningBills.id, id))
-    .returning();
-  if (!row) return [];
-  return planningYearsForYears(yearsOverlapping(row.start, row.end));
+export async function billDelete(id: ID): Promise<Void> {
+  await db.delete(PlanningBills).where(eq(PlanningBills.id, id));
+  return VOID;
 }
 
 const DEFAULT_PAGE_SIZE = 20;

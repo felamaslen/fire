@@ -1,20 +1,135 @@
 import { strict as assert } from "node:assert";
 
-import { and, eq, notInArray } from "drizzle-orm";
-import type { ID } from "grats";
+import { and, desc, eq, lt, notInArray, or } from "drizzle-orm";
+import type { ID, Int } from "grats";
 
 import { db } from "@/db";
 import {
+  NetWorthCategoryAssets,
+  NetWorthCategoryLiabilities,
+} from "@/db/schema/net-worth";
+import {
+  PlanningAccounts,
   PlanningPayslipAdjustments,
   PlanningPayslips,
 } from "@/db/schema/planning";
 import { storeUpload } from "@/uploads";
 
 import type { Date as CalendarDate } from "../date";
+import { Money } from "../money";
 import { getMoneyInputFractionalAmount, type MoneyInput } from "../money";
+import {
+  NetWorthCategoryAsset,
+  NetWorthCategoryLiability,
+} from "../net-worth/categories";
+import {
+  buildConnection,
+  type Connection,
+  decodeCursor,
+  encodeCursor,
+} from "../pagination";
 import type { Upload } from "../upload";
-import { type PlanningYear, planningYearsForYears } from "./index";
-import { yearsOverlapping } from "./months";
+import { VOID, type Void } from "../void";
+import { PlanningAccount } from "./index";
+
+/** A recorded pay-period snapshot: the gross amount plus zero or more adjustments (tax, NIC, student loan, …). Payslips suppress earnings projections for the same month+account. @gqlType */
+export class PlanningPayslip {
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** Pay date. @gqlField */
+    public readonly date: CalendarDate,
+    /** Gross pay for this pay period. @gqlField */
+    public readonly amountGross: Money,
+    /** @gqlField */
+    public readonly name: string,
+    /** Path to the uploaded payslip file (PDF / image), relative to the server. Null if none was uploaded. @gqlField */
+    public readonly fileUrl: string | null,
+    public readonly toAccountId: string,
+    private readonly currency: string,
+  ) {}
+
+  static load(row: typeof PlanningPayslips.$inferSelect): PlanningPayslip {
+    return new PlanningPayslip(
+      row.id as ID,
+      row.date,
+      Money.fromMinorDenomination(row.amountGross, row.currency),
+      row.name,
+      row.fileUrl,
+      row.toAccountId,
+      row.currency,
+    );
+  }
+
+  /** Planning account the net pay lands in. @gqlField */
+  async toAccount(): Promise<PlanningAccount> {
+    const [row] = await db
+      .select({
+        assetId: PlanningAccounts.accountId,
+        alias: PlanningAccounts.alias,
+        asset: NetWorthCategoryAssets,
+      })
+      .from(PlanningAccounts)
+      .innerJoin(
+        NetWorthCategoryAssets,
+        eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
+      )
+      .where(eq(PlanningAccounts.accountId, this.toAccountId));
+    assert(
+      row,
+      `PlanningAccount for asset ${this.toAccountId} referenced by PlanningPayslip ${this.id} is missing — assign it via planningAccountAssign first.`,
+    );
+    return new PlanningAccount({
+      assetId: row.assetId,
+      alias: row.alias,
+      asset: NetWorthCategoryAsset.load(row.asset),
+    });
+  }
+
+  /** Line items on this payslip (tax / NIC / student-loan / any custom). Signed; negative = deduction. @gqlField */
+  async adjustments(): Promise<PlanningPayslipAdjustment[]> {
+    const rows = await db
+      .select()
+      .from(PlanningPayslipAdjustments)
+      .where(eq(PlanningPayslipAdjustments.payslipId, this.id));
+    return rows.map((r) => PlanningPayslipAdjustment.load(r, this.currency));
+  }
+}
+
+/** A single line item on a PlanningPayslip. Currency matches the parent payslip. @gqlType */
+export class PlanningPayslipAdjustment {
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** @gqlField */
+    public readonly name: string,
+    /** Signed amount. Negative = deduction. @gqlField */
+    public readonly amount: Money,
+    private readonly liabilityId: string | null,
+  ) {}
+
+  static load(
+    row: typeof PlanningPayslipAdjustments.$inferSelect,
+    currency: string,
+  ): PlanningPayslipAdjustment {
+    return new PlanningPayslipAdjustment(
+      row.id as ID,
+      row.name,
+      Money.fromMinorDenomination(row.amount, currency),
+      row.liabilityId,
+    );
+  }
+
+  /** Liability this adjustment pays down, if any (e.g. a student-loan deduction). @gqlField */
+  async liability(): Promise<NetWorthCategoryLiability | null> {
+    if (!this.liabilityId) return null;
+    const [row] = await db
+      .select()
+      .from(NetWorthCategoryLiabilities)
+      .where(eq(NetWorthCategoryLiabilities.id, this.liabilityId));
+    return row ? NetWorthCategoryLiability.load(row) : null;
+  }
+}
 
 /** A single payslip line item to attach to a payslip. Include `id` to update an existing adjustment; omit it to create a new one. @gqlInput */
 export type PayslipAdjustmentInput = {
@@ -87,7 +202,7 @@ export async function payslipCreate(
   adjustments?: PayslipAdjustmentInput[] | null,
   /** Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket; the resolved URL is persisted on the payslip row. */
   file?: Upload | null,
-): Promise<PlanningYear[]> {
+): Promise<PlanningPayslip> {
   const { currency, amount } = getMoneyInputFractionalAmount(amountGross);
   const fileUrl = file ? `/files/${await storeUpload(await file)}` : null;
   const row = await db.transaction(async (tx) => {
@@ -107,7 +222,7 @@ export async function payslipCreate(
     }
     return inserted;
   });
-  return planningYearsForYears(yearsOverlapping(row.date, row.date));
+  return PlanningPayslip.load(row);
 }
 
 /**
@@ -125,7 +240,7 @@ export async function payslipUpdate(
   adjustments?: PayslipAdjustmentInput[] | null,
   /** Replacement file upload. Pass `null` explicitly to clear the existing fileUrl; omit to leave it unchanged. */
   file?: Upload | null,
-): Promise<PlanningYear[]> {
+): Promise<PlanningPayslip> {
   const [existing] = await db
     .select()
     .from(PlanningPayslips)
@@ -164,12 +279,7 @@ export async function payslipUpdate(
     }
     return updated;
   });
-
-  const affected = new Set<number>([
-    ...yearsOverlapping(existing.date, existing.date),
-    ...yearsOverlapping(row.date, row.date),
-  ]);
-  return planningYearsForYears([...affected]);
+  return PlanningPayslip.load(row);
 }
 
 /**
@@ -177,11 +287,50 @@ export async function payslipUpdate(
  *
  * @gqlMutationField
  */
-export async function payslipDelete(id: ID): Promise<PlanningYear[]> {
-  const [row] = await db
-    .delete(PlanningPayslips)
-    .where(eq(PlanningPayslips.id, id))
-    .returning();
-  if (!row) return [];
-  return planningYearsForYears(yearsOverlapping(row.date, row.date));
+export async function payslipDelete(id: ID): Promise<Void> {
+  await db.delete(PlanningPayslips).where(eq(PlanningPayslips.id, id));
+  return VOID;
+}
+
+const PAYSLIPS_DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * Every recorded payslip, paginated and sorted by pay date descending (most-recent first, `id` tiebreak).
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function payslips(
+  first?: Int | null,
+  after?: ID | null,
+): Promise<Connection<PlanningPayslip> | null> {
+  const limit = first ?? PAYSLIPS_DEFAULT_PAGE_SIZE;
+  const cursor = after ? decodeCursor(after) : null;
+
+  const cursorWhere = cursor
+    ? or(
+        lt(PlanningPayslips.date, new Date(cursor.c)),
+        and(
+          eq(PlanningPayslips.date, new Date(cursor.c)),
+          lt(PlanningPayslips.id, cursor.i),
+        ),
+      )
+    : undefined;
+
+  const rows = await db
+    .select()
+    .from(PlanningPayslips)
+    .where(cursorWhere)
+    .orderBy(desc(PlanningPayslips.date), desc(PlanningPayslips.id))
+    .limit(limit + 1);
+
+  const hasExtra = rows.length > limit;
+  const page = hasExtra ? rows.slice(0, limit) : rows;
+
+  const dateById = new Map(page.map((r) => [r.id, r.date]));
+  return buildConnection<PlanningPayslip>(
+    page.map((r) => PlanningPayslip.load(r)),
+    (node) => encodeCursor(dateById.get(node.id)!.toISOString(), node.id),
+    { hasNextPage: hasExtra, hasPreviousPage: cursor != null },
+  );
 }

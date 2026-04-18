@@ -13,9 +13,9 @@ import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrency
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
+import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
-import { payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
@@ -659,6 +659,105 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PlanningPayslipAdjustmentType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningPayslipAdjustment",
+        description: "A single line item on a PlanningPayslip. Currency matches the parent payslip.",
+        fields() {
+            return {
+                amount: {
+                    description: "Signed amount. Negative = deduction.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                liability: {
+                    description: "Liability this adjustment pays down, if any (e.g. a student-loan deduction).",
+                    name: "liability",
+                    type: NetWorthCategoryLiabilityType
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningPayslipType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningPayslip",
+        description: "A recorded pay-period snapshot: the gross amount plus zero or more adjustments (tax, NIC, student loan, \u2026). Payslips suppress earnings projections for the same month+account.",
+        fields() {
+            return {
+                adjustments: {
+                    description: "Line items on this payslip (tax / NIC / student-loan / any custom). Signed; negative = deduction.",
+                    name: "adjustments",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningPayslipAdjustmentType)))
+                },
+                amountGross: {
+                    description: "Gross pay for this pay period.",
+                    name: "amountGross",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                date: {
+                    description: "Pay date.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                fileUrl: {
+                    description: "Path to the uploaded payslip file (PDF / image), relative to the server. Null if none was uploaded.",
+                    name: "fileUrl",
+                    type: GraphQLString
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                toAccount: {
+                    description: "Planning account the net pay lands in.",
+                    name: "toAccount",
+                    type: new GraphQLNonNull(PlanningAccountType)
+                }
+            };
+        }
+    });
+    const PlanningPayslipEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningPayslipEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PlanningPayslipType)
+                }
+            };
+        }
+    });
+    const PlanningPayslipConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningPayslipConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningPayslipEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
     const PongType: GraphQLObjectType = new GraphQLObjectType({
         name: "Pong",
         description: "An object representing a test response from the GraphQL server",
@@ -1003,6 +1102,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return queryNetWorthEntryResolver(args.id);
                     }
                 },
+                payslips: {
+                    description: "Every recorded payslip, paginated and sorted by pay date descending (most-recent first, `id` tiebreak).",
+                    name: "payslips",
+                    type: PlanningPayslipConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryPayslipsResolver(args.first, args.after));
+                    }
+                },
                 ping: {
                     description: "Call this to check that the GraphQL server is working properly",
                     name: "ping",
@@ -1071,6 +1186,19 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "ISO-4217 currency code (e.g. \"GBP\").",
                     name: "currency",
                     type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const VoidType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Void",
+        description: "Placeholder payload for mutations that have nothing meaningful to return (e.g. delete).\nClients should select `_` (or nothing) and discard the result.",
+        fields() {
+            return {
+                _: {
+                    description: "Exists only because GraphQL forbids empty object types. Always null \u2014 ignore it.",
+                    name: "_",
+                    type: GraphQLBoolean
                 }
             };
         }
@@ -1177,19 +1305,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         },
         isOneOf: true
-    });
-    const VoidType: GraphQLObjectType = new GraphQLObjectType({
-        name: "Void",
-        description: "Placeholder payload for mutations that have nothing meaningful to return (e.g. delete).\nClients should select `_` (or nothing) and discard the result.",
-        fields() {
-            return {
-                _: {
-                    description: "Exists only because GraphQL forbids empty object types. Always null \u2014 ignore it.",
-                    name: "_",
-                    type: GraphQLBoolean
-                }
-            };
-        }
     });
     const NetWorthCategoryRefType: GraphQLInputObjectType = new GraphQLInputObjectType({
         description: "Category reference; exactly one of `asset`, `liability`, `option` must be set.",
@@ -1532,7 +1647,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 billCreate: {
                     description: "Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, \u2026) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.",
                     name: "billCreate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(PlanningBillType),
                     args: {
                         amount: {
                             description: "Amount charged per occurrence. Currency must match the asset account.",
@@ -1583,7 +1698,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 billDelete: {
                     description: "Delete a bill and every projection derived from it. Any actual transactions that had been recorded against this bill's months (via `PlanningMonthBills` overrides) are removed too, since they no longer have a parent bill. Use this when a subscription is cancelled or a mortgage is paid off.",
                     name: "billDelete",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(VoidType),
                     args: {
                         id: {
                             type: new GraphQLNonNull(GraphQLID)
@@ -1596,7 +1711,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 billUpdate: {
                     description: "Partially update an existing bill. Only fields passed in are changed \u2014 omit a field to leave it untouched. The projected-transaction stream for every affected month is recomputed from the new values; months that already had actual transactions recorded keep those and simply use the new bill as a fallback where no actual exists.",
                     name: "billUpdate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(PlanningBillType),
                     args: {
                         amount: {
                             description: "New amount per occurrence. Currency must match the asset account.",
@@ -1651,7 +1766,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 earningsCreate: {
                     description: "Register a new earnings stream (salary, contract income, \u2026). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `toAccountId` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and \u2014 when enabled \u2014 Student Loan plan 2, using the year's tax rates and any attached UK tax codes.",
                     name: "earningsCreate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(PlanningEarningType),
                     args: {
                         amountGross: {
                             type: new GraphQLNonNull(MoneyInputType)
@@ -1699,7 +1814,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 earningsDelete: {
                     description: "Delete an earnings stream and stop all future projections it was driving. Attached UK tax codes are removed via cascade. Use this when a role ends and no further income is expected from this source.",
                     name: "earningsDelete",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(VoidType),
                     args: {
                         id: {
                             type: new GraphQLNonNull(GraphQLID)
@@ -1712,7 +1827,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 earningsUpdate: {
                     description: "Partially update an earnings stream. Only fields passed in are changed \u2014 omit a field to leave it untouched. Passing `ukTaxCodes` replaces the full tax-code history (existing rows are deleted, then the supplied list is inserted). Months affected by the old or new date range have their projections recomputed.",
                     name: "earningsUpdate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(PlanningEarningType),
                     args: {
                         amountGross: {
                             type: MoneyInputType
@@ -1860,7 +1975,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 payslipCreate: {
                     description: "Create a new payslip. If `file` is provided it's streamed into the local uploads bucket and its URL stored on the row.",
                     name: "payslipCreate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(PlanningPayslipType),
                     args: {
                         adjustments: {
                             type: new GraphQLList(new GraphQLNonNull(PayslipAdjustmentInputType))
@@ -1890,7 +2005,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 payslipDelete: {
                     description: "Delete a payslip. Adjustments are removed via cascade.",
                     name: "payslipDelete",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(VoidType),
                     args: {
                         id: {
                             type: new GraphQLNonNull(GraphQLID)
@@ -1903,7 +2018,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 payslipUpdate: {
                     description: "Partially update an existing payslip. Only fields passed in are changed. Passing `adjustments` replaces the full set of line items (rows not listed are deleted; entries with an `id` are upserted).",
                     name: "payslipUpdate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(PlanningPayslipType),
                     args: {
                         adjustments: {
                             type: new GraphQLList(new GraphQLNonNull(PayslipAdjustmentInputType))
@@ -1981,7 +2096,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 transactionCreate: {
                     description: "Record a manual transaction on a planning month. Amount is a positive magnitude; the direction is carried by which account is `fromAccountId` (and optionally `toAccountId` for internal transfers).",
                     name: "transactionCreate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(PlanningTransactionType),
                     args: {
                         amount: {
                             description: "Positive magnitude. Sign is derived from which side of the transaction an account is on.",
@@ -2014,7 +2129,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 transactionDelete: {
                     description: "Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:\n\n- `tx:\u2026` / `to:\u2026` \u2014 deletes the `PlanningTransactions` row.\n- `pay:\u2026` \u2014 deletes the payslip (and its adjustments, via cascade).\n- `adj:\u2026` \u2014 deletes the single adjustment.\n- `bill:\u2026` \u2014 writes a per-month bill override with null amount, which skips the bill for this month only.\n- `earn:\u2026` \u2014 inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.",
                     name: "transactionDelete",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(VoidType),
                     args: {
                         id: {
                             description: "Composite id as returned on `PlanningTransaction.id`.",
@@ -2032,7 +2147,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 transactionUpdate: {
                     description: "Update an existing transaction. The composite `id` determines what's actually rewritten:\n\n- `tx:\u2026` / `to:\u2026` \u2014 patches the underlying manual `PlanningTransactions` row.\n- `pay:\u2026` \u2014 patches the payslip gross / name.\n- `adj:\u2026` \u2014 patches a payslip adjustment (sign of the existing row is preserved; `amount` is treated as magnitude).\n- `bill:\u2026` \u2014 creates or updates a per-month bill override so this month uses the new amount in place of the predicted value.\n- `earn:\u2026` \u2014 materialises this month's earnings prediction as a real payslip (gross + auto-populated tax/NIC/student-loan deductions), then applies the edit to the corresponding payslip line. Future months continue to be predicted from the earnings stream.",
                     name: "transactionUpdate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningYearType))),
+                    type: new GraphQLNonNull(PlanningTransactionType),
                     args: {
                         amount: {
                             description: "New positive magnitude.",
@@ -2092,6 +2207,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }

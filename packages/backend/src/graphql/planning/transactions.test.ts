@@ -179,7 +179,7 @@ it("transactionCreate inserts a manual outgoing transaction on the target month"
   await assign(main);
   await recordSnapshot(main, "2025-03-31", 1_000_000);
 
-  const result = await runGql(
+  await runGql(
     graphql(`
       mutation ($a: ID!) {
         transactionCreate(
@@ -194,7 +194,6 @@ it("transactionCreate inserts a manual outgoing transaction on the target month"
     `),
     { a: main },
   );
-  expect(result.transactionCreate.map((y) => y.id)).toEqual(["2025"]);
 
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
@@ -319,7 +318,7 @@ it("transactionDelete removes a manual transaction", async () => {
     graphql(`
       mutation ($id: ID!) {
         transactionDelete(monthId: "apr-2025", id: $id) {
-          id
+          _
         }
       }
     `),
@@ -409,7 +408,7 @@ it("transactionDelete on a predicted bill skips it for this month (null override
     graphql(`
       mutation ($id: ID!) {
         transactionDelete(monthId: "apr-2025", id: $id) {
-          id
+          _
         }
       }
     `),
@@ -509,7 +508,7 @@ it("transactionDelete on a predicted earnings transaction creates a zero-gross p
     graphql(`
       mutation ($id: ID!) {
         transactionDelete(monthId: "apr-2025", id: $id) {
-          id
+          _
         }
       }
     `),
