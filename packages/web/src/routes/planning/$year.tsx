@@ -274,6 +274,11 @@ function Header({
           </Link>
         </Button>
         <Button asChild variant="outline" size="sm">
+          <Link to="/planning/$year/payslips" params={{ year }}>
+            Manage payslips
+          </Link>
+        </Button>
+        <Button asChild variant="outline" size="sm">
           <Link to="/planning/$year/tax-rates" params={{ year }}>
             Manage tax rates
           </Link>
