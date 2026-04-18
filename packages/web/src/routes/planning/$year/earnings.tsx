@@ -1,5 +1,7 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { addDays, formatISO, parseISO } from "date-fns";
+import { Pencil, Plus, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -42,6 +44,15 @@ const PlanningEarningsDialogDocument = graphql(
               ...Figure
             }
             attributes
+            pensionReliefAtSource
+            pensionNetPay
+            pensionSalarySacrifice
+            studentLoanPlan2
+            ukTaxCodes {
+              start
+              end
+              taxCode
+            }
             toAccount {
               id
               name
@@ -73,6 +84,7 @@ const PlanningEarningsCreateDocument = graphql(`
     $end: Date
     $pensionSalarySacrifice: Float
     $studentLoanPlan2: Boolean
+    $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ) {
     earningsCreate(
       name: $name
@@ -85,6 +97,39 @@ const PlanningEarningsCreateDocument = graphql(`
       end: $end
       pensionSalarySacrifice: $pensionSalarySacrifice
       studentLoanPlan2: $studentLoanPlan2
+      ukTaxCodes: $ukTaxCodes
+    ) {
+      id
+    }
+  }
+`);
+
+const PlanningEarningsUpdateDocument = graphql(`
+  mutation PlanningEarningsUpdate(
+    $id: ID!
+    $name: String
+    $start: Date
+    $amountGross: MoneyInput
+    $pensionReliefAtSource: Float
+    $pensionNetPay: Float
+    $toAccountId: ID
+    $end: Date
+    $pensionSalarySacrifice: Float
+    $studentLoanPlan2: Boolean
+    $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
+  ) {
+    earningsUpdate(
+      id: $id
+      name: $name
+      start: $start
+      amountGross: $amountGross
+      pensionReliefAtSource: $pensionReliefAtSource
+      pensionNetPay: $pensionNetPay
+      toAccountId: $toAccountId
+      end: $end
+      pensionSalarySacrifice: $pensionSalarySacrifice
+      studentLoanPlan2: $studentLoanPlan2
+      ukTaxCodes: $ukTaxCodes
     ) {
       id
     }
@@ -117,6 +162,102 @@ type RefetchEntry =
       variables: { year: string };
     }
   | { query: typeof PlanningYearViewDocument; variables: { id: string } };
+
+/** Percentage-shaped form values (0–100 strings) for the three pension rates
+ * plus the amount and top-level fields. Stored as strings so empty inputs
+ * don't coerce to 0. */
+/** One entry in the user-facing tax-code timeline. `start` is computed on
+ * submit (first entry = earning.start, later entries = previous.end), so the
+ * form only tracks the code + its end date. */
+type TaxCodeEntry = { taxCode: string; end: string };
+
+type FormValues = {
+  name: string;
+  start: string;
+  end: string;
+  amount: string;
+  toAccountId: string;
+  pensionReliefAtSourcePct: string;
+  pensionNetPayPct: string;
+  pensionSalarySacrificePct: string;
+  studentLoanPlan2: boolean;
+  taxCodes: TaxCodeEntry[];
+};
+
+const emptyForm: FormValues = {
+  name: "",
+  start: "",
+  end: "",
+  amount: "",
+  toAccountId: "",
+  pensionReliefAtSourcePct: "0",
+  pensionNetPayPct: "0",
+  pensionSalarySacrificePct: "",
+  studentLoanPlan2: false,
+  taxCodes: [],
+};
+
+function earningToForm(earning: Earning): FormValues {
+  return {
+    name: earning.name,
+    start: earning.start,
+    end: earning.end ?? "",
+    amount: String(earning.amountGross.amount),
+    toAccountId: earning.toAccount.id,
+    pensionReliefAtSourcePct:
+      earning.pensionReliefAtSource == null
+        ? ""
+        : String(earning.pensionReliefAtSource * 100),
+    pensionNetPayPct:
+      earning.pensionNetPay == null
+        ? ""
+        : String(earning.pensionNetPay * 100),
+    pensionSalarySacrificePct:
+      earning.pensionSalarySacrifice == null
+        ? ""
+        : String(earning.pensionSalarySacrifice * 100),
+    studentLoanPlan2: earning.studentLoanPlan2 ?? false,
+    // Codes arrive unsorted; chain them by start date.
+    taxCodes: [...earning.ukTaxCodes]
+      .sort((a, b) => a.start.localeCompare(b.start))
+      .map((c) => ({ taxCode: c.taxCode, end: c.end ?? "" })),
+  };
+}
+
+/** Build the `PlanningEarningUKTaxCodeInput[]` the backend expects from the
+ * form's entries: each row's `start` is the earning's start for the first
+ * row, and `previous.end + 1 day` for every subsequent row (so the periods
+ * abut without overlapping). */
+function taxCodesForMutation(
+  earningStart: string,
+  entries: TaxCodeEntry[],
+): { start: string; end: string | null; taxCode: string }[] {
+  return entries
+    .filter((e) => e.taxCode.trim() !== "")
+    .map((e, i, arr) => ({
+      start: i === 0 ? earningStart : dayAfter(arr[i - 1].end),
+      end: e.end === "" ? null : e.end,
+      taxCode: e.taxCode.trim(),
+    }));
+}
+
+/** `YYYY-MM-DD` → the following calendar day in the same format. */
+function dayAfter(iso: string): string {
+  return formatISO(addDays(parseISO(iso), 1), { representation: "date" });
+}
+
+const CURRENCY = "GBP";
+
+function formIsValid(values: FormValues): boolean {
+  const parsedAmount = Number(values.amount);
+  return (
+    !!values.name.trim() &&
+    !!values.start &&
+    !!values.toAccountId &&
+    Number.isFinite(parsedAmount) &&
+    parsedAmount > 0
+  );
+}
 
 function PlanningEarningsDialog() {
   const { year } = Route.useParams();
@@ -155,7 +296,12 @@ function PlanningEarningsDialog() {
               </li>
             )}
             {earnings.map((e) => (
-              <EarningRow key={e.id} earning={e} refetch={refetch} />
+              <EarningRow
+                key={e.id}
+                earning={e}
+                accounts={accounts}
+                refetch={refetch}
+              />
             ))}
           </ul>
           {accounts.length === 0 ? (
@@ -178,11 +324,14 @@ function PlanningEarningsDialog() {
 
 function EarningRow({
   earning,
+  accounts,
   refetch,
 }: {
   earning: Earning;
+  accounts: AccountOption[];
   refetch: RefetchEntry[];
 }) {
+  const [editing, setEditing] = useState(false);
   const [remove] = useMutation(PlanningEarningsDeleteDocument, {
     refetchQueries: refetch,
   });
@@ -191,6 +340,19 @@ function EarningRow({
     await remove({ variables: { id: earning.id } });
     toast.success(`Deleted ${earning.name}`);
   };
+
+  if (editing) {
+    return (
+      <li className="px-3 py-2">
+        <EditEarningForm
+          earning={earning}
+          accounts={accounts}
+          refetch={refetch}
+          onDone={() => setEditing(false)}
+        />
+      </li>
+    );
+  }
 
   const range =
     earning.end == null
@@ -217,6 +379,14 @@ function EarningRow({
           </div>
         )}
       </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => setEditing(true)}
+        aria-label={`Edit ${earning.name}`}
+      >
+        <Pencil className="size-4" />
+      </Button>
       <DeleteButton onConfirm={onDelete} />
     </li>
   );
@@ -229,79 +399,143 @@ function AddEarningForm({
   accounts: AccountOption[];
   refetch: RefetchEntry[];
 }) {
-  const [name, setName] = useState("");
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [amount, setAmount] = useState("");
-  const [currency] = useState("GBP");
-  const [toAccountId, setToAccountId] = useState("");
-  const [pensionReliefAtSource, setPensionReliefAtSource] = useState("0");
-  const [pensionNetPay, setPensionNetPay] = useState("0");
-  const [pensionSalarySacrifice, setPensionSalarySacrifice] = useState("");
-  const [studentLoanPlan2, setStudentLoanPlan2] = useState(false);
-
+  const [values, setValues] = useState<FormValues>(emptyForm);
   const [create, { loading }] = useMutation(PlanningEarningsCreateDocument, {
     refetchQueries: refetch,
   });
 
-  const parsedAmount = Number(amount);
-  const disabled =
-    loading ||
-    !name.trim() ||
-    !start ||
-    !toAccountId ||
-    !Number.isFinite(parsedAmount) ||
-    parsedAmount <= 0;
+  const disabled = loading || !formIsValid(values);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (disabled) return;
-    // Pension inputs are entered as 0-100 percentages; backend expects
-    // 0-1 fractions.
-    const relief = (Number(pensionReliefAtSource) || 0) / 100;
-    const netPay = (Number(pensionNetPay) || 0) / 100;
-    const salSac =
-      pensionSalarySacrifice.trim() === ""
-        ? null
-        : Number(pensionSalarySacrifice) / 100;
     await create({
       variables: {
-        name: name.trim(),
-        start,
-        end: end === "" ? null : end,
-        amountGross: { amount: parsedAmount, currency },
+        name: values.name.trim(),
+        start: values.start,
+        end: values.end === "" ? null : values.end,
+        amountGross: { amount: Number(values.amount), currency: CURRENCY },
         countryCode: "GB",
-        pensionReliefAtSource: relief,
-        pensionNetPay: netPay,
-        pensionSalarySacrifice: salSac,
-        studentLoanPlan2,
-        toAccountId,
+        pensionReliefAtSource: pctToFraction(values.pensionReliefAtSourcePct),
+        pensionNetPay: pctToFraction(values.pensionNetPayPct),
+        pensionSalarySacrifice:
+          values.pensionSalarySacrificePct.trim() === ""
+            ? null
+            : pctToFraction(values.pensionSalarySacrificePct),
+        studentLoanPlan2: values.studentLoanPlan2,
+        toAccountId: values.toAccountId,
+        ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
       },
     });
-    toast.success(`Added ${name.trim()}`);
-    setName("");
-    setStart("");
-    setEnd("");
-    setAmount("");
-    setPensionReliefAtSource("0");
-    setPensionNetPay("0");
-    setPensionSalarySacrifice("");
-    setStudentLoanPlan2(false);
+    toast.success(`Added ${values.name.trim()}`);
+    setValues(emptyForm);
   };
 
   return (
     <form onSubmit={submit} className="space-y-3 rounded-md border p-3">
       <div className="text-sm font-medium">Add earning</div>
+      <EarningFormFields
+        values={values}
+        setValues={setValues}
+        accounts={accounts}
+      />
+      <div className="flex justify-end">
+        <Button type="submit" disabled={disabled}>
+          Add earning
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function EditEarningForm({
+  earning,
+  accounts,
+  refetch,
+  onDone,
+}: {
+  earning: Earning;
+  accounts: AccountOption[];
+  refetch: RefetchEntry[];
+  onDone: () => void;
+}) {
+  const [values, setValues] = useState<FormValues>(() => earningToForm(earning));
+  const [update, { loading }] = useMutation(PlanningEarningsUpdateDocument, {
+    refetchQueries: refetch,
+  });
+
+  const disabled = loading || !formIsValid(values);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (disabled) return;
+    await update({
+      variables: {
+        id: earning.id,
+        name: values.name.trim(),
+        start: values.start,
+        end: values.end === "" ? null : values.end,
+        amountGross: { amount: Number(values.amount), currency: CURRENCY },
+        pensionReliefAtSource: pctToFraction(values.pensionReliefAtSourcePct),
+        pensionNetPay: pctToFraction(values.pensionNetPayPct),
+        pensionSalarySacrifice:
+          values.pensionSalarySacrificePct.trim() === ""
+            ? null
+            : pctToFraction(values.pensionSalarySacrificePct),
+        studentLoanPlan2: values.studentLoanPlan2,
+        toAccountId: values.toAccountId,
+        ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
+      },
+    });
+    toast.success(`Updated ${values.name.trim()}`);
+    onDone();
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <div className="text-sm font-medium">Edit earning</div>
+      <EarningFormFields
+        values={values}
+        setValues={setValues}
+        accounts={accounts}
+      />
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={disabled}>
+          Save
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function EarningFormFields({
+  values,
+  setValues,
+  accounts,
+}: {
+  values: FormValues;
+  setValues: React.Dispatch<React.SetStateAction<FormValues>>;
+  accounts: AccountOption[];
+}) {
+  const patch = (p: Partial<FormValues>) => setValues((v) => ({ ...v, ...p }));
+  return (
+    <>
       <div className="grid gap-3 sm:grid-cols-2">
         <FormField label="Name">
           <Input
             placeholder="e.g. Day job"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={values.name}
+            onChange={(e) => patch({ name: e.target.value })}
           />
         </FormField>
         <FormField label="Account">
-          <Select value={toAccountId} onValueChange={setToAccountId}>
+          <Select
+            value={values.toAccountId}
+            onValueChange={(v) => patch({ toAccountId: v })}
+          >
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Pick an account…" />
             </SelectTrigger>
@@ -317,15 +551,15 @@ function AddEarningForm({
         <FormField label="Start">
           <Input
             type="date"
-            value={start}
-            onChange={(e) => setStart(e.target.value)}
+            value={values.start}
+            onChange={(e) => patch({ start: e.target.value })}
           />
         </FormField>
         <FormField label="End (optional)">
           <Input
             type="date"
-            value={end}
-            onChange={(e) => setEnd(e.target.value)}
+            value={values.end}
+            onChange={(e) => patch({ end: e.target.value })}
           />
         </FormField>
         <FormField label="Gross (per year)">
@@ -333,9 +567,9 @@ function AddEarningForm({
             type="number"
             inputMode="decimal"
             step="0.01"
-            currency={currency}
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            currency={CURRENCY}
+            value={values.amount}
+            onChange={(e) => patch({ amount: e.target.value })}
           />
         </FormField>
       </div>
@@ -346,38 +580,139 @@ function AddEarningForm({
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
           <FormField label="Relief at source">
             <PercentInput
-              value={pensionReliefAtSource}
-              onChange={setPensionReliefAtSource}
+              value={values.pensionReliefAtSourcePct}
+              onChange={(v) => patch({ pensionReliefAtSourcePct: v })}
             />
           </FormField>
           <FormField label="Net pay">
             <PercentInput
-              value={pensionNetPay}
-              onChange={setPensionNetPay}
+              value={values.pensionNetPayPct}
+              onChange={(v) => patch({ pensionNetPayPct: v })}
             />
           </FormField>
           <FormField label="Salary sacrifice">
             <PercentInput
-              value={pensionSalarySacrifice}
-              onChange={setPensionSalarySacrifice}
+              value={values.pensionSalarySacrificePct}
+              onChange={(v) => patch({ pensionSalarySacrificePct: v })}
               placeholder="(none)"
             />
           </FormField>
         </div>
         <label className="mt-2 flex items-center gap-2">
           <Checkbox
-            checked={studentLoanPlan2}
-            onCheckedChange={(v) => setStudentLoanPlan2(v === true)}
+            checked={values.studentLoanPlan2}
+            onCheckedChange={(v) => patch({ studentLoanPlan2: v === true })}
           />
           <span>Repaying Student Loan plan 2</span>
         </label>
       </details>
-      <div className="flex justify-end">
-        <Button type="submit" disabled={disabled}>
-          Add earning
+      <UKTaxCodesField
+        earningStart={values.start}
+        entries={values.taxCodes}
+        onChange={(taxCodes) => patch({ taxCodes })}
+      />
+    </>
+  );
+}
+
+function UKTaxCodesField({
+  earningStart,
+  entries,
+  onChange,
+}: {
+  earningStart: string;
+  entries: TaxCodeEntry[];
+  onChange: (next: TaxCodeEntry[]) => void;
+}) {
+  // New entries are only allowed once the last one has an end date — otherwise
+  // we couldn't compute the new entry's start.
+  const lastEnd = entries[entries.length - 1]?.end ?? "";
+  const canAdd =
+    !!earningStart && (entries.length === 0 || lastEnd !== "");
+
+  const addEntry = () => {
+    onChange([...entries, { taxCode: "", end: "" }]);
+  };
+  const patchAt = (i: number, p: Partial<TaxCodeEntry>) => {
+    onChange(entries.map((e, idx) => (idx === i ? { ...e, ...p } : e)));
+  };
+  const removeAt = (i: number) => {
+    onChange(entries.filter((_, idx) => idx !== i));
+  };
+
+  return (
+    <details className="rounded-md border bg-muted/20 p-2 text-xs" open={entries.length > 0}>
+      <summary className="cursor-pointer font-medium">UK tax codes</summary>
+      <ul className="mt-2 space-y-2">
+        {entries.map((entry, i) => {
+          const prevEnd = entries[i - 1]?.end;
+          const start =
+            i === 0 ? earningStart : prevEnd ? dayAfter(prevEnd) : "";
+          const isLast = i === entries.length - 1;
+          return (
+            <li key={i} className="flex items-end gap-2">
+              <FormField label="From">
+                <Input
+                  type="date"
+                  value={start}
+                  readOnly
+                  className="h-9 bg-muted"
+                />
+              </FormField>
+              <FormField label="To">
+                <Input
+                  type="date"
+                  value={entry.end}
+                  onChange={(e) => patchAt(i, { end: e.target.value })}
+                  // The final entry can stay open-ended; earlier ones must
+                  // carry an end date since they're the start of the next.
+                  required={!isLast}
+                  placeholder={isLast ? "(ongoing)" : undefined}
+                />
+              </FormField>
+              <FormField label="Code">
+                <Input
+                  placeholder="1257L"
+                  value={entry.taxCode}
+                  onChange={(e) => patchAt(i, { taxCode: e.target.value })}
+                />
+              </FormField>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => removeAt(i)}
+                aria-label={`Remove tax code ${i + 1}`}
+              >
+                <X className="size-4" />
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-2 flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!canAdd}
+          onClick={addEntry}
+        >
+          <Plus className="mr-1 size-3" />
+          Add tax code
         </Button>
+        {!earningStart && (
+          <span className="text-muted-foreground">
+            Pick a start date first.
+          </span>
+        )}
+        {earningStart && entries.length > 0 && lastEnd === "" && (
+          <span className="text-muted-foreground">
+            Set the last entry's end date to add another.
+          </span>
+        )}
       </div>
-    </form>
+    </details>
   );
 }
 
@@ -418,6 +753,10 @@ function PercentInput({
       onChange={(e) => onChange(e.target.value)}
     />
   );
+}
+
+function pctToFraction(v: string): number {
+  return (Number(v) || 0) / 100;
 }
 
 function formatDate(d: string): string {
