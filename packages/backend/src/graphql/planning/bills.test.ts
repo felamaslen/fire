@@ -723,3 +723,96 @@ it("Query.bills returns rows sorted by start descending, paginated", async () =>
     hasPreviousPage: true,
   });
 });
+
+it("PlanningBill.liability exposes the linked liability, tracks billUpdate changes", async () => {
+  await seedYear();
+  const accountIdFrom = await createAsset();
+  await assign(accountIdFrom);
+
+  const liability = await runGql(
+    graphql(`
+      mutation {
+        netWorthCategoryCreate(
+          input: { liability: { name: "Amex", type: CREDIT_CARD } }
+        ) {
+          id
+        }
+      }
+    `),
+    {},
+  );
+  const liabilityId = liability.netWorthCategoryCreate.id;
+
+  // Creating with a liabilityId should make `liability` non-null.
+  await runGql(
+    graphql(`
+      mutation ($a: ID!, $l: ID!) {
+        billCreate(
+          start: "2025-04-01"
+          frequency: MONTHLY
+          collectionDate: ["15"]
+          amount: { amount: 100, currency: "GBP" }
+          name: "Amex payment"
+          fromAccountId: $a
+          liabilityId: $l
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdFrom, l: liabilityId },
+  );
+  const billId = await firstBillId();
+
+  const withLink = await runGql(
+    graphql(`
+      query {
+        bills(first: 1) {
+          edges {
+            node {
+              id
+              liability {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  expect(withLink.bills!.edges[0].node.liability).toEqual({
+    id: liabilityId,
+    name: "Amex",
+  });
+
+  // Clearing the liability via billUpdate(liabilityId: null) drops the link.
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        billUpdate(id: $id, liabilityId: null) {
+          id
+        }
+      }
+    `),
+    { id: billId },
+  );
+  const cleared = await runGql(
+    graphql(`
+      query {
+        bills(first: 1) {
+          edges {
+            node {
+              liability {
+                id
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  expect(cleared.bills!.edges[0].node.liability).toBeNull();
+});

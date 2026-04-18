@@ -4,7 +4,10 @@ import { and, desc, eq, lt, or } from "drizzle-orm";
 import type { ID, Int } from "grats";
 
 import { db } from "@/db";
-import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
+import {
+  NetWorthCategoryAssets,
+  NetWorthCategoryLiabilities,
+} from "@/db/schema/net-worth";
 import { PlanningAccounts, PlanningBills } from "@/db/schema/planning";
 import { UnreachableCaseError } from "@/errors";
 
@@ -14,7 +17,10 @@ import {
   Money,
   type MoneyInput,
 } from "../money";
-import { NetWorthCategoryAsset } from "../net-worth/categories";
+import {
+  NetWorthCategoryAsset,
+  NetWorthCategoryLiability,
+} from "../net-worth/categories";
 import {
   buildConnection,
   type Connection,
@@ -49,6 +55,7 @@ export class PlanningBill {
     /** @gqlField */
     public readonly name: string,
     public readonly fromAccountId: string,
+    private readonly liabilityId: string | null,
   ) {}
 
   static load(row: typeof PlanningBills.$inferSelect): PlanningBill {
@@ -61,7 +68,18 @@ export class PlanningBill {
       Money.fromMinorDenomination(row.amount, row.currency),
       row.name,
       row.fromAccountId,
+      row.liabilityId,
     );
+  }
+
+  /** Liability this bill services — e.g. a credit-card paid off by a monthly direct debit, or a mortgage principal. Null if the bill isn't tied to a liability. @gqlField */
+  async liability(): Promise<NetWorthCategoryLiability | null> {
+    if (!this.liabilityId) return null;
+    const [row] = await db
+      .select()
+      .from(NetWorthCategoryLiabilities)
+      .where(eq(NetWorthCategoryLiabilities.id, this.liabilityId));
+    return row ? NetWorthCategoryLiability.load(row) : null;
   }
 
   /** Planning account (asset + alias) the bill is paid from. @gqlField */
