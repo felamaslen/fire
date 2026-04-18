@@ -49,6 +49,14 @@ export class PlanningEarning {
     public readonly countryCode: string,
     /** Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `"5% salary sacrifice, 3% net pay pension, student loan plan 2"`). Empty string if none apply. @gqlField */
     public readonly attributes: string,
+    /** Fraction of gross diverted via salary sacrifice. Null when the concept doesn't apply for this earning (e.g. non-UK). @gqlField */
+    public readonly pensionSalarySacrifice: Float | null,
+    /** Fraction of gross contributed via relief-at-source. Null when the concept doesn't apply. @gqlField */
+    public readonly pensionReliefAtSource: Float | null,
+    /** Fraction of gross contributed via net-pay arrangement. Null when the concept doesn't apply. @gqlField */
+    public readonly pensionNetPay: Float | null,
+    /** Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply (e.g. non-UK earnings). @gqlField */
+    public readonly studentLoanPlan2: boolean | null,
     public readonly toAccountId: string,
   ) {}
 
@@ -66,6 +74,10 @@ export class PlanningEarning {
         pensionReliefAtSource: row.pensionReliefAtSource,
         studentLoanPlan2: row.studentLoanPlan2,
       }),
+      row.pensionSalarySacrifice,
+      row.pensionReliefAtSource,
+      row.pensionNetPay,
+      row.studentLoanPlan2,
       row.toAccountId,
     );
   }
@@ -182,13 +194,15 @@ export async function earningsCreate(
   amountGross: MoneyInput,
   /** ISO-3166-1 alpha-2 country where the earnings are taxed (e.g. `"GB"`). */
   countryCode: string,
-  pensionReliefAtSource: Float,
-  pensionNetPay: Float,
   /** Planning account (`PlanningAccount.id`) the net earnings land in. The asset must already have a planning account assigned via `planningAccountAssign`. */
   toAccountId: ID,
   end?: CalendarDate | null,
+  /** Fraction (0-1) contributed via relief-at-source. Leave null when the concept doesn't apply. */
+  pensionReliefAtSource?: Float | null,
+  /** Fraction (0-1) contributed via net-pay arrangement. Leave null when the concept doesn't apply. */
+  pensionNetPay?: Float | null,
   pensionSalarySacrifice?: Float | null,
-  /** Whether Student Loan plan 2 is being repaid on this income. Defaults to false. */
+  /** Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply. */
   studentLoanPlan2?: boolean | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
 ): Promise<PlanningYear[]> {
@@ -205,8 +219,8 @@ export async function earningsCreate(
         currency,
         countryCode,
         pensionSalarySacrifice: pensionSalarySacrifice ?? null,
-        pensionReliefAtSource,
-        pensionNetPay,
+        pensionReliefAtSource: pensionReliefAtSource ?? 0,
+        pensionNetPay: pensionNetPay ?? 0,
         studentLoanPlan2: studentLoanPlan2 ?? false,
         toAccountId: toAccountId,
       })
@@ -266,9 +280,15 @@ export async function earningsUpdate(
         ...(pensionSalarySacrifice !== undefined && {
           pensionSalarySacrifice,
         }),
-        ...(pensionReliefAtSource != null && { pensionReliefAtSource }),
-        ...(pensionNetPay != null && { pensionNetPay }),
-        ...(studentLoanPlan2 != null && { studentLoanPlan2 }),
+        ...(pensionReliefAtSource !== undefined && {
+          pensionReliefAtSource: pensionReliefAtSource ?? 0,
+        }),
+        ...(pensionNetPay !== undefined && {
+          pensionNetPay: pensionNetPay ?? 0,
+        }),
+        ...(studentLoanPlan2 !== undefined && {
+          studentLoanPlan2: studentLoanPlan2 ?? false,
+        }),
         ...(toAccountId != null && { toAccountId: toAccountId }),
         updatedAt: new Date(),
       })

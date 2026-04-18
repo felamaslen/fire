@@ -357,12 +357,18 @@ type Mutation {
     countryCode: String!
     end: Date
     name: String!
-    pensionNetPay: Float!
-    pensionReliefAtSource: Float!
+    """
+    Fraction (0-1) contributed via net-pay arrangement. Leave null when the concept doesn't apply.
+    """
+    pensionNetPay: Float
+    """
+    Fraction (0-1) contributed via relief-at-source. Leave null when the concept doesn't apply.
+    """
+    pensionReliefAtSource: Float
     pensionSalarySacrifice: Float
     start: Date!
     """
-    Whether Student Loan plan 2 is being repaid on this income. Defaults to false.
+    Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply.
     """
     studentLoanPlan2: Boolean
     """
@@ -737,7 +743,23 @@ type PlanningEarning {
   end: Date
   id: ID!
   name: String!
+  """
+  Fraction of gross contributed via net-pay arrangement. Null when the concept doesn't apply.
+  """
+  pensionNetPay: Float
+  """
+  Fraction of gross contributed via relief-at-source. Null when the concept doesn't apply.
+  """
+  pensionReliefAtSource: Float
+  """
+  Fraction of gross diverted via salary sacrifice. Null when the concept doesn't apply for this earning (e.g. non-UK).
+  """
+  pensionSalarySacrifice: Float
   start: Date!
+  """
+  Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply (e.g. non-UK earnings).
+  """
+  studentLoanPlan2: Boolean
   """Destination planning account for the net earnings."""
   toAccount: PlanningAccount!
   """
