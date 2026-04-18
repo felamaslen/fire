@@ -423,3 +423,255 @@ it("Query.earnings returns rows sorted by start date descending, paginated", asy
     hasPreviousPage: true,
   });
 });
+
+it("earningsCreate stores studentLoanLiabilityId when plan 2 is true, and rejects it otherwise", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+
+  const liability = await runGql(
+    graphql(`
+      mutation {
+        netWorthCategoryCreate(
+          input: { liability: { name: "SLC", type: LOAN, interestRate: 0.07 } }
+        ) {
+          id
+        }
+      }
+    `),
+    {},
+  );
+  const liabilityId = liability.netWorthCategoryCreate.id;
+
+  // Setting the liability without plan 2 enabled is rejected.
+  await expect(
+    runGql(
+      graphql(`
+        mutation ($a: ID!, $l: ID!) {
+          earningsCreate(
+            name: "Day job"
+            start: "2025-04-01"
+            amountGross: { amount: 30000, currency: "GBP" }
+            countryCode: "GB"
+            pensionReliefAtSource: 0
+            pensionNetPay: 0
+            toAccountId: $a
+            studentLoanLiabilityId: $l
+          ) {
+            id
+          }
+        }
+      `),
+      { a: accountIdTo, l: liabilityId },
+    ),
+  ).rejects.toThrowErrorMatchingInlineSnapshot(
+    `[Error: GraphQL errors: studentLoanLiabilityId may only be set when studentLoanPlan2 is true]`,
+  );
+
+  // With plan 2 enabled the link is persisted and exposed on the type.
+  await runGql(
+    graphql(`
+      mutation ($a: ID!, $l: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+          studentLoanPlan2: true
+          studentLoanLiabilityId: $l
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo, l: liabilityId },
+  );
+
+  const list = await runGql(
+    graphql(`
+      query {
+        earnings(first: 1) {
+          edges {
+            node {
+              studentLoanPlan2
+              studentLoanLiability {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  expect(list.earnings!.edges[0].node.studentLoanPlan2).toBe(true);
+  expect(list.earnings!.edges[0].node.studentLoanLiability).toEqual({
+    id: liabilityId,
+    name: "SLC",
+  });
+});
+
+it("earningsUpdate rejects setting a student-loan liability while plan 2 stays false", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+
+  const liability = await runGql(
+    graphql(`
+      mutation {
+        netWorthCategoryCreate(
+          input: { liability: { name: "SLC", type: LOAN, interestRate: 0.07 } }
+        ) {
+          id
+        }
+      }
+    `),
+    {},
+  );
+  const liabilityId = liability.netWorthCategoryCreate.id;
+
+  const earning = await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+
+  await expect(
+    runGql(
+      graphql(`
+        mutation ($id: ID!, $l: ID!) {
+          earningsUpdate(id: $id, studentLoanLiabilityId: $l) {
+            id
+          }
+        }
+      `),
+      { id: earning.earningsCreate.id, l: liabilityId },
+    ),
+  ).rejects.toThrowErrorMatchingInlineSnapshot(
+    `[Error: GraphQL errors: studentLoanLiabilityId may only be set when studentLoanPlan2 is true]`,
+  );
+});
+
+it("materialising an earnings deduction copies studentLoanLiabilityId onto the SL payslip adjustment", async () => {
+  await seedYear();
+  const main = await createAsset();
+  await assign(main);
+  await recordSnapshot(main, "2025-03-31", 1_000_000);
+
+  const liability = await runGql(
+    graphql(`
+      mutation {
+        netWorthCategoryCreate(
+          input: { liability: { name: "SLC", type: LOAN, interestRate: 0.07 } }
+        ) {
+          id
+        }
+      }
+    `),
+    {},
+  );
+  const liabilityId = liability.netWorthCategoryCreate.id;
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!, $l: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 60000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+          studentLoanPlan2: true
+          studentLoanLiabilityId: $l
+        ) {
+          id
+        }
+      }
+    `),
+    { a: main, l: liabilityId },
+  );
+
+  // Find the predicted student-loan line and trigger materialisation.
+  const month = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                id
+                liabilityId
+                name
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const apr = month.planningYear!.months.find((m) => m.id === "apr-2025")!;
+  const sl = apr.accounts[0].transactions.find((t) =>
+    t.name.endsWith("student loan"),
+  )!;
+  expect(sl.liabilityId).toBe(liabilityId);
+
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        transactionUpdate(
+          monthId: "apr-2025"
+          id: $id
+          amount: { amount: 300, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `),
+    { id: sl.id },
+  );
+
+  const after = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                liabilityId
+                name
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const aprAfter = after.planningYear!.months.find((m) => m.id === "apr-2025")!;
+  const slAdj = aprAfter.accounts[0].transactions.find((t) =>
+    t.name.endsWith("student loan"),
+  )!;
+  expect(slAdj.liabilityId).toBe(liabilityId);
+});

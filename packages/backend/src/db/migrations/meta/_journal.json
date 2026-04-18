@@ -36,6 +36,13 @@
       "when": 1776464308515,
       "tag": "0004_extend_currency_code_enum",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1776510446915,
+      "tag": "0005_add_earnings_student_loan_liability",
+      "breakpoints": true
     }
   ]
 }

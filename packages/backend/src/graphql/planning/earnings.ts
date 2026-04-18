@@ -5,7 +5,10 @@ import type { Float, ID, Int } from "grats";
 
 import { db } from "@/db";
 import { assertCountryCode } from "@/db/schema/country";
-import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
+import {
+  NetWorthCategoryAssets,
+  NetWorthCategoryLiabilities,
+} from "@/db/schema/net-worth";
 import {
   PlanningAccounts,
   PlanningEarnings,
@@ -18,7 +21,10 @@ import {
   Money,
   type MoneyInput,
 } from "../money";
-import { NetWorthCategoryAsset } from "../net-worth/categories";
+import {
+  NetWorthCategoryAsset,
+  NetWorthCategoryLiability,
+} from "../net-worth/categories";
 import {
   buildConnection,
   type Connection,
@@ -54,6 +60,7 @@ export class PlanningEarning {
     /** Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply (e.g. non-UK earnings). @gqlField */
     public readonly studentLoanPlan2: boolean | null,
     public readonly toAccountId: string,
+    private readonly studentLoanLiabilityId: string | null,
   ) {}
 
   static load(row: typeof PlanningEarnings.$inferSelect): PlanningEarning {
@@ -75,7 +82,18 @@ export class PlanningEarning {
       row.pensionNetPay,
       row.studentLoanPlan2,
       row.toAccountId,
+      row.studentLoanLiabilityId,
     );
+  }
+
+  /** Liability the predicted student-loan deduction pays down. Null when `studentLoanPlan2` is false or no liability has been linked. @gqlField */
+  async studentLoanLiability(): Promise<NetWorthCategoryLiability | null> {
+    if (!this.studentLoanLiabilityId) return null;
+    const [row] = await db
+      .select()
+      .from(NetWorthCategoryLiabilities)
+      .where(eq(NetWorthCategoryLiabilities.id, this.studentLoanLiabilityId));
+    return row ? NetWorthCategoryLiability.load(row) : null;
   }
 
   /** Destination planning account for the net earnings. @gqlField */
@@ -200,9 +218,16 @@ export async function earningsCreate(
   pensionSalarySacrifice?: Float | null,
   /** Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply. */
   studentLoanPlan2?: boolean | null,
+  /** Liability the predicted student-loan deduction pays down. May only be set when `studentLoanPlan2` is true. */
+  studentLoanLiabilityId?: ID | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
 ): Promise<PlanningEarning> {
   assertCountryCode(countryCode);
+  const slp2 = studentLoanPlan2 ?? false;
+  assert(
+    studentLoanLiabilityId == null || slp2,
+    "studentLoanLiabilityId may only be set when studentLoanPlan2 is true",
+  );
   const { currency, amount } = getMoneyInputFractionalAmount(amountGross);
   const row = await db.transaction(async (tx) => {
     const [inserted] = await tx
@@ -217,7 +242,8 @@ export async function earningsCreate(
         pensionSalarySacrifice: pensionSalarySacrifice ?? null,
         pensionReliefAtSource: pensionReliefAtSource ?? 0,
         pensionNetPay: pensionNetPay ?? 0,
-        studentLoanPlan2: studentLoanPlan2 ?? false,
+        studentLoanPlan2: slp2,
+        studentLoanLiabilityId: studentLoanLiabilityId ?? null,
         toAccountId: toAccountId,
       })
       .returning();
@@ -245,6 +271,8 @@ export async function earningsUpdate(
   end?: CalendarDate | null,
   pensionSalarySacrifice?: Float | null,
   studentLoanPlan2?: boolean | null,
+  /** New linked liability; pass null explicitly to clear. Must be null whenever `studentLoanPlan2` ends up false (after this patch applies). */
+  studentLoanLiabilityId?: ID | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
 ): Promise<PlanningEarning> {
   const [existing] = await db
@@ -252,6 +280,19 @@ export async function earningsUpdate(
     .from(PlanningEarnings)
     .where(eq(PlanningEarnings.id, id));
   assert(existing, `Earning ${id} not found`);
+
+  const nextStudentLoanPlan2 =
+    studentLoanPlan2 !== undefined
+      ? (studentLoanPlan2 ?? false)
+      : existing.studentLoanPlan2;
+  const nextLiabilityId =
+    studentLoanLiabilityId !== undefined
+      ? studentLoanLiabilityId
+      : existing.studentLoanLiabilityId;
+  assert(
+    nextLiabilityId == null || nextStudentLoanPlan2,
+    "studentLoanLiabilityId may only be set when studentLoanPlan2 is true",
+  );
 
   let narrowedCountry: "GB" | undefined;
   if (countryCode != null) {
@@ -284,6 +325,9 @@ export async function earningsUpdate(
         }),
         ...(studentLoanPlan2 !== undefined && {
           studentLoanPlan2: studentLoanPlan2 ?? false,
+        }),
+        ...(studentLoanLiabilityId !== undefined && {
+          studentLoanLiabilityId,
         }),
         ...(toAccountId != null && { toAccountId: toAccountId }),
         updatedAt: new Date(),

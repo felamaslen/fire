@@ -239,6 +239,7 @@ CREATE TABLE "PlanningEarnings" (
   "pensionReliefAtSource" DOUBLE PRECISION NOT NULL,
   "pensionNetPay" DOUBLE PRECISION NOT NULL,
   "studentLoanPlan2" BOOLEAN DEFAULT FALSE NOT NULL,
+  "studentLoanLiabilityId" uuid,
   "toAccountId" uuid NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
@@ -255,7 +256,12 @@ CREATE TABLE "PlanningEarnings" (
   CONSTRAINT "PlanningEarnings_pensionReliefAtSource_ck"
     CHECK ("PlanningEarnings"."pensionReliefAtSource" BETWEEN 0 AND 1),
   CONSTRAINT "PlanningEarnings_pensionNetPay_ck"
-    CHECK ("PlanningEarnings"."pensionNetPay" BETWEEN 0 AND 1)
+    CHECK ("PlanningEarnings"."pensionNetPay" BETWEEN 0 AND 1),
+  CONSTRAINT "PlanningEarnings_studentLoanLiability_ck"
+    CHECK (
+      "PlanningEarnings"."studentLoanLiabilityId" IS NULL
+      OR "PlanningEarnings"."studentLoanPlan2" = TRUE
+    )
 );
 
 CREATE TABLE "PlanningEarningsUKTaxCodes" (
@@ -443,6 +449,13 @@ ADD CONSTRAINT "PlanningBills_liabilityId_NetWorthCategoryLiabilities_id_fk"
     "liabilityId"
   ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
     ON DELETE RESTRICT
+    ON UPDATE NO ACTION;
+ALTER TABLE "PlanningEarnings"
+ADD CONSTRAINT "PlanningEarnings_studentLoanLiabilityId_NetWorthCategoryLiabilities_id_fk"
+  FOREIGN KEY (
+    "studentLoanLiabilityId"
+  ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
+    ON DELETE SET NULL
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningEarnings"
 ADD CONSTRAINT "PlanningEarnings_toAccountId_PlanningAccounts_accountId_fk"

@@ -159,6 +159,11 @@ export const PlanningEarnings = pgTable(
     pensionNetPay: doublePrecision("pensionNetPay").notNull(),
     /** Whether the earner is repaying UK Student Loan plan 2 on this income. When false, no student-loan deduction is applied to predicted take-home. */
     studentLoanPlan2: boolean("studentLoanPlan2").notNull().default(false),
+    /** Liability the predicted student-loan deduction pays down. Must be null unless `studentLoanPlan2` is true. */
+    studentLoanLiabilityId: uuid("studentLoanLiabilityId").references(
+      () => NetWorthCategoryLiabilities.id,
+      { onDelete: "set null" },
+    ),
     /** Planning account the net earnings land in. */
     toAccountId: uuid("toAccountId")
       .notNull()
@@ -186,6 +191,10 @@ export const PlanningEarnings = pgTable(
     check(
       "PlanningEarnings_pensionNetPay_ck",
       sql`${t.pensionNetPay} BETWEEN 0 AND 1`,
+    ),
+    check(
+      "PlanningEarnings_studentLoanLiability_ck",
+      sql`${t.studentLoanLiabilityId} IS NULL OR ${t.studentLoanPlan2} = true`,
     ),
   ],
 );
