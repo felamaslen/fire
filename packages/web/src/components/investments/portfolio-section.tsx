@@ -1,5 +1,5 @@
 import { useSuspenseQuery } from "@apollo/client/react";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
@@ -69,10 +69,47 @@ const STACK_COLORS = [
   "#f97316",
 ];
 
+type PortfolioChartSettings = {
+  periodIdx: number;
+  mode: "line" | "candlestick";
+  stack: boolean;
+};
+
+const STORAGE_KEY = "fire.investments.portfolioChart";
+
+function loadSettings(): PortfolioChartSettings {
+  if (typeof window === "undefined") {
+    return { periodIdx: 0, mode: "line", stack: false };
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { periodIdx: 0, mode: "line", stack: false };
+    const parsed = JSON.parse(raw) as Partial<PortfolioChartSettings>;
+    return {
+      periodIdx:
+        typeof parsed.periodIdx === "number" &&
+        parsed.periodIdx >= 0 &&
+        parsed.periodIdx < PERIODS.length
+          ? parsed.periodIdx
+          : 0,
+      mode: parsed.mode === "candlestick" ? "candlestick" : "line",
+      stack: parsed.stack === true,
+    };
+  } catch {
+    return { periodIdx: 0, mode: "line", stack: false };
+  }
+}
+
 export function PortfolioSection() {
-  const [periodIdx, setPeriodIdx] = useState(0);
-  const [mode, setMode] = useState<"line" | "candlestick">("line");
-  const [stack, setStack] = useState(false);
+  const [settings, setSettings] = useState<PortfolioChartSettings>(loadSettings);
+  const { periodIdx, mode, stack } = settings;
+  const update = (patch: Partial<PortfolioChartSettings>) =>
+    setSettings((prev) => ({ ...prev, ...patch }));
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  }, [settings]);
+
   const p = PERIODS[periodIdx];
 
   return (
@@ -85,7 +122,7 @@ export function PortfolioSection() {
               key={per.label}
               size="sm"
               variant={i === periodIdx ? "default" : "outline"}
-              onClick={() => setPeriodIdx(i)}
+              onClick={() => update({ periodIdx: i })}
             >
               {per.label}
             </Button>
@@ -94,14 +131,14 @@ export function PortfolioSection() {
           <Button
             size="sm"
             variant={mode === "line" ? "default" : "outline"}
-            onClick={() => setMode("line")}
+            onClick={() => update({ mode: "line" })}
           >
             Line
           </Button>
           <Button
             size="sm"
             variant={mode === "candlestick" ? "default" : "outline"}
-            onClick={() => setMode("candlestick")}
+            onClick={() => update({ mode: "candlestick" })}
           >
             Candle
           </Button>
@@ -109,7 +146,7 @@ export function PortfolioSection() {
             size="sm"
             variant={stack ? "default" : "outline"}
             disabled={mode === "candlestick"}
-            onClick={() => setStack((s) => !s)}
+            onClick={() => update({ stack: !stack })}
           >
             Stacked
           </Button>
