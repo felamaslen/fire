@@ -343,6 +343,7 @@ CREATE TABLE "PlanningTransactions" (
   "accountId" uuid NOT NULL,
   "toAccountId" uuid,
   "liabilityId" uuid,
+  "assetId" uuid,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   CONSTRAINT "PlanningTransactions_accounts_ck"
@@ -356,7 +357,13 @@ CREATE TABLE "PlanningTransactions" (
       OR (
         "PlanningTransactions"."toAccountId" IS NULL
         AND "PlanningTransactions"."liabilityId" IS NULL
+        AND "PlanningTransactions"."assetId" IS NULL
       )
+    ),
+  CONSTRAINT "PlanningTransactions_liabilityAssetExclusive_ck"
+    CHECK (
+      "PlanningTransactions"."liabilityId" IS NULL
+      OR "PlanningTransactions"."assetId" IS NULL
     )
 );
 
@@ -537,6 +544,11 @@ ADD CONSTRAINT "PlanningTransactions_liabilityId_NetWorthCategoryLiabilities_id_
   FOREIGN KEY (
     "liabilityId"
   ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
+    ON DELETE RESTRICT
+    ON UPDATE NO ACTION;
+ALTER TABLE "PlanningTransactions"
+ADD CONSTRAINT "PlanningTransactions_assetId_NetWorthCategoryAssets_id_fk"
+  FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id")
     ON DELETE RESTRICT
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningTransactions"

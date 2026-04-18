@@ -210,6 +210,8 @@ export type PlanningTransaction = {
   isEditable: boolean;
   /** `NetWorthCategoryLiability.id` if this row is a payslip adjustment linked to a liability (e.g. a student-loan deduction). Null on every other kind of transaction. @gqlField */
   liabilityId: ID | null;
+  /** `NetWorthCategoryAsset.id` if this transaction invests into an asset (stock or pension). Null on every other kind of transaction. @gqlField */
+  assetId: ID | null;
 };
 
 /** A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias. @gqlType */

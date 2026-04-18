@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { db } from "@/db";
 import type { CurrencyCode } from "@/db/schema/currency";
+import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 import {
   PlanningBills,
   PlanningEarnings,
@@ -79,7 +80,7 @@ export function decodePlanningTransactionId(
 }
 
 /**
- * Record a manual transaction on a planning month. `amount` is signed — negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId` and `liabilityId` to be null.
+ * Record a manual transaction on a planning month. `amount` is signed — negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId`, `liabilityId`, and `assetId` to be null. An outflow may either pay down a liability OR invest into a stock/pension asset, but not both.
  *
  * @gqlMutationField
  */
@@ -93,18 +94,25 @@ export async function transactionCreate(
   accountId: ID,
   /** Destination planning account (`PlanningAccount.id`) for an internal transfer. Only valid for outflows. */
   toAccountId?: ID | null,
-  /** Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows. */
+  /** Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows. Mutually exclusive with `assetId`. */
   liabilityId?: ID | null,
+  /** Asset (`NetWorthCategoryAsset.id`, type `STOCK` or `PENSION`) being invested into by this transaction, if any. Only valid for outflows. Mutually exclusive with `liabilityId`. */
+  assetId?: ID | null,
 ): Promise<PlanningTransaction> {
   const { year, date } = monthKey(monthId);
   const { currency, amount: minor } = getMoneyInputFractionalAmount(amount);
   assert(minor !== 0, "Transaction amount must be non-zero");
   if (minor > 0) {
     assert(
-      toAccountId == null && liabilityId == null,
-      "Inflow transactions must not have a toAccountId or liabilityId",
+      toAccountId == null && liabilityId == null && assetId == null,
+      "Inflow transactions must not have a toAccountId, liabilityId, or assetId",
     );
   }
+  assert(
+    liabilityId == null || assetId == null,
+    "A transaction cannot both pay down a liability and invest into an asset",
+  );
+  if (assetId != null) await assertInvestableAsset(assetId);
   await ensurePlanningMonth(year, date);
   const [row] = await db
     .insert(PlanningTransactions)
@@ -117,6 +125,7 @@ export async function transactionCreate(
       accountId,
       toAccountId: toAccountId ?? null,
       liabilityId: liabilityId ?? null,
+      assetId: assetId ?? null,
     })
     .returning();
   return {
@@ -126,7 +135,21 @@ export async function transactionCreate(
     isProvisional: false,
     isEditable: true,
     liabilityId: (row.liabilityId ?? null) as ID | null,
+    assetId: (row.assetId ?? null) as ID | null,
   };
+}
+
+/** Verify an asset exists and is of a type (`STOCK` / `PENSION`) that can receive investment transactions. */
+async function assertInvestableAsset(assetId: string): Promise<void> {
+  const [asset] = await db
+    .select({ type: NetWorthCategoryAssets.type })
+    .from(NetWorthCategoryAssets)
+    .where(eq(NetWorthCategoryAssets.id, assetId));
+  assert(asset, `Asset ${assetId} not found`);
+  assert(
+    asset.type === "STOCK" || asset.type === "PENSION",
+    "Only STOCK or PENSION assets can receive investment transactions",
+  );
 }
 
 /**
@@ -152,8 +175,10 @@ export async function transactionUpdate(
   accountId?: ID | null,
   /** New destination planning account (`PlanningAccount.id`) for a transfer. Pass null explicitly to clear. Manual transactions only. */
   toAccountId?: ID | null,
-  /** New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only. */
+  /** New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only. Mutually exclusive with `assetId`. */
   liabilityId?: ID | null,
+  /** New invested-into asset (`NetWorthCategoryAsset.id`, type `STOCK` or `PENSION`). Pass null explicitly to clear. Manual transactions only. Mutually exclusive with `liabilityId`. */
+  assetId?: ID | null,
 ): Promise<PlanningTransaction> {
   const { year, date } = monthKey(monthId);
   const parsed = decodePlanningTransactionId(id);
@@ -163,6 +188,11 @@ export async function transactionUpdate(
   switch (parsed.kind) {
     case "tx":
     case "to": {
+      assert(
+        liabilityId == null || assetId == null,
+        "A transaction cannot both pay down a liability and invest into an asset",
+      );
+      if (assetId != null) await assertInvestableAsset(assetId);
       await ensurePlanningMonth(year, date);
       let amountPatch: { amount: number; currency: CurrencyCode } | null = null;
       if (patchAmount) {
@@ -190,6 +220,7 @@ export async function transactionUpdate(
           ...(accountId != null && { accountId }),
           ...(toAccountId !== undefined && { toAccountId }),
           ...(liabilityId !== undefined && { liabilityId }),
+          ...(assetId !== undefined && { assetId }),
           updatedAt: new Date(),
         })
         .where(eq(PlanningTransactions.id, parsed.id));
@@ -281,6 +312,7 @@ async function reloadTransaction(
         isProvisional: false,
         isEditable: fromSide,
         liabilityId: (row.liabilityId ?? null) as ID | null,
+        assetId: (row.assetId ?? null) as ID | null,
       };
     }
     case "pay": {
@@ -296,6 +328,7 @@ async function reloadTransaction(
         isProvisional: false,
         isEditable: true,
         liabilityId: null,
+        assetId: null,
       };
     }
     case "adj": {
@@ -321,6 +354,7 @@ async function reloadTransaction(
         isProvisional: false,
         isEditable: true,
         liabilityId: (row.adjustment.liabilityId ?? null) as ID | null,
+        assetId: null,
       };
     }
     case "bill":
@@ -338,6 +372,7 @@ async function reloadTransaction(
         isProvisional: true,
         isEditable: false,
         liabilityId: null,
+        assetId: null,
       };
     }
   }

@@ -786,6 +786,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "amount",
                     type: new GraphQLNonNull(MoneyType)
                 },
+                assetId: {
+                    description: "`NetWorthCategoryAsset.id` if this transaction invests into an asset (stock or pension). Null on every other kind of transaction.",
+                    name: "assetId",
+                    type: GraphQLID
+                },
                 id: {
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
@@ -2107,7 +2112,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 transactionCreate: {
-                    description: "Record a manual transaction on a planning month. `amount` is signed \u2014 negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId` and `liabilityId` to be null.",
+                    description: "Record a manual transaction on a planning month. `amount` is signed \u2014 negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId`, `liabilityId`, and `assetId` to be null. An outflow may either pay down a liability OR invest into a stock/pension asset, but not both.",
                     name: "transactionCreate",
                     type: new GraphQLNonNull(PlanningTransactionType),
                     args: {
@@ -2119,8 +2124,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "Signed amount: negative = outflow, positive = ad-hoc inflow.",
                             type: new GraphQLNonNull(MoneyInputType)
                         },
+                        assetId: {
+                            description: "Asset (`NetWorthCategoryAsset.id`, type `STOCK` or `PENSION`) being invested into by this transaction, if any. Only valid for outflows. Mutually exclusive with `liabilityId`.",
+                            type: GraphQLID
+                        },
                         liabilityId: {
-                            description: "Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows.",
+                            description: "Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows. Mutually exclusive with `assetId`.",
                             type: GraphQLID
                         },
                         monthId: {
@@ -2136,7 +2145,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationTransactionCreateResolver(args.monthId, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId);
+                        return mutationTransactionCreateResolver(args.monthId, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId);
                     }
                 },
                 transactionDelete: {
@@ -2170,12 +2179,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "New positive magnitude.",
                             type: MoneyInputType
                         },
+                        assetId: {
+                            description: "New invested-into asset (`NetWorthCategoryAsset.id`, type `STOCK` or `PENSION`). Pass null explicitly to clear. Manual transactions only. Mutually exclusive with `liabilityId`.",
+                            type: GraphQLID
+                        },
                         id: {
                             description: "Composite id as returned on `PlanningTransaction.id`.",
                             type: new GraphQLNonNull(GraphQLID)
                         },
                         liabilityId: {
-                            description: "New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only.",
+                            description: "New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only. Mutually exclusive with `assetId`.",
                             type: GraphQLID
                         },
                         monthId: {
@@ -2191,7 +2204,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationTransactionUpdateResolver(args.monthId, args.id, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId);
+                        return mutationTransactionUpdateResolver(args.monthId, args.id, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId);
                     }
                 }
             };
