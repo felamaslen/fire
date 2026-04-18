@@ -91,58 +91,68 @@ async function setPrice(
 const AGG_QUERY = graphql(`
   query {
     investments {
-      position {
-        units
-        costBasis {
-          amount
-        }
-        costBasisWithFees {
-          amount
-        }
-        totalCost {
-          amount
-        }
-        totalValue {
-          amount
-        }
-        totalGain {
-          amount
-        }
-        percentGain
-        dailyGainValue {
-          amount
-        }
-        dailyGainPercent
-        reinvested {
-          units
-          cost {
-            amount
+      edges {
+        node {
+          position {
+            units
+            costBasis {
+              amount
+            }
+            costBasisWithFees {
+              amount
+            }
+            totalCost {
+              amount
+            }
+            totalValue {
+              amount
+            }
+            totalGain {
+              amount
+            }
+            percentGain
+            dailyGainValue {
+              amount
+            }
+            dailyGainPercent
+            reinvested {
+              units
+              cost {
+                amount
+              }
+              value {
+                amount
+              }
+            }
           }
-          value {
-            amount
-          }
-        }
-      }
-      wrappers {
-        asset {
-          name
-        }
-        position {
-          units
-          costBasis {
-            amount
-          }
-          totalValue {
-            amount
-          }
-          totalGain {
-            amount
+          wrappers {
+            asset {
+              name
+            }
+            position {
+              units
+              costBasis {
+                amount
+              }
+              totalValue {
+                amount
+              }
+              totalGain {
+                amount
+              }
+            }
           }
         }
       }
     }
   }
 `);
+
+function firstInvestment(data: {
+  investments: { edges: { node: unknown }[] } | null;
+}) {
+  return data.investments?.edges[0]?.node as any;
+}
 
 describe("Investment aggregates and wrappers", () => {
   it("reports cost basis, total value, gain for a single-wrapper buy-and-hold", async () => {
@@ -153,7 +163,7 @@ describe("Investment aggregates and wrappers", () => {
     await setPrice(id, "2024-02-01", 600);
 
     const data = await runGql(AGG_QUERY, {});
-    const inv = data.investments?.[0];
+    const inv = firstInvestment(data);
     expect(inv?.position).toMatchObject({
       units: 10,
       costBasis: { amount: 5 },
@@ -185,7 +195,7 @@ describe("Investment aggregates and wrappers", () => {
     await setPrice(id, "2024-02-01", 700);
 
     const data = await runGql(AGG_QUERY, {});
-    const p = data.investments?.[0]?.position;
+    const p = firstInvestment(data)?.position;
     expect(p?.units).toBe(6);
     expect(p?.costBasis?.amount).toBeCloseTo((10 * 5 - 4 * 7) / 6);
     expect(p?.totalCost?.amount).toBeCloseTo(10 * 5 - 4 * 7);
@@ -202,7 +212,7 @@ describe("Investment aggregates and wrappers", () => {
     await setPrice(id, "2024-01-01", 500);
 
     const data = await runGql(AGG_QUERY, {});
-    const p = data.investments?.[0]?.position;
+    const p = firstInvestment(data)?.position;
     expect(p?.costBasis?.amount).toBe(5);
     expect(p?.costBasisWithFees?.amount).toBe((10 * 5 + 0.5 + 1) / 10);
   });
@@ -215,7 +225,7 @@ describe("Investment aggregates and wrappers", () => {
     await setPrice(id, "2024-06-01", 600);
 
     const data = await runGql(AGG_QUERY, {});
-    expect(data.investments?.[0]?.position?.reinvested).toEqual({
+    expect(firstInvestment(data)?.position?.reinvested).toEqual({
       units: 2,
       cost: { amount: 12 },
       value: { amount: 12 },
@@ -231,10 +241,12 @@ describe("Investment aggregates and wrappers", () => {
     await setPrice(id, "2024-01-01", 500);
 
     const data = await runGql(AGG_QUERY, {});
-    const inv = data.investments?.[0];
+    const inv = firstInvestment(data);
     expect(inv?.position?.units).toBe(14);
     expect(inv?.position?.totalValue?.amount).toBe(14 * 5);
-    const wrapperNames = inv?.wrappers?.map((w) => w.asset.name).sort();
+    const wrapperNames = inv?.wrappers
+      ?.map((w: { asset: { name: string } }) => w.asset.name)
+      .sort();
     expect(wrapperNames).toEqual(["ISA", "SIPP"]);
   });
 
@@ -246,8 +258,8 @@ describe("Investment aggregates and wrappers", () => {
     await setPrice(id, "2024-02-01", 700);
 
     const data = await runGql(AGG_QUERY, {});
-    expect(data.investments?.[0]?.position?.costBasis).toBeNull();
-    expect(data.investments?.[0]?.position?.units).toBe(0);
+    expect(firstInvestment(data)?.position?.costBasis).toBeNull();
+    expect(firstInvestment(data)?.position?.units).toBe(0);
   });
 
   it("returns null daily gain when fewer than two prices exist", async () => {
@@ -257,7 +269,7 @@ describe("Investment aggregates and wrappers", () => {
     await setPrice(id, "2024-01-01", 500);
 
     const data = await runGql(AGG_QUERY, {});
-    expect(data.investments?.[0]?.position?.dailyGainValue).toBeNull();
-    expect(data.investments?.[0]?.position?.dailyGainPercent).toBeNull();
+    expect(firstInvestment(data)?.position?.dailyGainValue).toBeNull();
+    expect(firstInvestment(data)?.position?.dailyGainPercent).toBeNull();
   });
 });

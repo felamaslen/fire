@@ -766,6 +766,71 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const InvestmentEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(InvestmentType)
+                }
+            };
+        }
+    });
+    const InvestmentConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const SortDirectionType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Ascending or descending order for a sort input.",
+        name: "SortDirection",
+        values: {
+            ASC: {
+                value: "ASC"
+            },
+            DESC: {
+                value: "DESC"
+            }
+        }
+    });
+    const InvestmentSortType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "Choose how to order `Query.investments`. Exactly one field must be set. When omitted entirely the list is newest-first by creation time.",
+        name: "InvestmentSort",
+        fields() {
+            return {
+                gainAbs: {
+                    name: "gainAbs",
+                    type: SortDirectionType
+                },
+                gainPercent: {
+                    name: "gainPercent",
+                    type: SortDirectionType
+                },
+                value: {
+                    name: "value",
+                    type: SortDirectionType
+                }
+            };
+        },
+        isOneOf: true
+    });
     const NetWorthCurrencyRateType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthCurrencyRate",
         description: "Exchange rate captured alongside a net-worth entry; converts one unit of `currency` into `base`.",
@@ -1389,11 +1454,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 investments: {
-                    description: "All investments recorded on the server, most-recently-created first.",
+                    description: "Paginated list of investments, sorted by the requested key. Computed sorts (`value`, `gainAbs`, `gainPercent`) use current cached values; cursors are only stable while those values don't change.",
                     name: "investments",
-                    type: new GraphQLList(new GraphQLNonNull(InvestmentType)),
-                    resolve() {
-                        return assertNonNull(queryInvestmentsResolver());
+                    type: InvestmentConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        },
+                        sort: {
+                            type: InvestmentSortType
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryInvestmentsResolver(args.first, args.after, args.sort));
                     }
                 },
                 netWorth: {
@@ -2866,6 +2942,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentFundType, InvestmentPositionType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, SortDirectionType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }

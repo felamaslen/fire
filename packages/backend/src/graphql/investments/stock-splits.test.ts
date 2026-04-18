@@ -113,13 +113,17 @@ describe("investmentStockSplit mutations", () => {
     const list = graphql(`
       query {
         investments {
-          stockSplits {
-            id
+          edges {
+            node {
+              stockSplits {
+                id
+              }
+            }
           }
         }
       }
     `);
     const data = await runGql(list, {});
-    expect(data.investments?.[0]?.stockSplits ?? []).toEqual([]);
+    expect(data.investments?.edges[0]?.node.stockSplits ?? []).toEqual([]);
   });
 });

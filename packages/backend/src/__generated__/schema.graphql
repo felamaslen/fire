@@ -49,6 +49,12 @@ enum PlanningBillsFrequency {
   YEARLY
 }
 
+"""Ascending or descending order for a sort input."""
+enum SortDirection {
+  ASC
+  DESC
+}
+
 """
 The underlying instrument an `Investment` represents: a listed stock or a fund.
 """
@@ -84,6 +90,15 @@ input InvestmentAssetInput @oneOf {
 input InvestmentFundInput {
   """Link to the fund's product page."""
   url: String!
+}
+
+"""
+Choose how to order `Query.investments`. Exactly one field must be set. When omitted entirely the list is newest-first by creation time.
+"""
+input InvestmentSort @oneOf {
+  gainAbs: SortDirection
+  gainPercent: SortDirection
+  value: SortDirection
 }
 
 input InvestmentStockInput {
@@ -368,6 +383,22 @@ type InvestmentAllocationsResult {
   cash: Float
   """Per-investment allocations for the wrapper. Sums to 1."""
   investments: [InvestmentAllocation!]!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type InvestmentConnection {
+  edges: [InvestmentEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type InvestmentEdge {
+  cursor: ID!
+  node: Investment!
 }
 
 """
@@ -1339,8 +1370,10 @@ type Query {
     """
     assetId: ID
   ): InvestmentAllocationsResult @semanticNonNull
-  """All investments recorded on the server, most-recently-created first."""
-  investments: [Investment!] @semanticNonNull
+  """
+  Paginated list of investments, sorted by the requested key. Computed sorts (`value`, `gainAbs`, `gainPercent`) use current cached values; cursors are only stable while those values don't change.
+  """
+  investments(after: ID, first: Int, sort: InvestmentSort): InvestmentConnection @semanticNonNull
   """Paginated list of net-worth entries, newest first."""
   netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """

@@ -126,21 +126,27 @@ describe("investmentTransactionCreate", () => {
     const doc = graphql(`
       query {
         investments {
-          transactions {
-            id
-            taxes {
-              amount
+          edges {
+            node {
+              transactions {
+                id
+                taxes {
+                  amount
+                }
+                fees {
+                  amount
+                }
+                drip
+              }
             }
-            fees {
-              amount
-            }
-            drip
           }
         }
       }
     `);
     const data = await runGql(doc, {});
-    const tx = data.investments?.[0]?.transactions?.find((t) => t.id === id);
+    const tx = data.investments?.edges[0]?.node.transactions?.find(
+      (t) => t.id === id,
+    );
     expect(tx).toMatchObject({
       taxes: { amount: 0 },
       fees: { amount: 0 },
@@ -241,13 +247,17 @@ describe("investmentTransactionUpdate / Delete", () => {
     const list = graphql(`
       query {
         investments {
-          transactions {
-            id
+          edges {
+            node {
+              transactions {
+                id
+              }
+            }
           }
         }
       }
     `);
     const data = await runGql(list, {});
-    expect(data.investments?.[0]?.transactions ?? []).toEqual([]);
+    expect(data.investments?.edges[0]?.node.transactions ?? []).toEqual([]);
   });
 });

@@ -180,30 +180,148 @@ describe("investment mutations", () => {
     const list = graphql(`
       query {
         investments {
-          id
+          edges {
+            node {
+              id
+            }
+          }
         }
       }
     `);
     const data = await runGql(list, {});
-    expect(data.investments).toEqual([]);
+    expect(data.investments?.edges ?? []).toEqual([]);
   });
 });
 
 describe("investments query", () => {
-  it("returns created investments newest-first", async () => {
+  it("returns created investments newest-first by default", async () => {
     await createStock("Apple", "AAPL");
     await createStock("Microsoft", "MSFT");
     const doc = graphql(`
       query {
         investments {
-          name
+          edges {
+            node {
+              name
+            }
+          }
         }
       }
     `);
     const data = await runGql(doc, {});
-    expect(data.investments?.map((i) => i.name)).toEqual([
+    expect(data.investments?.edges.map((e) => e.node.name)).toEqual([
       "Microsoft",
       "Apple",
     ]);
+  });
+
+  it("sorts by totalValue descending when requested", async () => {
+    const { db } = await import("@/db");
+    const { InvestmentPrices } = await import("@/db/schema/investments");
+    const small = await createStock("Small", "SML");
+    const big = await createStock("Big", "BIG");
+    const asset = await (async () => {
+      const doc = graphql(`
+        mutation {
+          netWorthCategoryCreate(
+            input: { asset: { name: "ISA", type: STOCK } }
+          ) {
+            id
+          }
+        }
+      `);
+      return (await runGql(doc, {})).netWorthCategoryCreate.id;
+    })();
+    const buy = graphql(`
+      mutation ($id: ID!, $asset: ID!, $units: Int!, $price: Float!) {
+        investmentTransactionCreate(
+          investmentId: $id
+          assetId: $asset
+          date: "2024-01-01"
+          units: $units
+          price: { amount: $price, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `);
+    await runGql(buy, { id: small, asset, units: 1, price: 1 });
+    await runGql(buy, { id: big, asset, units: 100, price: 1 });
+    await db.insert(InvestmentPrices).values([
+      {
+        investmentId: small,
+        date: new Date("2024-01-01"),
+        price: 100,
+        currency: "GBP",
+      },
+      {
+        investmentId: big,
+        date: new Date("2024-01-01"),
+        price: 100,
+        currency: "GBP",
+      },
+    ]);
+
+    const doc = graphql(`
+      query {
+        investments(sort: { value: DESC }) {
+          edges {
+            node {
+              name
+            }
+          }
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    expect(data.investments?.edges.map((e) => e.node.name)).toEqual([
+      "Big",
+      "Small",
+    ]);
+  });
+
+  it("paginates with first + after", async () => {
+    await createStock("A", "AAA");
+    await createStock("B", "BBB");
+    await createStock("C", "CCC");
+    const page1 = graphql(`
+      query {
+        investments(first: 2) {
+          edges {
+            cursor
+            node {
+              name
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    `);
+    const r1 = await runGql(page1, {});
+    expect(r1.investments?.pageInfo.hasNextPage).toBe(true);
+    expect(r1.investments?.edges.map((e) => e.node.name)).toEqual(["C", "B"]);
+
+    const page2 = graphql(`
+      query ($after: ID!) {
+        investments(first: 2, after: $after) {
+          edges {
+            node {
+              name
+            }
+          }
+          pageInfo {
+            hasNextPage
+          }
+        }
+      }
+    `);
+    const r2 = await runGql(page2, {
+      after: r1.investments!.pageInfo.endCursor!,
+    });
+    expect(r2.investments?.pageInfo.hasNextPage).toBe(false);
+    expect(r2.investments?.edges.map((e) => e.node.name)).toEqual(["A"]);
   });
 });
