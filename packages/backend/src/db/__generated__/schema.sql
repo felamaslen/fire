@@ -76,6 +76,97 @@ CREATE TYPE "public"."planningBillsFrequency" AS ENUM (
   'QUARTERLY',
   'YEARLY'
 );
+CREATE TABLE "InvestmentAllocations" (
+  "assetId" uuid NOT NULL,
+  "investmentId" uuid NOT NULL,
+  "allocation" DOUBLE PRECISION NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentAllocations_pk" PRIMARY KEY ("assetId", "investmentId"),
+  CONSTRAINT "InvestmentAllocations_allocation_ck"
+    CHECK (
+      "InvestmentAllocations"."allocation" > 0
+      AND "InvestmentAllocations"."allocation" <= 1
+    )
+);
+
+CREATE TABLE "InvestmentCashAllocation" (
+  "singleton" BOOLEAN PRIMARY KEY NOT NULL,
+  "allocation" DOUBLE PRECISION NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentCashAllocation_singleton_ck"
+    CHECK ("InvestmentCashAllocation"."singleton" = TRUE),
+  CONSTRAINT "InvestmentCashAllocation_allocation_ck"
+    CHECK (
+      "InvestmentCashAllocation"."allocation" >= 0
+      AND "InvestmentCashAllocation"."allocation" <= 1
+    )
+);
+
+CREATE TABLE "InvestmentPrices" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "investmentId" uuid NOT NULL,
+  "date" date NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL,
+  "priceAdjusted" DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentPrices_price_ck"
+    CHECK ("InvestmentPrices"."price" >= 0),
+  CONSTRAINT "InvestmentPrices_priceAdjusted_ck"
+    CHECK ("InvestmentPrices"."priceAdjusted" >= 0)
+);
+
+CREATE TABLE "InvestmentStockSplits" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "investmentId" uuid NOT NULL,
+  "date" date NOT NULL,
+  "ratio" NUMERIC(20, 10) NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentStockSplits_ratio_ck"
+    CHECK ("InvestmentStockSplits"."ratio" > 0)
+);
+
+CREATE TABLE "InvestmentTransactions" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "investmentId" uuid NOT NULL,
+  "assetId" uuid NOT NULL,
+  "units" BIGINT NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL,
+  "taxes" BIGINT DEFAULT 0 NOT NULL,
+  "fees" BIGINT DEFAULT 0 NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "date" date NOT NULL,
+  "drip" BOOLEAN DEFAULT FALSE NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentTransactions_price_ck"
+    CHECK ("InvestmentTransactions"."price" >= 0),
+  CONSTRAINT "InvestmentTransactions_taxes_ck"
+    CHECK ("InvestmentTransactions"."taxes" >= 0),
+  CONSTRAINT "InvestmentTransactions_fees_ck"
+    CHECK ("InvestmentTransactions"."fees" >= 0)
+);
+
+CREATE TABLE "Investments" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "name" text NOT NULL,
+  "stockCode" text,
+  "fundLink" text,
+  "currency" "CurrencyCode" NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "Investments_stockCode_fundLink_ck"
+    CHECK (
+      ("Investments"."stockCode" IS NOT NULL)::INT + (
+        "Investments"."fundLink" IS NOT NULL
+      )::INT = 1
+    )
+);
+
 CREATE TABLE "NetWorthCategoryAssets" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "name" text NOT NULL,
@@ -152,8 +243,8 @@ CREATE TABLE "NetWorthValueOptions" (
   "valueId" uuid NOT NULL,
   "units" BIGINT NOT NULL,
   "currency" "CurrencyCode" NOT NULL,
-  "priceStrike" BIGINT NOT NULL,
-  "priceMarket" BIGINT,
+  "priceStrike" DOUBLE PRECISION NOT NULL,
+  "priceMarket" DOUBLE PRECISION,
   "vested" BIGINT NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
@@ -410,6 +501,36 @@ CREATE TABLE "PlanningYears" (
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
 
+ALTER TABLE "InvestmentAllocations"
+ADD CONSTRAINT "InvestmentAllocations_assetId_NetWorthCategoryAssets_id_fk"
+  FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "InvestmentAllocations"
+ADD CONSTRAINT "InvestmentAllocations_investmentId_Investments_id_fk"
+  FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "InvestmentPrices"
+ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk"
+  FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "InvestmentStockSplits"
+ADD CONSTRAINT "InvestmentStockSplits_investmentId_Investments_id_fk"
+  FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "InvestmentTransactions"
+ADD CONSTRAINT "InvestmentTransactions_investmentId_Investments_id_fk"
+  FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "InvestmentTransactions"
+ADD CONSTRAINT "InvestmentTransactions_assetId_NetWorthCategoryAssets_id_fk"
+  FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id")
+    ON DELETE RESTRICT
+    ON UPDATE NO ACTION;
 ALTER TABLE "NetWorthCategoryLiabilities"
 ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" (
@@ -577,6 +698,20 @@ ADD CONSTRAINT "PlanningYearUKTaxRates_year_PlanningYears_year_fk"
   FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year")
     ON DELETE CASCADE
     ON UPDATE NO ACTION;
+CREATE UNIQUE INDEX "InvestmentPrices_investmentId_date_uq" ON "InvestmentPrices" USING btree (
+  "investmentId",
+  "date"
+);
+CREATE UNIQUE INDEX "InvestmentStockSplits_investmentId_date_uq" ON "InvestmentStockSplits" USING btree (
+  "investmentId",
+  "date"
+);
+CREATE INDEX "InvestmentTransactions_investmentId_idx" ON "InvestmentTransactions" USING btree (
+  "investmentId"
+);
+CREATE INDEX "InvestmentTransactions_assetId_idx" ON "InvestmentTransactions" USING btree (
+  "assetId"
+);
 CREATE UNIQUE INDEX "NetWorthEntries_month_uq" ON "NetWorthEntries" USING btree (
   date_trunc('month', "date"::TIMESTAMP)
 );
@@ -591,3 +726,72 @@ CREATE UNIQUE INDEX "PlanningMonths_year_month_uq" ON "PlanningMonths" USING btr
   "year",
   date_trunc('month', "date"::TIMESTAMP)
 );
+CREATE VIEW "public"."InvestmentPortfolioDailyBreakdown" AS
+  (
+    WITH
+      "priceRange" AS (
+        SELECT MIN(date) AS "startDate", MAX(date) AS "endDate"
+        FROM "InvestmentPrices"
+      ),
+      days AS (
+        SELECT
+          generate_series(
+            "startDate",
+            "endDate",
+            '1 day'::INTERVAL
+          )::date AS date
+        FROM "priceRange"
+        WHERE "startDate" IS NOT NULL
+      ),
+      holdings AS (
+        SELECT DISTINCT "assetId", "investmentId"
+        FROM "InvestmentTransactions"
+      ),
+      "unitsByDay" AS (
+        SELECT
+          h."assetId",
+          h."investmentId",
+          d.date,
+          COALESCE(
+            (
+              SELECT SUM(t.units)
+              FROM "InvestmentTransactions" AS t
+              WHERE
+                t."assetId" = h."assetId"
+                AND t."investmentId" = h."investmentId"
+                AND t.date <= d.date
+            ),
+            0
+          ) AS units
+        FROM
+          holdings AS h
+          CROSS JOIN days AS d
+      ),
+      "priceByDay" AS (
+        SELECT
+          h."investmentId",
+          d.date,
+          (
+            SELECT p.price
+            FROM "InvestmentPrices" AS p
+            WHERE p."investmentId" = h."investmentId" AND p.date <= d.date
+            ORDER BY p.date DESC
+            LIMIT 1
+          ) AS price
+        FROM
+          (SELECT DISTINCT "investmentId" FROM holdings) AS h
+          CROSS JOIN days AS d
+      )
+    SELECT
+      i.currency,
+      u."assetId",
+      u.date,
+      SUM(u.units * p.price) AS amount
+    FROM
+      "unitsByDay" AS u
+      JOIN "Investments" AS i ON i.id = u."investmentId"
+      JOIN "priceByDay" AS p
+        ON p."investmentId" = u."investmentId" AND p.date = u.date
+    WHERE p.price IS NOT NULL AND u.units != 0
+    GROUP BY i.currency, u."assetId", u.date
+  );

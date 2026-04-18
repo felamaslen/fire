@@ -78,6 +78,62 @@
       "when": 1776541501444,
       "tag": "0010_allow_zero_amount_transactions",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776546675599,
+      "tag": "0011_create_investments_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776546712881,
+      "tag": "0012_create_investment_transactions_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1776546747194,
+      "tag": "0013_create_investment_stock_splits_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1776546760044,
+      "tag": "0014_widen_net_worth_value_option_prices_to_double",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1776546789892,
+      "tag": "0015_create_investment_prices_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1776546795496,
+      "tag": "0016_add_investment_prices_adjusted_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1776546862318,
+      "tag": "0017_create_investment_allocations_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1776547025920,
+      "tag": "0018_create_investment_portfolio_daily_breakdown_view",
+      "breakpoints": true
     }
   ]
 }
