@@ -41,9 +41,6 @@ const PlanningMonthAccountCellDocument = graphql(
     fragment PlanningMonthAccountCell on PlanningMonthAccount {
       id
       name
-      valueStart {
-        ...Figure
-      }
       valueEnd {
         ...Figure
       }
@@ -215,28 +212,6 @@ function PlanningTable({ data }: { data: PlanningYearData }) {
               </TableHead>
             ))}
           </TableRow>
-          <TableRow className="hover:bg-muted">
-            <TableHead
-              className={cn(
-                "sticky top-10 left-0 z-30 bg-muted text-[10px] font-normal text-muted-foreground uppercase",
-                cellBorder,
-              )}
-            />
-            {accounts.map((a) => (
-              <TableHead
-                key={a.id}
-                className={cn(
-                  "sticky top-10 z-20 bg-muted text-[10px] font-normal text-muted-foreground uppercase",
-                  cellBorder,
-                )}
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <span>Start</span>
-                  <span>End</span>
-                </div>
-              </TableHead>
-            ))}
-          </TableRow>
         </TableHeader>
         <TableBody>
           {data.months.map((month, i) => (
@@ -305,10 +280,6 @@ function MonthAccountCell({
   const cell = readFragment(PlanningMonthAccountCellDocument, data);
   return (
     <div className="divide-y divide-border">
-      <div className="flex items-baseline justify-between gap-2 bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
-        <Figure data={cell.valueStart} className={monoRight} />
-        <Figure data={cell.valueEnd} className={cn(monoRight, "font-medium")} />
-      </div>
       <ul>
         {cell.transactions.length === 0 && (
           <li className="px-2 py-1 text-[10px] text-muted-foreground">—</li>
@@ -317,6 +288,9 @@ function MonthAccountCell({
           <TransactionRow key={tx.id} data={tx} monoRight={monoRight} />
         ))}
       </ul>
+      <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
+        <Figure data={cell.valueEnd} className={cn(monoRight, "font-medium")} />
+      </div>
     </div>
   );
 }
