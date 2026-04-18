@@ -71,9 +71,11 @@ const PlanningMonthAccountCellDocument = graphql(
       valueStart {
         ...Figure
       }
+      valueStartProvisional
       valueEnd {
         ...Figure
       }
+      valueEndProvisional
       transactions {
         id
         ...PlanningTransactionRow
@@ -503,9 +505,11 @@ function MonthAccountCell({
     <div className="group flex h-full flex-col divide-y divide-border">
       {showStart && (
         <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
-          <Figure
+          <ProvisionalFigure
             data={cell.valueStart}
-            className={cn(monoRight, "font-bold")}
+            provisional={cell.valueStartProvisional}
+            className={monoRight}
+            label="opening"
           />
         </div>
       )}
@@ -534,9 +538,50 @@ function MonthAccountCell({
         </li>
       </ul>
       <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
-        <Figure data={cell.valueEnd} className={cn(monoRight, "font-bold")} />
+        <ProvisionalFigure
+          data={cell.valueEnd}
+          provisional={cell.valueEndProvisional}
+          className={monoRight}
+          label="closing"
+        />
       </div>
     </div>
+  );
+}
+
+/** `Figure` with a provisional-vs-recorded affordance: projected values render italic / muted with a dashed underline and a tooltip explaining they aren't from a net-worth snapshot; recorded values render bold without any extra chrome. */
+function ProvisionalFigure({
+  data,
+  provisional,
+  className,
+  label,
+}: {
+  data: FragmentOf<typeof FigureDocument>;
+  provisional: boolean;
+  className: string;
+  label: "opening" | "closing";
+}) {
+  if (!provisional) {
+    return <Figure data={data} className={cn(className, "font-bold")} />;
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            className,
+            "cursor-help italic text-muted-foreground underline decoration-dotted underline-offset-2",
+          )}
+        >
+          <Figure data={data} />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        Projected {label} balance — no net-worth snapshot has been recorded for
+        this month, so this is rolled forward from prior data. Record an entry
+        to anchor the number.
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

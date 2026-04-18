@@ -33,6 +33,7 @@ import {
   earningMonthCoverage,
   monthId,
   monthYearLabel,
+  startOfMonthUTC,
 } from "./months";
 import { computeUKTake } from "./tax";
 import { encodePlanningTransactionId } from "./transactions";
@@ -379,9 +380,7 @@ export function monthTransactionsFor(
   assetId: string,
   monthDate: Date,
 ): PlanningTransaction[] {
-  const monthStart = new Date(
-    Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth(), 1),
-  );
+  const monthStart = startOfMonthUTC(monthDate);
   const monthEnd = addMonthsUTC(monthStart, 1);
   const out: PlanningTransaction[] = [];
 
@@ -625,29 +624,56 @@ export function monthTransactionsFor(
   return out;
 }
 
+/** The latest net-worth snapshot for `assetId` whose date falls inside `monthDate`'s calendar month, or null if none exists. */
+export function monthEndSnapshotFor(
+  data: PlanningYearData,
+  assetId: string,
+  monthDate: Date,
+): Money | null {
+  const monthStart = startOfMonthUTC(monthDate);
+  const monthEnd = addMonthsUTC(monthStart, 1);
+  // Snapshots are sorted by date descending — the first in-month hit is the
+  // latest snapshot inside the month.
+  const hit = data.snapshots.find(
+    (s) =>
+      s.assetId === assetId &&
+      s.date.getTime() >= monthStart.getTime() &&
+      s.date.getTime() < monthEnd.getTime(),
+  );
+  return hit
+    ? Money.fromMinorDenomination(hit.minor, REPORTING_CURRENCY)
+    : null;
+}
+
+/** Whether `valueStart` for `(assetId, monthDate)` is anchored to a real recorded balance (snapshot in the immediately preceding month) vs. projected forward from a distant baseline or no baseline at all. */
+export function valueStartProvisionalFor(
+  data: PlanningYearData,
+  assetId: string,
+  monthDate: Date,
+): boolean {
+  const monthStart = startOfMonthUTC(monthDate);
+  const priorMonthStart = addMonthsUTC(monthStart, -1);
+  const baseline = data.snapshots.find(
+    (s) => s.assetId === assetId && s.date.getTime() < monthStart.getTime(),
+  );
+  if (!baseline) return true;
+  const baselineMonthStart = startOfMonthUTC(baseline.date);
+  return baselineMonthStart.getTime() !== priorMonthStart.getTime();
+}
+
 /** Pure in-memory compute: the opening balance at `monthDate` for `assetId`, rolling forward from the latest snapshot strictly before it through intervening months' transactions. */
 export function valueStartFor(
   data: PlanningYearData,
   assetId: string,
   monthDate: Date,
 ): Money {
-  const monthStart = new Date(
-    Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth(), 1),
-  );
+  const monthStart = startOfMonthUTC(monthDate);
   const baseline = data.snapshots.find(
     (s) => s.assetId === assetId && s.date.getTime() < monthStart.getTime(),
   );
   let runningMinor = baseline ? baseline.minor : 0;
 
-  const baselineMonthStart = baseline
-    ? new Date(
-        Date.UTC(
-          baseline.date.getUTCFullYear(),
-          baseline.date.getUTCMonth(),
-          1,
-        ),
-      )
-    : null;
+  const baselineMonthStart = baseline ? startOfMonthUTC(baseline.date) : null;
   let cursor = baselineMonthStart
     ? addMonthsUTC(baselineMonthStart, 1)
     : new Date(Date.UTC(data.year, 3, 1));

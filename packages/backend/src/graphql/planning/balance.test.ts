@@ -110,10 +110,12 @@ async function monthsFor(year: string) {
               amount
               currency
             }
+            valueStartProvisional
             valueEnd {
               amount
               currency
             }
+            valueEndProvisional
             transactions {
               name
               amount {
@@ -140,6 +142,24 @@ function balanceTable(months: Awaited<ReturnType<typeof monthsFor>>): string {
         a.name,
         a.valueStart.amount,
         a.valueEnd.amount,
+      ]),
+    ),
+  );
+}
+
+function balanceProvisionalTable(
+  months: Awaited<ReturnType<typeof monthsFor>>,
+): string {
+  return formatTable(
+    ["MONTH", "ACCOUNT", "START", "START PROV.", "END", "END PROV."],
+    months.flatMap((m) =>
+      m.accounts.map((a) => [
+        m.id,
+        a.name,
+        a.valueStart.amount,
+        a.valueStartProvisional,
+        a.valueEnd.amount,
+        a.valueEndProvisional,
       ]),
     ),
   );
@@ -240,7 +260,7 @@ it("snapshot in month prior — subsequent months baselined from it", async () =
     MONTH    ACCOUNT VALUE START VALUE END
     apr-2025 Current 0           -100     
     may-2025 Current -100        -200     
-    jun-2025 Current -200        -300     
+    jun-2025 Current -200        5000     
     jul-2025 Current 5000        4900     
     aug-2025 Current 4900        4800     
     sep-2025 Current 4800        4700     
@@ -284,10 +304,10 @@ it("snapshots with gaps — each snapshot re-anchors, months in between chain fo
   expect(balances).toMatchInlineSnapshot(`
     "
     MONTH    ACCOUNT VALUE START VALUE END
-    apr-2025 Current 0           -100     
+    apr-2025 Current 0           1000     
     may-2025 Current 1000        900      
     jun-2025 Current 900         800      
-    jul-2025 Current 800         700      
+    jul-2025 Current 800         3000     
     aug-2025 Current 3000        2900     
     sep-2025 Current 2900        2800     
     oct-2025 Current 2800        2700     
@@ -575,5 +595,38 @@ it("transactions field surfaces each source with the expected provisional/editab
     "
     MONTH    TX NAME           AMOUNT PROV. EDITABLE
     apr-2025 Transfer to joint 200    false false   "
+  `);
+});
+
+it("in-month snapshot overrides valueEnd — no discontinuity with next month's opening", async () => {
+  await seedYear("2025");
+  const joint = await createAsset("Joint");
+  await assign(joint, "Joint");
+
+  // Balance recorded at end of March (prior FY month) — becomes April's
+  // valueStart via the normal baseline lookup.
+  await recordSnapshot(joint, "2025-03-31", 864929); // £8,649.29
+  // Balance recorded at end of April — real £2,287.03 drop not modelled as
+  // any planner transaction. Before the valueEnd snapshot override, April
+  // would close at £8,649.29 (projected) while May would open at £6,362.26
+  // (next-month baseline), leaving a £2,287.03 jump nobody can explain.
+  await recordSnapshot(joint, "2025-04-30", 636226); // £6,362.26
+
+  const months = await monthsFor("2025");
+  expect(balanceProvisionalTable(months)).toMatchInlineSnapshot(`
+    "
+    MONTH    ACCOUNT START   START PROV. END     END PROV.
+    apr-2025 Joint   8649.29 false       6362.26 false    
+    may-2025 Joint   6362.26 false       6362.26 true     
+    jun-2025 Joint   6362.26 true        6362.26 true     
+    jul-2025 Joint   6362.26 true        6362.26 true     
+    aug-2025 Joint   6362.26 true        6362.26 true     
+    sep-2025 Joint   6362.26 true        6362.26 true     
+    oct-2025 Joint   6362.26 true        6362.26 true     
+    nov-2025 Joint   6362.26 true        6362.26 true     
+    dec-2025 Joint   6362.26 true        6362.26 true     
+    jan-2026 Joint   6362.26 true        6362.26 true     
+    feb-2026 Joint   6362.26 true        6362.26 true     
+    mar-2026 Joint   6362.26 true        6362.26 true     "
   `);
 });
