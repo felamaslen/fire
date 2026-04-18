@@ -1,7 +1,7 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
+import { Pencil, Plus } from "lucide-react";
 import { Suspense, useState } from "react";
 import { toast } from "sonner";
 
@@ -40,7 +40,7 @@ import { InvestmentsPageDocument } from "../investments";
 
 const InvestmentDetailDocument = graphql(
   `
-    query InvestmentDetail($txFirst: Int, $txAfter: ID) {
+    query InvestmentDetail {
       investment: investments {
         edges {
           node {
@@ -55,25 +55,6 @@ const InvestmentDetailDocument = graphql(
               ... on InvestmentFund {
                 __typename
                 url
-              }
-            }
-            transactionsPaged(first: $txFirst, after: $txAfter) {
-              edges {
-                cursor
-                node {
-                  id
-                  date
-                  units
-                  drip
-                  price { ...Figure }
-                  taxes { ...Figure }
-                  fees { ...Figure }
-                  asset { id name }
-                }
-              }
-              pageInfo {
-                hasNextPage
-                endCursor
               }
             }
             position {
@@ -103,6 +84,40 @@ const InvestmentDetailDocument = graphql(
   [FigureDocument],
 );
 
+const InvestmentTransactionsDocument = graphql(
+  `
+    query InvestmentTransactions($txFirst: Int, $txAfter: ID) {
+      investment: investments {
+        edges {
+          node {
+            id
+            transactionsPaged(first: $txFirst, after: $txAfter) {
+              edges {
+                cursor
+                node {
+                  id
+                  date
+                  units
+                  drip
+                  price { amount ...Figure }
+                  taxes { amount ...Figure }
+                  fees { amount ...Figure }
+                  asset { id name }
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      }
+    }
+  `,
+  [FigureDocument],
+);
+
 const InvestmentTransactionCreateDocument = graphql(`
   mutation InvestmentTransactionCreate(
     $investmentId: ID!
@@ -116,6 +131,32 @@ const InvestmentTransactionCreateDocument = graphql(`
   ) {
     investmentTransactionCreate(
       investmentId: $investmentId
+      assetId: $assetId
+      date: $date
+      units: $units
+      price: $price
+      taxes: $taxes
+      fees: $fees
+      drip: $drip
+    ) {
+      id
+    }
+  }
+`);
+
+const InvestmentTransactionUpdateDocument = graphql(`
+  mutation InvestmentTransactionUpdate(
+    $id: ID!
+    $assetId: ID
+    $date: Date
+    $units: Int
+    $price: MoneyInput
+    $taxes: MoneyInput
+    $fees: MoneyInput
+    $drip: Boolean
+  ) {
+    investmentTransactionUpdate(
+      id: $id
       assetId: $assetId
       date: $date
       units: $units
@@ -171,10 +212,7 @@ type AssetEdge = NonNullable<
 >["edges"][number];
 
 function InvestmentDetail({ id }: { id: string }) {
-  const { data, refetch, fetchMore } = useSuspenseQuery(
-    InvestmentDetailDocument,
-    { variables: { txFirst: 15, txAfter: null } },
-  );
+  const { data } = useSuspenseQuery(InvestmentDetailDocument);
   const investment = data.investment?.edges
     .map((e) => e.node)
     .find((n) => n.id === id);
@@ -242,56 +280,78 @@ function InvestmentDetail({ id }: { id: string }) {
         </dl>
       </header>
 
-      <TransactionsSection
-        investmentId={investment.id}
-        currency={investment.currency}
-        transactions={investment.transactionsPaged?.edges.map((e) => e.node) ?? []}
-        hasNextPage={investment.transactionsPaged?.pageInfo.hasNextPage ?? false}
-        endCursor={investment.transactionsPaged?.pageInfo.endCursor ?? null}
-        wrappers={wrappers}
-        onMutate={() => void refetch()}
-        onLoadMore={() =>
-          void fetchMore({
-            variables: {
-              txFirst: 15,
-              txAfter: investment.transactionsPaged?.pageInfo.endCursor,
-            },
-          })
+      <Suspense
+        fallback={
+          <div className="flex min-h-32 items-center justify-center">
+            <Spinner />
+          </div>
         }
-      />
+      >
+        <TransactionsSection
+          investmentId={investment.id}
+          currency={investment.currency}
+          wrappers={wrappers}
+        />
+      </Suspense>
     </div>
   );
 }
 
 type TransactionRow = NonNullable<
   NonNullable<
-    ResultOf<typeof InvestmentDetailDocument>["investment"]
-  >["edges"][number]["node"]["transactionsPaged"]
+    NonNullable<
+      ResultOf<typeof InvestmentTransactionsDocument>["investment"]
+    >["edges"][number]["node"]["transactionsPaged"]
+  >
 >["edges"][number]["node"];
 
 function TransactionsSection({
   investmentId,
   currency,
-  transactions,
   wrappers,
-  hasNextPage,
-  endCursor,
-  onMutate,
-  onLoadMore,
 }: {
   investmentId: string;
   currency: string;
-  transactions: TransactionRow[];
   wrappers: { id: string; name: string; type: string }[];
-  hasNextPage: boolean;
-  endCursor: string | null;
-  onMutate: () => void;
-  onLoadMore: () => void;
 }) {
+  // Keyset pagination stack: each entry is the `after` cursor that produced the
+  // current page. `[null]` = first page.
+  const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
+  const currentCursor = cursorStack[cursorStack.length - 1];
+  const { data, refetch } = useSuspenseQuery(InvestmentTransactionsDocument, {
+    variables: { txFirst: 15, txAfter: currentCursor },
+  });
+  const investment = data.investment?.edges
+    .map((e) => e.node)
+    .find((n) => n.id === investmentId);
+  const transactions: TransactionRow[] =
+    investment?.transactionsPaged?.edges.map((e) => e.node) ?? [];
+  const hasNextPage =
+    investment?.transactionsPaged?.pageInfo.hasNextPage ?? false;
+  const endCursor = investment?.transactionsPaged?.pageInfo.endCursor ?? null;
+
+  const onMutate = () => {
+    setCursorStack([null]);
+    void refetch();
+  };
+  const onNext = () => {
+    if (endCursor) setCursorStack((s) => [...s, endCursor]);
+  };
+  const onPrev: (() => void) | null =
+    cursorStack.length > 1
+      ? () => setCursorStack((s) => s.slice(0, -1))
+      : null;
+
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<TransactionRow | null>(null);
+  const onEdit = (t: TransactionRow) => setEditing(t);
   const [deleteTx] = useMutation(InvestmentTransactionDeleteDocument, {
     refetchQueries: [
-      { query: InvestmentDetailDocument, variables: { txFirst: 15, txAfter: null } },
+      {
+        query: InvestmentTransactionsDocument,
+        variables: { txFirst: 15, txAfter: null },
+      },
+      { query: InvestmentDetailDocument },
       { query: InvestmentsPageDocument, variables: { first: 100 } },
     ],
     onCompleted: () => toast.success("Transaction removed"),
@@ -308,10 +368,11 @@ function TransactionsSection({
       </div>
 
       {adding && (
-        <AddTransactionForm
+        <TransactionForm
           investmentId={investmentId}
           currency={currency}
           wrappers={wrappers}
+          existing={null}
           defaultAssetId={transactions[0]?.asset.id ?? wrappers[0]?.id ?? ""}
           onDone={() => {
             setAdding(false);
@@ -321,9 +382,25 @@ function TransactionsSection({
         />
       )}
 
+      {editing && (
+        <TransactionForm
+          investmentId={investmentId}
+          currency={currency}
+          wrappers={wrappers}
+          existing={editing}
+          defaultAssetId={editing.asset.id}
+          onDone={() => {
+            setEditing(null);
+            onMutate();
+          }}
+          onCancel={() => setEditing(null)}
+        />
+      )}
+
       {transactions.length === 0 ? (
         <p className="text-sm text-muted-foreground">No transactions yet.</p>
       ) : (
+        <div className="max-h-[45vh] overflow-y-auto rounded border">
         <Table>
           <TableHeader>
             <TableRow>
@@ -338,39 +415,65 @@ function TransactionsSection({
           <TableBody>
             {transactions.map((t) => (
               <TableRow key={t.id}>
-                <TableCell>{t.date}</TableCell>
-                <TableCell>{t.asset.name}</TableCell>
-                <TableCell className="text-right tabular-nums">{t.units}</TableCell>
-                <TableCell className="text-right">
+                <TableCell className="align-middle">{t.date}</TableCell>
+                <TableCell className="align-middle">{t.asset.name}</TableCell>
+                <TableCell className="text-right tabular-nums align-middle">
+                  {t.units}
+                </TableCell>
+                <TableCell className="text-right align-middle">
                   <Figure data={t.price} />
                 </TableCell>
-                <TableCell>{t.drip ? "Yes" : ""}</TableCell>
-                <TableCell className="w-0">
-                  <DeleteButton
-                    onConfirm={() => deleteTx({ variables: { id: t.id } })}
-                  />
+                <TableCell className="align-middle">
+                  {t.drip ? "Yes" : ""}
+                </TableCell>
+                <TableCell className="w-0 align-middle">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => onEdit(t)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <DeleteButton
+                      onConfirm={() => deleteTx({ variables: { id: t.id } })}
+                    />
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
-      )}
-
-      {hasNextPage && endCursor && (
-        <div className="flex justify-center">
-          <Button size="sm" variant="outline" onClick={onLoadMore}>
-            Load more
-          </Button>
         </div>
       )}
+
+      <div className="flex justify-between border-t pt-3">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!onPrev}
+          onClick={() => onPrev?.()}
+        >
+          ← Prev
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!hasNextPage || !endCursor}
+          onClick={onNext}
+        >
+          Next →
+        </Button>
+      </div>
     </section>
   );
 }
 
-function AddTransactionForm({
+function TransactionForm({
   investmentId,
   currency,
   wrappers,
+  existing,
   defaultAssetId,
   onDone,
   onCancel,
@@ -378,27 +481,37 @@ function AddTransactionForm({
   investmentId: string;
   currency: string;
   wrappers: { id: string; name: string; type: string }[];
+  existing: TransactionRow | null;
   defaultAssetId: string;
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const refetch = [
+    {
+      query: InvestmentTransactionsDocument,
+      variables: { txFirst: 15, txAfter: null },
+    },
+    { query: InvestmentDetailDocument },
+    { query: InvestmentsPageDocument, variables: { first: 100 } },
+  ];
   const [createTx] = useMutation(InvestmentTransactionCreateDocument, {
-    refetchQueries: [
-      { query: InvestmentDetailDocument, variables: { txFirst: 15, txAfter: null } },
-      { query: InvestmentsPageDocument, variables: { first: 100 } },
-    ],
+    refetchQueries: refetch,
+    awaitRefetchQueries: true,
+  });
+  const [updateTx] = useMutation(InvestmentTransactionUpdateDocument, {
+    refetchQueries: refetch,
     awaitRefetchQueries: true,
   });
 
   const form = useForm({
     defaultValues: {
-      assetId: defaultAssetId,
-      date: new Date().toISOString().slice(0, 10),
-      units: 0,
-      priceAmount: 0,
-      taxesAmount: 0,
-      feesAmount: 0,
-      drip: false,
+      assetId: existing?.asset.id ?? defaultAssetId,
+      date: existing?.date ?? new Date().toISOString().slice(0, 10),
+      units: existing?.units ?? 0,
+      priceAmount: existing?.price.amount ?? 0,
+      taxesAmount: existing?.taxes.amount ?? 0,
+      feesAmount: existing?.fees.amount ?? 0,
+      drip: existing?.drip ?? false,
     },
     onSubmit: async ({ value }) => {
       if (!value.assetId) {
@@ -406,19 +519,35 @@ function AddTransactionForm({
         return;
       }
       try {
-        await createTx({
-          variables: {
-            investmentId,
-            assetId: value.assetId,
-            date: value.date,
-            units: Math.trunc(value.units),
-            price: { amount: Number(value.priceAmount), currency },
-            taxes: { amount: Number(value.taxesAmount), currency },
-            fees: { amount: Number(value.feesAmount), currency },
-            drip: value.drip,
-          },
-        });
-        toast.success("Transaction added");
+        if (existing) {
+          await updateTx({
+            variables: {
+              id: existing.id,
+              assetId: value.assetId,
+              date: value.date,
+              units: Math.trunc(value.units),
+              price: { amount: Number(value.priceAmount), currency },
+              taxes: { amount: Number(value.taxesAmount), currency },
+              fees: { amount: Number(value.feesAmount), currency },
+              drip: value.drip,
+            },
+          });
+          toast.success("Transaction updated");
+        } else {
+          await createTx({
+            variables: {
+              investmentId,
+              assetId: value.assetId,
+              date: value.date,
+              units: Math.trunc(value.units),
+              price: { amount: Number(value.priceAmount), currency },
+              taxes: { amount: Number(value.taxesAmount), currency },
+              fees: { amount: Number(value.feesAmount), currency },
+              drip: value.drip,
+            },
+          });
+          toast.success("Transaction added");
+        }
         onDone();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err));
@@ -541,7 +670,7 @@ function AddTransactionForm({
         <form.Subscribe selector={(s) => s.isSubmitting}>
           {(submitting) => (
             <Button type="submit" disabled={submitting}>
-              Add
+              {existing ? "Save" : "Add"}
             </Button>
           )}
         </form.Subscribe>
