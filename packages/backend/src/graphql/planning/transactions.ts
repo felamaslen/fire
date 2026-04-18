@@ -23,7 +23,7 @@ import {
 } from "../money";
 import { VOID, type Void } from "../void";
 import { ensurePlanningMonth, type PlanningTransaction } from "./index";
-import { parseMonthId, planningMonthKey } from "./months";
+import { earningMonthCoverage, parseMonthId, planningMonthKey } from "./months";
 import { computeUKTake } from "./tax";
 
 /**
@@ -38,13 +38,18 @@ const txIdSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("pay"), id: z.string() }),
   /** Payslip adjustment row. */
   z.object({ kind: z.literal("adj"), id: z.string() }),
-  /** Bill projection — either a predicted row or a materialised `PlanningMonthBills` override. */
-  z.object({ kind: z.literal("bill"), id: z.string() }),
-  /** One line from an earnings stream's predicted monthly take (gross, income-tax, NIC, or student-loan). */
+  /** Bill projection — either a predicted row or a materialised `PlanningMonthBills` override. `monthId` scopes the virtual row to a specific month so the composite is globally unique (the same bill appears in each month it collects in). */
+  z.object({
+    kind: z.literal("bill"),
+    id: z.string(),
+    monthId: z.string(),
+  }),
+  /** One line from an earnings stream's predicted monthly take (gross, income-tax, NIC, or student-loan). `monthId` scopes the virtual row to a specific month — the same earning projects identical rows across every covered month, so the composite has to include the month to stay globally unique. */
   z.object({
     kind: z.literal("earn"),
     part: z.enum(["gross", "tax", "nic", "sl"]),
     id: z.string(),
+    monthId: z.string(),
   }),
 ]);
 
@@ -433,7 +438,11 @@ async function materialiseEarningAsPayslip(
     studentLoanPlan2: earning.studentLoanPlan2,
     rates,
   });
-  const perMonth = (n: number) => Math.round(n / 12);
+  // Keep the materialised payslip in sync with the projection that produced
+  // the row the user just clicked on: pro-rata the monthly figures when the
+  // earning only covers part of the month (mid-month start / end).
+  const coverage = earningMonthCoverage(earning.start, earning.end, date);
+  const perMonth = (n: number) => Math.round((n / 12) * coverage);
 
   let gross = perMonth(take.gross);
   const adjustments: {

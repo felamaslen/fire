@@ -1,3 +1,12 @@
+import {
+  differenceInCalendarDays,
+  isAfter,
+  isBefore,
+  max,
+  min,
+  subDays,
+} from "date-fns";
+
 const MONTH_SHORT = [
   "jan",
   "feb",
@@ -47,6 +56,48 @@ export function monthsInFYYear(year: number): Date[] {
     out.push(new Date(Date.UTC(y, m, 1)));
   }
   return out;
+}
+
+/**
+ * Fraction of a calendar month covered by the earning range
+ * `[start, end]` (`end` null → ongoing). Returns `0` when the earning
+ * doesn't intersect the month, `1` when it covers every day, and a value
+ * in `(0, 1)` when the earning starts or ends mid-month (pro-rata). Both
+ * endpoints are inclusive: an earning whose `end` falls on day `d` still
+ * "covers" day `d`.
+ */
+export function earningMonthCoverage(
+  earningStart: Date,
+  earningEnd: Date | null,
+  monthStart: Date,
+): number {
+  const monthEnd = addMonthsUTC(monthStart, 1);
+  const monthLastDay = subDays(monthEnd, 1);
+  const effectiveEnd = earningEnd ?? new Date(8640000000000000);
+  if (isAfter(earningStart, monthLastDay)) return 0;
+  if (isBefore(effectiveEnd, monthStart)) return 0;
+  const overlapStart = max([monthStart, earningStart]);
+  const overlapEnd = min([monthLastDay, effectiveEnd]);
+  const overlapDays = differenceInCalendarDays(overlapEnd, overlapStart) + 1;
+  const monthDays = differenceInCalendarDays(monthEnd, monthStart);
+  return overlapDays / monthDays;
+}
+
+/** Add `n` calendar months to a UTC-anchored date. Equivalent to date-fns
+ * `addMonths`, but computed in UTC so dates at UTC-midnight don't drift by
+ * the local TZ offset around DST boundaries. */
+export function addMonthsUTC(date: Date, n: number): Date {
+  return new Date(
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth() + n,
+      date.getUTCDate(),
+      date.getUTCHours(),
+      date.getUTCMinutes(),
+      date.getUTCSeconds(),
+      date.getUTCMilliseconds(),
+    ),
+  );
 }
 
 /** UK FY years overlapping the `[start, end]` date range. `end` null → open-ended (cap at a far-future year derived from today + 10y). */

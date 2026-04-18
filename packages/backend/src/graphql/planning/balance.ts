@@ -26,6 +26,7 @@ import { UnreachableCaseError } from "@/errors";
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
 import type { PlanningTransaction } from "./index";
+import { addMonthsUTC, earningMonthCoverage, monthId } from "./months";
 import { computeUKTake } from "./tax";
 import { encodePlanningTransactionId } from "./transactions";
 
@@ -250,9 +251,7 @@ export function monthTransactionsFor(
   const monthStart = new Date(
     Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth(), 1),
   );
-  const monthEnd = new Date(
-    Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth() + 1, 1),
-  );
+  const monthEnd = addMonthsUTC(monthStart, 1);
   const out: PlanningTransaction[] = [];
 
   // 1) Explicit PlanningTransactions
@@ -314,8 +313,8 @@ export function monthTransactionsFor(
   if (!hasPayslip && data.rates) {
     for (const e of data.earnings) {
       if (e.toAccountId !== assetId) continue;
-      if (e.start.getTime() > monthStart.getTime()) continue;
-      if (e.end && e.end.getTime() < monthStart.getTime()) continue;
+      const coverage = earningMonthCoverage(e.start, e.end, monthStart);
+      if (coverage === 0) continue;
       assert(e.countryCode === "GB", "Only GB earnings supported");
       const take = computeUKTake({
         gross: e.amountGross,
@@ -327,12 +326,16 @@ export function monthTransactionsFor(
         studentLoanPlan2: e.studentLoanPlan2,
         rates: data.rates,
       });
-      const perMonth = (n: number) => Math.round(n / 12);
+      // Annualised → monthly, then pro-rata'd when the earning only covers
+      // part of the month (start or end falls mid-month).
+      const perMonth = (n: number) => Math.round((n / 12) * coverage);
+      const monthKey = monthId(monthStart);
       out.push({
         id: encodePlanningTransactionId({
           kind: "earn",
           part: "gross",
           id: e.id,
+          monthId: monthKey,
         }),
         name: `${e.name} — gross`,
         amount: Money.fromMinorDenomination(perMonth(take.gross), e.currency),
@@ -346,6 +349,7 @@ export function monthTransactionsFor(
             kind: "earn",
             part: "tax",
             id: e.id,
+            monthId: monthKey,
           }),
           name: `${e.name} — income tax`,
           amount: Money.fromMinorDenomination(
@@ -363,6 +367,7 @@ export function monthTransactionsFor(
             kind: "earn",
             part: "nic",
             id: e.id,
+            monthId: monthKey,
           }),
           name: `${e.name} — NIC`,
           amount: Money.fromMinorDenomination(-perMonth(take.nic), e.currency),
@@ -377,6 +382,7 @@ export function monthTransactionsFor(
             kind: "earn",
             part: "sl",
             id: e.id,
+            monthId: monthKey,
           }),
           name: `${e.name} — student loan`,
           amount: Money.fromMinorDenomination(
@@ -413,7 +419,11 @@ export function monthTransactionsFor(
     if (override) {
       if (override.amount == null || override.currency == null) continue;
       out.push({
-        id: encodePlanningTransactionId({ kind: "bill", id: b.id }),
+        id: encodePlanningTransactionId({
+          kind: "bill",
+          id: b.id,
+          monthId: monthId(monthStart),
+        }),
         name: b.name,
         amount: Money.fromMinorDenomination(
           -override.amount,
@@ -425,7 +435,11 @@ export function monthTransactionsFor(
       });
     } else {
       out.push({
-        id: encodePlanningTransactionId({ kind: "bill", id: b.id }),
+        id: encodePlanningTransactionId({
+          kind: "bill",
+          id: b.id,
+          monthId: monthId(monthStart),
+        }),
         name: b.name,
         amount: Money.fromMinorDenomination(-b.amount, b.currency),
         isProvisional: true,
@@ -452,16 +466,18 @@ export function valueStartFor(
   );
   let runningMinor = baseline ? baseline.minor : 0;
 
-  const walkFrom = baseline
+  const baselineMonthStart = baseline
     ? new Date(
         Date.UTC(
           baseline.date.getUTCFullYear(),
-          baseline.date.getUTCMonth() + 1,
+          baseline.date.getUTCMonth(),
           1,
         ),
       )
+    : null;
+  let cursor = baselineMonthStart
+    ? addMonthsUTC(baselineMonthStart, 1)
     : new Date(Date.UTC(data.year, 3, 1));
-  const cursor = new Date(walkFrom);
   while (cursor.getTime() < monthStart.getTime()) {
     const txs = monthTransactionsFor(data, assetId, cursor);
     for (const tx of txs) {
@@ -471,7 +487,7 @@ export function valueStartFor(
       );
       runningMinor += Math.round(tx.amount.amount * 100);
     }
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    cursor = addMonthsUTC(cursor, 1);
   }
 
   return Money.fromMinorDenomination(runningMinor, REPORTING_CURRENCY);
