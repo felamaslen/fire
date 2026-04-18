@@ -473,8 +473,8 @@ it("transactionUpdate on a predicted earnings transaction materialises a payslip
     "
     NAME                    AMOUNT SOURCE EDIT     ID                          
     April payslip (revised) 3500   actual editable {"kind":"pay","id":"<uuid>"}
-    Income tax              -290.5 actual editable {"kind":"adj","id":"<uuid>"}
-    NIC                     -116.2 actual editable {"kind":"adj","id":"<uuid>"}"
+    Day job — income tax    -290.5 actual editable {"kind":"adj","id":"<uuid>"}
+    Day job — NIC           -116.2 actual editable {"kind":"adj","id":"<uuid>"}"
   `);
 });
 
@@ -521,5 +521,75 @@ it("transactionDelete on a predicted earnings transaction creates a zero-gross p
     "
     NAME              AMOUNT SOURCE EDIT     ID                          
     Day job — skipped 0      actual editable {"kind":"pay","id":"<uuid>"}"
+  `);
+});
+
+it("transactionUpdate on a predicted earnings deduction materialises the payslip with the gross + all other deductions, prefixed with the earning name", async () => {
+  await seedYear();
+  const main = await createAsset();
+  await assign(main);
+  await recordSnapshot(main, "2025-03-31", 1_000_000);
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 60000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          studentLoanPlan2: true
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: main },
+  );
+
+  // Before the edit, April should show the four predicted lines (gross + tax +
+  // NIC + student loan), each prefixed with the earning's name.
+  expect(await aprilTransactions()).toMatchInlineSnapshot(`
+    "
+    NAME                   AMOUNT  SOURCE    EDIT     ID                                          
+    Day job — gross        5000    predicted editable {"kind":"earn","part":"gross","id":"<uuid>"}
+    Day job — income tax   -952.67 predicted editable {"kind":"earn","part":"tax","id":"<uuid>"}  
+    Day job — NIC          -267.55 predicted editable {"kind":"earn","part":"nic","id":"<uuid>"}  
+    Day job — student loan -245.29 predicted editable {"kind":"earn","part":"sl","id":"<uuid>"}   "
+  `);
+
+  const nicId = await aprilTxId("Day job — NIC");
+
+  // User edits just the NIC line. The planner should materialise a payslip
+  // that includes:
+  //   - the gross line (not missing)
+  //   - the edited NIC at the new magnitude (not duplicated)
+  //   - the other deductions that were present before (tax, student loan)
+  // — all carrying the earning's name as a prefix.
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        transactionUpdate(
+          monthId: "apr-2025"
+          id: $id
+          amount: { amount: 400, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `),
+    { id: nicId },
+  );
+
+  expect(await aprilTransactions()).toMatchInlineSnapshot(`
+    "
+    NAME                   AMOUNT  SOURCE EDIT     ID                          
+    Day job — gross        5000    actual editable {"kind":"pay","id":"<uuid>"}
+    Day job — income tax   -952.67 actual editable {"kind":"adj","id":"<uuid>"}
+    Day job — NIC          -400    actual editable {"kind":"adj","id":"<uuid>"}
+    Day job — student loan -245.29 actual editable {"kind":"adj","id":"<uuid>"}"
   `);
 });
