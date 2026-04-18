@@ -99,6 +99,13 @@
       "when": 1776546747194,
       "tag": "0013_create_investment_stock_splits_table",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1776546760044,
+      "tag": "0014_widen_net_worth_value_option_prices_to_double",
+      "breakpoints": true
     }
   ]
 }
