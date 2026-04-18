@@ -317,11 +317,11 @@ type Mutation {
     name: String!
     """First day the bill is in effect."""
     start: Date!
-  ): [PlanningYear!]!
+  ): PlanningBill!
   """
   Delete a bill and every projection derived from it. Any actual transactions that had been recorded against this bill's months (via `PlanningMonthBills` overrides) are removed too, since they no longer have a parent bill. Use this when a subscription is cancelled or a mortgage is paid off.
   """
-  billDelete(id: ID!): [PlanningYear!]!
+  billDelete(id: ID!): Void!
   """
   Partially update an existing bill. Only fields passed in are changed — omit a field to leave it untouched. The projected-transaction stream for every affected month is recomputed from the new values; months that already had actual transactions recorded keep those and simply use the new bill as a fallback where no actual exists.
   """
@@ -347,7 +347,7 @@ type Mutation {
     name: String
     """New first day in effect."""
     start: Date
-  ): [PlanningYear!]!
+  ): PlanningBill!
   """
   Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `toAccountId` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
   """
@@ -376,11 +376,11 @@ type Mutation {
     """
     toAccountId: ID!
     ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
-  ): [PlanningYear!]!
+  ): PlanningEarning!
   """
   Delete an earnings stream and stop all future projections it was driving. Attached UK tax codes are removed via cascade. Use this when a role ends and no further income is expected from this source.
   """
-  earningsDelete(id: ID!): [PlanningYear!]!
+  earningsDelete(id: ID!): Void!
   """
   Partially update an earnings stream. Only fields passed in are changed — omit a field to leave it untouched. Passing `ukTaxCodes` replaces the full tax-code history (existing rows are deleted, then the supplied list is inserted). Months affected by the old or new date range have their projections recomputed.
   """
@@ -400,7 +400,7 @@ type Mutation {
     """
     toAccountId: ID
     ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
-  ): [PlanningYear!]!
+  ): PlanningEarning!
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """
@@ -456,9 +456,9 @@ type Mutation {
     Planning account (`PlanningAccount.id`) the net pay lands in. The asset must already have a planning account assigned via `planningAccountAssign`.
     """
     toAccountId: ID!
-  ): [PlanningYear!]!
+  ): PlanningPayslip!
   """Delete a payslip. Adjustments are removed via cascade."""
-  payslipDelete(id: ID!): [PlanningYear!]!
+  payslipDelete(id: ID!): Void!
   """
   Partially update an existing payslip. Only fields passed in are changed. Passing `adjustments` replaces the full set of line items (rows not listed are deleted; entries with an `id` are upserted).
   """
@@ -476,7 +476,7 @@ type Mutation {
     New destination planning account (`PlanningAccount.id`) the net pay lands in.
     """
     toAccountId: ID
-  ): [PlanningYear!]!
+  ): PlanningPayslip!
   """
   Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.
   """
@@ -508,7 +508,7 @@ type Mutation {
     name: String!
     """Destination planning account (`PlanningAccount.id`) for a transfer."""
     toAccountId: ID
-  ): [PlanningYear!]!
+  ): PlanningTransaction!
   """
   Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:
   
@@ -523,7 +523,7 @@ type Mutation {
     id: ID!
     """Planning month id, e.g. `"apr-2025"`."""
     monthId: ID!
-  ): [PlanningYear!]!
+  ): Void!
   """
   Update an existing transaction. The composite `id` determines what's actually rewritten:
   
@@ -555,7 +555,7 @@ type Mutation {
     New destination planning account (`PlanningAccount.id`) for a transfer. Pass null explicitly to clear. Manual transactions only.
     """
     toAccountId: ID
-  ): [PlanningYear!]!
+  ): PlanningTransaction!
 }
 
 """
@@ -833,6 +833,58 @@ type PlanningMonthAccount {
 }
 
 """
+A recorded pay-period snapshot: the gross amount plus zero or more adjustments (tax, NIC, student loan, …). Payslips suppress earnings projections for the same month+account.
+"""
+type PlanningPayslip {
+  """
+  Line items on this payslip (tax / NIC / student-loan / any custom). Signed; negative = deduction.
+  """
+  adjustments: [PlanningPayslipAdjustment!]!
+  """Gross pay for this pay period."""
+  amountGross: Money!
+  """Pay date."""
+  date: Date!
+  """
+  Path to the uploaded payslip file (PDF / image), relative to the server. Null if none was uploaded.
+  """
+  fileUrl: String
+  id: ID!
+  name: String!
+  """Planning account the net pay lands in."""
+  toAccount: PlanningAccount!
+}
+
+"""
+A single line item on a PlanningPayslip. Currency matches the parent payslip.
+"""
+type PlanningPayslipAdjustment {
+  """Signed amount. Negative = deduction."""
+  amount: Money!
+  id: ID!
+  """
+  Liability this adjustment pays down, if any (e.g. a student-loan deduction).
+  """
+  liability: NetWorthCategoryLiability
+  name: String!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type PlanningPayslipConnection {
+  edges: [PlanningPayslipEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type PlanningPayslipEdge {
+  cursor: ID!
+  node: PlanningPayslip!
+}
+
+"""
 A single row in a PlanningMonthAccount — mix of actual and predicted sources.
 """
 type PlanningTransaction {
@@ -944,6 +996,10 @@ type Query {
   netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection @semanticNonNull
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
+  """
+  Every recorded payslip, paginated and sorted by pay date descending (most-recent first, `id` tiebreak).
+  """
+  payslips(after: ID, first: Int): PlanningPayslipConnection @semanticNonNull
   """Call this to check that the GraphQL server is working properly"""
   ping: Pong @semanticNonNull
   """
