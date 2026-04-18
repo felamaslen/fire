@@ -107,6 +107,11 @@ export function addMonthsUTC(date: Date, n: number): Date {
   );
 }
 
+/** First day (midnight) of `date`'s calendar month, anchored in UTC. Equivalent to date-fns `startOfMonth` but TZ-safe for UTC-anchored dates. */
+export function startOfMonthUTC(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
 /** UK FY years overlapping the `[start, end]` date range. `end` null → open-ended (cap at a far-future year derived from today + 10y). */
 export function yearsOverlapping(start: Date, end: Date | null): number[] {
   const effectiveEnd =

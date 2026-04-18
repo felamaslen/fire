@@ -842,14 +842,24 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningTransactionType)))
                 },
                 valueEnd: {
-                    description: "Closing balance for the month \u2014 `valueStart` plus the sum of this month's transactions.",
+                    description: "Closing balance for the month. When a net-worth snapshot was recorded inside this month we use it verbatim \u2014 real recorded balance always wins over a projection. Otherwise it falls back to `valueStart` plus the sum of this month's transactions.",
                     name: "valueEnd",
                     type: new GraphQLNonNull(MoneyType)
                 },
+                valueEndProvisional: {
+                    description: "True when `valueEnd` is projected (no snapshot recorded inside this month). False when it's anchored to a real recorded balance from an in-month snapshot.",
+                    name: "valueEndProvisional",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
                 valueStart: {
-                    description: "Opening balance for the month \u2014 the latest NetWorthValueAmounts snapshot strictly before the month rolled forward through any intervening planning transactions. Defaults to zero when there's no prior snapshot.",
+                    description: "Opening balance for the month \u2014 the latest recorded net-worth snapshot strictly before the month rolled forward through any intervening planning transactions. Defaults to zero when there's no prior snapshot.",
                     name: "valueStart",
                     type: new GraphQLNonNull(MoneyType)
+                },
+                valueStartProvisional: {
+                    description: "True when `valueStart` is projected (rolled forward through transactions from a distant snapshot, or defaulted to zero with no snapshot at all). False when it's anchored to a real recorded balance from the immediately preceding month.",
+                    name: "valueStartProvisional",
+                    type: new GraphQLNonNull(GraphQLBoolean)
                 }
             };
         }

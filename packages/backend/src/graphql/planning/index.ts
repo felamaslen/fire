@@ -25,9 +25,11 @@ import { VOID, type Void } from "../void";
 import {
   loadPlanningAccountInfos,
   loadPlanningYearData,
+  monthEndSnapshotFor,
   monthTransactionsFor,
   type PlanningYearData,
   valueStartFor,
+  valueStartProvisionalFor,
 } from "./balance";
 import { monthId, monthsInFYYear } from "./months";
 import {
@@ -124,6 +126,16 @@ export class PlanningMonth {
         this.date,
       );
       const valueStart = valueStartFor(this.yearData, info.assetId, this.date);
+      const valueStartProvisional = valueStartProvisionalFor(
+        this.yearData,
+        info.assetId,
+        this.date,
+      );
+      const monthEndSnapshot = monthEndSnapshotFor(
+        this.yearData,
+        info.assetId,
+        this.date,
+      );
       return new PlanningMonthAccount({
         monthId: this.id,
         date: this.date,
@@ -133,6 +145,8 @@ export class PlanningMonth {
         asset: info.asset,
         transactions,
         valueStart,
+        valueStartProvisional,
+        monthEndSnapshot,
       });
     });
   }
@@ -149,6 +163,8 @@ export class PlanningMonthAccount {
   asset!: NetWorthCategoryAsset;
   monthTransactions!: PlanningTransaction[];
   monthValueStart!: Money;
+  monthValueStartProvisional!: boolean;
+  monthEndSnapshot!: Money | null;
 
   constructor(data: {
     monthId: ID;
@@ -159,6 +175,8 @@ export class PlanningMonthAccount {
     asset: NetWorthCategoryAsset;
     transactions: PlanningTransaction[];
     valueStart: Money;
+    valueStartProvisional: boolean;
+    monthEndSnapshot: Money | null;
   }) {
     this.id = `${data.monthId}::${data.assetId}` as ID;
     this.date = data.date;
@@ -168,6 +186,8 @@ export class PlanningMonthAccount {
     this.asset = data.asset;
     this.monthTransactions = data.transactions;
     this.monthValueStart = data.valueStart;
+    this.monthValueStartProvisional = data.valueStartProvisional;
+    this.monthEndSnapshot = data.monthEndSnapshot;
   }
 
   /** Display name — alias if set, otherwise the underlying asset's name. @gqlField */
@@ -180,19 +200,30 @@ export class PlanningMonthAccount {
     return this.monthTransactions;
   }
 
-  /** Opening balance for the month — the latest NetWorthValueAmounts snapshot strictly before the month rolled forward through any intervening planning transactions. Defaults to zero when there's no prior snapshot. @gqlField */
+  /** Opening balance for the month — the latest recorded net-worth snapshot strictly before the month rolled forward through any intervening planning transactions. Defaults to zero when there's no prior snapshot. @gqlField */
   valueStart(): Money {
     return this.monthValueStart;
   }
 
-  /** Closing balance for the month — `valueStart` plus the sum of this month's transactions. @gqlField */
+  /** True when `valueStart` is projected (rolled forward through transactions from a distant snapshot, or defaulted to zero with no snapshot at all). False when it's anchored to a real recorded balance from the immediately preceding month. @gqlField */
+  valueStartProvisional(): boolean {
+    return this.monthValueStartProvisional;
+  }
+
+  /** Closing balance for the month. When a net-worth snapshot was recorded inside this month we use it verbatim — real recorded balance always wins over a projection. Otherwise it falls back to `valueStart` plus the sum of this month's transactions. @gqlField */
   valueEnd(): Money {
+    if (this.monthEndSnapshot) return this.monthEndSnapshot;
     const delta = this.monthTransactions.reduce(
       (sum, tx) => sum + Math.round(tx.amount.amount * 100),
       0,
     );
     const endMinor = Math.round(this.monthValueStart.amount * 100) + delta;
     return Money.fromMinorDenomination(endMinor, this.monthValueStart.currency);
+  }
+
+  /** True when `valueEnd` is projected (no snapshot recorded inside this month). False when it's anchored to a real recorded balance from an in-month snapshot. @gqlField */
+  valueEndProvisional(): boolean {
+    return this.monthEndSnapshot == null;
   }
 }
 
