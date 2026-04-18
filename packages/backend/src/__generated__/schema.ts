@@ -17,6 +17,7 @@ import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategory
 import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
+import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
 import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
@@ -497,6 +498,28 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             return [InvestmentFundType, InvestmentStockType];
         }
     });
+    const InvestmentStockSplitType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentStockSplit",
+        description: "A stock-split event recorded against an `Investment`. `units_post = units_pre * ratio`, so ratio > 1 is a forward split and 0 < ratio < 1 is a reverse split.",
+        fields() {
+            return {
+                date: {
+                    description: "Calendar date the split took effect.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                ratio: {
+                    description: "Split ratio. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split.",
+                    name: "ratio",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                }
+            };
+        }
+    });
     const InvestmentTransactionType: GraphQLObjectType = new GraphQLObjectType({
         name: "InvestmentTransaction",
         description: "One buy, sell, or dividend-reinvestment booked against an `Investment` and a wrapper (a net-worth asset of type `STOCK` or `PENSION`).",
@@ -566,6 +589,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                stockSplits: {
+                    description: "Stock-split events on this investment, oldest-first.",
+                    name: "stockSplits",
+                    type: new GraphQLList(new GraphQLNonNull(InvestmentStockSplitType)),
+                    resolve(source, args, context, info) {
+                        return assertNonNull(defaultFieldResolver(source, args, context, info));
+                    }
                 },
                 transactions: {
                     description: "Transactions booked against this investment, oldest-first.",
@@ -2118,6 +2149,59 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationInvestmentDeleteResolver(args.id);
                     }
                 },
+                investmentStockSplitCreate: {
+                    description: "Record a stock split on an investment. Historic `unitPriceCached` values are retroactively adjusted.",
+                    name: "investmentStockSplitCreate",
+                    type: new GraphQLNonNull(InvestmentStockSplitType),
+                    args: {
+                        date: {
+                            description: "Calendar date the split took effect.",
+                            type: new GraphQLNonNull(DateType)
+                        },
+                        investmentId: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        ratio: {
+                            description: "Positive split ratio. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split.",
+                            type: new GraphQLNonNull(GraphQLFloat)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentStockSplitCreateResolver(args.investmentId, args.date, args.ratio);
+                    }
+                },
+                investmentStockSplitDelete: {
+                    description: "Delete a stock split. Historic `unitPriceCached` values are recomputed as though the split never happened.",
+                    name: "investmentStockSplitDelete",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentStockSplitDeleteResolver(args.id);
+                    }
+                },
+                investmentStockSplitUpdate: {
+                    description: "Partial update to a stock split. Omitted / null fields are left unchanged.",
+                    name: "investmentStockSplitUpdate",
+                    type: new GraphQLNonNull(InvestmentStockSplitType),
+                    args: {
+                        date: {
+                            type: DateType
+                        },
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        ratio: {
+                            type: GraphQLFloat
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationInvestmentStockSplitUpdateResolver(args.id, args.date, args.ratio);
+                    }
+                },
                 investmentTransactionCreate: {
                     description: "Book a new buy, sell, or dividend-reinvestment against an investment.",
                     name: "investmentTransactionCreate",
@@ -2570,6 +2654,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentFundType, InvestmentStockType, InvestmentTransactionType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentFundType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }

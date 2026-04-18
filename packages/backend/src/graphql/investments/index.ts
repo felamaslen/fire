@@ -10,6 +10,10 @@ import { InvestmentPrices, Investments } from "@/db/schema/investments";
 import { assertCurrencyCode, Money } from "../money";
 import { VOID, type Void } from "../void";
 import {
+  InvestmentStockSplit,
+  loadInvestmentStockSplits,
+} from "./stock-splits";
+import {
   InvestmentTransaction,
   loadInvestmentTransactions,
 } from "./transactions";
@@ -67,6 +71,15 @@ export class Investment {
    */
   async transactions(): Promise<InvestmentTransaction[] | null> {
     return loadInvestmentTransactions(this.id);
+  }
+
+  /** Stock-split events on this investment, oldest-first.
+   *
+   * @gqlField
+   * @gqlAnnotate semanticNonNull
+   */
+  async stockSplits(): Promise<InvestmentStockSplit[] | null> {
+    return loadInvestmentStockSplits(this.id);
   }
 
   /** Most recent split-adjusted unit price recorded for this investment, in `currency`. `null` if no prices have been recorded yet. @gqlField */

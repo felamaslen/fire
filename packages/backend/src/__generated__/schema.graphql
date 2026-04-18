@@ -322,6 +322,8 @@ type Investment {
   currency: String!
   id: ID!
   name: String!
+  """Stock-split events on this investment, oldest-first."""
+  stockSplits: [InvestmentStockSplit!] @semanticNonNull
   """Transactions booked against this investment, oldest-first."""
   transactions: [InvestmentTransaction!] @semanticNonNull
   """
@@ -342,6 +344,19 @@ type InvestmentFund {
 type InvestmentStock {
   """Ticker on the relevant exchange (e.g. `SMT.L`, `AAPL`)."""
   code: String!
+}
+
+"""
+A stock-split event recorded against an `Investment`. `units_post = units_pre * ratio`, so ratio > 1 is a forward split and 0 < ratio < 1 is a reverse split.
+"""
+type InvestmentStockSplit {
+  """Calendar date the split took effect."""
+  date: Date!
+  id: ID!
+  """
+  Split ratio. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split.
+  """
+  ratio: Float!
 }
 
 """
@@ -511,6 +526,26 @@ type Mutation {
   Delete an investment and all its transactions, stock splits, and prices.
   """
   investmentDelete(id: ID!): Void!
+  """
+  Record a stock split on an investment. Historic `unitPriceCached` values are retroactively adjusted.
+  """
+  investmentStockSplitCreate(
+    """Calendar date the split took effect."""
+    date: Date!
+    investmentId: ID!
+    """
+    Positive split ratio. `2` = 2-for-1 forward split; `0.1` = 1-for-10 reverse split.
+    """
+    ratio: Float!
+  ): InvestmentStockSplit!
+  """
+  Delete a stock split. Historic `unitPriceCached` values are recomputed as though the split never happened.
+  """
+  investmentStockSplitDelete(id: ID!): Void!
+  """
+  Partial update to a stock split. Omitted / null fields are left unchanged.
+  """
+  investmentStockSplitUpdate(date: Date, id: ID!, ratio: Float): InvestmentStockSplit!
   """Book a new buy, sell, or dividend-reinvestment against an investment."""
   investmentTransactionCreate(
     """
