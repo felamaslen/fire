@@ -18,6 +18,7 @@ import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategory
 import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
+import { portfolio as queryPortfolioResolver } from "./../graphql/investments/portfolio";
 import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
 import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
@@ -1387,6 +1388,180 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PortfolioCandlestickPointType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioCandlestickPoint",
+        description: "One OHLC candlestick bucket. `from` / `to` are the portfolio total at the bucket's start / end; `lo` / `hi` are the minimum / maximum across the bucket. All values are in major units of `currency`.",
+        fields() {
+            return {
+                from: {
+                    name: "from",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                hi: {
+                    name: "hi",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                lo: {
+                    name: "lo",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                to: {
+                    name: "to",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                x: {
+                    name: "x",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
+    const PortfolioCandlestickType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioCandlestick",
+        description: "OHLC-style time series of portfolio total, downsampled to at most 300 buckets while always preserving the first and last bucket.",
+        fields() {
+            return {
+                currency: {
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                initialDate: {
+                    name: "initialDate",
+                    type: new GraphQLNonNull(DateType)
+                },
+                points: {
+                    name: "points",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioCandlestickPointType)))
+                }
+            };
+        }
+    });
+    const PortfolioTimePeriodType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.",
+        name: "PortfolioTimePeriod",
+        values: {
+            MONTH: {
+                value: "MONTH"
+            },
+            YEAR: {
+                value: "YEAR"
+            },
+            YTD: {
+                value: "YTD"
+            }
+        }
+    });
+    const PortfolioTimeseriesPointType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioTimeseriesPoint",
+        description: "One line-chart sample: `x` days since the series' `initialDate`, `y` in major units of `currency`.",
+        fields() {
+            return {
+                x: {
+                    name: "x",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                y: {
+                    name: "y",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
+    const PortfolioTimeseriesType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioTimeseries",
+        description: "Daily-valued time series of portfolio total, downsampled to at most 300 points while always preserving the first and last sample.",
+        fields() {
+            return {
+                currency: {
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                initialDate: {
+                    name: "initialDate",
+                    type: new GraphQLNonNull(DateType)
+                },
+                points: {
+                    name: "points",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioTimeseriesPointType)))
+                }
+            };
+        }
+    });
+    const PortfolioType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Portfolio",
+        description: "Aggregated portfolio view \u2014 filter by wrappers and/or investments, converted into `currency` (defaults to the home currency).",
+        fields() {
+            return {
+                candlestick: {
+                    description: "Candlestick buckets of portfolio total over the requested period.",
+                    name: "candlestick",
+                    type: new GraphQLNonNull(PortfolioCandlestickType),
+                    args: {
+                        length: {
+                            type: GraphQLInt
+                        },
+                        period: {
+                            type: new GraphQLNonNull(PortfolioTimePeriodType)
+                        }
+                    },
+                    resolve(source, args) {
+                        return source.candlestick(args.period, args.length);
+                    }
+                },
+                currency: {
+                    description: "ISO-4217 code every aggregate on this `Portfolio` is expressed in.",
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                dailyGainPercent: {
+                    description: "Fractional change in portfolio value over the most recent pricing interval. `null` until enough price history exists, or when the previous total is zero.",
+                    name: "dailyGainPercent",
+                    type: GraphQLFloat
+                },
+                dailyGainValue: {
+                    description: "Change in portfolio value over the most recent pricing interval. `null` until enough price history exists.",
+                    name: "dailyGainValue",
+                    type: MoneyType
+                },
+                percentGain: {
+                    description: "Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero.",
+                    name: "percentGain",
+                    type: GraphQLFloat
+                },
+                timeseries: {
+                    description: "Daily-sampled line series of portfolio total over the requested period.",
+                    name: "timeseries",
+                    type: new GraphQLNonNull(PortfolioTimeseriesType),
+                    args: {
+                        length: {
+                            type: GraphQLInt
+                        },
+                        period: {
+                            type: new GraphQLNonNull(PortfolioTimePeriodType)
+                        }
+                    },
+                    resolve(source, args) {
+                        return source.timeseries(args.period, args.length);
+                    }
+                },
+                totalCost: {
+                    description: "Net capital-in for currently held units (excluding fees and taxes). Each buy adds its consideration, each sell subtracts it.",
+                    name: "totalCost",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                totalGain: {
+                    description: "Unrealised gain on the filtered portfolio \u2014 `totalValue - totalCost`.",
+                    name: "totalGain",
+                    type: MoneyType
+                },
+                totalValue: {
+                    description: "Current market value of the filtered portfolio. Zero when nothing is held; `null` when conversion to `currency` is impossible for some holding.",
+                    name: "totalValue",
+                    type: MoneyType
+                }
+            };
+        }
+    });
     const QueryType: GraphQLObjectType = new GraphQLObjectType({
         name: "Query",
         fields() {
@@ -1594,6 +1769,26 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryPlanningYearsResolver(args.first, args.after, args.last, args.before));
+                    }
+                },
+                portfolio: {
+                    description: "Aggregated view of the portfolio, optionally filtered by wrappers and/or investments, with all money values expressed in `currency` (defaults to the home currency).",
+                    name: "portfolio",
+                    type: PortfolioType,
+                    args: {
+                        currency: {
+                            description: "ISO-4217 code to express all aggregates in. Defaults to the server's home currency.",
+                            type: GraphQLString
+                        },
+                        filterAssetIdIn: {
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        },
+                        filterInvestmentIdIn: {
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryPortfolioResolver(args.filterAssetIdIn, args.filterInvestmentIdIn, args.currency));
                     }
                 }
             };
@@ -2942,6 +3137,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, SortDirectionType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
     });
 }

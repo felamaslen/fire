@@ -49,6 +49,15 @@ enum PlanningBillsFrequency {
   YEARLY
 }
 
+"""
+Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.
+"""
+enum PortfolioTimePeriod {
+  MONTH
+  YEAR
+  YTD
+}
+
 """Ascending or descending order for a sort input."""
 enum SortDirection {
   ASC
@@ -1344,6 +1353,79 @@ type Pong {
   pong: String!
 }
 
+"""
+Aggregated portfolio view — filter by wrappers and/or investments, converted into `currency` (defaults to the home currency).
+"""
+type Portfolio {
+  """Candlestick buckets of portfolio total over the requested period."""
+  candlestick(length: Int, period: PortfolioTimePeriod!): PortfolioCandlestick!
+  """ISO-4217 code every aggregate on this `Portfolio` is expressed in."""
+  currency: String!
+  """
+  Fractional change in portfolio value over the most recent pricing interval. `null` until enough price history exists, or when the previous total is zero.
+  """
+  dailyGainPercent: Float
+  """
+  Change in portfolio value over the most recent pricing interval. `null` until enough price history exists.
+  """
+  dailyGainValue: Money
+  """
+  Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero.
+  """
+  percentGain: Float
+  """
+  Daily-sampled line series of portfolio total over the requested period.
+  """
+  timeseries(length: Int, period: PortfolioTimePeriod!): PortfolioTimeseries!
+  """
+  Net capital-in for currently held units (excluding fees and taxes). Each buy adds its consideration, each sell subtracts it.
+  """
+  totalCost: Money!
+  """Unrealised gain on the filtered portfolio — `totalValue - totalCost`."""
+  totalGain: Money
+  """
+  Current market value of the filtered portfolio. Zero when nothing is held; `null` when conversion to `currency` is impossible for some holding.
+  """
+  totalValue: Money
+}
+
+"""
+OHLC-style time series of portfolio total, downsampled to at most 300 buckets while always preserving the first and last bucket.
+"""
+type PortfolioCandlestick {
+  currency: String!
+  initialDate: Date!
+  points: [PortfolioCandlestickPoint!]!
+}
+
+"""
+One OHLC candlestick bucket. `from` / `to` are the portfolio total at the bucket's start / end; `lo` / `hi` are the minimum / maximum across the bucket. All values are in major units of `currency`.
+"""
+type PortfolioCandlestickPoint {
+  from: Int!
+  hi: Int!
+  lo: Int!
+  to: Int!
+  x: Int!
+}
+
+"""
+Daily-valued time series of portfolio total, downsampled to at most 300 points while always preserving the first and last sample.
+"""
+type PortfolioTimeseries {
+  currency: String!
+  initialDate: Date!
+  points: [PortfolioTimeseriesPoint!]!
+}
+
+"""
+One line-chart sample: `x` days since the series' `initialDate`, `y` in major units of `currency`.
+"""
+type PortfolioTimeseriesPoint {
+  x: Int!
+  y: Int!
+}
+
 type Query {
   """
   Every registered bill, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
@@ -1400,6 +1482,17 @@ type Query {
   Every planning year the user can reasonably work in, ordered oldest first. The range spans from the first `NetWorthEntry`'s FY up to 5 FYs past today (or past the most-recent entry, whichever is later); when no entries exist yet it starts at the current FY. Years without any stored data are synthesised on the fly. Supports forward (`first` / `after`) and backward (`last` / `before`) pagination.
   """
   planningYears(after: ID, before: ID, first: Int, last: Int): PlanningYearConnection @semanticNonNull
+  """
+  Aggregated view of the portfolio, optionally filtered by wrappers and/or investments, with all money values expressed in `currency` (defaults to the home currency).
+  """
+  portfolio(
+    """
+    ISO-4217 code to express all aggregates in. Defaults to the server's home currency.
+    """
+    currency: String
+    filterAssetIdIn: [ID!]
+    filterInvestmentIdIn: [ID!]
+  ): Portfolio @semanticNonNull
 }
 
 """
