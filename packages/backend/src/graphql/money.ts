@@ -17,6 +17,27 @@ export function currencyDefault(): string | null {
   return HOME_CURRENCY;
 }
 
+/** Metadata for a currency supported by the server. @gqlType */
+export type Currency = {
+  /** ISO-4217 three-letter code (e.g. `"USD"`). @gqlField */
+  code: string;
+  /** Human-readable currency name (e.g. `"United States dollar"`). @gqlField */
+  name: string;
+};
+
+/**
+ * Every currency code the server accepts for money inputs, paired with a human-readable name. Use this to populate currency pickers.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export function currencies(): Currency[] | null {
+  return Object.entries(CURRENCIES).map(([code, c]) => ({
+    code,
+    name: c.name,
+  }));
+}
+
 export function assertCurrencyCode(s: string): asserts s is CurrencyCode {
   assert(
     (currencyCode.enumValues as readonly string[]).includes(s),

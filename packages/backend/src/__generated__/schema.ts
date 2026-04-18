@@ -9,7 +9,7 @@ import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
 import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, GraphQLInputObjectType } from "graphql";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
-import { currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
+import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
@@ -250,6 +250,24 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 pageInfo: {
                     name: "pageInfo",
                     type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const CurrencyType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Currency",
+        description: "Metadata for a currency supported by the server.",
+        fields() {
+            return {
+                code: {
+                    description: "ISO-4217 three-letter code (e.g. `\"USD\"`).",
+                    name: "code",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                name: {
+                    description: "Human-readable currency name (e.g. `\"United States dollar\"`).",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
                 }
             };
         }
@@ -837,6 +855,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryBillsResolver(args.first, args.after));
+                    }
+                },
+                currencies: {
+                    description: "Every currency code the server accepts for money inputs, paired with a human-readable name. Use this to populate currency pickers.",
+                    name: "currencies",
+                    type: new GraphQLList(new GraphQLNonNull(CurrencyType)),
+                    resolve() {
+                        return assertNonNull(queryCurrenciesResolver());
                     }
                 },
                 currencyDefault: {
@@ -1985,6 +2011,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PlanningYearTaxRatesType, NetWorthCategoryType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningTransactionType, PlanningYearType, PlanningYearTaxRatesUKType, PongType, QueryType, VoidType]
     });
 }
