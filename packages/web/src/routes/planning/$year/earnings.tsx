@@ -158,7 +158,7 @@ const PlanningEarningsUpdateDocument = graphql(`
 const PlanningEarningsDeleteDocument = graphql(`
   mutation PlanningEarningsDelete($id: ID!) {
     earningsDelete(id: $id) {
-      id
+      _
     }
   }
 `);

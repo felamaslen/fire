@@ -134,7 +134,7 @@ const PlanningBillUpdateDocument = graphql(`
 const PlanningBillDeleteDocument = graphql(`
   mutation PlanningBillDelete($id: ID!) {
     billDelete(id: $id) {
-      id
+      _
     }
   }
 `);
