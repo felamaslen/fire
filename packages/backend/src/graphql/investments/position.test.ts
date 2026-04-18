@@ -262,6 +262,31 @@ describe("Investment aggregates and wrappers", () => {
     expect(firstInvestment(data)?.position?.units).toBe(0);
   });
 
+  it("split-adjusts units so today's value reflects post-split shares at post-split price", async () => {
+    const id = await createStock();
+    const assetId = await createAsset();
+    const { db } = await import("@/db");
+    const { InvestmentStockSplits } = await import("@/db/schema/investments");
+    // Bought 100 shares pre-split at £50/share → £5,000 cash in.
+    await buy(id, assetId, "2021-01-01", 100, 50);
+    // 10:1 split: each original share becomes 10.
+    await db.insert(InvestmentStockSplits).values({
+      investmentId: id,
+      date: new Date("2021-05-04"),
+      ratio: "10",
+    });
+    // Current post-split price £5/share → total value still £5,000.
+    await setPrice(id, "2024-01-01", 500);
+
+    const data = await runGql(AGG_QUERY, {});
+    const p = firstInvestment(data)?.position;
+    expect(p?.units).toBe(1000);
+    expect(p?.totalValue?.amount).toBeCloseTo(5000);
+    expect(p?.totalCost?.amount).toBeCloseTo(5000);
+    expect(p?.costBasis?.amount).toBeCloseTo(5);
+    expect(p?.totalGain?.amount).toBeCloseTo(0);
+  });
+
   it("reports realised gain for a fully-sold position as (sell proceeds - buy cost) / buy cost", async () => {
     const id = await createStock();
     const assetId = await createAsset();

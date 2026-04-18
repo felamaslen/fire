@@ -134,6 +134,13 @@
       "when": 1776547025920,
       "tag": "0018_create_investment_portfolio_daily_breakdown_view",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1776556456586,
+      "tag": "0019_fix_investment_prices_adjusted_direction",
+      "breakpoints": true
     }
   ]
 }

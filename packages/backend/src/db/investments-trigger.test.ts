@@ -73,11 +73,11 @@ describe("InvestmentPrices.priceAdjusted trigger", () => {
     expect(await getAdjusted(investmentId, "2024-06-01")).toBe(600);
   });
 
-  it("multiplies by later split ratios on INSERT of the price", async () => {
+  it("divides by later split ratios on INSERT of the price", async () => {
     const investmentId = await createInvestment();
     await insertSplit(investmentId, "2024-06-01", "2");
     await insertPrice(investmentId, "2024-01-01", 500);
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(1000);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(250);
   });
 
   it("backfills existing prices when a later split is inserted", async () => {
@@ -85,30 +85,30 @@ describe("InvestmentPrices.priceAdjusted trigger", () => {
     await insertPrice(investmentId, "2024-01-01", 500);
     await insertPrice(investmentId, "2024-06-01", 600);
     await insertSplit(investmentId, "2024-03-01", "2");
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(1000);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(250);
     expect(await getAdjusted(investmentId, "2024-06-01")).toBe(600);
   });
 
   it("stacks multiple later splits multiplicatively", async () => {
     const investmentId = await createInvestment();
-    await insertPrice(investmentId, "2024-01-01", 500);
+    await insertPrice(investmentId, "2024-01-01", 1000);
     await insertSplit(investmentId, "2024-03-01", "2");
     await insertSplit(investmentId, "2024-09-01", "5");
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(5000);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(100);
   });
 
   it("handles a reverse split (ratio < 1)", async () => {
     const investmentId = await createInvestment();
-    await insertPrice(investmentId, "2024-01-01", 1000);
+    await insertPrice(investmentId, "2024-01-01", 100);
     await insertSplit(investmentId, "2024-06-01", "0.1");
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(100);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(1000);
   });
 
   it("reverts priceAdjusted when a split is deleted", async () => {
     const investmentId = await createInvestment();
     await insertPrice(investmentId, "2024-01-01", 500);
     const splitId = await insertSplit(investmentId, "2024-06-01", "2");
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(1000);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(250);
 
     await db
       .delete(InvestmentStockSplits)
@@ -118,15 +118,15 @@ describe("InvestmentPrices.priceAdjusted trigger", () => {
 
   it("recomputes priceAdjusted when a split's ratio is updated", async () => {
     const investmentId = await createInvestment();
-    await insertPrice(investmentId, "2024-01-01", 500);
+    await insertPrice(investmentId, "2024-01-01", 600);
     const splitId = await insertSplit(investmentId, "2024-06-01", "2");
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(1000);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(300);
 
     await db
       .update(InvestmentStockSplits)
       .set({ ratio: "3" })
       .where(eq(InvestmentStockSplits.id, splitId));
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(1500);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(200);
   });
 
   it("recomputes priceAdjusted when a split's date is updated to the other side of a price", async () => {
@@ -139,7 +139,7 @@ describe("InvestmentPrices.priceAdjusted trigger", () => {
       .update(InvestmentStockSplits)
       .set({ date: new Date("2024-09-01") })
       .where(eq(InvestmentStockSplits.id, splitId));
-    expect(await getAdjusted(investmentId, "2024-06-01")).toBe(1000);
+    expect(await getAdjusted(investmentId, "2024-06-01")).toBe(250);
   });
 
   it("does not touch updatedAt when a split change triggers recompute", async () => {
@@ -151,7 +151,7 @@ describe("InvestmentPrices.priceAdjusted trigger", () => {
       .where(eq(InvestmentPrices.investmentId, investmentId));
 
     await insertSplit(investmentId, "2024-06-01", "2");
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(1000);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(250);
 
     const [after] = await db
       .select({ updatedAt: InvestmentPrices.updatedAt })
@@ -176,10 +176,14 @@ describe("InvestmentPrices.priceAdjusted trigger", () => {
     const investmentId = await createInvestment();
     await insertPrice(investmentId, "2024-01-01", 10);
     await insertSplit(investmentId, "2024-06-01", "0.5");
-    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(5);
+    expect(await getAdjusted(investmentId, "2024-01-01")).toBe(20);
 
     await insertPrice(investmentId, "2024-02-01", 1);
     await insertSplit(investmentId, "2024-07-01", "0.3");
-    expect(await getAdjusted(investmentId, "2024-02-01")).toBeCloseTo(0.15, 10);
+    // Two later splits apply: 0.5 then 0.3 → 1 / (0.5 × 0.3).
+    expect(await getAdjusted(investmentId, "2024-02-01")).toBeCloseTo(
+      1 / (0.5 * 0.3),
+      10,
+    );
   });
 });

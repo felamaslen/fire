@@ -1,9 +1,10 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
   InvestmentPrices,
   Investments,
+  InvestmentStockSplits,
   InvestmentTransactions,
 } from "@/db/schema/investments";
 import { readOrRefresh } from "@/tasks/yahoo";
@@ -65,7 +66,28 @@ export async function loadInvestmentStats(
           eq(InvestmentTransactions.assetId, assetId),
         );
 
-  const txRows = await db.select().from(InvestmentTransactions).where(where);
+  const [txRows, splitRows] = await Promise.all([
+    db.select().from(InvestmentTransactions).where(where),
+    db
+      .select({
+        date: InvestmentStockSplits.date,
+        ratio: InvestmentStockSplits.ratio,
+      })
+      .from(InvestmentStockSplits)
+      .where(eq(InvestmentStockSplits.investmentId, investmentId))
+      .orderBy(asc(InvestmentStockSplits.date)),
+  ]);
+
+  // Multiplier for a transaction dated `d`: product of every split's ratio
+  // whose `date > d`. A pre-split buy of 100 units at a 10:1 ratio therefore
+  // counts as 1000 of today's shares.
+  const splitMultiplier = (txDate: Date): number => {
+    let m = 1;
+    for (const s of splitRows) {
+      if (s.date.getTime() > txDate.getTime()) m *= Number(s.ratio);
+    }
+    return m;
+  };
 
   let unitsHeld = 0;
   let reinvestedUnits = 0;
@@ -76,14 +98,18 @@ export async function loadInvestmentStats(
   let taxesSum = 0;
   let feesSum = 0;
   for (const r of txRows) {
-    unitsHeld += r.units;
+    const mult = splitMultiplier(r.date);
+    const adjustedUnits = r.units * mult;
+    unitsHeld += adjustedUnits;
+    // `unitsPriceSum` tracks cash in/out, which is not affected by splits —
+    // the user paid `units × price` at the time regardless of later splits.
     unitsPriceSum += r.units * r.price;
     taxesSum += r.taxes;
     feesSum += r.fees;
     if (r.units > 0) buyCostSum += r.units * r.price;
     else if (r.units < 0) sellValueSum += Math.abs(r.units) * r.price;
     if (r.drip && r.units > 0) {
-      reinvestedUnits += r.units;
+      reinvestedUnits += adjustedUnits;
       reinvestedCostSum += r.units * r.price;
     }
   }
