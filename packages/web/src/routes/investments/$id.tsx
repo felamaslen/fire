@@ -10,6 +10,13 @@ import { Figure, FigureDocument } from "@/components/figure";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -129,14 +136,24 @@ function InvestmentDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
   return (
-    <div className="space-y-4 pt-4">
-      <Button variant="outline" onClick={() => void navigate({ to: "/investments" })}>
-        ← Back to investments
-      </Button>
-      <Suspense fallback={<Spinner />}>
-        <InvestmentDetail id={id} />
-      </Suspense>
-    </div>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) void navigate({ to: "/investments" });
+      }}
+    >
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Investment</DialogTitle>
+          <DialogDescription className="sr-only">
+            Transaction history and stats for this investment.
+          </DialogDescription>
+        </DialogHeader>
+        <Suspense fallback={<Spinner />}>
+          <InvestmentDetail id={id} />
+        </Suspense>
+      </DialogContent>
+    </Dialog>
   );
 }
 
