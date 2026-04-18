@@ -92,6 +92,13 @@
       "when": 1776546712881,
       "tag": "0012_create_investment_transactions_table",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1776546747194,
+      "tag": "0013_create_investment_stock_splits_table",
+      "breakpoints": true
     }
   ]
 }
