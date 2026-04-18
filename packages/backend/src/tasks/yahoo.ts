@@ -1,6 +1,10 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { LRUCache } from "lru-cache";
 import YahooFinance from "yahoo-finance2";
 
+import { env } from "@/env";
 import { log } from "@/log";
 
 const yahooFinance = new YahooFinance({
@@ -23,6 +27,64 @@ const cache = new LRUCache<string, Quote>({
 });
 
 const inflight = new Map<string, Promise<Quote | null>>();
+
+// In dev, persist the LRU between HMR reloads so we don't hammer Yahoo every
+// time a file changes. Disabled in prod/test — prod gets its warm cache from
+// the daily cron, and tests start from a clean slate.
+const PERSIST_ENABLED = env.NODE_ENV === "development";
+const PERSIST_PATH = resolve(process.cwd(), ".yahoo-cache.json");
+
+type PersistedEntry = {
+  key: string;
+  priceMinorUnits: number;
+  currency: string;
+  fetchedAt: string;
+};
+
+function loadCacheFromDisk(): void {
+  if (!PERSIST_ENABLED) return;
+  try {
+    const raw = readFileSync(PERSIST_PATH, "utf8");
+    const entries = JSON.parse(raw) as PersistedEntry[];
+    for (const e of entries) {
+      cache.set(e.key, {
+        priceMinorUnits: e.priceMinorUnits,
+        currency: e.currency,
+        fetchedAt: new Date(e.fetchedAt),
+      });
+    }
+    log.info(`loaded ${entries.length} yahoo quote(s) from ${PERSIST_PATH}`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn(`failed to load yahoo cache from ${PERSIST_PATH}`, { err });
+    }
+  }
+}
+
+let persistTimer: NodeJS.Timeout | null = null;
+function schedulePersist(): void {
+  if (!PERSIST_ENABLED) return;
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    const entries: PersistedEntry[] = [];
+    for (const [key, value] of cache.entries()) {
+      entries.push({
+        key,
+        priceMinorUnits: value.priceMinorUnits,
+        currency: value.currency,
+        fetchedAt: value.fetchedAt.toISOString(),
+      });
+    }
+    try {
+      writeFileSync(PERSIST_PATH, JSON.stringify(entries, null, 2));
+    } catch (err) {
+      log.warn(`failed to persist yahoo cache to ${PERSIST_PATH}`, { err });
+    }
+  }, 500);
+}
+
+loadCacheFromDisk();
 
 /** Read the currently cached quote for a ticker, without triggering network activity. */
 export function readCachedQuote(symbol: string): Quote | null {
@@ -73,6 +135,7 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
         fetchedAt: new Date(),
       };
       cache.set(symbol, quote);
+      schedulePersist();
       return quote;
     } catch (err) {
       log.warn(`yahoo quote for ${symbol} failed`, { err });
