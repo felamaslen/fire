@@ -1,8 +1,14 @@
 import { useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { AlertTriangle } from "lucide-react";
 
 import { Figure, FigureDocument } from "@/components/figure";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Table,
   TableBody,
@@ -58,6 +64,9 @@ export const PlanningYearViewDocument = graphql(
     query PlanningYearView($id: ID!) {
       planningYear(id: $id) {
         id
+        taxRates {
+          __typename
+        }
         accounts {
           id
           name
@@ -109,10 +118,11 @@ function PlanningYearPage() {
     );
   }
   const allYears = data.planningYears?.edges.map((e) => e.node.id) ?? [];
+  const hasTaxRates = data.planningYear.taxRates != null;
   return (
     <main className="flex min-h-svh flex-col">
       <div className="space-y-6 p-8 pb-24">
-        <Header year={year} />
+        <Header year={year} hasTaxRates={hasTaxRates} />
         <PlanningTable data={data.planningYear} />
       </div>
       <YearFooter current={year} years={allYears} />
@@ -121,11 +131,35 @@ function PlanningYearPage() {
   );
 }
 
-function Header({ year }: { year: string }) {
+function Header({
+  year,
+  hasTaxRates,
+}: {
+  year: string;
+  hasTaxRates: boolean;
+}) {
   return (
     <div className="flex items-baseline gap-3">
-      <h1 className="text-2xl font-semibold tracking-tight">
+      <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
         Planning · {fyLabel(year)}
+        {!hasTaxRates && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Link
+                to="/planning/$year/tax-rates"
+                params={{ year }}
+                aria-label="Tax rates not configured"
+                className="text-amber-500 hover:text-amber-600"
+              >
+                <AlertTriangle className="size-5" />
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent>
+              No tax rates set for {fyLabel(year)} — earnings projections are
+              disabled until you configure them.
+            </TooltipContent>
+          </Tooltip>
+        )}
       </h1>
       <nav className="ml-auto flex items-center gap-2">
         <Button asChild variant="outline" size="sm">
@@ -136,6 +170,11 @@ function Header({ year }: { year: string }) {
         <Button asChild variant="outline" size="sm">
           <Link to="/planning/$year/earnings" params={{ year }}>
             Manage earnings
+          </Link>
+        </Button>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/planning/$year/tax-rates" params={{ year }}>
+            Manage tax rates
           </Link>
         </Button>
       </nav>
