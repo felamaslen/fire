@@ -1,11 +1,6 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
-import {
-  createFileRoute,
-  Link,
-  Outlet,
-  useNavigate,
-} from "@tanstack/react-router";
-import { Pencil, Plus } from "lucide-react";
+import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { ArrowDown, ArrowUp, Pencil, Plus } from "lucide-react";
 import { Suspense, useState } from "react";
 import { toast } from "sonner";
 
@@ -37,6 +32,7 @@ import {
   graphql,
   readFragment,
   type ResultOf,
+  type VariablesOf,
 } from "@/graphql";
 
 const InvestmentRowDocument = graphql(
@@ -73,8 +69,8 @@ const InvestmentRowDocument = graphql(
 
 export const InvestmentsPageDocument = graphql(
   `
-    query InvestmentsPage($first: Int) {
-      investments(first: $first) {
+    query InvestmentsPage($first: Int, $sort: InvestmentSort) {
+      investments(first: $first, sort: $sort) {
         edges {
           node {
             id
@@ -104,44 +100,86 @@ export const Route = createFileRoute("/investments")({
   component: InvestmentsDialogLayout,
 });
 
-export const investmentsRefetch = [{ query: InvestmentsPageDocument }];
+export const investmentsRefetch = [
+  { query: InvestmentsPageDocument, variables: { first: 100 } },
+];
+
+type SortKind = "createdAt" | "value" | "gainAbs" | "gainPercent";
+type SortDirection = "ASC" | "DESC";
+
+function toSortInput(
+  kind: SortKind,
+  dir: SortDirection,
+): VariablesOf<typeof InvestmentsPageDocument>["sort"] {
+  if (kind === "createdAt") return null;
+  if (kind === "value") return { value: dir };
+  if (kind === "gainAbs") return { gainAbs: dir };
+  return { gainPercent: dir };
+}
 
 function InvestmentsDialogLayout() {
-  const navigate = useNavigate();
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) void navigate({ to: "/" });
-      }}
-    >
-      <DialogContent className="max-w-4xl">
-        <DialogHeader>
-          <DialogTitle>Investments</DialogTitle>
-        </DialogHeader>
-        <PortfolioSection />
-        <Suspense fallback={<Spinner />}>
-          <InvestmentsList />
-        </Suspense>
-        <Outlet />
-      </DialogContent>
-    </Dialog>
+    <main className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
+      <header className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Investments</h1>
+        <Link
+          to="/"
+          className="text-sm text-muted-foreground hover:underline"
+        >
+          ← Home
+        </Link>
+      </header>
+      <PortfolioSection />
+      <Suspense fallback={<Spinner />}>
+        <InvestmentsList />
+      </Suspense>
+      <Outlet />
+    </main>
   );
 }
 
 function InvestmentsList() {
-  const { data } = useSuspenseQuery(InvestmentsPageDocument, {
-    variables: { first: 100 },
+  const [sort, setSort] = useState<{ kind: SortKind; dir: SortDirection }>({
+    kind: "createdAt",
+    dir: "DESC",
   });
-  const rows: InvestmentRowNode[] =
+  const [hideSold, setHideSold] = useState(true);
+
+  const { data } = useSuspenseQuery(InvestmentsPageDocument, {
+    variables: { first: 100, sort: toSortInput(sort.kind, sort.dir) },
+  });
+  const allRows: InvestmentRowNode[] =
     data.investments?.edges.map((e) => e.node) ?? [];
+  const rows = hideSold
+    ? allRows.filter((r) => {
+        const u = readFragment(InvestmentRowDocument, r).position.units;
+        return u !== 0;
+      })
+    : allRows;
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<InvestmentRowNode | null>(null);
 
+  const toggle = (kind: SortKind) => {
+    setSort((s) =>
+      s.kind === kind
+        ? { kind, dir: s.dir === "ASC" ? "DESC" : "ASC" }
+        : { kind, dir: "DESC" },
+    );
+  };
+
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={hideSold}
+            onChange={(e) => setHideSold(e.target.checked)}
+            className="accent-foreground"
+          />
+          Hide sold (zero-unit) investments
+        </label>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-1 h-4 w-4" /> New investment
         </Button>
@@ -158,9 +196,30 @@ function InvestmentsList() {
               <TableHead>Name</TableHead>
               <TableHead>Ticker / link</TableHead>
               <TableHead className="text-right">Units</TableHead>
-              <TableHead className="text-right">Value</TableHead>
-              <TableHead className="text-right">Gain</TableHead>
-              <TableHead className="text-right">%</TableHead>
+              <TableHead className="text-right">
+                <SortHeader
+                  label="Value"
+                  kind="value"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+              </TableHead>
+              <TableHead className="text-right">
+                <SortHeader
+                  label="Gain"
+                  kind="gainAbs"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+              </TableHead>
+              <TableHead className="text-right">
+                <SortHeader
+                  label="%"
+                  kind="gainPercent"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+              </TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -187,6 +246,36 @@ function InvestmentsList() {
         existing={editing}
       />
     </div>
+  );
+}
+
+function SortHeader({
+  label,
+  kind,
+  sort,
+  onToggle,
+}: {
+  label: string;
+  kind: SortKind;
+  sort: { kind: SortKind; dir: SortDirection };
+  onToggle: (kind: SortKind) => void;
+}) {
+  const active = sort.kind === kind;
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(kind)}
+      className="inline-flex items-center gap-1 hover:text-foreground"
+    >
+      {label}
+      {active ? (
+        sort.dir === "ASC" ? (
+          <ArrowUp className="h-3 w-3" />
+        ) : (
+          <ArrowDown className="h-3 w-3" />
+        )
+      ) : null}
+    </button>
   );
 }
 
