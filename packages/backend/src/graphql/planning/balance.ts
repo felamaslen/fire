@@ -7,6 +7,7 @@ import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import {
   NetWorthCategoryAssets,
+  NetWorthCategoryLiabilities,
   NetWorthEntries,
   NetWorthValueAmounts,
   NetWorthValues,
@@ -48,6 +49,14 @@ type BillRow = typeof PlanningBills.$inferSelect;
 type OverrideRow = typeof PlanningMonthBills.$inferSelect;
 type RateRow = typeof PlanningYearUKTaxRates.$inferSelect;
 
+/** Credit-card liability billed from a planning account, with the pre-computed EWMA of its 24 most recent balance snapshots (GBP minor units). */
+export type CreditCardPrediction = {
+  liabilityId: string;
+  name: string;
+  billedFromAccountId: string;
+  ewmaMinor: number;
+};
+
 /** Snapshot of one planning account (PlanningAccounts row joined with the underlying asset). */
 export type PlanningAccountInfo = {
   assetId: string;
@@ -69,6 +78,8 @@ export type PlanningYearData = {
   rates: RateRow | null;
   /** GBP-denominated snapshot values per assigned asset, sorted by date descending. */
   snapshots: Array<{ date: Date; assetId: string; minor: number }>;
+  /** Credit-card liabilities with a `billedFromAccountId` pointing at one of the planning accounts, plus the EWMA of their recent balance history that feeds the monthly predicted payment. */
+  creditCardPredictions: CreditCardPrediction[];
 };
 
 /** Look up every planning account and return the (account, asset) pair — used at PlanningYear load time. */
@@ -103,112 +114,122 @@ export async function loadPlanningYearData(
   const fyEnd = new Date(Date.UTC(yearNumber + 1, 3, 1));
   const hasAccounts = assetIds.length > 0;
 
-  const [txs, payslipJoin, earningJoin, billJoin, rates, snapshotRows] =
-    await Promise.all([
-      hasAccounts
-        ? db
-            .select()
-            .from(PlanningTransactions)
-            .where(eq(PlanningTransactions.year, yearNumber))
-        : Promise.resolve<TxRow[]>([]),
-      hasAccounts
-        ? db
-            .select({
-              payslip: PlanningPayslips,
-              adjustment: PlanningPayslipAdjustments,
-            })
-            .from(PlanningPayslips)
-            .leftJoin(
-              PlanningPayslipAdjustments,
-              eq(PlanningPayslipAdjustments.payslipId, PlanningPayslips.id),
-            )
-            .where(
-              and(
-                inArray(PlanningPayslips.toAccountId, assetIds),
-                gte(PlanningPayslips.date, fyStart),
-                lt(PlanningPayslips.date, fyEnd),
+  const [
+    txs,
+    payslipJoin,
+    earningJoin,
+    billJoin,
+    rates,
+    snapshotRows,
+    creditCardPredictions,
+  ] = await Promise.all([
+    hasAccounts
+      ? db
+          .select()
+          .from(PlanningTransactions)
+          .where(eq(PlanningTransactions.year, yearNumber))
+      : Promise.resolve<TxRow[]>([]),
+    hasAccounts
+      ? db
+          .select({
+            payslip: PlanningPayslips,
+            adjustment: PlanningPayslipAdjustments,
+          })
+          .from(PlanningPayslips)
+          .leftJoin(
+            PlanningPayslipAdjustments,
+            eq(PlanningPayslipAdjustments.payslipId, PlanningPayslips.id),
+          )
+          .where(
+            and(
+              inArray(PlanningPayslips.toAccountId, assetIds),
+              gte(PlanningPayslips.date, fyStart),
+              lt(PlanningPayslips.date, fyEnd),
+            ),
+          )
+      : Promise.resolve<
+          Array<{ payslip: PayslipRow; adjustment: AdjustmentRow | null }>
+        >([]),
+    hasAccounts
+      ? db
+          .select({
+            earning: PlanningEarnings,
+            taxCode: PlanningEarningsUKTaxCodes,
+          })
+          .from(PlanningEarnings)
+          .leftJoin(
+            PlanningEarningsUKTaxCodes,
+            eq(PlanningEarningsUKTaxCodes.earningsId, PlanningEarnings.id),
+          )
+          .where(
+            and(
+              inArray(PlanningEarnings.toAccountId, assetIds),
+              lte(PlanningEarnings.start, fyEnd),
+              or(
+                isNull(PlanningEarnings.end),
+                gte(PlanningEarnings.end, fyStart),
               ),
-            )
-        : Promise.resolve<
-            Array<{ payslip: PayslipRow; adjustment: AdjustmentRow | null }>
-          >([]),
-      hasAccounts
-        ? db
-            .select({
-              earning: PlanningEarnings,
-              taxCode: PlanningEarningsUKTaxCodes,
-            })
-            .from(PlanningEarnings)
-            .leftJoin(
-              PlanningEarningsUKTaxCodes,
-              eq(PlanningEarningsUKTaxCodes.earningsId, PlanningEarnings.id),
-            )
-            .where(
-              and(
-                inArray(PlanningEarnings.toAccountId, assetIds),
-                lte(PlanningEarnings.start, fyEnd),
-                or(
-                  isNull(PlanningEarnings.end),
-                  gte(PlanningEarnings.end, fyStart),
-                ),
-              ),
-            )
-        : Promise.resolve<
-            Array<{ earning: EarningRow; taxCode: TaxCodeRow | null }>
-          >([]),
-      hasAccounts
-        ? db
-            .select({ bill: PlanningBills, override: PlanningMonthBills })
-            .from(PlanningBills)
-            .leftJoin(
-              PlanningMonthBills,
-              and(
-                eq(PlanningMonthBills.billId, PlanningBills.id),
-                eq(PlanningMonthBills.year, yearNumber),
-              ),
-            )
-            .where(
-              and(
-                inArray(PlanningBills.fromAccountId, assetIds),
-                lte(PlanningBills.start, fyEnd),
-                or(isNull(PlanningBills.end), gte(PlanningBills.end, fyStart)),
-              ),
-            )
-        : Promise.resolve<
-            Array<{ bill: BillRow; override: OverrideRow | null }>
-          >([]),
-      db
-        .select()
-        .from(PlanningYearUKTaxRates)
-        .where(eq(PlanningYearUKTaxRates.year, yearNumber))
-        .then((rows) => rows[0] ?? null),
-      hasAccounts
-        ? db
-            .select({
-              date: NetWorthEntries.date,
-              assetId: NetWorthValues.categoryAssetId,
-              minor: NetWorthValueAmounts.amount,
-            })
-            .from(NetWorthEntries)
-            .innerJoin(
-              NetWorthValues,
-              and(
-                eq(NetWorthValues.entryId, NetWorthEntries.id),
-                inArray(NetWorthValues.categoryAssetId, assetIds),
-              ),
-            )
-            .innerJoin(
-              NetWorthValueAmounts,
-              and(
-                eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
-                eq(NetWorthValueAmounts.currency, REPORTING_CURRENCY),
-              ),
-            )
-            .orderBy(desc(NetWorthEntries.date))
-        : Promise.resolve<
-            Array<{ date: Date; assetId: string | null; minor: number }>
-          >([]),
-    ]);
+            ),
+          )
+      : Promise.resolve<
+          Array<{ earning: EarningRow; taxCode: TaxCodeRow | null }>
+        >([]),
+    hasAccounts
+      ? db
+          .select({ bill: PlanningBills, override: PlanningMonthBills })
+          .from(PlanningBills)
+          .leftJoin(
+            PlanningMonthBills,
+            and(
+              eq(PlanningMonthBills.billId, PlanningBills.id),
+              eq(PlanningMonthBills.year, yearNumber),
+            ),
+          )
+          .where(
+            and(
+              inArray(PlanningBills.fromAccountId, assetIds),
+              lte(PlanningBills.start, fyEnd),
+              or(isNull(PlanningBills.end), gte(PlanningBills.end, fyStart)),
+            ),
+          )
+      : Promise.resolve<Array<{ bill: BillRow; override: OverrideRow | null }>>(
+          [],
+        ),
+    db
+      .select()
+      .from(PlanningYearUKTaxRates)
+      .where(eq(PlanningYearUKTaxRates.year, yearNumber))
+      .then((rows) => rows[0] ?? null),
+    hasAccounts
+      ? db
+          .select({
+            date: NetWorthEntries.date,
+            assetId: NetWorthValues.categoryAssetId,
+            minor: NetWorthValueAmounts.amount,
+          })
+          .from(NetWorthEntries)
+          .innerJoin(
+            NetWorthValues,
+            and(
+              eq(NetWorthValues.entryId, NetWorthEntries.id),
+              inArray(NetWorthValues.categoryAssetId, assetIds),
+            ),
+          )
+          .innerJoin(
+            NetWorthValueAmounts,
+            and(
+              eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
+              eq(NetWorthValueAmounts.currency, REPORTING_CURRENCY),
+            ),
+          )
+          .orderBy(desc(NetWorthEntries.date))
+      : Promise.resolve<
+          Array<{ date: Date; assetId: string | null; minor: number }>
+        >([]),
+    hasAccounts
+      ? loadCreditCardPredictions(assetIds)
+      : Promise.resolve<CreditCardPrediction[]>([]),
+  ]);
 
   const payslipsById = new Map<
     string,
@@ -275,7 +296,81 @@ export async function loadPlanningYearData(
     bills: Array.from(billsById.values()),
     rates,
     snapshots,
+    creditCardPredictions,
   };
+}
+
+/** How many most-recent liability balances feed the credit-card spend prediction. */
+const CREDIT_CARD_EWMA_WINDOW = 24;
+
+/** Load credit-card liabilities whose `billedFromAccountId` points at one of `assetIds`, plus their balance history, and pre-compute the EWMA that will be used as the monthly predicted payment. */
+async function loadCreditCardPredictions(
+  assetIds: string[],
+): Promise<CreditCardPrediction[]> {
+  const liabilities = await db
+    .select()
+    .from(NetWorthCategoryLiabilities)
+    .where(
+      and(
+        eq(NetWorthCategoryLiabilities.type, "CREDIT_CARD"),
+        inArray(NetWorthCategoryLiabilities.billedFromAccountId, assetIds),
+      ),
+    );
+  if (liabilities.length === 0) return [];
+
+  const balances = await db
+    .select({
+      liabilityId: NetWorthValues.categoryLiabilityId,
+      date: NetWorthEntries.date,
+      minor: NetWorthValueAmounts.amount,
+    })
+    .from(NetWorthEntries)
+    .innerJoin(
+      NetWorthValues,
+      and(
+        eq(NetWorthValues.entryId, NetWorthEntries.id),
+        inArray(
+          NetWorthValues.categoryLiabilityId,
+          liabilities.map((l) => l.id),
+        ),
+      ),
+    )
+    .innerJoin(
+      NetWorthValueAmounts,
+      and(
+        eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
+        eq(NetWorthValueAmounts.currency, REPORTING_CURRENCY),
+      ),
+    )
+    .orderBy(desc(NetWorthEntries.date));
+
+  const byLiability = new Map<string, number[]>();
+  for (const b of balances) {
+    if (b.liabilityId == null) continue;
+    const list = byLiability.get(b.liabilityId) ?? [];
+    if (list.length < CREDIT_CARD_EWMA_WINDOW) list.push(b.minor);
+    byLiability.set(b.liabilityId, list);
+  }
+
+  return liabilities
+    .filter((l) => l.billedFromAccountId != null)
+    .map((l) => ({
+      liabilityId: l.id,
+      name: l.name,
+      billedFromAccountId: l.billedFromAccountId as string,
+      ewmaMinor: exponentialWeightedAverage(byLiability.get(l.id) ?? []),
+    }));
+}
+
+/** EWMA over values ordered most-recent-first. Uses α = 2/(n+1) (Pandas default). Returns 0 when `values` is empty. */
+function exponentialWeightedAverage(values: number[]): number {
+  if (values.length === 0) return 0;
+  const alpha = 2 / (values.length + 1);
+  let s = values[values.length - 1];
+  for (let i = values.length - 2; i >= 0; i--) {
+    s = alpha * values[i] + (1 - alpha) * s;
+  }
+  return Math.round(s);
 }
 
 /** Pure in-memory filter: the transactions visible to `(assetId, monthDate)` given a pre-loaded year bundle. */
@@ -442,7 +537,38 @@ export function monthTransactionsFor(
     }
   }
 
-  // 4) Bills with per-month overrides
+  // 4) Credit-card spend predictions — one row per CC liability whose
+  // `billedFromAccountId` is this account, unless the month already has a
+  // manual `PlanningTransactions` row with matching `liabilityId` (which
+  // explicitly overrides the prediction for that month).
+  for (const cc of data.creditCardPredictions) {
+    if (cc.billedFromAccountId !== assetId) continue;
+    const suppressed = data.transactions.some(
+      (t) =>
+        t.liabilityId === cc.liabilityId &&
+        t.date.getTime() >= monthStart.getTime() &&
+        t.date.getTime() < monthEnd.getTime(),
+    );
+    if (suppressed) continue;
+    out.push({
+      id: encodePlanningTransactionId({
+        kind: "liab",
+        id: cc.liabilityId,
+        monthId: monthId(monthStart),
+      }),
+      name: cc.name,
+      amount: Money.fromMinorDenomination(
+        -Math.abs(cc.ewmaMinor),
+        REPORTING_CURRENCY,
+      ),
+      isProvisional: true,
+      isEditable: true,
+      liabilityId: cc.liabilityId as ID,
+      assetId: null,
+    });
+  }
+
+  // 5) Bills with per-month overrides
   for (const { bill: b, overridesByMonthStartIso } of data.bills) {
     if (b.fromAccountId !== assetId) continue;
     const collectionDay = collectionDayInMonth(

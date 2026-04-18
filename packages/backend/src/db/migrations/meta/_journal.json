@@ -64,6 +64,20 @@
       "when": 1776530473476,
       "tag": "0008_add_asset_id_to_planning_transactions",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1776533556202,
+      "tag": "0009_add_billed_from_account_to_liabilities",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1776541501444,
+      "tag": "0010_allow_zero_amount_transactions",
+      "breakpoints": true
     }
   ]
 }

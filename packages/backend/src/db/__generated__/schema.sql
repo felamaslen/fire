@@ -90,6 +90,7 @@ CREATE TABLE "NetWorthCategoryLiabilities" (
   "type" "netWorthCategoryLiabilityType" NOT NULL,
   "categoryAssetId" uuid,
   "interestRate" NUMERIC(6, 4),
+  "billedFromAccountId" uuid,
   "skip" BOOLEAN DEFAULT FALSE NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
@@ -103,6 +104,11 @@ CREATE TABLE "NetWorthCategoryLiabilities" (
         "NetWorthCategoryLiabilities"."type" != 'LOAN'
         AND "NetWorthCategoryLiabilities"."interestRate" IS NULL
       )
+    ),
+  CONSTRAINT "NetWorthCategoryLiabilities_billedFromAccount_ck"
+    CHECK (
+      "NetWorthCategoryLiabilities"."billedFromAccountId" IS NULL
+      OR "NetWorthCategoryLiabilities"."type" = 'CREDIT_CARD'
     )
 );
 
@@ -353,7 +359,7 @@ CREATE TABLE "PlanningTransactions" (
     ),
   CONSTRAINT "PlanningTransactions_inflow_ck"
     CHECK (
-      "PlanningTransactions"."amount" < 0
+      "PlanningTransactions"."amount" <= 0
       OR (
         "PlanningTransactions"."toAccountId" IS NULL
         AND "PlanningTransactions"."liabilityId" IS NULL
@@ -408,6 +414,13 @@ ALTER TABLE "NetWorthCategoryLiabilities"
 ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk"
   FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" (
     "id"
+  )
+    ON DELETE SET NULL
+    ON UPDATE NO ACTION;
+ALTER TABLE "NetWorthCategoryLiabilities"
+ADD CONSTRAINT "NetWorthCategoryLiabilities_billedFromAccountId_PlanningAccounts_accountId_fk"
+  FOREIGN KEY ("billedFromAccountId") REFERENCES "public"."PlanningAccounts" (
+    "accountId"
   )
     ON DELETE SET NULL
     ON UPDATE NO ACTION;

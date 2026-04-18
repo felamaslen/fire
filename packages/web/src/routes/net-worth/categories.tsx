@@ -49,6 +49,10 @@ const LiabilityRowDocument = graphql(`
     liabilityType: type
     interestRate
     skip
+    billedFromAccount {
+      id
+      name
+    }
   }
 `);
 
@@ -101,6 +105,13 @@ const NetWorthCategoriesDocument = graphql(
           node {
             ...NetWorthCategorySelection
           }
+        }
+      }
+      planningYearCurrent {
+        id
+        accounts {
+          id
+          name
         }
       }
     }
@@ -177,6 +188,10 @@ export const Route = createFileRoute("/net-worth/categories")({
 
 const refetch = [{ query: NetWorthCategoriesDocument }];
 
+type PlanningAccountOption = NonNullable<
+  ResultOf<typeof NetWorthCategoriesDocument>["planningYearCurrent"]
+>["accounts"][number];
+
 function NetWorthCategoriesPage() {
   const { data } = useSuspenseQuery(NetWorthCategoriesDocument);
 
@@ -191,11 +206,15 @@ function NetWorthCategoriesPage() {
     else if (n.__typename === "NetWorthCategoryOption") options.push(n);
     else throw new Error("Unhandled node: " + n);
   }
+  const planningAccounts = data.planningYearCurrent?.accounts ?? [];
 
   return (
     <Accordion type="single" collapsible className="space-y-2">
       <AssetsSection data={assets} />
-      <LiabilitiesSection data={liabilities} />
+      <LiabilitiesSection
+        data={liabilities}
+        planningAccounts={planningAccounts}
+      />
       <OptionsSection data={options} />
     </Accordion>
   );
@@ -345,7 +364,13 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
   );
 }
 
-function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
+function LiabilitiesSection({
+  data,
+  planningAccounts,
+}: {
+  data: LiabilitySelection[];
+  planningAccounts: PlanningAccountOption[];
+}) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
     refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
@@ -356,6 +381,7 @@ function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
       type: "CREDIT_CARD" as LiabilityType,
       interestRate: "",
       skip: false,
+      billedFromAccountId: "" as string,
     },
     onSubmit: async ({ value }) => {
       if (!value.name.trim()) return;
@@ -369,6 +395,10 @@ function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
               interestRate:
                 value.type === "LOAN" && value.interestRate
                   ? Number.parseFloat(value.interestRate) / 100
+                  : null,
+              billedFromAccountId:
+                value.type === "CREDIT_CARD" && value.billedFromAccountId
+                  ? value.billedFromAccountId
                   : null,
               skip: value.type === "LOAN" ? value.skip : null,
             },
@@ -395,7 +425,11 @@ function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
                 <AccordionContent>
                   <div className="space-y-2">
                     {rows.map((d) => (
-                      <LiabilityRow key={d.id} data={d} />
+                      <LiabilityRow
+                        key={d.id}
+                        data={d}
+                        planningAccounts={planningAccounts}
+                      />
                     ))}
                   </div>
                 </AccordionContent>
@@ -438,6 +472,36 @@ function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
               </Select>
             )}
           </form.Field>
+          <form.Subscribe selector={(s) => s.values.type}>
+            {(type) =>
+              type === "CREDIT_CARD" && planningAccounts.length > 0 && (
+                <form.Field name="billedFromAccountId">
+                  {(field) => (
+                    <Select
+                      value={field.state.value || "__none__"}
+                      onValueChange={(v) =>
+                        field.handleChange(v === "__none__" ? "" : v)
+                      }
+                    >
+                      <SelectTrigger className="w-48">
+                        <SelectValue placeholder="Billed from…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">
+                          No billed-from account
+                        </SelectItem>
+                        {planningAccounts.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </form.Field>
+              )
+            }
+          </form.Subscribe>
           <form.Subscribe selector={(s) => s.values.type}>
             {(type) =>
               type === "LOAN" && (
@@ -492,8 +556,10 @@ function LiabilitiesSection({ data }: { data: LiabilitySelection[] }) {
 
 function LiabilityRow({
   data,
+  planningAccounts,
 }: {
   data: FragmentOf<typeof LiabilityRowDocument>;
+  planningAccounts: PlanningAccountOption[];
 }) {
   const liability = readFragment(LiabilityRowDocument, data);
   // Liability `skip` feeds `NetWorthEntry.totalLiabilities` / `totalNet`, so
@@ -509,11 +575,13 @@ function LiabilityRow({
   });
 
   const isLoan = liability.liabilityType === "LOAN";
+  const isCreditCard = liability.liabilityType === "CREDIT_CARD";
   const form = useForm({
     defaultValues: {
       name: liability.name,
       interestRate: decimalToPercent(liability.interestRate),
       skip: liability.skip ?? false,
+      billedFromAccountId: liability.billedFromAccount?.id ?? "",
     },
     onSubmit: async ({ value }) => {
       await update({
@@ -524,6 +592,9 @@ function LiabilityRow({
               name: value.name,
               interestRate: isLoan
                 ? percentToDecimal(value.interestRate)
+                : null,
+              billedFromAccountId: isCreditCard
+                ? value.billedFromAccountId || null
                 : null,
               skip: isLoan ? value.skip : null,
             },
@@ -550,6 +621,32 @@ function LiabilityRow({
           />
         )}
       </form.Field>
+      {isCreditCard && planningAccounts.length > 0 && (
+        <form.Field name="billedFromAccountId">
+          {(field) => (
+            <Select
+              value={field.state.value || "__none__"}
+              onValueChange={(v) =>
+                field.handleChange(v === "__none__" ? "" : v)
+              }
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue placeholder="Billed from…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">
+                  No billed-from account
+                </SelectItem>
+                {planningAccounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </form.Field>
+      )}
       {isLoan && (
         <>
           <form.Field name="interestRate">

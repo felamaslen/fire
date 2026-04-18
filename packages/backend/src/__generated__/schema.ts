@@ -178,6 +178,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "asset",
                     type: NetWorthCategoryAssetType
                 },
+                billedFromAccount: {
+                    description: "Planning account this liability is billed from (credit cards only). When set, the planner emits predicted monthly payment transactions on that account.",
+                    name: "billedFromAccount",
+                    type: PlanningAccountType
+                },
                 id: {
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
@@ -1259,6 +1264,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "assetId",
                     type: GraphQLID
                 },
+                billedFromAccountId: {
+                    description: "`PlanningAccount.id` this liability is billed from \u2014 only valid when `type` is `CREDIT_CARD`.",
+                    name: "billedFromAccountId",
+                    type: GraphQLID
+                },
                 interestRate: {
                     description: "Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN.",
                     name: "interestRate",
@@ -1364,6 +1374,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 assetId: {
                     description: "Link to the asset this liability funds.",
                     name: "assetId",
+                    type: GraphQLID
+                },
+                billedFromAccountId: {
+                    description: "`PlanningAccount.id` this liability is billed from \u2014 only valid when the liability is a credit card. Pass null explicitly to clear.",
+                    name: "billedFromAccountId",
                     type: GraphQLID
                 },
                 interestRate: {

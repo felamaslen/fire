@@ -368,7 +368,8 @@ export const PlanningTransactions = pgTable(
     ),
     check(
       "PlanningTransactions_inflow_ck",
-      sql`${t.amount} < 0 OR (${t.toAccountId} IS NULL AND ${t.liabilityId} IS NULL AND ${t.assetId} IS NULL)`,
+      sql`${t.amount} <= 0
+           OR (${t.toAccountId} IS NULL AND ${t.liabilityId} IS NULL AND ${t.assetId} IS NULL)`,
     ),
     check(
       "PlanningTransactions_liabilityAssetExclusive_ck",
