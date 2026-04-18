@@ -227,13 +227,7 @@ type LiabilityOption = Extract<
   { __typename: "NetWorthCategoryLiability" }
 >;
 
-function Header({
-  year,
-  hasTaxRates,
-}: {
-  year: string;
-  hasTaxRates: boolean;
-}) {
+function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
   return (
     <div className="flex items-baseline gap-3">
       <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
@@ -605,10 +599,7 @@ function TransactionRow({
 }
 
 /** Compact ghost-styled button sized to fit inside a dense transaction row. */
-function IconButton({
-  className,
-  ...props
-}: React.ComponentProps<"button">) {
+function IconButton({ className, ...props }: React.ComponentProps<"button">) {
   return (
     <button
       type="button"
@@ -741,8 +732,7 @@ function EditTransactionForm({
   const [name, setName] = useState(initial.name);
   const [amount, setAmount] = useState(String(initial.amount));
   const parsed = Number(amount);
-  const disabled =
-    !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (disabled) return;
@@ -801,8 +791,7 @@ function CreateTransactionForm({
   const [toAccountId, setToAccountId] = useState("__none__");
   const [liabilityId, setLiabilityId] = useState("__none__");
   const parsed = Number(amount);
-  const disabled =
-    !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (disabled) return;
