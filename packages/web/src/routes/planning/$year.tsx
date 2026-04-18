@@ -1,9 +1,25 @@
-import { useSuspenseQuery } from "@apollo/client/react";
+import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 
 import { Figure, FigureDocument } from "@/components/figure";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -35,6 +51,8 @@ const PlanningTransactionRowDocument = graphql(
       isEditable
       liabilityId
       amount {
+        amount
+        currency
         ...Figure
       }
     }
@@ -90,10 +108,69 @@ export const PlanningYearViewDocument = graphql(
           }
         }
       }
+      netWorthCategories(first: 100) {
+        edges {
+          node {
+            __typename
+            ... on NetWorthCategoryLiability {
+              id
+              name
+            }
+          }
+        }
+      }
     }
   `,
   [PlanningMonthAccountCellDocument],
 );
+
+const TransactionCreateDocument = graphql(`
+  mutation PlanningTransactionCreate(
+    $monthId: ID!
+    $amount: MoneyInput!
+    $name: String!
+    $fromAccountId: ID!
+    $toAccountId: ID
+    $liabilityId: ID
+  ) {
+    transactionCreate(
+      monthId: $monthId
+      amount: $amount
+      name: $name
+      fromAccountId: $fromAccountId
+      toAccountId: $toAccountId
+      liabilityId: $liabilityId
+    ) {
+      id
+    }
+  }
+`);
+
+const TransactionUpdateDocument = graphql(`
+  mutation PlanningTransactionUpdate(
+    $monthId: ID!
+    $id: ID!
+    $amount: MoneyInput
+    $name: String
+  ) {
+    transactionUpdate(
+      monthId: $monthId
+      id: $id
+      amount: $amount
+      name: $name
+    ) {
+      id
+    }
+  }
+`);
+
+const TransactionDeleteDocument = graphql(`
+  mutation PlanningTransactionDelete($monthId: ID!, $id: ID!) {
+    transactionDelete(monthId: $monthId, id: $id) {
+      id
+    }
+  }
+`);
 
 export const Route = createFileRoute("/planning/$year")({
   component: PlanningYearPage,
@@ -122,17 +199,33 @@ function PlanningYearPage() {
   }
   const allYears = data.planningYears?.edges.map((e) => e.node.id) ?? [];
   const hasTaxRates = data.planningYear.taxRates != null;
+  const liabilities: LiabilityOption[] = (data.netWorthCategories?.edges ?? [])
+    .map((e) => e.node)
+    .filter(
+      (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",
+    );
   return (
     <main className="flex min-h-svh flex-col">
       <div className="space-y-6 p-8 pb-24">
         <Header year={year} hasTaxRates={hasTaxRates} />
-        <PlanningTable data={data.planningYear} />
+        <PlanningTable
+          data={data.planningYear}
+          year={year}
+          liabilities={liabilities}
+        />
       </div>
       <YearFooter current={year} years={allYears} />
       <Outlet />
     </main>
   );
 }
+
+type LiabilityOption = Extract<
+  NonNullable<
+    ResultOf<typeof PlanningYearViewDocument>["netWorthCategories"]
+  >["edges"][number]["node"],
+  { __typename: "NetWorthCategoryLiability" }
+>;
 
 function Header({
   year,
@@ -231,7 +324,15 @@ function fyLabelShort(year: string): string {
   return `FY${start}/${next}`;
 }
 
-function PlanningTable({ data }: { data: PlanningYearData }) {
+function PlanningTable({
+  data,
+  year,
+  liabilities,
+}: {
+  data: PlanningYearData;
+  year: string;
+  liabilities: LiabilityOption[];
+}) {
   const accounts = data.accounts;
 
   // Excel-like: sticky header row, sticky first column, hairline gridlines on
@@ -306,7 +407,7 @@ function PlanningTable({ data }: { data: PlanningYearData }) {
                       </div>
                     </TableCell>
                   )
-                : month.accounts.map((cell) => (
+                : month.accounts.map((cell, j) => (
                     <TableCell
                       key={cell.id}
                       className={cn(
@@ -324,6 +425,11 @@ function PlanningTable({ data }: { data: PlanningYearData }) {
                         data={cell}
                         monoRight={monoRight}
                         showStart={i === 0}
+                        monthId={month.id}
+                        year={year}
+                        fromAccountId={accounts[j].id}
+                        accounts={accounts}
+                        liabilities={liabilities}
                       />
                     </TableCell>
                   ))}
@@ -339,14 +445,24 @@ function MonthAccountCell({
   data,
   monoRight,
   showStart,
+  monthId,
+  year,
+  fromAccountId,
+  accounts,
+  liabilities,
 }: {
   data: FragmentOf<typeof PlanningMonthAccountCellDocument>;
   monoRight: string;
   showStart: boolean;
+  monthId: string;
+  year: string;
+  fromAccountId: string;
+  accounts: PlanningYearData["accounts"];
+  liabilities: LiabilityOption[];
 }) {
   const cell = readFragment(PlanningMonthAccountCellDocument, data);
   return (
-    <div className="flex h-full flex-col divide-y divide-border">
+    <div className="group flex h-full flex-col divide-y divide-border">
       {showStart && (
         <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
           <Figure
@@ -360,8 +476,23 @@ function MonthAccountCell({
           <li className="px-2 py-1 text-[10px] text-muted-foreground">—</li>
         )}
         {cell.transactions.map((tx) => (
-          <TransactionRow key={tx.id} data={tx} monoRight={monoRight} />
+          <TransactionRow
+            key={tx.id}
+            data={tx}
+            monoRight={monoRight}
+            monthId={monthId}
+            year={year}
+          />
         ))}
+        <li className="flex justify-end px-1 py-0.5">
+          <CreateTransactionTrigger
+            monthId={monthId}
+            year={year}
+            fromAccountId={fromAccountId}
+            accounts={accounts}
+            liabilities={liabilities}
+          />
+        </li>
       </ul>
       <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
         <Figure data={cell.valueEnd} className={cn(monoRight, "font-medium")} />
@@ -373,21 +504,368 @@ function MonthAccountCell({
 function TransactionRow({
   data,
   monoRight,
+  monthId,
+  year,
 }: {
   data: FragmentOf<typeof PlanningTransactionRowDocument>;
   monoRight: string;
+  monthId: string;
+  year: string;
 }) {
   const tx = readFragment(PlanningTransactionRowDocument, data);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
+  const [update] = useMutation(TransactionUpdateDocument, {
+    refetchQueries: [
+      { query: PlanningYearViewDocument, variables: { id: year } },
+    ],
+  });
+  const [remove] = useMutation(TransactionDeleteDocument, {
+    refetchQueries: [
+      { query: PlanningYearViewDocument, variables: { id: year } },
+    ],
+  });
+
+  const onSaveEdit = async (patch: { name: string; amount: number }) => {
+    await update({
+      variables: {
+        monthId,
+        id: tx.id,
+        name: patch.name,
+        amount: { amount: patch.amount, currency: tx.amount.currency },
+      },
+    });
+    toast.success("Saved");
+    setEditOpen(false);
+  };
+  const onDelete = async () => {
+    await remove({ variables: { monthId, id: tx.id } });
+    toast.success("Deleted");
+  };
+
   return (
     <li
       className={cn(
-        "flex items-baseline justify-between gap-2 px-2 py-1",
+        "group/row flex items-center gap-1 px-2 py-1",
         tx.isProvisional && "italic text-muted-foreground",
       )}
     >
-      <span className="truncate">{tx.name}</span>
+      <span className="flex-1 truncate">{tx.name}</span>
       <Figure data={tx.amount} className={monoRight} />
+      {tx.isEditable && (
+        <span
+          className={cn(
+            "flex items-center gap-0.5 transition-opacity",
+            // While delete confirmation is open, keep the icons visible even
+            // if the pointer leaves the row — otherwise the confirm button
+            // disappears before the user can click it.
+            deletePending
+              ? "opacity-100"
+              : "opacity-0 group-hover/row:opacity-100",
+          )}
+        >
+          {!deletePending && (
+            <Popover open={editOpen} onOpenChange={setEditOpen}>
+              <PopoverTrigger asChild>
+                <IconButton aria-label={`Edit ${tx.name}`}>
+                  <Pencil className="size-3" />
+                </IconButton>
+              </PopoverTrigger>
+              <PopoverContent className="w-72" align="end">
+                <EditTransactionForm
+                  initial={{
+                    name: tx.name,
+                    amount: Math.abs(tx.amount.amount),
+                  }}
+                  onSubmit={onSaveEdit}
+                  onCancel={() => setEditOpen(false)}
+                />
+              </PopoverContent>
+            </Popover>
+          )}
+          <InlineDeleteButton
+            pending={deletePending}
+            onPendingChange={setDeletePending}
+            onConfirm={onDelete}
+            label={`Delete ${tx.name}`}
+          />
+        </span>
+      )}
     </li>
+  );
+}
+
+/** Compact ghost-styled button sized to fit inside a dense transaction row. */
+function IconButton({
+  className,
+  ...props
+}: React.ComponentProps<"button">) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "inline-flex size-5 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/** Two-step inline delete: click → morphs into confirm (✓) + cancel (✕).
+ * `pending` is lifted so the parent can hide the sibling edit button while
+ * the user is deciding, keeping the row's button count stable. */
+function InlineDeleteButton({
+  pending,
+  onPendingChange,
+  onConfirm,
+  label,
+}: {
+  pending: boolean;
+  onPendingChange: (pending: boolean) => void;
+  onConfirm: () => void | Promise<unknown>;
+  label: string;
+}) {
+  if (!pending) {
+    return (
+      <IconButton onClick={() => onPendingChange(true)} aria-label={label}>
+        <Trash2 className="size-3" />
+      </IconButton>
+    );
+  }
+  return (
+    <>
+      <IconButton
+        onClick={() => onPendingChange(false)}
+        aria-label="Cancel delete"
+      >
+        <X className="size-3" />
+      </IconButton>
+      <IconButton
+        onClick={async () => {
+          onPendingChange(false);
+          await onConfirm();
+        }}
+        aria-label="Confirm delete"
+        className="text-destructive hover:text-destructive"
+      >
+        <Check className="size-3" />
+      </IconButton>
+    </>
+  );
+}
+
+function CreateTransactionTrigger({
+  monthId,
+  year,
+  fromAccountId,
+  accounts,
+  liabilities,
+}: {
+  monthId: string;
+  year: string;
+  fromAccountId: string;
+  accounts: PlanningYearData["accounts"];
+  liabilities: LiabilityOption[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [create] = useMutation(TransactionCreateDocument, {
+    refetchQueries: [
+      { query: PlanningYearViewDocument, variables: { id: year } },
+    ],
+  });
+
+  const onSubmit = async (v: {
+    name: string;
+    amount: number;
+    toAccountId: string | null;
+    liabilityId: string | null;
+  }) => {
+    await create({
+      variables: {
+        monthId,
+        fromAccountId,
+        name: v.name,
+        amount: { amount: v.amount, currency: "GBP" },
+        toAccountId: v.toAccountId,
+        liabilityId: v.liabilityId,
+      },
+    });
+    toast.success("Transaction added");
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <IconButton
+          aria-label="Add transaction"
+          className="opacity-0 transition-opacity group-hover:opacity-100"
+        >
+          <Plus className="size-3" />
+        </IconButton>
+      </PopoverTrigger>
+      <PopoverContent className="w-80" align="end">
+        <CreateTransactionForm
+          accounts={accounts}
+          liabilities={liabilities}
+          excludeAccountId={fromAccountId}
+          onSubmit={onSubmit}
+          onCancel={() => setOpen(false)}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function EditTransactionForm({
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  initial: { name: string; amount: number };
+  onSubmit: (v: { name: string; amount: number }) => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initial.name);
+  const [amount, setAmount] = useState(String(initial.amount));
+  const parsed = Number(amount);
+  const disabled =
+    !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (disabled) return;
+    await onSubmit({ name: name.trim(), amount: parsed });
+  };
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <div className="space-y-1">
+        <Label className="text-xs">Name</Label>
+        <Input value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Amount</Label>
+        <Input
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          currency="GBP"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={disabled}>
+          Save
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function CreateTransactionForm({
+  accounts,
+  liabilities,
+  excludeAccountId,
+  onSubmit,
+  onCancel,
+}: {
+  accounts: PlanningYearData["accounts"];
+  liabilities: LiabilityOption[];
+  excludeAccountId: string;
+  onSubmit: (v: {
+    name: string;
+    amount: number;
+    toAccountId: string | null;
+    liabilityId: string | null;
+  }) => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [toAccountId, setToAccountId] = useState("__none__");
+  const [liabilityId, setLiabilityId] = useState("__none__");
+  const parsed = Number(amount);
+  const disabled =
+    !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (disabled) return;
+    await onSubmit({
+      name: name.trim(),
+      amount: parsed,
+      toAccountId: toAccountId === "__none__" ? null : toAccountId,
+      liabilityId: liabilityId === "__none__" ? null : liabilityId,
+    });
+  };
+  const transferTargets = accounts.filter((a) => a.id !== excludeAccountId);
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <div className="space-y-1">
+        <Label className="text-xs">Name</Label>
+        <Input
+          placeholder="e.g. Rent"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Amount</Label>
+        <Input
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          currency="GBP"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Transfer to (optional)</Label>
+        <Select value={toAccountId} onValueChange={setToAccountId}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">External outflow</SelectItem>
+            {transferTargets.map((a) => (
+              <SelectItem key={a.id} value={a.id}>
+                {a.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Pays down liability (optional)</Label>
+        <Select value={liabilityId} onValueChange={setLiabilityId}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">None</SelectItem>
+            {liabilities.map((l) => (
+              <SelectItem key={l.id} value={l.id}>
+                {l.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={disabled}>
+          Add
+        </Button>
+      </div>
+    </form>
   );
 }
 
