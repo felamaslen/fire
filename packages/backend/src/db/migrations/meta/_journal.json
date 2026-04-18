@@ -43,6 +43,13 @@
       "when": 1776510446915,
       "tag": "0005_add_earnings_student_loan_liability",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776524392226,
+      "tag": "0006_pension_deductions_nullable",
+      "breakpoints": true
     }
   ]
 }

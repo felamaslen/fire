@@ -153,10 +153,10 @@ export const PlanningEarnings = pgTable(
     countryCode: countryCode("countryCode").notNull(),
     /** Fraction of gross diverted via salary sacrifice (null if not used). */
     pensionSalarySacrifice: doublePrecision("pensionSalarySacrifice"),
-    /** Fraction of gross contributed via relief-at-source. */
-    pensionReliefAtSource: doublePrecision("pensionReliefAtSource").notNull(),
-    /** Fraction of gross contributed via net-pay arrangement. */
-    pensionNetPay: doublePrecision("pensionNetPay").notNull(),
+    /** Fraction of gross contributed via relief-at-source (null if not used). */
+    pensionReliefAtSource: doublePrecision("pensionReliefAtSource"),
+    /** Fraction of gross contributed via net-pay arrangement (null if not used). */
+    pensionNetPay: doublePrecision("pensionNetPay"),
     /** Whether the earner is repaying UK Student Loan plan 2 on this income. When false, no student-loan deduction is applied to predicted take-home. */
     studentLoanPlan2: boolean("studentLoanPlan2").notNull().default(false),
     /** Liability the predicted student-loan deduction pays down. Must be null unless `studentLoanPlan2` is true. */
@@ -186,11 +186,11 @@ export const PlanningEarnings = pgTable(
     ),
     check(
       "PlanningEarnings_pensionReliefAtSource_ck",
-      sql`${t.pensionReliefAtSource} BETWEEN 0 AND 1`,
+      sql`${t.pensionReliefAtSource} IS NULL OR ${t.pensionReliefAtSource} BETWEEN 0 AND 1`,
     ),
     check(
       "PlanningEarnings_pensionNetPay_ck",
-      sql`${t.pensionNetPay} BETWEEN 0 AND 1`,
+      sql`${t.pensionNetPay} IS NULL OR ${t.pensionNetPay} BETWEEN 0 AND 1`,
     ),
     check(
       "PlanningEarnings_studentLoanLiability_ck",

@@ -93,10 +93,10 @@ const PlanningEarningsCreateDocument = graphql(`
     $start: Date!
     $amountGross: MoneyInput!
     $countryCode: String!
-    $pensionReliefAtSource: Float!
-    $pensionNetPay: Float!
     $toAccountId: ID!
     $end: Date
+    $pensionReliefAtSource: Float
+    $pensionNetPay: Float
     $pensionSalarySacrifice: Float
     $studentLoanPlan2: Boolean
     $studentLoanLiabilityId: ID
@@ -215,8 +215,8 @@ const emptyForm: FormValues = {
   end: "",
   amount: "",
   toAccountId: "",
-  pensionReliefAtSourcePct: "0",
-  pensionNetPayPct: "0",
+  pensionReliefAtSourcePct: "",
+  pensionNetPayPct: "",
   pensionSalarySacrificePct: "",
   studentLoanPlan2: false,
   studentLoanLiabilityId: "",
@@ -460,8 +460,14 @@ function AddEarningForm({
         end: values.end === "" ? null : values.end,
         amountGross: { amount: Number(values.amount), currency: CURRENCY },
         countryCode: "GB",
-        pensionReliefAtSource: pctToFraction(values.pensionReliefAtSourcePct),
-        pensionNetPay: pctToFraction(values.pensionNetPayPct),
+        pensionReliefAtSource:
+          values.pensionReliefAtSourcePct.trim() === ""
+            ? null
+            : pctToFraction(values.pensionReliefAtSourcePct),
+        pensionNetPay:
+          values.pensionNetPayPct.trim() === ""
+            ? null
+            : pctToFraction(values.pensionNetPayPct),
         pensionSalarySacrifice:
           values.pensionSalarySacrificePct.trim() === ""
             ? null
@@ -527,8 +533,14 @@ function EditEarningForm({
         start: values.start,
         end: values.end === "" ? null : values.end,
         amountGross: { amount: Number(values.amount), currency: CURRENCY },
-        pensionReliefAtSource: pctToFraction(values.pensionReliefAtSourcePct),
-        pensionNetPay: pctToFraction(values.pensionNetPayPct),
+        pensionReliefAtSource:
+          values.pensionReliefAtSourcePct.trim() === ""
+            ? null
+            : pctToFraction(values.pensionReliefAtSourcePct),
+        pensionNetPay:
+          values.pensionNetPayPct.trim() === ""
+            ? null
+            : pctToFraction(values.pensionNetPayPct),
         pensionSalarySacrifice:
           values.pensionSalarySacrificePct.trim() === ""
             ? null
@@ -641,12 +653,14 @@ function EarningFormFields({
             <PercentInput
               value={values.pensionReliefAtSourcePct}
               onChange={(v) => patch({ pensionReliefAtSourcePct: v })}
+              placeholder="(none)"
             />
           </FormField>
           <FormField label="Net pay">
             <PercentInput
               value={values.pensionNetPayPct}
               onChange={(v) => patch({ pensionNetPayPct: v })}
+              placeholder="(none)"
             />
           </FormField>
           <FormField label="Salary sacrifice">
@@ -739,7 +753,7 @@ function UKTaxCodesField({
   };
 
   return (
-    <details className="rounded-md border bg-muted/20 p-2 text-xs" open={entries.length > 0}>
+    <details className="rounded-md border bg-muted/20 p-2 text-xs">
       <summary className="cursor-pointer font-medium">UK tax codes</summary>
       <ul className="mt-2 space-y-2">
         {entries.map((entry, i) => {

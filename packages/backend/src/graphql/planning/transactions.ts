@@ -451,8 +451,8 @@ async function materialiseEarningAsPayslip(
     gross: earning.amountGross,
     pension: {
       sacrifice: earning.pensionSalarySacrifice,
-      netPay: earning.pensionNetPay,
-      relief: earning.pensionReliefAtSource,
+      netPay: earning.pensionNetPay ?? 0,
+      relief: earning.pensionReliefAtSource ?? 0,
     },
     studentLoanPlan2: earning.studentLoanPlan2,
     rates,
