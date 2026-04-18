@@ -3,3 +3,7 @@ dist
 build
 pnpm-lock.yaml
 packages/backend/src/__generated__
+# drizzle-kit encodes statement boundaries as literal `--> statement-breakpoint`
+# markers; prettier's SQL formatter mangles them into `-- >` which breaks
+# migration splitting.
+packages/backend/src/db/migrations
