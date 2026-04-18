@@ -325,9 +325,29 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
                 },
+                pensionNetPay: {
+                    description: "Fraction of gross contributed via net-pay arrangement. Null when the concept doesn't apply.",
+                    name: "pensionNetPay",
+                    type: GraphQLFloat
+                },
+                pensionReliefAtSource: {
+                    description: "Fraction of gross contributed via relief-at-source. Null when the concept doesn't apply.",
+                    name: "pensionReliefAtSource",
+                    type: GraphQLFloat
+                },
+                pensionSalarySacrifice: {
+                    description: "Fraction of gross diverted via salary sacrifice. Null when the concept doesn't apply for this earning (e.g. non-UK).",
+                    name: "pensionSalarySacrifice",
+                    type: GraphQLFloat
+                },
                 start: {
                     name: "start",
                     type: new GraphQLNonNull(DateType)
+                },
+                studentLoanPlan2: {
+                    description: "Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply (e.g. non-UK earnings).",
+                    name: "studentLoanPlan2",
+                    type: GraphQLBoolean
                 },
                 toAccount: {
                     description: "Destination planning account for the net earnings.",
@@ -1642,10 +1662,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLString)
                         },
                         pensionNetPay: {
-                            type: new GraphQLNonNull(GraphQLFloat)
+                            description: "Fraction (0-1) contributed via net-pay arrangement. Leave null when the concept doesn't apply.",
+                            type: GraphQLFloat
                         },
                         pensionReliefAtSource: {
-                            type: new GraphQLNonNull(GraphQLFloat)
+                            description: "Fraction (0-1) contributed via relief-at-source. Leave null when the concept doesn't apply.",
+                            type: GraphQLFloat
                         },
                         pensionSalarySacrifice: {
                             type: GraphQLFloat
@@ -1654,7 +1676,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(DateType)
                         },
                         studentLoanPlan2: {
-                            description: "Whether Student Loan plan 2 is being repaid on this income. Defaults to false.",
+                            description: "Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply.",
                             type: GraphQLBoolean
                         },
                         toAccountId: {
@@ -1666,7 +1688,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
+                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.ukTaxCodes);
                     }
                 },
                 earningsDelete: {
