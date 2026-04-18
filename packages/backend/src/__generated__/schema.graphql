@@ -561,13 +561,17 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   type: NetWorthAssetType!
 }
 
-"""A cursor-paginated list of NetWorthCategory, newest first."""
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
 type NetWorthCategoryConnection {
   edges: [NetWorthCategoryEdge!]!
   pageInfo: PageInfo!
 }
 
-"""An edge within a NetWorthCategoryConnection."""
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
 type NetWorthCategoryEdge {
   cursor: ID!
   node: NetWorthCategory!
@@ -631,13 +635,17 @@ type NetWorthEntry {
   values: [NetWorthValue!]!
 }
 
-"""A cursor-paginated list of NetWorthEntry, newest first."""
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
 type NetWorthEntryConnection {
   edges: [NetWorthEntryEdge!]!
   pageInfo: PageInfo!
 }
 
-"""An edge within a NetWorthEntryConnection."""
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
 type NetWorthEntryEdge {
   cursor: ID!
   node: NetWorthEntry!
@@ -699,13 +707,17 @@ type PlanningBill {
   start: Date!
 }
 
-"""A cursor-paginated list of `PlanningBill`, newest-`start` first."""
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
 type PlanningBillConnection {
   edges: [PlanningBillEdge!]!
   pageInfo: PageInfo!
 }
 
-"""An edge within a `PlanningBillConnection`."""
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
 type PlanningBillEdge {
   cursor: ID!
   node: PlanningBill!
@@ -734,13 +746,17 @@ type PlanningEarning {
   ukTaxCodes: [PlanningEarningUKTaxCode!]!
 }
 
-"""A cursor-paginated list of `PlanningEarning`, newest-`start` first."""
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
 type PlanningEarningConnection {
   edges: [PlanningEarningEdge!]!
   pageInfo: PageInfo!
 }
 
-"""An edge within a `PlanningEarningConnection`."""
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
 type PlanningEarningEdge {
   cursor: ID!
   node: PlanningEarning!

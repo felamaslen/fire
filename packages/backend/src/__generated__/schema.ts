@@ -200,7 +200,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const PlanningBillEdgeType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningBillEdge",
-        description: "An edge within a `PlanningBillConnection`.",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
         fields() {
             return {
                 cursor: {
@@ -240,7 +240,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const PlanningBillConnectionType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningBillConnection",
-        description: "A cursor-paginated list of `PlanningBill`, newest-`start` first.",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
         fields() {
             return {
                 edges: {
@@ -344,7 +344,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const PlanningEarningEdgeType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningEarningEdge",
-        description: "An edge within a `PlanningEarningConnection`.",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
         fields() {
             return {
                 cursor: {
@@ -360,7 +360,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const PlanningEarningConnectionType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningEarningConnection",
-        description: "A cursor-paginated list of `PlanningEarning`, newest-`start` first.",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
         fields() {
             return {
                 edges: {
@@ -572,7 +572,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const NetWorthEntryEdgeType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthEntryEdge",
-        description: "An edge within a NetWorthEntryConnection.",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
         fields() {
             return {
                 cursor: {
@@ -588,7 +588,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const NetWorthEntryConnectionType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthEntryConnection",
-        description: "A cursor-paginated list of NetWorthEntry, newest first.",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
         fields() {
             return {
                 edges: {
@@ -604,7 +604,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const NetWorthCategoryEdgeType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthCategoryEdge",
-        description: "An edge within a NetWorthCategoryConnection.",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
         fields() {
             return {
                 cursor: {
@@ -620,7 +620,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const NetWorthCategoryConnectionType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthCategoryConnection",
-        description: "A cursor-paginated list of NetWorthCategory, newest first.",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
         fields() {
             return {
                 edges: {

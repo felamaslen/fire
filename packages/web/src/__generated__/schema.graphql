@@ -892,6 +892,12 @@ type Query {
   Look up a planning year by its id (the starting calendar year, e.g. `"2025"`).
   """
   planningYear(id: ID!): PlanningYear
+  """
+  The planning year whose range covers today. UK financial years run 6 April → 5 April; dates before 6 April count against the previous calendar year.
+  
+  Returns `null` when no year record has been configured yet for the current FY — the client should prompt the user to set one up, or fall back to `planningYears` to pick a recent one.
+  """
+  planningYearCurrent: PlanningYear
   """List every configured planning year."""
   planningYears: [PlanningYear!]
 }

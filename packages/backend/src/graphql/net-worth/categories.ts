@@ -13,8 +13,8 @@ import {
   NetWorthValues,
 } from "@/db/schema/net-worth";
 
+import { buildConnection, type Connection } from "../pagination";
 import { VOID, type Void } from "../void";
-import type { PageInfo } from "./index";
 
 /** Kind of asset a category represents. @gqlEnum */
 export type NetWorthAssetType =
@@ -129,22 +129,6 @@ export class NetWorthCategoryOption implements NetWorthCategory {
   }
 }
 
-/** An edge within a NetWorthCategoryConnection. @gqlType */
-export type NetWorthCategoryEdge = {
-  /** @gqlField */
-  cursor: ID;
-  /** @gqlField */
-  node: NetWorthCategory;
-};
-
-/** A cursor-paginated list of NetWorthCategory, newest first. @gqlType */
-export type NetWorthCategoryConnection = {
-  /** @gqlField */
-  edges: NetWorthCategoryEdge[];
-  /** @gqlField */
-  pageInfo: PageInfo;
-};
-
 type CategoryCursor = { c: string; i: string };
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -184,7 +168,7 @@ export async function netWorthCategories(
   after?: ID | null,
   last?: Int | null,
   before?: ID | null,
-): Promise<NetWorthCategoryConnection | null> {
+): Promise<Connection<NetWorthCategory> | null> {
   assert(
     first == null || last == null,
     "Pass either `first` or `last`, not both.",
@@ -274,22 +258,20 @@ export async function netWorthCategories(
   const page = hasExtra ? windowed.slice(0, limit) : windowed;
   const ordered = forward ? page : [...page].reverse();
 
-  const edges: NetWorthCategoryEdge[] = ordered.map((row) => ({
-    cursor: encodeCategoryCursor({
-      createdAt: row.createdAtDate,
-      id: row.id,
-    }),
-    node: row,
-  }));
-
-  const pageInfo: PageInfo = {
-    hasNextPage: forward ? hasExtra : cursor != null,
-    hasPreviousPage: forward ? cursor != null : hasExtra,
-    startCursor: edges.length > 0 ? edges[0].cursor : null,
-    endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
-  };
-
-  return { edges, pageInfo };
+  return buildConnection<NetWorthCategory>(
+    ordered,
+    (node) => {
+      const src = ordered.find((r) => r.id === node.id)!;
+      return encodeCategoryCursor({
+        createdAt: src.createdAtDate,
+        id: node.id,
+      });
+    },
+    {
+      hasNextPage: forward ? hasExtra : cursor != null,
+      hasPreviousPage: forward ? cursor != null : hasExtra,
+    },
+  );
 }
 
 /** Create payload for an asset category. @gqlInput */
