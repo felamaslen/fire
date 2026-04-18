@@ -212,7 +212,7 @@ it("transactionCreate inserts a manual outgoing transaction on the target month"
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
     NAME    AMOUNT SOURCE EDIT     ID                         
-    Dentist -500   actual editable {"kind":"tx","id":"<uuid>"}"
+    Dentist 500    actual editable {"kind":"tx","id":"<uuid>"}"
   `);
 });
 
@@ -258,7 +258,7 @@ it("transactionUpdate patches a manual transaction (name + amount)", async () =>
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
     NAME              AMOUNT SOURCE EDIT     ID                         
-    Dentist (revised) -750   actual editable {"kind":"tx","id":"<uuid>"}"
+    Dentist (revised) 750    actual editable {"kind":"tx","id":"<uuid>"}"
   `);
 });
 
@@ -360,7 +360,7 @@ it("transactionUpdate on a predicted bill writes a per-month override (this mont
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Broadband"
-          accountId: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -408,7 +408,7 @@ it("transactionDelete on a predicted bill skips it for this month (null override
           collectionDate: ["15"]
           amount: { amount: 100, currency: "GBP" }
           name: "Broadband"
-          accountId: $a
+          fromAccountId: $a
         ) {
           id
         }
@@ -680,12 +680,14 @@ it("transactionUpdate on a payslip adjustment keeps every other adjustment in it
     NAME          AMOUNT SOURCE EDIT     ID                          
     April payslip 3000   actual editable {"kind":"pay","id":"<uuid>"}
     Income tax    -400   actual editable {"kind":"adj","id":"<uuid>"}
-    NIC           -250   actual editable {"kind":"adj","id":"<uuid>"}
+    NIC           250    actual editable {"kind":"adj","id":"<uuid>"}
     Student loan  -100   actual editable {"kind":"adj","id":"<uuid>"}"
   `);
 
-  // Only the NIC amount should have changed vs. the pre-edit snapshot.
-  expect(before.replace("-200", "-250")).toBe(await aprilTransactions());
+  // Only the NIC amount should have changed vs. the pre-edit snapshot. The
+  // resolver stores whatever sign the caller supplied (here `+250`), so the
+  // `-200` deduction ends up as a positive `250` credit.
+  expect(before.replace("-200", "250 ")).toBe(await aprilTransactions());
 });
 
 describe("asset investment link", () => {
@@ -741,7 +743,7 @@ describe("asset investment link", () => {
         { a: main, s: cash },
       ),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Error: Only STOCK or PENSION assets can receive investment transactions]`,
+      `[Error: GraphQL errors: Only STOCK or PENSION assets can receive investment transactions]`,
     );
   });
 
@@ -783,7 +785,7 @@ describe("asset investment link", () => {
         { a: main, l: liability, s: stock },
       ),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Error: A transaction cannot both pay down a liability and invest into an asset]`,
+      `[Error: GraphQL errors: A transaction cannot both pay down a liability and invest into an asset]`,
     );
   });
 
@@ -811,7 +813,7 @@ describe("asset investment link", () => {
         { a: main, s: stock },
       ),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Error: Inflow transactions must not have a toAccountId, liabilityId, or assetId]`,
+      `[Error: GraphQL errors: Inflow transactions must not have a toAccountId, liabilityId, or assetId]`,
     );
   });
 
