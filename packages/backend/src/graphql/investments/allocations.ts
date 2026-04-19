@@ -11,6 +11,11 @@ import {
 } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
+import {
+  getMoneyInputFractionalAmount,
+  Money,
+  type MoneyInput,
+} from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
 import { Investment } from "./index";
 
@@ -62,13 +67,13 @@ export class InvestmentAllocation {
   }
 }
 
-/** Allocations configured for a single wrapper, plus the portfolio-wide cash allocation share that applies across the whole portfolio. @gqlType */
+/** Allocations configured for a single wrapper, plus the portfolio-wide cash reserve that applies across the whole portfolio. @gqlType */
 export class InvestmentAllocationsResult {
   constructor(
     /** Per-investment allocations for the wrapper. Sums to 1. @gqlField */
     public readonly investments: InvestmentAllocation[],
-    /** Portfolio-wide target cash fraction (applies across all wrappers in aggregate). `null` when no cash allocation has been configured yet. @gqlField */
-    public readonly cash: Float | null,
+    /** Portfolio-wide target cash reserve as an absolute monetary value (applies across all wrappers in aggregate). `null` when no cash target has been configured yet. @gqlField */
+    public readonly cash: Money | null,
   ) {}
 }
 
@@ -152,30 +157,36 @@ export async function investmentAllocationsSet(
   return loadAllocationsForAsset(assetId);
 }
 
-/** Set the portfolio-wide target cash allocation (applies across every wrapper in aggregate). `0 <= allocation <= 1`. @gqlMutationField */
+/** Set the portfolio-wide target cash reserve as an absolute monetary value (applies across every wrapper in aggregate). Amount must be non-negative. @gqlMutationField */
 export async function investmentCashAllocationSet(
-  allocation: Float,
-): Promise<Float> {
-  if (!(allocation >= 0 && allocation <= 1)) {
+  amount: MoneyInput,
+): Promise<Money> {
+  const { amount: amountMinor, currency } =
+    getMoneyInputFractionalAmount(amount);
+  if (amountMinor < 0) {
     throw new GraphQLError(
-      `Cash allocation must be in [0, 1], got ${allocation}`,
+      `Cash target must be non-negative, got ${amount.amount}`,
     );
   }
   await db
     .insert(InvestmentCashAllocation)
-    .values({ singleton: true, allocation })
+    .values({ singleton: true, amount: amountMinor, currency })
     .onConflictDoUpdate({
       target: InvestmentCashAllocation.singleton,
-      set: { allocation, updatedAt: new Date() },
+      set: { amount: amountMinor, currency, updatedAt: new Date() },
     });
-  return allocation;
+  return Money.fromMinorDenomination(amountMinor, currency);
 }
 
-async function loadCashAllocation(): Promise<Float | null> {
+async function loadCashAllocation(): Promise<Money | null> {
   const [row] = await db
-    .select({ allocation: InvestmentCashAllocation.allocation })
+    .select({
+      amount: InvestmentCashAllocation.amount,
+      currency: InvestmentCashAllocation.currency,
+    })
     .from(InvestmentCashAllocation);
-  return (row?.allocation ?? null) as Float | null;
+  if (!row) return null;
+  return Money.fromMinorDenomination(row.amount, row.currency);
 }
 
 async function loadAllocationsForAsset(

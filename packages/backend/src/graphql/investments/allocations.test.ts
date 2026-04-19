@@ -72,7 +72,9 @@ describe("investmentAllocationsSet", () => {
               name
             }
           }
-          cash
+          cash {
+            amount
+          }
         }
       }
     `);
@@ -187,17 +189,24 @@ describe("investmentAllocationsSet", () => {
 });
 
 describe("investmentCashAllocationSet and query", () => {
-  it("stores and upserts the portfolio-wide cash fraction", async () => {
+  it("stores and upserts the portfolio-wide cash target as an absolute amount", async () => {
     const set = graphql(`
-      mutation ($a: Float!) {
-        investmentCashAllocationSet(allocation: $a)
+      mutation ($a: MoneyInput!) {
+        investmentCashAllocationSet(amount: $a) {
+          amount
+          currency
+        }
       }
     `);
-    expect(await runGql(set, { a: 0.1 })).toEqual({
-      investmentCashAllocationSet: 0.1,
-    });
-    expect(await runGql(set, { a: 0.25 })).toEqual({
-      investmentCashAllocationSet: 0.25,
+    expect(await runGql(set, { a: { amount: 1000, currency: "GBP" } })).toEqual(
+      {
+        investmentCashAllocationSet: { amount: 1000, currency: "GBP" },
+      },
+    );
+    expect(
+      await runGql(set, { a: { amount: 2500.5, currency: "GBP" } }),
+    ).toEqual({
+      investmentCashAllocationSet: { amount: 2500.5, currency: "GBP" },
     });
   });
 
@@ -205,14 +214,19 @@ describe("investmentCashAllocationSet and query", () => {
     const assetId = await createAsset();
     const setCash = graphql(`
       mutation {
-        investmentCashAllocationSet(allocation: 0.2)
+        investmentCashAllocationSet(amount: { amount: 500, currency: "GBP" }) {
+          amount
+        }
       }
     `);
     await runGql(setCash, {});
     const q = graphql(`
       query ($assetId: ID!) {
         investmentAllocations(assetId: $assetId) {
-          cash
+          cash {
+            amount
+            currency
+          }
           investments {
             allocation
           }
@@ -221,7 +235,7 @@ describe("investmentCashAllocationSet and query", () => {
     `);
     const data = await runGql(q, { assetId });
     expect(data.investmentAllocations).toEqual({
-      cash: 0.2,
+      cash: { amount: 500, currency: "GBP" },
       investments: [],
     });
   });
@@ -230,20 +244,25 @@ describe("investmentCashAllocationSet and query", () => {
     const q = graphql(`
       query {
         investmentAllocations {
-          cash
+          cash {
+            amount
+          }
         }
       }
     `);
     await expect(runGql(q, {})).rejects.toThrowError(/not yet implemented/);
   });
 
-  it("rejects a cash allocation outside [0, 1]", async () => {
+  it("rejects a negative cash target", async () => {
     const set = graphql(`
-      mutation ($a: Float!) {
-        investmentCashAllocationSet(allocation: $a)
+      mutation ($a: MoneyInput!) {
+        investmentCashAllocationSet(amount: $a) {
+          amount
+        }
       }
     `);
-    await expect(runGql(set, { a: -0.1 })).rejects.toThrowError(/in \[0, 1\]/);
-    await expect(runGql(set, { a: 1.5 })).rejects.toThrowError(/in \[0, 1\]/);
+    await expect(
+      runGql(set, { a: { amount: -1, currency: "GBP" } }),
+    ).rejects.toThrowError(/non-negative/);
   });
 });

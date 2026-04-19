@@ -242,13 +242,15 @@ export const investmentAllocationsRelations = relations(
   }),
 );
 
-/** Singleton row holding the portfolio-wide target cash allocation (applied across *all* assets in aggregate, not per-wrapper). The `singleton` column is pinned to `true` by a check constraint so there can only ever be one row. */
+/** Singleton row holding the portfolio-wide target cash reserve as an absolute monetary value (applied across *all* assets in aggregate, not per-wrapper). The `singleton` column is pinned to `true` by a check constraint so there can only ever be one row. */
 export const InvestmentCashAllocation = pgTable(
   "InvestmentCashAllocation",
   {
     singleton: boolean("singleton").primaryKey(),
-    /** Target fraction of the whole portfolio kept as cash. `0 <= a <= 1`. */
-    allocation: doublePrecision("allocation").notNull(),
+    /** Target cash amount in the minor denomination of `currency` (e.g. pence for GBP). Non-negative. */
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    /** ISO-4217 currency the target is denominated in. */
+    currency: currencyCode("currency").notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -258,10 +260,7 @@ export const InvestmentCashAllocation = pgTable(
   },
   (t) => [
     check("InvestmentCashAllocation_singleton_ck", sql`${t.singleton} = true`),
-    check(
-      "InvestmentCashAllocation_allocation_ck",
-      sql`${t.allocation} >= 0 AND ${t.allocation} <= 1`,
-    ),
+    check("InvestmentCashAllocation_amount_ck", sql`${t.amount} >= 0`),
   ],
 );
 

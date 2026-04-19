@@ -836,13 +836,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const InvestmentAllocationsResultType: GraphQLObjectType = new GraphQLObjectType({
         name: "InvestmentAllocationsResult",
-        description: "Allocations configured for a single wrapper, plus the portfolio-wide cash allocation share that applies across the whole portfolio.",
+        description: "Allocations configured for a single wrapper, plus the portfolio-wide cash reserve that applies across the whole portfolio.",
         fields() {
             return {
                 cash: {
-                    description: "Portfolio-wide target cash fraction (applies across all wrappers in aggregate). `null` when no cash allocation has been configured yet.",
+                    description: "Portfolio-wide target cash reserve as an absolute monetary value (applies across all wrappers in aggregate). `null` when no cash target has been configured yet.",
                     name: "cash",
-                    type: GraphQLFloat
+                    type: MoneyType
                 },
                 investments: {
                     description: "Per-investment allocations for the wrapper. Sums to 1.",
@@ -2771,16 +2771,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 investmentCashAllocationSet: {
-                    description: "Set the portfolio-wide target cash allocation (applies across every wrapper in aggregate). `0 <= allocation <= 1`.",
+                    description: "Set the portfolio-wide target cash reserve as an absolute monetary value (applies across every wrapper in aggregate). Amount must be non-negative.",
                     name: "investmentCashAllocationSet",
-                    type: new GraphQLNonNull(GraphQLFloat),
+                    type: new GraphQLNonNull(MoneyType),
                     args: {
-                        allocation: {
-                            type: new GraphQLNonNull(GraphQLFloat)
+                        amount: {
+                            type: new GraphQLNonNull(MoneyInputType)
                         }
                     },
                     resolve(_source, args) {
-                        return mutationInvestmentCashAllocationSetResolver(args.allocation);
+                        return mutationInvestmentCashAllocationSetResolver(args.amount);
                     }
                 },
                 investmentCreate: {

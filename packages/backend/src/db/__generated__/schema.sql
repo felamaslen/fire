@@ -92,16 +92,14 @@ CREATE TABLE "InvestmentAllocations" (
 
 CREATE TABLE "InvestmentCashAllocation" (
   "singleton" BOOLEAN PRIMARY KEY NOT NULL,
-  "allocation" DOUBLE PRECISION NOT NULL,
+  "amount" BIGINT NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   CONSTRAINT "InvestmentCashAllocation_singleton_ck"
     CHECK ("InvestmentCashAllocation"."singleton" = TRUE),
-  CONSTRAINT "InvestmentCashAllocation_allocation_ck"
-    CHECK (
-      "InvestmentCashAllocation"."allocation" >= 0
-      AND "InvestmentCashAllocation"."allocation" <= 1
-    )
+  CONSTRAINT "InvestmentCashAllocation_amount_ck"
+    CHECK ("InvestmentCashAllocation"."amount" >= 0)
 );
 
 CREATE TABLE "InvestmentPrices" (

@@ -394,13 +394,13 @@ type InvestmentAllocation {
 }
 
 """
-Allocations configured for a single wrapper, plus the portfolio-wide cash allocation share that applies across the whole portfolio.
+Allocations configured for a single wrapper, plus the portfolio-wide cash reserve that applies across the whole portfolio.
 """
 type InvestmentAllocationsResult {
   """
-  Portfolio-wide target cash fraction (applies across all wrappers in aggregate). `null` when no cash allocation has been configured yet.
+  Portfolio-wide target cash reserve as an absolute monetary value (applies across all wrappers in aggregate). `null` when no cash target has been configured yet.
   """
-  cash: Float
+  cash: Money
   """Per-investment allocations for the wrapper. Sums to 1."""
   investments: [InvestmentAllocation!]!
 }
@@ -708,9 +708,9 @@ type Mutation {
     assetId: ID!
   ): InvestmentAllocationsResult!
   """
-  Set the portfolio-wide target cash allocation (applies across every wrapper in aggregate). `0 <= allocation <= 1`.
+  Set the portfolio-wide target cash reserve as an absolute monetary value (applies across every wrapper in aggregate). Amount must be non-negative.
   """
-  investmentCashAllocationSet(allocation: Float!): Float!
+  investmentCashAllocationSet(amount: MoneyInput!): Money!
   """Create a new investment."""
   investmentCreate(
     """What kind of instrument this investment represents."""
