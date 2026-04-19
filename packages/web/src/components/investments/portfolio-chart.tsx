@@ -22,6 +22,12 @@ type Props = {
   currency?: string;
   /** Start date of the X axis (`x === 0`); each subsequent x is days after this. */
   initialDate?: Date;
+  /**
+   * When `true`, render `lines` as filled stacked areas instead of overlaid
+   * strokes. Assumes the caller has already made each series' `y` cumulative
+   * (series[i].y = its own value + all previous series' values at the same x).
+   */
+  stacked?: boolean;
 };
 
 const AXIS_PAD_LEFT = 64;
@@ -65,6 +71,7 @@ export function PortfolioChart({
   className,
   currency = "GBP",
   initialDate,
+  stacked = false,
 }: Props) {
   const { xScale, yScale, xMin, xMax, yMin, yMax } = useMemo(() => {
     const allXs: number[] = [];
@@ -233,12 +240,34 @@ export function PortfolioChart({
         );
       })}
 
-      {lines?.map((line) => {
+      {lines?.map((line, idx) => {
+        if (stacked) {
+          // Build the closed polygon between this line and the one below it
+          // (or 0 if it's the bottom-most). Assumes lines are sorted from
+          // bottom to top and each y is cumulative.
+          const below = idx > 0 ? lines[idx - 1].points : null;
+          const topPath = line.points
+            .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`)
+            .join(" ");
+          const bottomPoints = (below ?? line.points.map((p) => ({ x: p.x, y: 0 })))
+            .slice()
+            .reverse();
+          const bottomPath = bottomPoints
+            .map((p) => `L ${xScale(p.x)} ${yScale(p.y)}`)
+            .join(" ");
+          return (
+            <path
+              key={line.label}
+              d={`${topPath} ${bottomPath} Z`}
+              fill={line.color}
+              fillOpacity={0.7}
+              stroke={line.color}
+              strokeWidth={0.5}
+            />
+          );
+        }
         const d = line.points
-          .map(
-            (p, i) =>
-              `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`,
-          )
+          .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`)
           .join(" ");
         return (
           <path
@@ -250,25 +279,36 @@ export function PortfolioChart({
           />
         );
       })}
-
-      {/* Legend for stacked line charts */}
-      {lines && lines.length > 1 && (
-        <g transform={`translate(${AXIS_PAD_LEFT + 4} ${AXIS_PAD_TOP + 4})`}>
-          {lines.map((l, i) => (
-            <g key={l.label} transform={`translate(0 ${i * 14})`}>
-              <rect width="10" height="10" fill={l.color} rx="2" />
-              <text
-                x={14}
-                y={9}
-                className="fill-muted-foreground text-[10px]"
-              >
-                {l.label}
-              </text>
-            </g>
-          ))}
-        </g>
-      )}
     </svg>
+  );
+}
+
+/** Small wrapping swatch list for a stacked chart. Shows up to `max` series by name; anything beyond collapses into a "+N more" pill. */
+export function PortfolioChartLegend({
+  lines,
+  max = 12,
+}: {
+  lines: LineSeries[];
+  max?: number;
+}) {
+  const visible = lines.slice(0, max);
+  const overflow = Math.max(0, lines.length - visible.length);
+  return (
+    <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      {visible.map((l) => (
+        <li key={l.label} className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="inline-block h-2.5 w-2.5 rounded-sm"
+            style={{ background: l.color }}
+          />
+          <span className="max-w-[14rem] truncate">{l.label}</span>
+        </li>
+      ))}
+      {overflow > 0 && (
+        <li className="italic">+{overflow} more</li>
+      )}
+    </ul>
   );
 }
 
