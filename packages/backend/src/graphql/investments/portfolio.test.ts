@@ -239,6 +239,54 @@ describe("Query.portfolio aggregates", () => {
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(0);
   });
 
+  it("reports xirr for a portfolio that doubled over one year", async () => {
+    const asset = await createAsset();
+    const a = await createStock("A", "AAA");
+    // One year before `TEST_NOW` (2026-04-18). Buy 100 @ £1 = £100 deployed.
+    await buy(a, asset, "2025-04-18", 100, 1);
+    // Today's held price £2/share → held value £200.
+    await setPrice(a, "2026-04-18", 200);
+
+    const doc = graphql(`
+      query {
+        portfolio {
+          xirr
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    expect(data.portfolio?.xirr).toBeCloseTo(1.0, 2);
+  });
+
+  it("reports xirr ≈ 0 for a round-trip at the same price", async () => {
+    const asset = await createAsset();
+    const a = await createStock("A", "AAA");
+    await buy(a, asset, "2024-01-01", 100, 5);
+    await buy(a, asset, "2025-01-01", -100, 5);
+
+    const doc = graphql(`
+      query {
+        portfolio {
+          xirr
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    expect(data.portfolio?.xirr ?? 0).toBeCloseTo(0, 3);
+  });
+
+  it("returns null xirr when there are no transactions", async () => {
+    const doc = graphql(`
+      query {
+        portfolio {
+          xirr
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    expect(data.portfolio?.xirr).toBeNull();
+  });
+
   it("filters by assetId", async () => {
     const isa = await createAsset("ISA");
     const sipp = await createAsset("SIPP");

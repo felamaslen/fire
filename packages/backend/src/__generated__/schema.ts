@@ -1662,6 +1662,20 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Current market value of the filtered portfolio \u2014 the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down.",
                     name: "totalValue",
                     type: MoneyType
+                },
+                xirr: {
+                    description: "Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge.",
+                    name: "xirr",
+                    type: GraphQLFloat,
+                    args: {
+                        skipLive: {
+                            description: "When `true`, ignore any live quote and terminate against the most recent cached close instead.",
+                            type: GraphQLBoolean
+                        }
+                    },
+                    resolve(source, args) {
+                        return source.xirr(args.skipLive);
+                    }
                 }
             };
         }

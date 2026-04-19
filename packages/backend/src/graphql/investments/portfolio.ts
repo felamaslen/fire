@@ -87,6 +87,113 @@ type HeldInvestment = {
   pricePrevious: number | null;
 };
 
+async function computePortfolioXirr(
+  filters: Filters,
+  opts: { skipLive: boolean },
+): Promise<Float | null> {
+  const held = await loadHeldInvestments(filters, opts);
+
+  const investmentIds = held.map((h) => h.id);
+  if (investmentIds.length === 0) return null;
+
+  const txConditions = [
+    inArray(InvestmentTransactions.investmentId, investmentIds),
+  ];
+  if (filters.filterAssetIdIn && filters.filterAssetIdIn.length > 0) {
+    txConditions.push(
+      inArray(InvestmentTransactions.assetId, filters.filterAssetIdIn),
+    );
+  }
+  const txRows = await db
+    .select({
+      date: InvestmentTransactions.date,
+      units: InvestmentTransactions.units,
+      price: InvestmentTransactions.price,
+    })
+    .from(InvestmentTransactions)
+    .where(and(...txConditions));
+
+  // Cash flows: each buy is money out (negative), each sell is money in
+  // (positive). `t.units` is already signed, so `-t.units × price` gets the
+  // right sign in one step.
+  const flows: { date: Date; amount: number }[] = txRows.map((t) => ({
+    date: t.date,
+    amount: -t.units * t.price,
+  }));
+
+  const today = new Date();
+  let todayValue = 0;
+  for (const h of held) {
+    if (h.unitsHeld === 0) continue;
+    if (h.priceLatest === null) return null;
+    todayValue += h.unitsHeld * h.priceLatest;
+  }
+  if (todayValue > 0) flows.push({ date: today, amount: todayValue });
+
+  return solveXirr(flows) as Float | null;
+}
+
+/** Newton-Raphson with a bisection fallback. `flows` must contain at least one positive and one negative entry. Returns the annualised rate as a decimal, or `null` when no sensible root is found. */
+function solveXirr(flows: { date: Date; amount: number }[]): number | null {
+  if (flows.length < 2) return null;
+  const hasPos = flows.some((f) => f.amount > 0);
+  const hasNeg = flows.some((f) => f.amount < 0);
+  if (!hasPos || !hasNeg) return null;
+
+  // Reference = earliest date; ages in fractional years since then.
+  let refMs = flows[0].date.getTime();
+  for (const f of flows) refMs = Math.min(refMs, f.date.getTime());
+  const msPerYear = 365.25 * 24 * 60 * 60 * 1000;
+  const ages = flows.map((f) => (f.date.getTime() - refMs) / msPerYear);
+
+  const npv = (r: number): number => {
+    let s = 0;
+    for (let i = 0; i < flows.length; i++) {
+      s += flows[i].amount / Math.pow(1 + r, ages[i]);
+    }
+    return s;
+  };
+  const dnpv = (r: number): number => {
+    let s = 0;
+    for (let i = 0; i < flows.length; i++) {
+      if (ages[i] === 0) continue;
+      s += (-ages[i] * flows[i].amount) / Math.pow(1 + r, ages[i] + 1);
+    }
+    return s;
+  };
+
+  // Newton-Raphson.
+  let r = 0.1;
+  for (let i = 0; i < 100; i++) {
+    const v = npv(r);
+    if (Math.abs(v) < 1e-7) return r;
+    const d = dnpv(r);
+    if (d === 0) break;
+    const next = r - v / d;
+    if (!Number.isFinite(next) || next <= -0.999) break;
+    if (Math.abs(next - r) < 1e-9) return next;
+    r = next;
+  }
+
+  // Bisection fallback over a wide bracket.
+  let lo = -0.999;
+  let hi = 10;
+  let fLo = npv(lo);
+  if (fLo * npv(hi) > 0) return null;
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    const fMid = npv(mid);
+    if (Math.abs(fMid) < 1e-7 || hi - lo < 1e-9) return mid;
+    if (fLo * fMid < 0) {
+      hi = mid;
+    } else {
+      lo = mid;
+      fLo = fMid;
+    }
+  }
+  return null;
+}
+
 async function loadHeldInvestments(
   filters: Filters,
   opts: { skipLive?: boolean } = {},
@@ -442,6 +549,14 @@ export class Portfolio {
     const cost = await this.totalCost();
     if (cost.amount === 0) return null;
     return ((value.amount - cost.amount) / cost.amount) as Float;
+  }
+
+  /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. @gqlField */
+  async xirr(
+    /** When `true`, ignore any live quote and terminate against the most recent cached close instead. */
+    skipLive?: boolean | null,
+  ): Promise<Float | null> {
+    return computePortfolioXirr(this.filters, { skipLive: skipLive ?? false });
   }
 
   /** Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists. @gqlField */
