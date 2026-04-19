@@ -10,8 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
-    name: Typecheck, lint, and backend tests
+  test:
     runs-on: ubuntu-latest
     services:
       postgres:
