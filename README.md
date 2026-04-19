@@ -28,6 +28,10 @@ A personal net-worth tracker. Records assets, investments, and month-by-month ca
 - Rolling balance projection forward from a starting point.
 - UK tax helpers (PAYE-style computation) baked into earnings.
 
+### Assumptions
+
+- **Credit cards are paid off in full each month.** The app doesn't model revolving debt, grace periods, or interest accrual on card balances; a card's balance at any point represents this month's charges due on the next payment date. Credit-card activity shows up as a monthly-spending line on the forecast (`monthlyCreditCardPayoff`) rather than as a growing liability. If you carry a balance, track it as a `LOAN` liability with an explicit interest rate instead.
+
 ### Other
 - File uploads (local disk) for attaching documents to records.
 - OpenTelemetry tracing across HTTP, Fastify routes, and Drizzle queries.

@@ -1,10 +1,5 @@
 /**
- * Value / cashflow forecasting utilities shared by the net-worth
- * forecast engine and the planning balance module. Pure math plus a
- * handful of tiny helpers that bucket raw planning rows into the
- * per-month samples we feed the EWMA. No DB, no GraphQL, no side
- * effects — each helper takes the rows it needs as parameters so the
- * DB-shaped loaders upstream stay separate and testable.
+ * Value and cashflow forecasting utilities shared by the net-worth forecast engine and the planning balance module. Pure math plus a handful of tiny helpers that bucket raw planning rows into the per-month samples we feed the EWMA. No DB, no GraphQL, no side effects — each helper takes the rows it needs as parameters so the DB-shaped loaders upstream stay separate and testable.
  */
 
 import { addMonths } from "date-fns";
@@ -16,14 +11,9 @@ import { collectionDayInMonth } from "@/graphql/planning/balance";
 // ============================================================
 
 /**
- * Exponentially-weighted moving average of `values` ordered most-recent
- * first. Uses α = 2 / (n + 1) (Pandas' default span formula) so the
- * caller picks the decay implicitly by choosing the window size.
+ * Exponentially-weighted moving average of `values` ordered most-recent first. Uses α = 2 / (n + 1) (Pandas' default span formula) so the caller picks the decay implicitly by choosing the window size.
  *
- * Returns 0 for an empty input so call sites can treat "no samples" as
- * "no cashflow" without an explicit null check. Output is a float — if
- * the caller needs an integer (e.g. minor-currency units) it's their
- * responsibility to round.
+ * Returns 0 for an empty input so call sites can treat "no samples" as "no cashflow" without an explicit null check. Output is a float — if the caller needs an integer (e.g. minor-currency units) it's their responsibility to round.
  */
 export function ewma(values: readonly number[]): number {
   if (values.length === 0) return 0;
@@ -40,10 +30,7 @@ export function ewma(values: readonly number[]): number {
 // ============================================================
 
 /**
- * Convert a percentage annual growth rate (e.g. `3` for +3%/year, `-15`
- * for −15%/year depreciation) into the equivalent monthly compounding
- * factor. Returns `1` when the rate is null or zero so callers can
- * multiply unconditionally.
+ * Convert a percentage annual growth rate (e.g. `3` for +3%/year, `-15` for −15%/year depreciation) into the equivalent monthly compounding factor. Returns `1` when the rate is null or zero so callers can multiply unconditionally.
  */
 export function monthlyGrowthFactor(annualPercent: number | null): number {
   if (annualPercent == null || annualPercent === 0) return 1;
@@ -52,9 +39,7 @@ export function monthlyGrowthFactor(annualPercent: number | null): number {
 }
 
 /**
- * Project `startValue` forward `months` months at the given annual rate,
- * compounded monthly. Returns an array of length `months + 1` starting
- * at `startValue`.
+ * Project `startValue` forward `months` months at the given annual rate, compounded monthly. Returns an array of length `months + 1` starting at `startValue`.
  */
 export function projectMonthlyGrowth(
   startValue: number,
@@ -73,32 +58,7 @@ export function projectMonthlyGrowth(
 // ============================================================
 
 /**
- * Project a credit-card balance forward.
- *
- * Credit cards have no stored interest rate in this system — by
- * convention users only track balances for cards they pay off in full,
- * so the balance either stays flat (paid from a cash account each
- * month) or accrues the monthly spend unabated when no billed-from
- * account is set.
- */
-export function projectCreditCardBalance(
-  startBalance: number,
-  monthlySpend: number,
-  months: number,
-  paidFromAccount: boolean,
-): number[] {
-  const out = new Array<number>(months + 1);
-  out[0] = startBalance;
-  for (let i = 1; i <= months; i++) {
-    out[i] = paidFromAccount ? out[i - 1] : out[i - 1] + monthlySpend;
-  }
-  return out;
-}
-
-/**
- * Project a loan balance forward, compounding the annual interest rate
- * monthly and deducting a fixed monthly repayment. The balance is
- * clamped at zero — once the loan is paid off it stays paid off.
+ * Project a loan balance forward, compounding the annual interest rate monthly and deducting a fixed monthly repayment. The balance is clamped at zero — once the loan is paid off it stays paid off.
  */
 export function projectLoanBalance(
   startBalance: number,
@@ -186,13 +146,7 @@ function billFiresInMonth(bill: LiabilityBill, monthStart: Date): boolean {
 }
 
 /**
- * EWMA of the last `windowMonths` calendar months of credit-card
- * spending against this liability. Each month = sum of |tx.amount| of
- * planning transactions tagged to the card in that month. Months with
- * no transactions count as zero. Samples are ordered most-recent first,
- * and the window ends at the calendar month immediately preceding
- * `asOfMonthStart` (we don't include the current, partially-elapsed
- * month).
+ * EWMA of the last `windowMonths` calendar months of credit-card spending against this liability. Each month = sum of `|tx.amount|` for `PlanningTransactions` tagged to the card in that month. Months with no transactions count as zero. Samples are ordered most-recent first, and the window ends at the calendar month immediately preceding `asOfMonthStart` (we don't include the current, partially-elapsed month).
  */
 export function creditCardEwmaSpend(
   txs: readonly LiabilityTx[],
@@ -207,15 +161,7 @@ export function creditCardEwmaSpend(
 }
 
 /**
- * EWMA of the last `windowMonths` *non-zero* months of loan repayment
- * activity. For each month working back from the one before
- * `asOfMonthStart`, we take the sum of |tx.amount| if any transactions
- * hit the liability that month; otherwise we fall back to the scheduled
- * bill amount if any bill fires that month; otherwise we skip the
- * month. We stop once we have `windowMonths` samples or have gone back
- * `maxLookback` months — whichever comes first. Returns 0 when there
- * is no historical activity at all, which the caller should treat as
- * "don't extrapolate repayments on this loan".
+ * EWMA of the last `windowMonths` *non-zero* months of loan repayment activity. For each month working back from the one before `asOfMonthStart`, we take the sum of `|tx.amount|` if any transactions hit the liability that month; otherwise we fall back to the scheduled bill amount if any bill fires that month; otherwise we skip the month. We stop once we have `windowMonths` samples or have gone back `maxLookback` months — whichever comes first. Returns 0 when there is no historical activity at all, which the caller should treat as "don't extrapolate repayments on this loan".
  */
 export function loanEwmaRepayment(
   txs: readonly LiabilityTx[],
@@ -240,12 +186,7 @@ export function loanEwmaRepayment(
 }
 
 /**
- * EWMA of monthly cash contributions into a portfolio over the last
- * `windowMonths` complete calendar months (newest first, excluding the
- * month containing `asOfMonthStart`). Each transaction contributes
- * `units * price` to its month — positive for buys, negative for
- * sells — and months with no transactions count as zero. Fees / taxes
- * are ignored, matching how `Portfolio.xirr` itself is computed.
+ * EWMA of monthly cash contributions into a portfolio over the last `windowMonths` complete calendar months (newest first, excluding the month containing `asOfMonthStart`). Each transaction contributes `units * price` to its month — positive for buys, negative for sells — and months with no transactions count as zero. Fees and taxes are ignored, matching how `Portfolio.xirr` itself is computed.
  */
 export function ewmaMonthlyContribution(
   txs: readonly InvestmentTx[],
@@ -268,10 +209,72 @@ export function ewmaMonthlyContribution(
 }
 
 /**
- * EWMA of the `windowSize` most-recent payslip net amounts landing in
- * `accountId`. Returns 0 when there are no payslips for the account —
- * the caller should treat that as "no income projection for this
- * account" and not synthesise a cashflow.
+ * Internal-rate-of-return for an irregular cashflow stream (XIRR). `flows` must contain at least one positive and one negative entry. Uses Newton–Raphson with a wide-bracket bisection fallback. Returns the annualised rate as a decimal (e.g. `0.08` = 8%/yr), or `null` when no sensible root is found.
+ */
+export function solveXirr(
+  flows: readonly { date: Date; amount: number }[],
+): number | null {
+  if (flows.length < 2) return null;
+  const hasPos = flows.some((f) => f.amount > 0);
+  const hasNeg = flows.some((f) => f.amount < 0);
+  if (!hasPos || !hasNeg) return null;
+
+  // Reference = earliest date; ages in fractional years since then.
+  let refMs = flows[0].date.getTime();
+  for (const f of flows) refMs = Math.min(refMs, f.date.getTime());
+  const msPerYear = 365.25 * 24 * 60 * 60 * 1000;
+  const ages = flows.map((f) => (f.date.getTime() - refMs) / msPerYear);
+
+  const npv = (r: number): number => {
+    let s = 0;
+    for (let i = 0; i < flows.length; i++) {
+      s += flows[i].amount / Math.pow(1 + r, ages[i]);
+    }
+    return s;
+  };
+  const dnpv = (r: number): number => {
+    let s = 0;
+    for (let i = 0; i < flows.length; i++) {
+      if (ages[i] === 0) continue;
+      s += (-ages[i] * flows[i].amount) / Math.pow(1 + r, ages[i] + 1);
+    }
+    return s;
+  };
+
+  // Newton-Raphson.
+  let r = 0.1;
+  for (let i = 0; i < 100; i++) {
+    const v = npv(r);
+    if (Math.abs(v) < 1e-7) return r;
+    const d = dnpv(r);
+    if (d === 0) break;
+    const next = r - v / d;
+    if (!Number.isFinite(next) || next <= -0.999) break;
+    if (Math.abs(next - r) < 1e-9) return next;
+    r = next;
+  }
+
+  // Bisection fallback over a wide bracket.
+  let lo = -0.999;
+  let hi = 10;
+  let fLo = npv(lo);
+  if (fLo * npv(hi) > 0) return null;
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    const fMid = npv(mid);
+    if (Math.abs(fMid) < 1e-7 || hi - lo < 1e-9) return mid;
+    if (fLo * fMid < 0) {
+      hi = mid;
+    } else {
+      lo = mid;
+      fLo = fMid;
+    }
+  }
+  return null;
+}
+
+/**
+ * EWMA of the `windowSize` most-recent payslip net amounts landing in `accountId`. Returns 0 when there are no payslips for the account — the caller should treat that as "no income projection for this account" and not synthesise a cashflow.
  */
 export function ewmaPayslipNet(
   payslips: readonly Payslip[],

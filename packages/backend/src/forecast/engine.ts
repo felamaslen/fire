@@ -1,10 +1,5 @@
 /**
- * Monthly net-worth forecast engine. Pure — takes a pre-loaded
- * snapshot of today's category balances plus the historical rows the
- * EWMA helpers need, and projects forward. Returns both the per-month
- * aggregate points and the "workings" (per-category per-month
- * balances, monthly-cashflow components, derived EWMA figures) so
- * clients can show their reasoning, not just the bottom line.
+ * Monthly net-worth forecast engine. Pure — takes a pre-loaded snapshot of today's category balances plus the historical rows the EWMA helpers need, and projects forward. Returns both the per-month aggregate points and the "workings" (per-category per-month balances, monthly-cashflow components, derived EWMA figures) so clients can show their reasoning, not just the bottom line.
  *
  * DB loading lives in a separate module so this stays unit-testable.
  */
@@ -20,7 +15,6 @@ import {
   type LiabilityTx,
   loanEwmaRepayment,
   type Payslip,
-  projectCreditCardBalance,
   projectLoanBalance,
   projectMonthlyGrowth,
 } from "./growth";
@@ -40,19 +34,17 @@ export type ForecastCategory =
       id: string;
       kind: "asset";
       assetType: AssetType;
-      /** Per-cent annual rate for PROPERTY / VEHICLE only. */
+      /** Percentage annual rate for `PROPERTY` / `VEHICLE` only. */
       growthRate?: number | null;
-      /** Annualised return as a decimal (e.g. `0.08` = 8%/yr) for STOCK / PENSION portfolio wrappers. */
+      /** Annualised return as a decimal (e.g. `0.08` = 8%/yr) for `STOCK` / `PENSION` portfolio wrappers. */
       xirr?: number | null;
     }
   | {
       id: string;
       kind: "liability";
       liabilityType: "CREDIT_CARD" | "LOAN" | "MISC";
-      /** Per-cent annual interest for LOAN only. */
+      /** Percentage annual interest for `LOAN` only. */
       interestRate?: number | null;
-      /** True when the CC is paid from a cash account each month (balance stays flat, spend exits cash instead). */
-      paidFromAccount?: boolean;
       skip?: boolean;
     }
   | {
@@ -68,15 +60,15 @@ export type ForecastInputs = {
   categories: ForecastCategory[];
   /** Starting balance per category id, home-currency minor units. */
   startingBalance: Map<string, number>;
-  /** PlanningTransactions grouped by liability id. */
+  /** `PlanningTransactions` grouped by liability id. */
   liabilityTxs: Map<string, readonly LiabilityTx[]>;
-  /** PlanningBills grouped by loan liability id. */
+  /** `PlanningBills` grouped by loan liability id. */
   loanBills: Map<string, readonly LiabilityBill[]>;
-  /** InvestmentTransactions grouped by STOCK/PENSION wrapper asset id. */
+  /** `InvestmentTransactions` grouped by `STOCK` / `PENSION` wrapper asset id. */
   portfolioTxs: Map<string, readonly InvestmentTx[]>;
   /** All historical payslips — `ewmaPayslipNet` filters by `toAccountId`. */
   payslips: readonly Payslip[];
-  /** Cash accounts we should EWMA income for (usually every PlanningAccount). */
+  /** Cash accounts we should EWMA income for (usually every `PlanningAccount`). */
   accountIds: readonly string[];
   /** Scheduled bills **not** tagged to a liability — pure cash-out expenses. */
   nonLiabilityBills: readonly LiabilityBill[];
@@ -95,20 +87,18 @@ export type ForecastCategoryWorkings = {
   categoryId: string;
   /** Home-currency minor units at month 0. */
   startingBalance: number;
-  /** PROPERTY / VEHICLE only — percent annual rate carried through from the category. */
+  /** `PROPERTY` / `VEHICLE` only — percentage annual rate carried through from the category. */
   growthRate: number | null;
-  /** STOCK / PENSION only — decimal annualised return fed into the monthly compounding. */
+  /** `STOCK` / `PENSION` only — decimal annualised return fed into the monthly compounding. */
   xirr: number | null;
-  /** STOCK / PENSION only — EWMA monthly contribution added to the balance each month. */
+  /** `STOCK` / `PENSION` only — EWMA monthly contribution added to the balance each month. */
   monthlyContribution: number;
-  /** CREDIT_CARD only — EWMA monthly spend. Charged to the balance if unpaid, exits cash otherwise. */
+  /** `CREDIT_CARD` only — EWMA of the past year's monthly spend. Since cards are treated as paid off in full each month, this value only feeds the cashflow breakdown — it never touches the card's balance. */
   monthlySpend: number;
-  /** LOAN only — EWMA monthly repayment subtracted from the balance after interest. */
+  /** `LOAN` only — EWMA monthly repayment subtracted from the balance after interest. */
   monthlyRepayment: number;
-  /** LOAN only — percent annual interest carried through from the category. */
+  /** `LOAN` only — percentage annual interest carried through from the category. */
   interestRate: number | null;
-  /** CREDIT_CARD only — whether the card is paid off from a cash account each month. */
-  paidFromAccount: boolean;
   /** Projected balance, length `months + 1`, home-currency minor units. */
   projectedBalance: number[];
 };
@@ -118,11 +108,11 @@ export type ForecastCashflow = {
   monthlyIncome: number;
   /** Sum of monthly-equivalent amounts across non-liability bills. */
   monthlyBills: number;
-  /** Sum of CC EWMA spend for cards with `paidFromAccount = true`. */
+  /** Sum of credit-card EWMA spend across every card (every card is assumed paid off in full each month — see README). */
   monthlyCreditCardPayoff: number;
   /** Sum of EWMA repayments across all active loans. */
   monthlyLoanRepayment: number;
-  /** Sum of EWMA contributions across all STOCK/PENSION portfolios. */
+  /** Sum of EWMA contributions across all `STOCK` / `PENSION` portfolios. */
   monthlyInvestmentContribution: number;
   /** `monthlyBills + monthlyCreditCardPayoff + monthlyLoanRepayment + monthlyInvestmentContribution`. */
   monthlyCashOut: number;
@@ -133,7 +123,7 @@ export type ForecastCashflow = {
 export type ForecastResult = {
   points: ForecastPoint[];
   workings: {
-    /** Aggregated starting cash across all CASH assets, home-currency minor. */
+    /** Aggregated starting cash across all `CASH` assets, home-currency minor. */
     cashStart: number;
     /** Monthly cash balance, length `months + 1`. */
     cashBalance: number[];
@@ -168,7 +158,6 @@ function projectOne(
     monthlySpend: 0,
     monthlyRepayment: 0,
     interestRate: null,
-    paidFromAccount: false,
     projectedBalance: new Array<number>(months + 1).fill(start),
   };
 
@@ -213,17 +202,12 @@ function projectOne(
   if (cat.kind === "liability") {
     switch (cat.liabilityType) {
       case "CREDIT_CARD": {
-        const spend = creditCardEwmaSpend(
+        // Cards are assumed paid off in full each month, so the balance
+        // stays flat at `start`. Spend feeds the cashflow breakdown via
+        // `monthlyCreditCardPayoff`.
+        base.monthlySpend = creditCardEwmaSpend(
           inputs.liabilityTxs.get(cat.id) ?? [],
           inputs.asOfMonthStart,
-        );
-        base.monthlySpend = spend;
-        base.paidFromAccount = cat.paidFromAccount === true;
-        base.projectedBalance = projectCreditCardBalance(
-          start,
-          spend,
-          months,
-          base.paidFromAccount,
         );
         return base;
       }
@@ -271,7 +255,7 @@ function computeCashflow(
     const w = workings.get(cat.id);
     if (!w) continue;
     if (cat.kind === "liability" && !cat.skip) {
-      if (cat.liabilityType === "CREDIT_CARD" && cat.paidFromAccount) {
+      if (cat.liabilityType === "CREDIT_CARD") {
         monthlyCreditCardPayoff += w.monthlySpend;
       } else if (cat.liabilityType === "LOAN") {
         monthlyLoanRepayment += w.monthlyRepayment;
@@ -301,12 +285,7 @@ function computeCashflow(
 }
 
 /**
- * Project monthly net worth forward from a pre-loaded snapshot. Skipped
- * liabilities drop out entirely. Cash is modelled as a single
- * aggregate bucket whose monthly delta is
- * `(income EWMA) − (bills + CC payoff + loan repayment + investment
- * contributions)`. Returns both the aggregate per-month points and the
- * per-category/per-cashflow-component workings used to derive them.
+ * Project monthly net worth forward from a pre-loaded snapshot. Skipped liabilities drop out entirely. Cash is modelled as a single aggregate bucket whose monthly delta is `(income EWMA) − (bills + CC payoff + loan repayment + investment contributions)`. Returns both the aggregate per-month points and the per-category / per-cashflow-component workings used to derive them.
  */
 export function runForecast(inputs: ForecastInputs): ForecastResult {
   const { months, categories, startingBalance, asOfMonthStart } = inputs;

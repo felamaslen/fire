@@ -16,6 +16,7 @@ import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCr
 import { investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
+import { netWorthForecast as queryNetWorthForecastResolver } from "./../graphql/net-worth/forecast";
 import { netWorthHistory as queryNetWorthHistoryResolver } from "./../graphql/net-worth/history";
 import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
@@ -1203,6 +1204,259 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const NetWorthForecastCashflowType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastCashflow",
+        description: "Monthly cashflow component breakdown \u2014 the \"spending side\" of the forecast. Each amount is the engine's projected-constant monthly number and is held flat across the forecast horizon.",
+        fields() {
+            return {
+                monthlyBills: {
+                    description: "Monthly-equivalent total across every scheduled bill not tagged to a liability.",
+                    name: "monthlyBills",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                monthlyCashOut: {
+                    description: "Sum of all out-flow components.",
+                    name: "monthlyCashOut",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                monthlyCreditCardPayoff: {
+                    description: "EWMA credit-card spend on cards paid from a cash account each month.",
+                    name: "monthlyCreditCardPayoff",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                monthlyIncome: {
+                    description: "EWMA sum of recent payslip nets across every planning account.",
+                    name: "monthlyIncome",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                monthlyInvestmentContribution: {
+                    description: "EWMA monthly investment contribution across every `STOCK` / `PENSION` portfolio.",
+                    name: "monthlyInvestmentContribution",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                monthlyLoanRepayment: {
+                    description: "EWMA monthly loan repayment across every active loan.",
+                    name: "monthlyLoanRepayment",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                monthlyNetCashFlow: {
+                    description: "`monthlyIncome \u2212 monthlyCashOut`. May be negative.",
+                    name: "monthlyNetCashFlow",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
+    const NetWorthForecastFlatAssetType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastFlatAsset",
+        description: "Projection for an asset category with no configured growth or return inputs \u2014 `OPTION`, `MISC`, and `PROPERTY` / `VEHICLE` / `STOCK` / `PENSION` categories that haven't yet got a growth rate or XIRR. The balance is held flat across the forecast horizon.",
+        fields() {
+            return {
+                category: {
+                    name: "category",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                projectedBalance: {
+                    description: "Projected balance at each returned forecast point (inclusive of the starting point).",
+                    name: "projectedBalance",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType)))
+                },
+                startingBalance: {
+                    description: "Balance at the forecast's starting point.",
+                    name: "startingBalance",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
+    const NetWorthForecastFlatLiabilityType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastFlatLiability",
+        description: "Projection for a liability the engine holds flat: `MISC`, every `CREDIT_CARD` (assumed paid off in full each month \u2014 see README), and a `LOAN` that hasn't got enough history to derive a monthly repayment. The balance stays constant across the forecast horizon.",
+        fields() {
+            return {
+                category: {
+                    name: "category",
+                    type: new GraphQLNonNull(NetWorthCategoryLiabilityType)
+                },
+                projectedBalance: {
+                    description: "Projected balance at each returned forecast point (inclusive of the starting point).",
+                    name: "projectedBalance",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType)))
+                },
+                startingBalance: {
+                    description: "Balance at the forecast's starting point (positive magnitude).",
+                    name: "startingBalance",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
+    const NetWorthForecastGrowthAssetType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastGrowthAsset",
+        description: "Projection for a `PROPERTY` / `VEHICLE` asset with an assumed growth rate. The balance compounds monthly at `growthRate`.",
+        fields() {
+            return {
+                category: {
+                    name: "category",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                growthRate: {
+                    description: "Annual growth rate (percent). Negative for depreciating assets (e.g. vehicles).",
+                    name: "growthRate",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                projectedBalance: {
+                    description: "Projected balance at each returned forecast point (inclusive of the starting point).",
+                    name: "projectedBalance",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType)))
+                },
+                startingBalance: {
+                    description: "Balance at the forecast's starting point.",
+                    name: "startingBalance",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
+    const NetWorthForecastLoanType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastLoan",
+        description: "Projection for a `LOAN` liability. The balance compounds monthly at `interestRate` and drops by `monthlyRepayment`, clamped at zero.",
+        fields() {
+            return {
+                category: {
+                    name: "category",
+                    type: new GraphQLNonNull(NetWorthCategoryLiabilityType)
+                },
+                interestRate: {
+                    description: "Annual interest rate (percent).",
+                    name: "interestRate",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                monthlyRepayment: {
+                    description: "EWMA of the past ten months' actual repayments (or scheduled bill amounts when no transactions land that month).",
+                    name: "monthlyRepayment",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                projectedBalance: {
+                    description: "Projected balance at each returned forecast point (inclusive of the starting point).",
+                    name: "projectedBalance",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType)))
+                },
+                startingBalance: {
+                    description: "Balance at the forecast's starting point (positive magnitude).",
+                    name: "startingBalance",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
+    const NetWorthForecastOptionCategoryType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastOptionCategory",
+        description: "Projection for an equity-option category. Options are held flat \u2014 the forecast doesn't model vesting or price movement.",
+        fields() {
+            return {
+                category: {
+                    name: "category",
+                    type: new GraphQLNonNull(NetWorthCategoryOptionType)
+                },
+                projectedBalance: {
+                    description: "Projected balance at each returned forecast point (inclusive of the starting point).",
+                    name: "projectedBalance",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType)))
+                },
+                startingBalance: {
+                    description: "Balance at the forecast's starting point.",
+                    name: "startingBalance",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
+    const NetWorthForecastPortfolioType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastPortfolio",
+        description: "Projection for a `STOCK` / `PENSION` portfolio wrapper. The balance compounds at `(1 + xirr)^(1/12)` each month and gains `monthlyContribution` in new deposits.",
+        fields() {
+            return {
+                category: {
+                    name: "category",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                monthlyContribution: {
+                    description: "EWMA of the portfolio's monthly cash contribution over the past three years.",
+                    name: "monthlyContribution",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                projectedBalance: {
+                    description: "Projected balance at each returned forecast point (inclusive of the starting point).",
+                    name: "projectedBalance",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType)))
+                },
+                startingBalance: {
+                    description: "Balance at the forecast's starting point.",
+                    name: "startingBalance",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                xirr: {
+                    description: "Annualised internal rate of return as a decimal (e.g. `0.08` = 8%/yr). Derived from the portfolio's transaction history; a portfolio with no computable XIRR is exposed as a `NetWorthForecastFlatAsset` instead.",
+                    name: "xirr",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                }
+            };
+        }
+    });
+    const NetWorthForecastCategoryType: GraphQLUnionType = new GraphQLUnionType({
+        name: "NetWorthForecastCategory",
+        description: "Per-category projection, discriminated by how the engine evolves the balance.",
+        types() {
+            return [NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType];
+        }
+    });
+    const NetWorthForecastWorkingsType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastWorkings",
+        description: "Engine workings exposed so the client can show how the forecast was derived.",
+        fields() {
+            return {
+                cashBalance: {
+                    description: "Cash balance at each returned forecast point.",
+                    name: "cashBalance",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType)))
+                },
+                cashStart: {
+                    description: "Aggregated cash balance across every `CASH` category at the starting point.",
+                    name: "cashStart",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                cashflow: {
+                    description: "Monthly cashflow component breakdown.",
+                    name: "cashflow",
+                    type: new GraphQLNonNull(NetWorthForecastCashflowType)
+                },
+                categories: {
+                    description: "Per-category projection, excluding `CASH` (which is rolled into `cashBalance`) and skipped liabilities.",
+                    name: "categories",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthForecastCategoryType)))
+                }
+            };
+        }
+    });
+    const NetWorthForecastType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecast",
+        description: "Monthly net-worth forecast over the requested horizon. `points` matches the shape of `netWorthHistory` so the two can be concatenated on the client.",
+        fields() {
+            return {
+                points: {
+                    description: "Projected net-worth points, same shape as `netWorthHistory` entries.",
+                    name: "points",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthHistoryPointType)))
+                },
+                workings: {
+                    description: "Per-component derivation of the projection, for \"show the workings\" visualisations.",
+                    name: "workings",
+                    type: new GraphQLNonNull(NetWorthForecastWorkingsType)
+                }
+            };
+        }
+    });
     const PlanningPayslipAdjustmentType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningPayslipAdjustment",
         description: "A single line item on a PlanningPayslip. Currency matches the parent payslip.",
@@ -1955,6 +2209,36 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return queryNetWorthEntryResolver(args.id);
+                    }
+                },
+                netWorthForecast: {
+                    description: "Projected monthly net worth for the next `years` years, thinned to `limit` evenly-spaced points. The engine always projects monthly internally; at `years = 10, limit = 20`, callers see one point every six months. The forecast always starts at today (the latest recorded snapshot) and ends at exactly `years` from today.",
+                    name: "netWorthForecast",
+                    type: NetWorthForecastType,
+                    args: {
+                        limit: {
+                            description: "Number of forecast points to return \u2014 evenly spaced between now and `years` years from now.",
+                            type: new GraphQLNonNull(GraphQLInt),
+                            defaultValue: 10,
+                            extensions: {
+                                grats: {
+                                    directives: [{
+                                            name: "constraint",
+                                            args: {
+                                                max: 20,
+                                                min: 5
+                                            }
+                                        }]
+                                }
+                            }
+                        },
+                        years: {
+                            description: "Forecast horizon in years (integer; 1\u201350).",
+                            type: new GraphQLNonNull(GraphQLInt)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryNetWorthForecastResolver(args.years, args.limit));
                     }
                 },
                 netWorthHistory: {
@@ -3434,6 +3718,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastCashflowType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
     });
 }

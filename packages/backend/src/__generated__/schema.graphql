@@ -77,6 +77,11 @@ The underlying instrument an `Investment` represents: a listed stock or a fund.
 """
 union InvestmentAsset = InvestmentFund | InvestmentStock
 
+"""
+Per-category projection, discriminated by how the engine evolves the balance.
+"""
+union NetWorthForecastCategory = NetWorthForecastFlatAsset | NetWorthForecastFlatLiability | NetWorthForecastGrowthAsset | NetWorthForecastLoan | NetWorthForecastOptionCategory | NetWorthForecastPortfolio
+
 """Country-specific tax parameters captured on a PlanningYear."""
 union PlanningYearTaxRates = PlanningYearTaxRatesUK
 
@@ -1091,6 +1096,156 @@ type NetWorthEntryEdge {
   node: NetWorthEntry!
 }
 
+"""
+Monthly net-worth forecast over the requested horizon. `points` matches the shape of `netWorthHistory` so the two can be concatenated on the client.
+"""
+type NetWorthForecast {
+  """Projected net-worth points, same shape as `netWorthHistory` entries."""
+  points: [NetWorthHistoryPoint!]!
+  """
+  Per-component derivation of the projection, for "show the workings" visualisations.
+  """
+  workings: NetWorthForecastWorkings!
+}
+
+"""
+Monthly cashflow component breakdown — the "spending side" of the forecast. Each amount is the engine's projected-constant monthly number and is held flat across the forecast horizon.
+"""
+type NetWorthForecastCashflow {
+  """
+  Monthly-equivalent total across every scheduled bill not tagged to a liability.
+  """
+  monthlyBills: Money!
+  """Sum of all out-flow components."""
+  monthlyCashOut: Money!
+  """EWMA credit-card spend on cards paid from a cash account each month."""
+  monthlyCreditCardPayoff: Money!
+  """EWMA sum of recent payslip nets across every planning account."""
+  monthlyIncome: Money!
+  """
+  EWMA monthly investment contribution across every `STOCK` / `PENSION` portfolio.
+  """
+  monthlyInvestmentContribution: Money!
+  """EWMA monthly loan repayment across every active loan."""
+  monthlyLoanRepayment: Money!
+  """`monthlyIncome − monthlyCashOut`. May be negative."""
+  monthlyNetCashFlow: Money!
+}
+
+"""
+Projection for an asset category with no configured growth or return inputs — `OPTION`, `MISC`, and `PROPERTY` / `VEHICLE` / `STOCK` / `PENSION` categories that haven't yet got a growth rate or XIRR. The balance is held flat across the forecast horizon.
+"""
+type NetWorthForecastFlatAsset {
+  category: NetWorthCategoryAsset!
+  """
+  Projected balance at each returned forecast point (inclusive of the starting point).
+  """
+  projectedBalance: [Money!]!
+  """Balance at the forecast's starting point."""
+  startingBalance: Money!
+}
+
+"""
+Projection for a liability the engine holds flat: `MISC`, every `CREDIT_CARD` (assumed paid off in full each month — see README), and a `LOAN` that hasn't got enough history to derive a monthly repayment. The balance stays constant across the forecast horizon.
+"""
+type NetWorthForecastFlatLiability {
+  category: NetWorthCategoryLiability!
+  """
+  Projected balance at each returned forecast point (inclusive of the starting point).
+  """
+  projectedBalance: [Money!]!
+  """Balance at the forecast's starting point (positive magnitude)."""
+  startingBalance: Money!
+}
+
+"""
+Projection for a `PROPERTY` / `VEHICLE` asset with an assumed growth rate. The balance compounds monthly at `growthRate`.
+"""
+type NetWorthForecastGrowthAsset {
+  category: NetWorthCategoryAsset!
+  """
+  Annual growth rate (percent). Negative for depreciating assets (e.g. vehicles).
+  """
+  growthRate: Float!
+  """
+  Projected balance at each returned forecast point (inclusive of the starting point).
+  """
+  projectedBalance: [Money!]!
+  """Balance at the forecast's starting point."""
+  startingBalance: Money!
+}
+
+"""
+Projection for a `LOAN` liability. The balance compounds monthly at `interestRate` and drops by `monthlyRepayment`, clamped at zero.
+"""
+type NetWorthForecastLoan {
+  category: NetWorthCategoryLiability!
+  """Annual interest rate (percent)."""
+  interestRate: Float!
+  """
+  EWMA of the past ten months' actual repayments (or scheduled bill amounts when no transactions land that month).
+  """
+  monthlyRepayment: Money!
+  """
+  Projected balance at each returned forecast point (inclusive of the starting point).
+  """
+  projectedBalance: [Money!]!
+  """Balance at the forecast's starting point (positive magnitude)."""
+  startingBalance: Money!
+}
+
+"""
+Projection for an equity-option category. Options are held flat — the forecast doesn't model vesting or price movement.
+"""
+type NetWorthForecastOptionCategory {
+  category: NetWorthCategoryOption!
+  """
+  Projected balance at each returned forecast point (inclusive of the starting point).
+  """
+  projectedBalance: [Money!]!
+  """Balance at the forecast's starting point."""
+  startingBalance: Money!
+}
+
+"""
+Projection for a `STOCK` / `PENSION` portfolio wrapper. The balance compounds at `(1 + xirr)^(1/12)` each month and gains `monthlyContribution` in new deposits.
+"""
+type NetWorthForecastPortfolio {
+  category: NetWorthCategoryAsset!
+  """
+  EWMA of the portfolio's monthly cash contribution over the past three years.
+  """
+  monthlyContribution: Money!
+  """
+  Projected balance at each returned forecast point (inclusive of the starting point).
+  """
+  projectedBalance: [Money!]!
+  """Balance at the forecast's starting point."""
+  startingBalance: Money!
+  """
+  Annualised internal rate of return as a decimal (e.g. `0.08` = 8%/yr). Derived from the portfolio's transaction history; a portfolio with no computable XIRR is exposed as a `NetWorthForecastFlatAsset` instead.
+  """
+  xirr: Float!
+}
+
+"""
+Engine workings exposed so the client can show how the forecast was derived.
+"""
+type NetWorthForecastWorkings {
+  """Cash balance at each returned forecast point."""
+  cashBalance: [Money!]!
+  """
+  Aggregated cash balance across every `CASH` category at the starting point.
+  """
+  cashStart: Money!
+  """Monthly cashflow component breakdown."""
+  cashflow: NetWorthForecastCashflow!
+  """
+  Per-category projection, excluding `CASH` (which is rolled into `cashBalance`) and skipped liabilities.
+  """
+  categories: [NetWorthForecastCategory!]!
+}
+
 """One bucket at a single history point, grouped by asset `type`."""
 type NetWorthHistoryAssetBucket {
   """
@@ -1623,6 +1778,17 @@ type Query {
   netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection @semanticNonNull
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
+  """
+  Projected monthly net worth for the next `years` years, thinned to `limit` evenly-spaced points. The engine always projects monthly internally; at `years = 10, limit = 20`, callers see one point every six months. The forecast always starts at today (the latest recorded snapshot) and ends at exactly `years` from today.
+  """
+  netWorthForecast(
+    """
+    Number of forecast points to return — evenly spaced between now and `years` years from now.
+    """
+    limit: Int! = 10 @constraint(max: 20, min: 5)
+    """Forecast horizon in years (integer; 1–50)."""
+    years: Int!
+  ): NetWorthForecast @semanticNonNull
   """
   Full history of net-worth snapshots, oldest first. Each point exposes gross assets split by type plus the overall assets / liabilities / net totals. All amounts are converted into the home currency via each entry's own captured currency rates.
   """

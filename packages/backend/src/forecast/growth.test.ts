@@ -9,7 +9,6 @@ import {
   loanEwmaRepayment,
   monthlyGrowthFactor,
   type Payslip,
-  projectCreditCardBalance,
   projectLoanBalance,
   projectMonthlyGrowth,
 } from "./growth";
@@ -81,21 +80,6 @@ describe("projectMonthlyGrowth", () => {
     const out = projectMonthlyGrowth(20000, -15, 24);
     // After 2 years a vehicle losing 15%/year ≈ 0.85² × 20000 = 14450.
     expect(out[24]).toBeCloseTo(14450, 0);
-  });
-});
-
-describe("projectCreditCardBalance", () => {
-  it("keeps a balance flat when paid from a cash account each month", () => {
-    const out = projectCreditCardBalance(200, 500, 12, true);
-    expect(out).toHaveLength(13);
-    expect(out[0]).toBe(200);
-    expect(out[12]).toBe(200);
-  });
-
-  it("accrues spend each month when no billed-from account is set", () => {
-    const out = projectCreditCardBalance(0, 100, 6, false);
-    expect(out[0]).toBe(0);
-    expect(out[6]).toBe(600);
   });
 });
 
