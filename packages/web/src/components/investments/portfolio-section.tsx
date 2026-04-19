@@ -83,9 +83,11 @@ const PortfolioChartDocument = graphql(
 type Period =
   | { period: "YEAR"; length: number; label: string }
   | { period: "MONTH"; length: number; label: string }
-  | { period: "YTD"; length: 0; label: string };
+  | { period: "YTD"; length: 0; label: string }
+  | { period: "ALL"; length: 0; label: string };
 
 export const PORTFOLIO_PERIODS: Period[] = [
+  { period: "ALL", length: 0, label: "All" },
   { period: "YEAR", length: 5, label: "5y" },
   { period: "YEAR", length: 3, label: "3y" },
   { period: "YEAR", length: 1, label: "1y" },
@@ -191,7 +193,7 @@ function PortfolioChartLoader({
   candlestick,
   stack,
 }: {
-  period: "YEAR" | "MONTH" | "YTD";
+  period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
   candlestick: boolean;
   stack: boolean;

@@ -1516,6 +1516,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         description: "Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.",
         name: "PortfolioTimePeriod",
         values: {
+            ALL: {
+                value: "ALL"
+            },
             MONTH: {
                 value: "MONTH"
             },
