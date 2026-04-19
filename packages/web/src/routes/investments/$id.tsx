@@ -516,10 +516,7 @@ function TransactionsSection({
   const onEdit = (t: TransactionRow) => setEditing(t);
   const [deleteTx] = useMutation(InvestmentTransactionDeleteDocument, {
     refetchQueries: [
-      {
-        query: InvestmentTransactionsDocument,
-        variables: { txFirst: 15, txAfter: null },
-      },
+      "InvestmentTransactions",
       { query: InvestmentDetailDocument },
       { query: InvestmentsListDocument, variables: { first: 100 } },
     ],
@@ -663,10 +660,7 @@ function TransactionForm({
   onCancel: () => void;
 }) {
   const refetch = [
-    {
-      query: InvestmentTransactionsDocument,
-      variables: { txFirst: 15, txAfter: null },
-    },
+    "InvestmentTransactions",
     { query: InvestmentDetailDocument },
     { query: InvestmentsListDocument, variables: { first: 100 } },
   ];
