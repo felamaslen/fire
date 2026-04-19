@@ -10,7 +10,6 @@ import {
   creditCardEwmaSpend,
   ewmaMonthlyContribution,
   ewmaPayslipNet,
-  type InvestmentTx,
   type LiabilityBill,
   type LiabilityTx,
   loanEwmaRepayment,
@@ -64,8 +63,8 @@ export type ForecastInputs = {
   liabilityTxs: Map<string, readonly LiabilityTx[]>;
   /** `PlanningBills` grouped by loan liability id. */
   loanBills: Map<string, readonly LiabilityBill[]>;
-  /** `InvestmentTransactions` grouped by `STOCK` / `PENSION` wrapper asset id. */
-  portfolioTxs: Map<string, readonly InvestmentTx[]>;
+  /** `PlanningTransactions` with an `assetId` set, grouped by that wrapper asset's id — the per-month contribution EWMA into each `STOCK` / `PENSION` portfolio. */
+  portfolioContributionTxs: Map<string, readonly LiabilityTx[]>;
   /** All historical payslips — `ewmaPayslipNet` filters by `toAccountId`. */
   payslips: readonly Payslip[];
   /** Cash accounts we should EWMA income for (usually every `PlanningAccount`). */
@@ -177,7 +176,7 @@ function projectOne(
         const xirr = cat.xirr ?? null;
         const monthlyFactor = xirr == null ? 1 : Math.pow(1 + xirr, 1 / 12);
         const contribution = ewmaMonthlyContribution(
-          inputs.portfolioTxs.get(cat.id) ?? [],
+          inputs.portfolioContributionTxs.get(cat.id) ?? [],
           inputs.asOfMonthStart,
         );
         const series = new Array<number>(months + 1);

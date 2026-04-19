@@ -186,24 +186,16 @@ export function loanEwmaRepayment(
 }
 
 /**
- * EWMA of monthly cash contributions into a portfolio over the last `windowMonths` complete calendar months (newest first, excluding the month containing `asOfMonthStart`). Each transaction contributes `units * price` to its month — positive for buys, negative for sells — and months with no transactions count as zero. Fees and taxes are ignored, matching how `Portfolio.xirr` itself is computed.
+ * EWMA of monthly cash contributions into a portfolio over the last `windowMonths` complete calendar months (newest first, excluding the month containing `asOfMonthStart`). Each sample sums `|tx.amount|` of `PlanningTransactions` tagged with the wrapper's asset id for that month — contributions are stored as outflows from a cash account (negative) so the magnitude is the relevant figure. Months with no transactions count as zero.
  */
 export function ewmaMonthlyContribution(
-  txs: readonly InvestmentTx[],
+  txs: readonly LiabilityTx[],
   asOfMonthStart: Date,
   windowMonths = 36,
 ): number {
   const samples: number[] = [];
   for (let i = 1; i <= windowMonths; i++) {
-    const monthStart = addMonths(asOfMonthStart, -i);
-    const nextMonth = addMonths(monthStart, 1);
-    let sum = 0;
-    for (const tx of txs) {
-      if (tx.date >= monthStart && tx.date < nextMonth) {
-        sum += tx.units * tx.price;
-      }
-    }
-    samples.push(sum);
+    samples.push(sumLiabilityTxInMonth(txs, addMonths(asOfMonthStart, -i)));
   }
   return ewma(samples);
 }

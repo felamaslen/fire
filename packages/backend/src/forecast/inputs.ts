@@ -67,7 +67,8 @@ export async function loadForecastInputs(
     liabilityTxs,
     loanBills,
     nonLiabilityBills,
-    { portfolioTxs, portfolioAssetIds },
+    { portfolioInvestmentTxs, portfolioAssetIds },
+    portfolioContributionTxs,
     payslips,
     accountIds,
   ] = await Promise.all([
@@ -76,7 +77,8 @@ export async function loadForecastInputs(
     loadLiabilityTxs(ewmaCutoff),
     loadLoanBills(),
     loadNonLiabilityBills(asOfDate),
-    loadPortfolioTxs(ewmaCutoff),
+    loadPortfolioInvestmentTxs(ewmaCutoff),
+    loadPortfolioContributionTxs(ewmaCutoff),
     loadPayslips(ewmaCutoff),
     loadAccountIds(),
   ]);
@@ -89,7 +91,7 @@ export async function loadForecastInputs(
   const terminalDate = latestEntryDate ?? asOfDate;
   const xirrByAsset = new Map<string, number | null>();
   for (const assetId of portfolioAssetIds) {
-    const txs = portfolioTxs.get(assetId) ?? [];
+    const txs = portfolioInvestmentTxs.get(assetId) ?? [];
     if (txs.length === 0) {
       xirrByAsset.set(assetId, null);
       continue;
@@ -123,7 +125,7 @@ export async function loadForecastInputs(
     startingBalance,
     liabilityTxs,
     loanBills,
-    portfolioTxs,
+    portfolioContributionTxs,
     payslips,
     accountIds,
     nonLiabilityBills,
@@ -305,8 +307,9 @@ async function loadNonLiabilityBills(asOfDate: Date): Promise<LiabilityBill[]> {
   return rows;
 }
 
-async function loadPortfolioTxs(cutoff: Date): Promise<{
-  portfolioTxs: Map<string, InvestmentTx[]>;
+/** Per-wrapper investment transactions — used to compute each portfolio's XIRR. `units * price` gives the flow for the XIRR solver; we don't use these rows for the forward contribution EWMA (see `loadPortfolioContributionTxs`). */
+async function loadPortfolioInvestmentTxs(cutoff: Date): Promise<{
+  portfolioInvestmentTxs: Map<string, InvestmentTx[]>;
   portfolioAssetIds: string[];
 }> {
   const rows = await db
@@ -334,9 +337,37 @@ async function loadPortfolioTxs(cutoff: Date): Promise<{
     out.set(r.assetId, arr);
   }
   return {
-    portfolioTxs: out,
+    portfolioInvestmentTxs: out,
     portfolioAssetIds: [...out.keys()],
   };
+}
+
+/** Per-wrapper contribution transactions — `PlanningTransactions` with an `assetId` set. Each row is a cash outflow from a planning account into the wrapper's investments; the forecast EWMAs `|amount|` per month to project ongoing contributions. */
+async function loadPortfolioContributionTxs(
+  cutoff: Date,
+): Promise<Map<string, LiabilityTx[]>> {
+  const rows = await db
+    .select({
+      assetId: PlanningTransactions.assetId,
+      date: PlanningTransactions.date,
+      amount: PlanningTransactions.amount,
+    })
+    .from(PlanningTransactions)
+    .where(
+      and(
+        isNotNull(PlanningTransactions.assetId),
+        gte(PlanningTransactions.date, cutoff),
+        eq(PlanningTransactions.currency, HOME_CURRENCY),
+      ),
+    );
+  const out = new Map<string, LiabilityTx[]>();
+  for (const r of rows) {
+    if (!r.assetId) continue;
+    const arr = out.get(r.assetId) ?? [];
+    arr.push({ date: r.date, amount: r.amount });
+    out.set(r.assetId, arr);
+  }
+  return out;
 }
 
 async function loadPayslips(cutoff: Date): Promise<Payslip[]> {

@@ -3,7 +3,6 @@ import {
   ewma,
   ewmaMonthlyContribution,
   ewmaPayslipNet,
-  type InvestmentTx,
   type LiabilityBill,
   type LiabilityTx,
   loanEwmaRepayment,
@@ -205,40 +204,39 @@ describe("ewmaMonthlyContribution", () => {
     expect(ewmaMonthlyContribution([], asOf)).toBe(0);
   });
 
-  it("recovers a constant monthly buy", () => {
-    const txs: InvestmentTx[] = [];
+  it("recovers a constant monthly contribution", () => {
+    const txs: LiabilityTx[] = [];
     for (let i = 1; i <= 36; i++) {
-      txs.push({
-        date: new Date(Date.UTC(2026, 3 - i, 15)),
-        units: 10,
-        price: 100,
-      });
+      txs.push({ date: new Date(Date.UTC(2026, 3 - i, 15)), amount: -1000 });
     }
     expect(ewmaMonthlyContribution(txs, asOf)).toBeCloseTo(1000);
   });
 
-  it("nets buys and sells within the same month", () => {
-    const txs: InvestmentTx[] = [
-      { date: new Date(Date.UTC(2026, 2, 10)), units: 20, price: 100 }, // +2000
-      { date: new Date(Date.UTC(2026, 2, 20)), units: -5, price: 120 }, // -600
+  it("sums absolute values within the same month", () => {
+    // PlanningTransactions outflows are negative, but occasional inflows
+    // (e.g. a withdrawal recorded as positive on the wrapper) must still
+    // contribute their magnitude to the EWMA.
+    const txs: LiabilityTx[] = [
+      { date: new Date(Date.UTC(2026, 2, 10)), amount: -1000 },
+      { date: new Date(Date.UTC(2026, 2, 20)), amount: 400 },
     ];
     const result = ewmaMonthlyContribution(txs, asOf, 3);
-    // The single non-zero month contributes +1400 — EWMA over
-    // [1400, 0, 0] is strictly above 0 and below 1400.
+    // Only Mar 2026 has activity (|-1000| + |400| = 1400) → EWMA over
+    // [1400, 0, 0] sits strictly above 0 and below 1400.
     expect(result).toBeGreaterThan(0);
     expect(result).toBeLessThan(1400);
   });
 
   it("skips the current (partially-elapsed) month", () => {
-    const txs: InvestmentTx[] = [
-      { date: new Date(Date.UTC(2026, 3, 10)), units: 1000, price: 1 },
+    const txs: LiabilityTx[] = [
+      { date: new Date(Date.UTC(2026, 3, 10)), amount: -1000 },
     ];
     expect(ewmaMonthlyContribution(txs, asOf)).toBe(0);
   });
 
   it("truncates to `windowMonths` of history", () => {
-    const txs: InvestmentTx[] = [
-      { date: new Date(Date.UTC(2026, 3 - 40, 10)), units: 10000, price: 100 },
+    const txs: LiabilityTx[] = [
+      { date: new Date(Date.UTC(2026, 3 - 40, 10)), amount: -10000 },
     ];
     expect(ewmaMonthlyContribution(txs, asOf, 36)).toBe(0);
   });

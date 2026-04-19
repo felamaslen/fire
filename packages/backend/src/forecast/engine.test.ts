@@ -14,7 +14,7 @@ function baseInputs(overrides: Partial<ForecastInputs> = {}): ForecastInputs {
     startingBalance: new Map(),
     liabilityTxs: new Map(),
     loanBills: new Map(),
-    portfolioTxs: new Map(),
+    portfolioContributionTxs: new Map(),
     payslips: [],
     accountIds: [],
     nonLiabilityBills: [],
@@ -75,13 +75,12 @@ describe("runForecast", () => {
       assetType: "STOCK",
       xirr: 0, // growth factor = 1, so only contributions accumulate
     };
-    const portfolioTxs = new Map([
+    const portfolioContributionTxs = new Map([
       [
         isa.id,
         Array.from({ length: 36 }, (_, i) => ({
           date: new Date(Date.UTC(2026, 3 - (i + 1), 15)),
-          units: 10,
-          price: 100,
+          amount: -1000,
         })),
       ],
     ]);
@@ -89,7 +88,7 @@ describe("runForecast", () => {
       baseInputs({
         categories: [isa],
         startingBalance: new Map([[isa.id, 100000]]),
-        portfolioTxs,
+        portfolioContributionTxs,
       }),
     );
     const w = workings.categories.find((c) => c.categoryId === isa.id);
