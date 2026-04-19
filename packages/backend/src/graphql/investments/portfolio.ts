@@ -390,10 +390,8 @@ async function loadDailySeriesMinor(
   }
 
   let minDate = priceRows[0].date;
-  let maxDate = priceRows[0].date;
   for (const p of priceRows) {
     if (p.date < minDate) minDate = p.date;
-    if (p.date > maxDate) maxDate = p.date;
   }
 
   // Units-on-day for (investment, d) = Σ (tx.units × product(splits where
@@ -419,46 +417,58 @@ async function loadDailySeriesMinor(
 
   const totals = new Map<string, number>();
   const msDay = 86400 * 1000;
-  for (let d = minDate.getTime(); d <= maxDate.getTime(); d += msDay) {
-    const day = new Date(d);
-    let totalMinor = 0;
-    for (const inv of held) {
-      const units = unitsOn(inv.id, day);
-      const price = lastOnOrBefore(
-        priceByInv.get(inv.id) ?? [],
-        day,
-        (x) => x.date,
-        (x) => x.price,
-        null,
-      );
-      if (price === null || units === 0) continue;
-      totalMinor += units * price;
-    }
-    totals.set(day.toISOString().slice(0, 10), totalMinor);
-  }
-
-  // Always emit a final point for today using the same live-quote-aware
-  // `priceLatest` the headline's aggregates use. Without this, the chart's
-  // last point trails the headline (which folds in live quotes) and chart
-  // days between the last cached `InvestmentPrices.date` and today are blank.
-  const today = new Date();
+  const now = new Date();
+  const today = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  const todayMs = today.getTime();
   const todayKey = today.toISOString().slice(0, 10);
-  let todayTotal = 0;
+
+  // Accumulate each investment's contribution into `totals` one investment at
+  // a time, running the loop all the way to today:
+  // - Carry the *previous* day's value across each split date, since the
+  //   stored `price` row and the `unitsOn` split multiplier don't always
+  //   agree on which side of the split boundary to land on (data providers
+  //   differ on whether ex-date close is pre- or post-split) — otherwise
+  //   shows up as a one-day spike in candlestick wicks.
+  // - Past the investment's last cached price row, keep multiplying a stale
+  //   price by `unitsOn(day)` so a sale transaction dated after that last
+  //   price still zeros the investment's contribution at the sell date. If
+  //   we stopped at the last cached price, a sold stock whose prices stopped
+  //   being tracked would leave a ghost band persisting to today.
+  // - Use the live-quote-aware `priceLatest` / `unitsHeld` from `held` for
+  //   today's point so the chart lines up with the headline totals.
   for (const inv of held) {
-    if (inv.unitsHeld === 0 || inv.priceLatest === null) continue;
-    todayTotal += inv.unitsHeld * inv.priceLatest;
-  }
-  if (todayTotal > 0) {
-    // Forward-fill every missing day between `maxDate` and today with the
-    // cached per-day total, so the chart doesn't flatline from day N to today
-    // while waiting for the live quote to re-anchor things.
-    const lastKey = maxDate.toISOString().slice(0, 10);
-    const lastValue = totals.get(lastKey) ?? 0;
-    for (let d = maxDate.getTime() + msDay; d < today.getTime(); d += msDay) {
-      const key = new Date(d).toISOString().slice(0, 10);
-      if (!totals.has(key)) totals.set(key, lastValue);
+    const invSplitMs = new Set(
+      (splitsByInv.get(inv.id) ?? []).map((s) => s.date.getTime()),
+    );
+    const invPrices = priceByInv.get(inv.id) ?? [];
+    let lastValue = 0;
+    for (let d = minDate.getTime(); d < todayMs; d += msDay) {
+      const day = new Date(d);
+      let v: number;
+      if (invSplitMs.has(d)) {
+        v = lastValue;
+      } else {
+        const units = unitsOn(inv.id, day);
+        const price = lastOnOrBefore(
+          invPrices,
+          day,
+          (x) => x.date,
+          (x) => x.price,
+          null,
+        );
+        v = price === null || units === 0 ? 0 : units * price;
+      }
+      const key = day.toISOString().slice(0, 10);
+      totals.set(key, (totals.get(key) ?? 0) + v);
+      lastValue = v;
     }
-    totals.set(todayKey, todayTotal);
+    const todayV =
+      inv.unitsHeld === 0 || inv.priceLatest === null
+        ? 0
+        : inv.unitsHeld * inv.priceLatest;
+    totals.set(todayKey, (totals.get(todayKey) ?? 0) + todayV);
   }
 
   return totals;
