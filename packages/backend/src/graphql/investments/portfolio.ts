@@ -436,6 +436,31 @@ async function loadDailySeriesMinor(
     }
     totals.set(day.toISOString().slice(0, 10), totalMinor);
   }
+
+  // Always emit a final point for today using the same live-quote-aware
+  // `priceLatest` the headline's aggregates use. Without this, the chart's
+  // last point trails the headline (which folds in live quotes) and chart
+  // days between the last cached `InvestmentPrices.date` and today are blank.
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  let todayTotal = 0;
+  for (const inv of held) {
+    if (inv.unitsHeld === 0 || inv.priceLatest === null) continue;
+    todayTotal += inv.unitsHeld * inv.priceLatest;
+  }
+  if (todayTotal > 0) {
+    // Forward-fill every missing day between `maxDate` and today with the
+    // cached per-day total, so the chart doesn't flatline from day N to today
+    // while waiting for the live quote to re-anchor things.
+    const lastKey = maxDate.toISOString().slice(0, 10);
+    const lastValue = totals.get(lastKey) ?? 0;
+    for (let d = maxDate.getTime() + msDay; d < today.getTime(); d += msDay) {
+      const key = new Date(d).toISOString().slice(0, 10);
+      if (!totals.has(key)) totals.set(key, lastValue);
+    }
+    totals.set(todayKey, todayTotal);
+  }
+
   return totals;
 }
 
