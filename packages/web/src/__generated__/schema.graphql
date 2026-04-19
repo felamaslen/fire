@@ -1424,7 +1424,7 @@ type Portfolio {
   """
   investment: Investment
   """
-  Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero.
+  Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero.
   """
   percentGain: Float
   """
@@ -1432,15 +1432,26 @@ type Portfolio {
   """
   timeseries(length: Int, period: PortfolioTimePeriod!): PortfolioTimeseries!
   """
-  Net capital-in for currently held units (excluding fees and taxes). Each buy adds its consideration, each sell subtracts it.
+  Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes.
   """
   totalCost: Money!
-  """Unrealised gain on the filtered portfolio — `totalValue - totalCost`."""
+  """
+  Total return (realised + unrealised) on the filtered portfolio — `totalValue - totalCost`.
+  """
   totalGain: Money
   """
-  Current market value of the filtered portfolio. Zero when nothing is held.
+  Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down.
   """
   totalValue: Money
+  """
+  Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge.
+  """
+  xirr(
+    """
+    When `true`, ignore any live quote and terminate against the most recent cached close instead.
+    """
+    skipLive: Boolean
+  ): Float
 }
 
 """

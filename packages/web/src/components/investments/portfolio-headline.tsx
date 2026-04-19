@@ -14,7 +14,7 @@ const PortfolioHeadlineDocument = graphql(
         currency
         totalValue { ...Figure }
         totalGain { amount ...Figure }
-        percentGain
+        xirr(skipLive: $skipLive)
         dailyGainValue(skipLive: $skipLive) { amount ...Figure }
         dailyGainPercent(skipLive: $skipLive)
       }
@@ -83,8 +83,8 @@ export function PortfolioHeadline() {
         label="Total gain"
         colorSign={portfolio?.totalGain?.amount}
         sub={
-          portfolio?.percentGain != null
-            ? `${(portfolio.percentGain * 100).toFixed(2)}%`
+          portfolio?.xirr != null
+            ? `${(portfolio.xirr * 100).toFixed(2)}% / yr`
             : null
         }
       >
