@@ -252,11 +252,15 @@ export async function loadInvestmentTransactionsConnection(
   investmentId: string,
   first?: Int | null,
   after?: ID | null,
+  filterAssetId?: string | null,
 ): Promise<Connection<InvestmentTransaction>> {
   const limit = first ?? 15;
   const cursor = after ? decodeCursor(after) : null;
 
   const conditions = [eq(InvestmentTransactions.investmentId, investmentId)];
+  if (filterAssetId) {
+    conditions.push(eq(InvestmentTransactions.assetId, filterAssetId));
+  }
   if (cursor) {
     const cursorDate = new Date(cursor.c);
     conditions.push(

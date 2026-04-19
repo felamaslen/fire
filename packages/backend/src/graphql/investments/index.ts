@@ -5,7 +5,7 @@ import { GraphQLError } from "graphql";
 import type { ID, Int } from "grats";
 
 import { db } from "@/db";
-import { Investments } from "@/db/schema/investments";
+import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import { readOrRefresh } from "@/tasks/yahoo";
 
 import type { Context } from "../context";
@@ -99,7 +99,7 @@ export class Investment {
     return loadInvestmentTransactions(this.id);
   }
 
-  /** Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default.
+  /** Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default. Pass `filterAssetId` to scope to a single wrapper.
    *
    * @gqlField
    * @gqlAnnotate semanticNonNull
@@ -107,8 +107,15 @@ export class Investment {
   async transactionsPaged(
     first?: Int | null,
     after?: ID | null,
+    /** When set, only transactions booked against this wrapper are returned. */
+    filterAssetId?: ID | null,
   ): Promise<Connection<InvestmentTransaction> | null> {
-    return loadInvestmentTransactionsConnection(this.id, first, after);
+    return loadInvestmentTransactionsConnection(
+      this.id,
+      first,
+      after,
+      filterAssetId,
+    );
   }
 
   /** Stock-split events on this investment, oldest-first.
@@ -138,9 +145,17 @@ export class Investment {
     );
   }
 
-  /** Holdings, cost basis, and gain/loss aggregated across every wrapper. @gqlField */
-  async position(ctx: Context): Promise<InvestmentPosition> {
-    const s = await loadInvestmentStats(ctx, this.id);
+  /** Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to a single wrapper when `filterAssetId` is supplied. @gqlField */
+  async position(
+    ctx: Context,
+    /** When set, the position is scoped to this wrapper. */
+    filterAssetId?: ID | null,
+  ): Promise<InvestmentPosition> {
+    const s = await loadInvestmentStats(
+      ctx,
+      this.id,
+      filterAssetId ?? undefined,
+    );
     return new InvestmentPosition(s);
   }
 
@@ -264,12 +279,24 @@ export async function investments(
   first?: Int | null,
   after?: ID | null,
   sort?: InvestmentSort | null,
+  /** When set, only investments with at least one transaction booked against this wrapper are returned, and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to that wrapper. */
+  filterAssetId?: ID | null,
 ): Promise<Connection<Investment> | null> {
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const afterCursor = after ? decodeCursor(after) : null;
   const { key, direction } = parseSortInput(sort);
 
-  const rows = await db.select().from(Investments);
+  const allRows = await db.select().from(Investments);
+  const rows = filterAssetId
+    ? await (async () => {
+        const ids = await db
+          .selectDistinct({ id: InvestmentTransactions.investmentId })
+          .from(InvestmentTransactions)
+          .where(eq(InvestmentTransactions.assetId, filterAssetId));
+        const keep = new Set(ids.map((r) => r.id));
+        return allRows.filter((row) => keep.has(row.id));
+      })()
+    : allRows;
 
   // Only load stats for rows when the caller actually needs them to sort.
   const enriched: {
@@ -285,7 +312,11 @@ export async function investments(
         }))
       : await Promise.all(
           rows.map(async (row) => {
-            const s = await loadInvestmentStats(ctx, row.id);
+            const s = await loadInvestmentStats(
+              ctx,
+              row.id,
+              filterAssetId ?? undefined,
+            );
             const totalValue =
               s.priceLatest === null ? null : s.unitsHeld * s.priceLatest;
             const totalGain =

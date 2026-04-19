@@ -750,11 +750,17 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 position: {
-                    description: "Holdings, cost basis, and gain/loss aggregated across every wrapper.",
+                    description: "Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to a single wrapper when `filterAssetId` is supplied.",
                     name: "position",
                     type: new GraphQLNonNull(InvestmentPositionType),
-                    resolve(source, _args, context) {
-                        return source.position(context);
+                    args: {
+                        filterAssetId: {
+                            description: "When set, the position is scoped to this wrapper.",
+                            type: GraphQLID
+                        }
+                    },
+                    resolve(source, args, context) {
+                        return source.position(context, args.filterAssetId);
                     }
                 },
                 stockSplits: {
@@ -774,11 +780,15 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 transactionsPaged: {
-                    description: "Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default.",
+                    description: "Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default. Pass `filterAssetId` to scope to a single wrapper.",
                     name: "transactionsPaged",
                     type: InvestmentTransactionConnectionType,
                     args: {
                         after: {
+                            type: GraphQLID
+                        },
+                        filterAssetId: {
+                            description: "When set, only transactions booked against this wrapper are returned.",
                             type: GraphQLID
                         },
                         first: {
@@ -786,7 +796,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(source, args) {
-                        return assertNonNull(source.transactionsPaged(args.first, args.after));
+                        return assertNonNull(source.transactionsPaged(args.first, args.after, args.filterAssetId));
                     }
                 },
                 unitPriceCached: {
@@ -1798,6 +1808,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         after: {
                             type: GraphQLID
                         },
+                        filterAssetId: {
+                            description: "When set, only investments with at least one transaction booked against this wrapper are returned, and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to that wrapper.",
+                            type: GraphQLID
+                        },
                         first: {
                             type: GraphQLInt
                         },
@@ -1806,7 +1820,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args, context) {
-                        return assertNonNull(queryInvestmentsResolver(context, args.first, args.after, args.sort));
+                        return assertNonNull(queryInvestmentsResolver(context, args.first, args.after, args.sort, args.filterAssetId));
                     }
                 },
                 netWorth: {
