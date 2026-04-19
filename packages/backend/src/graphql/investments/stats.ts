@@ -9,6 +9,8 @@ import {
 } from "@/db/schema/investments";
 import { readOrRefresh } from "@/tasks/yahoo";
 
+import { type Context, contextAwareDataLoader } from "../context";
+
 /**
  * Aggregated numbers for an investment (optionally scoped to a single wrapper), computed from the raw transactions and the cached price history.
  *
@@ -42,8 +44,15 @@ export type InvestmentStats = {
 
 /**
  * Load the raw stats for an investment (and optionally a wrapper). Caller combines them into `Money` / `Float` fields.
+ *
+ * Exported as a `Context`-aware loader: repeated calls for the same `(investmentId, assetId)` within a single request share the underlying DB work. Callers on hot paths (list resolvers, portfolio roll-ups) therefore don't fire the four underlying queries once per invocation — `Investment.position` and `investments()`'s sort key both key into the same cached promise.
  */
-export async function loadInvestmentStats(
+export const loadInvestmentStats = contextAwareDataLoader(
+  (_ctx: Context, investmentId: string, assetId?: string) =>
+    loadInvestmentStatsFromDb(investmentId, assetId),
+);
+
+async function loadInvestmentStatsFromDb(
   investmentId: string,
   assetId?: string,
 ): Promise<InvestmentStats> {

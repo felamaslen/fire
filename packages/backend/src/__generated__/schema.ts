@@ -718,7 +718,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 position: {
                     description: "Holdings, cost basis, and gain/loss filtered to this wrapper.",
                     name: "position",
-                    type: new GraphQLNonNull(InvestmentPositionType)
+                    type: new GraphQLNonNull(InvestmentPositionType),
+                    resolve(source, _args, context) {
+                        return source.position(context);
+                    }
                 }
             };
         }
@@ -749,7 +752,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 position: {
                     description: "Holdings, cost basis, and gain/loss aggregated across every wrapper.",
                     name: "position",
-                    type: new GraphQLNonNull(InvestmentPositionType)
+                    type: new GraphQLNonNull(InvestmentPositionType),
+                    resolve(source, _args, context) {
+                        return source.position(context);
+                    }
                 },
                 stockSplits: {
                     description: "Stock-split events on this investment, oldest-first.",
@@ -786,7 +792,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 unitPriceCached: {
                     description: "Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.",
                     name: "unitPriceCached",
-                    type: MoneyType
+                    type: MoneyType,
+                    resolve(source, _args, context) {
+                        return source.unitPriceCached(context);
+                    }
                 },
                 unitPriceLatest: {
                     description: "Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).",
@@ -1796,8 +1805,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: InvestmentSortType
                         }
                     },
-                    resolve(_source, args) {
-                        return assertNonNull(queryInvestmentsResolver(args.first, args.after, args.sort));
+                    resolve(_source, args, context) {
+                        return assertNonNull(queryInvestmentsResolver(context, args.first, args.after, args.sort));
                     }
                 },
                 netWorth: {
