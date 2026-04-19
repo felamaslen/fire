@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { cn } from "@/lib/cn";
+import { currencySymbol } from "@/lib/format";
 
 export interface InputProps
   extends React.InputHTMLAttributes<HTMLInputElement> {
@@ -8,25 +9,6 @@ export interface InputProps
   endAdornment?: React.ReactNode;
   /** ISO-4217 currency code (e.g. `"GBP"`). When set, the locale-appropriate currency symbol is rendered as the start adornment. Overrides `startAdornment`. */
   currency?: string;
-}
-
-/** `Intl.NumberFormat` is expensive to construct; cache one per currency. */
-const symbolCache = new Map<string, string>();
-
-function currencySymbol(currency: string): string {
-  let s = symbolCache.get(currency);
-  if (s !== undefined) return s;
-  try {
-    const parts = new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-    }).formatToParts(0);
-    s = parts.find((p) => p.type === "currency")?.value ?? currency;
-  } catch {
-    s = currency;
-  }
-  symbolCache.set(currency, s);
-  return s;
 }
 
 const baseInputClasses =
