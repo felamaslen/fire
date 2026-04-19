@@ -3,7 +3,17 @@
  */
 
 import { addMonths, startOfMonth } from "date-fns";
-import { and, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  or,
+} from "drizzle-orm";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
@@ -65,7 +75,7 @@ export async function loadForecastInputs(
     loadStartingBalances(),
     loadLiabilityTxs(ewmaCutoff),
     loadLoanBills(),
-    loadNonLiabilityBills(),
+    loadNonLiabilityBills(asOfDate),
     loadPortfolioTxs(ewmaCutoff),
     loadPayslips(ewmaCutoff),
     loadAccountIds(),
@@ -270,7 +280,7 @@ async function loadLoanBills(): Promise<Map<string, LiabilityBill[]>> {
   return out;
 }
 
-async function loadNonLiabilityBills(): Promise<LiabilityBill[]> {
+async function loadNonLiabilityBills(asOfDate: Date): Promise<LiabilityBill[]> {
   const rows = await db
     .select({
       start: PlanningBills.start,
@@ -284,6 +294,12 @@ async function loadNonLiabilityBills(): Promise<LiabilityBill[]> {
       and(
         isNull(PlanningBills.liabilityId),
         eq(PlanningBills.currency, HOME_CURRENCY),
+        lte(PlanningBills.start, asOfDate),
+        // `end` null ⇒ open-ended; otherwise the bill must still be
+        // in effect as of today. Without this, bills for expired
+        // rentals / previous mortgages / sold vehicles inflate the
+        // monthly spend projection.
+        or(isNull(PlanningBills.end), gte(PlanningBills.end, asOfDate)),
       ),
     );
   return rows;
