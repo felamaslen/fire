@@ -1,6 +1,20 @@
 import { Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/cn";
+
+const ACTIONS_SLOT_ID = "nav-header-actions";
+
+/** Portal children into the `NavHeader`'s right-side actions slot. Used by
+ * pages that want page-scoped controls in the global app header. */
+export function NavHeaderActions({ children }: { children: React.ReactNode }) {
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setEl(document.getElementById(ACTIONS_SLOT_ID));
+  }, []);
+  return el ? createPortal(children, el) : null;
+}
 
 const LINKS: {
   to: "/" | "/planning" | "/investments";
@@ -32,6 +46,7 @@ export function NavHeader() {
             {l.label}
           </Link>
         ))}
+        <div id={ACTIONS_SLOT_ID} className="ml-auto flex items-center gap-1" />
       </nav>
     </header>
   );

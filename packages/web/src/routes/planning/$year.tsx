@@ -1,11 +1,24 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { isSameMonth } from "date-fns/isSameMonth";
-import { AlertTriangle, Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Briefcase,
+  Check,
+  Pencil,
+  PiggyBank,
+  Plus,
+  Receipt,
+  Scale,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { Figure, FigureDocument } from "@/components/figure";
+import { NavHeaderActions } from "@/components/nav-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -259,7 +272,7 @@ type AssetOption = Extract<
 
 function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
   return (
-    <div className="flex items-baseline gap-3">
+    <>
       <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
         Planning · {fyLabel(year)}
         {!hasTaxRates && (
@@ -281,34 +294,71 @@ function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
           </Tooltip>
         )}
       </h1>
-      <nav className="ml-auto flex items-center gap-2">
-        <Button asChild variant="outline" size="sm">
-          <Link to="/planning/$year/accounts" params={{ year }}>
-            Manage accounts
+      <NavHeaderActions>
+        <ManageIconLink
+          to="/planning/$year/accounts"
+          year={year}
+          label="Manage accounts"
+          icon={<PiggyBank className="size-6" />}
+        />
+        <ManageIconLink
+          to="/planning/$year/earnings"
+          year={year}
+          label="Manage earnings"
+          icon={<Briefcase className="size-6" />}
+        />
+        <ManageIconLink
+          to="/planning/$year/bills"
+          year={year}
+          label="Manage bills"
+          icon={<Receipt className="size-6" />}
+        />
+        <ManageIconLink
+          to="/planning/$year/payslips"
+          year={year}
+          label="Manage payslips"
+          icon={<Upload className="size-6" />}
+        />
+        <ManageIconLink
+          to="/planning/$year/tax-rates"
+          year={year}
+          label="Manage tax rates"
+          icon={<Scale className="size-6" />}
+        />
+      </NavHeaderActions>
+    </>
+  );
+}
+
+type ManageRoute =
+  | "/planning/$year/accounts"
+  | "/planning/$year/earnings"
+  | "/planning/$year/bills"
+  | "/planning/$year/payslips"
+  | "/planning/$year/tax-rates";
+
+function ManageIconLink({
+  to,
+  year,
+  label,
+  icon,
+}: {
+  to: ManageRoute;
+  year: string;
+  label: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button asChild variant="ghost" size="icon" aria-label={label}>
+          <Link to={to} params={{ year }}>
+            {icon}
           </Link>
         </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/planning/$year/earnings" params={{ year }}>
-            Manage earnings
-          </Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/planning/$year/bills" params={{ year }}>
-            Manage bills
-          </Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/planning/$year/payslips" params={{ year }}>
-            Manage payslips
-          </Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/planning/$year/tax-rates" params={{ year }}>
-            Manage tax rates
-          </Link>
-        </Button>
-      </nav>
-    </div>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -374,13 +424,16 @@ function PlanningTable({
   const today = useToday();
 
   return (
-    <div className="max-h-[calc(100svh-10rem)] overflow-auto rounded-md border bg-background">
-      <Table className="border-separate border-spacing-0 text-xs">
+    <div className="rounded-md border bg-background">
+      <Table
+        containerClassName="overflow-visible"
+        className="border-separate border-spacing-0 text-xs"
+      >
         <TableHeader className="bg-muted">
           <TableRow className="hover:bg-muted">
             <TableHead
               className={cn(
-                "sticky top-0 left-0 z-30 w-8 min-w-8 max-w-8 bg-muted",
+                "sticky top-12 left-0 z-30 w-8 min-w-8 max-w-8 bg-muted",
                 cellBorder,
               )}
             />
@@ -388,7 +441,7 @@ function PlanningTable({
               <TableHead
                 key={a.id}
                 className={cn(
-                  "sticky top-0 z-20 min-w-56 bg-muted",
+                  "sticky top-12 z-20 min-w-56 bg-muted",
                   cellBorder,
                 )}
               >
@@ -407,14 +460,16 @@ function PlanningTable({
                 <TableHead
                   scope="row"
                   className={cn(
-                    "sticky left-0 z-10 h-px w-8 min-w-8 max-w-8 bg-background p-0 text-center align-middle font-medium",
+                    "sticky left-0 z-10 relative w-8 min-w-8 max-w-8 bg-background p-0 font-medium",
                     isCurrent && "text-primary",
                     cellBorder,
                   )}
                 >
-                  <span className="flex h-full min-h-20 items-center justify-center [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
-                    {formatMonth(month.date)}
-                  </span>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="[writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
+                      {formatMonth(month.date)}
+                    </span>
+                  </div>
                 </TableHead>
                 {accounts.length === 0
                   ? // Empty-state CTA: one cell spans the entire body next to the
