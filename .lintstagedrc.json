@@ -1,4 +1,5 @@
 {
   "*.ts": "eslint --fix",
+  "*.tsx": "eslint --fix",
   "*.sql": "prettier --write"
 }
