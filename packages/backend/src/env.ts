@@ -11,6 +11,10 @@ const schema = z.object({
   UPLOADS_DIR: z.string().min(1),
   /** Port the fastify server listens on when started as an entry point (not used in tests). */
   PORT: z.coerce.number().int().positive().default(4000),
+  /** Turns the OpenTelemetry SDK on / off. Defaults to off outside of `development` so tests and prod don't silently depend on a running collector. */
+  OTEL_ENABLED: z.stringbool().default(process.env.NODE_ENV === "development"),
+  /** Base URL of the OTLP/HTTP collector (no trailing path — `/v1/traces` is appended per signal). Matches the Jaeger all-in-one service defined in `docker-compose.yml`. */
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().default("http://localhost:4318"),
 });
 
 export const env = schema.parse(process.env);

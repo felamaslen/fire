@@ -17,5 +17,15 @@ services:
       timeout: 3s
       retries: 10
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI — http://localhost:16686
+      - "4318:4318" # OTLP/HTTP receiver (matches backend's OTEL_EXPORTER_OTLP_ENDPOINT default)
+      - "4317:4317" # OTLP/gRPC receiver
+
 volumes:
   postgres-data:
