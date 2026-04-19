@@ -5,6 +5,17 @@ import postgres from "postgres";
 const ADMIN_URL = "postgres://fire:fire@localhost:5433/postgres";
 const TEMPLATE_DB = "fire_template";
 
+/**
+ * Planning FY pre-seeded into the template DB so most planning tests can
+ * attach payslips / bills / earnings / transactions to a known year without
+ * each one paying the cost of `planningYearSet` (year row + 12 months). The
+ * default clock in `test/setup.ts` is `2026-04-18`, so FY `2026` is "today"
+ * and FY `2025` is the nearest past year — a natural fixture target. Tests
+ * that exercise year creation directly (`graphql/planning/planning.test.ts`)
+ * truncate `PlanningYears*` in their own `beforeEach` to start from empty.
+ */
+export const SEEDED_PLANNING_YEAR = 2025;
+
 export default async function globalSetup() {
   const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
   await admin.unsafe(`DROP DATABASE IF EXISTS "${TEMPLATE_DB}" WITH (FORCE)`);
@@ -18,7 +29,32 @@ export default async function globalSetup() {
   try {
     const db = drizzle(sql);
     await migrate(db, { migrationsFolder: "./src/db/migrations" });
+    await seedPlanningYearFixture(sql, SEEDED_PLANNING_YEAR);
   } finally {
     await sql.end();
   }
+}
+
+/**
+ * Write one `PlanningYears` row + its 12 `PlanningMonths` (April → March in
+ * UK FY terms) into the template DB. Kept as raw SQL — no app-schema
+ * imports — so global setup doesn't pull in the full module graph.
+ */
+async function seedPlanningYearFixture(
+  sql: postgres.Sql,
+  year: number,
+): Promise<void> {
+  await sql`INSERT INTO "PlanningYears" ("year") VALUES (${year})`;
+  // UK FY `year` runs April `year` → March `year + 1`. Each month anchors
+  // on the 1st of the month, matching what `planningYearSet` writes.
+  const rows = Array.from({ length: 12 }, (_, i) => {
+    const monthIdx = (3 + i) % 12; // 0-based: April = 3
+    const calendarYear = 3 + i < 12 ? year : year + 1;
+    const date = new Date(Date.UTC(calendarYear, monthIdx, 1));
+    return { year, date: date.toISOString().slice(0, 10) };
+  });
+  const values = rows.map((r) => `(${r.year}, '${r.date}')`).join(", ");
+  await sql.unsafe(
+    `INSERT INTO "PlanningMonths" ("year", "date") VALUES ${values}`,
+  );
 }

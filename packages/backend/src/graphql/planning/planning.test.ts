@@ -1,4 +1,16 @@
+import { sql } from "drizzle-orm";
+
+import { db } from "@/db";
 import { graphql, runGql } from "#test/gql";
+
+// This file asserts year-creation behaviour and enumerates years returned by
+// `planningYears` — the shared template seed (2025) from `test/global-setup.ts`
+// would skew those snapshots, so start from empty before each test.
+beforeEach(async () => {
+  await db.execute(
+    sql`TRUNCATE "PlanningYears", "PlanningMonths", "PlanningYearUKTaxRates" RESTART IDENTITY CASCADE`,
+  );
+});
 
 async function createAsset(name = "Current"): Promise<string> {
   const doc = graphql(`

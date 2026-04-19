@@ -48,14 +48,29 @@ beforeAll(async () => {
   }
 });
 
+/**
+ * Tables whose contents come from the template DB and should be preserved
+ * across tests. `global-setup.ts` pre-seeds a `PlanningYears` row + its 12
+ * `PlanningMonths` so planning tests don't each pay the cost of creating a
+ * year from scratch. Tests that exercise year creation directly
+ * (`graphql/planning/planning.test.ts`) truncate these in their own
+ * `beforeEach` to start from empty.
+ */
+const SEED_TABLES = new Set([
+  "PlanningYears",
+  "PlanningMonths",
+  "PlanningYearUKTaxRates",
+]);
+
 beforeEach(async () => {
   const { db } = await import("@/db");
   const rows = await db.execute<{ tablename: string }>(sql`
     SELECT tablename FROM pg_tables
     WHERE schemaname = 'public' AND tablename <> '__drizzle_migrations'
   `);
-  if (rows.length > 0) {
-    const list = rows.map((r) => `"${r.tablename}"`).join(", ");
+  const truncatable = rows.filter((r) => !SEED_TABLES.has(r.tablename));
+  if (truncatable.length > 0) {
+    const list = truncatable.map((r) => `"${r.tablename}"`).join(", ");
     await db.execute(sql.raw(`TRUNCATE ${list} RESTART IDENTITY CASCADE`));
   }
   // Wipe the uploads bucket so file-count assertions in upload tests are deterministic.
