@@ -6,13 +6,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, ExternalLink, Pencil, Plus } from "lucide-react";
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useState,
-  useTransition,
-} from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -306,11 +300,6 @@ function InvestmentsDialogLayout() {
 function InvestmentsPageContent() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  // Wrap option changes in a transition so the chart's suspense-query
-  // re-fetch doesn't bubble a fallback spinner up to the page-level
-  // Suspense — React keeps the previous render mounted until the new one
-  // is ready, and we dim it via `isPending`.
-  const [isPending, startTransition] = useTransition();
 
   // Bootstrap: captured once — used to seed URL + freeze initial query vars.
   const [bootstrap] = useState<InvestmentsSearch>(() =>
@@ -331,20 +320,16 @@ function InvestmentsPageContent() {
 
   const setChart = (next: PortfolioChartSettings) => {
     const patch = chartToSearch(next);
-    startTransition(() => {
-      void navigate({
-        search: (prev) => ({ ...prev, ...patch }),
-        replace: true,
-      });
+    void navigate({
+      search: (prev) => ({ ...prev, ...patch }),
+      replace: true,
     });
   };
   const setSort = (next: SortState) => {
     const patch = sortToSearch(next);
-    startTransition(() => {
-      void navigate({
-        search: (prev) => ({ ...prev, ...patch }),
-        replace: true,
-      });
+    void navigate({
+      search: (prev) => ({ ...prev, ...patch }),
+      replace: true,
     });
   };
 
@@ -368,12 +353,8 @@ function InvestmentsPageContent() {
   return (
     <>
       <PortfolioHeadline />
-      <PortfolioSection
-        settings={chart}
-        onChange={setChart}
-        pending={isPending}
-      />
-      <InvestmentsList sort={sort} onSortChange={setSort} pending={isPending} />
+      <PortfolioSection settings={chart} onChange={setChart} />
+      <InvestmentsList sort={sort} onSortChange={setSort} />
     </>
   );
 }
@@ -381,11 +362,9 @@ function InvestmentsPageContent() {
 function InvestmentsList({
   sort,
   onSortChange,
-  pending,
 }: {
   sort: SortState;
   onSortChange: (next: SortState) => void;
-  pending: boolean;
 }) {
   const setSort = (updater: (prev: SortState) => SortState) =>
     onSortChange(updater(sort));
@@ -420,7 +399,7 @@ function InvestmentsList({
     <div
       className={cn(
         "space-y-3 transition-opacity",
-        (loading || pending) && "pointer-events-none opacity-50",
+        loading && "pointer-events-none opacity-50",
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">

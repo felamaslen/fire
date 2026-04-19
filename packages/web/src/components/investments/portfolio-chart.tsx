@@ -93,8 +93,10 @@ export function PortfolioChart({
     const xMax = allXs.length ? Math.max(...allXs) : 1;
     // Float the Y axis to the data range rather than anchoring at 0, so a
     // portfolio that's always sat between £10k and £12k doesn't show up as
-    // a flat line at the top of the chart.
-    const dataMin = allYs.length ? Math.min(...allYs) : 0;
+    // a flat line at the top of the chart. For stacked charts the whole
+    // composition from 0 up is meaningful, so anchor min to 0 there.
+    const rawMin = allYs.length ? Math.min(...allYs) : 0;
+    const dataMin = stacked ? 0 : rawMin;
     const dataMax = allYs.length ? Math.max(...allYs) : 1;
     const {
       ticks: yTicks,
@@ -116,7 +118,7 @@ export function PortfolioChart({
       yScale: (y: number) =>
         AXIS_PAD_TOP + plotH - ((y - niceMin) / yRange) * plotH,
     };
-  }, [lines, candles, width, height, initialDate]);
+  }, [lines, candles, width, height, initialDate, stacked]);
 
   if (!lines?.length && (!candles || candles.points.length === 0)) {
     return (
@@ -308,10 +310,12 @@ export function PortfolioChartLegend({
         >
           <span
             aria-hidden
-            className="inline-block h-2.5 w-2.5 rounded-sm"
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
             style={{ background: l.color }}
           />
-          <span className="max-w-[14rem] truncate">{l.label}</span>
+          <span className="inline-block max-w-[8rem] truncate align-middle">
+            {l.label}
+          </span>
         </li>
       ))}
       {overflow > 0 && (
