@@ -21,6 +21,7 @@ import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
 import {
   AllocationsSection,
+  AllocationsSectionCashPositionFragment,
   AllocationsSectionInvestmentFragment,
 } from "@/components/investments/allocations-section";
 import {
@@ -170,6 +171,7 @@ const InvestmentsPageDocument = graphql(
           }
         }
       }
+      ...AllocationsSectionCashPosition
     }
   `,
   [
@@ -178,6 +180,7 @@ const InvestmentsPageDocument = graphql(
     PortfolioHeadlineFragment,
     PortfolioChartPortfolioFragment,
     AllocationsSectionInvestmentFragment,
+    AllocationsSectionCashPositionFragment,
   ],
 );
 

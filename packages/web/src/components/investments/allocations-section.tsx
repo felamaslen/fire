@@ -24,6 +24,18 @@ export const AllocationsSectionInvestmentFragment = graphql(`
         id
         name
         type
+        investmentAllocations {
+          investments {
+            allocation
+            investment {
+              id
+            }
+          }
+          cash {
+            amount
+            currency
+          }
+        }
       }
       position {
         units
@@ -32,6 +44,16 @@ export const AllocationsSectionInvestmentFragment = graphql(`
           currency
         }
       }
+    }
+  }
+`);
+
+/** Query-level fragment so the page prewarm can pull `cashPosition` in the same round-trip as the investments list. */
+export const AllocationsSectionCashPositionFragment = graphql(`
+  fragment AllocationsSectionCashPosition on Query {
+    cashPosition {
+      amount
+      currency
     }
   }
 `);
@@ -47,27 +69,14 @@ const AllocationsSectionDocument = graphql(
           }
         }
       }
+      ...AllocationsSectionCashPosition
     }
   `,
-  [AllocationsSectionInvestmentFragment],
+  [
+    AllocationsSectionInvestmentFragment,
+    AllocationsSectionCashPositionFragment,
+  ],
 );
-
-const InvestmentAllocationsDocument = graphql(`
-  query InvestmentAllocations($assetId: ID!) {
-    investmentAllocations(assetId: $assetId) {
-      investments {
-        allocation
-        investment {
-          id
-        }
-      }
-      cash {
-        amount
-        currency
-      }
-    }
-  }
-`);
 
 const InvestmentAllocationsSetDocument = graphql(`
   mutation InvestmentAllocationsSet(
@@ -100,7 +109,8 @@ const InvestmentCashAllocationSetDocument = graphql(`
 
 const CASH_COLOR = "#64748b";
 const WRAPPER_TYPES = new Set(["STOCK", "PENSION"]);
-const MIN_ALLOC = 0.001;
+const MIN_ALLOC = 0.01;
+const ALLOC_STEP = 0.01;
 const EPSILON = 1e-9;
 
 type Investment = ResultOf<typeof AllocationsSectionInvestmentFragment>;
@@ -135,6 +145,10 @@ type WrapperBucket = {
   assetName: string;
   assetType: string;
   holdings: WrapperHolding[];
+  /** Saved per-investment allocation targets for this wrapper (investmentId → fraction). */
+  savedAllocations: Map<string, number>;
+  /** Portfolio-wide saved cash target, pulled off this wrapper's `investmentAllocations.cash`. */
+  savedCash: { amount: number; currency: string } | null;
 };
 
 function bucketsByWrapper(investments: Investment[]): WrapperBucket[] {
@@ -154,11 +168,18 @@ function bucketsByWrapper(investments: Investment[]): WrapperBucket[] {
       if (existing) {
         existing.holdings.push(holding);
       } else {
+        const allocRows = w.asset.investmentAllocations?.investments ?? [];
+        const savedAllocations = new Map<string, number>();
+        for (const a of allocRows) {
+          savedAllocations.set(a.investment.id, a.allocation);
+        }
         map.set(w.asset.id, {
           assetId: w.asset.id,
           assetName: w.asset.name,
           assetType: w.asset.type,
           holdings: [holding],
+          savedAllocations,
+          savedCash: w.asset.investmentAllocations?.cash ?? null,
         });
       }
     }
@@ -248,30 +269,26 @@ export function AllocationsSection({
   );
   const seedAssetId = buckets[0]?.assetId ?? null;
 
-  // Cash is a portfolio-wide singleton — any wrapper's allocations query
-  // carries the same value. Query through `seedAssetId` to read it.
-  const { data: cashQueryData } = useQuery(InvestmentAllocationsDocument, {
-    variables: { assetId: seedAssetId ?? "" },
-    skip: !seedAssetId,
-    fetchPolicy: "cache-and-network",
-  });
-  const savedCash = cashQueryData?.investmentAllocations?.cash ?? null;
+  // Cash target is a portfolio-wide singleton — the same `cash` lives on
+  // every wrapper's `investmentAllocations` result; pick the first bucket's
+  // copy to read.
+  const savedCash = buckets[0]?.savedCash ?? null;
   const savedCashMajor = savedCash?.amount ?? 0;
   const cashCurrency = savedCash?.currency ?? portfolioCurrency;
+
+  const actualCashMajor = data
+    ? (readFragment(AllocationsSectionCashPositionFragment, data).cashPosition
+        ?.amount ?? 0)
+    : 0;
 
   const [pendingCashMajor, setPendingCashMajor] = useState<number | null>(null);
   const cashSnapshotRef = useRef<number | null>(null);
   const [saveCash, { loading: savingCash }] = useMutation(
     InvestmentCashAllocationSetDocument,
     {
-      refetchQueries: seedAssetId
-        ? [
-            {
-              query: InvestmentAllocationsDocument,
-              variables: { assetId: seedAssetId },
-            },
-          ]
-        : [],
+      refetchQueries: [
+        { query: AllocationsSectionDocument, variables: { first: 1000 } },
+      ],
       onError: (err) => toast.error(err.message),
       onCompleted: () => {
         toast.success("Cash target updated");
@@ -283,7 +300,23 @@ export function AllocationsSection({
   const investValueMajor = portfolioRows.reduce((a, r) => a + r.valueMinor, 0);
   const currentCashMajor = pendingCashMajor ?? savedCashMajor;
   const denom = currentCashMajor + investValueMajor;
-  const cashShare = denom > 0 ? currentCashMajor / denom : 0;
+
+  const actualDenom = actualCashMajor + investValueMajor;
+  const actualOverallSegments: AllocationSegment[] = [
+    {
+      id: "__cash__",
+      label: "Cash",
+      color: CASH_COLOR,
+      value: actualDenom > 0 ? actualCashMajor / actualDenom : 0,
+      title: `Cash (actual): ${formatAccountingMoney(cashCurrency, actualCashMajor, { compact: true })}`,
+    },
+    ...portfolioRows.map((r) => ({
+      id: r.investmentId,
+      label: r.label,
+      color: r.color,
+      value: actualDenom > 0 ? r.valueMinor / actualDenom : 0,
+    })),
+  ];
 
   const overallSegments: AllocationSegment[] = filterAssetId
     ? portfolioRows.map((r) => ({
@@ -298,6 +331,7 @@ export function AllocationsSection({
           label: "Cash",
           color: CASH_COLOR,
           value: denom > 0 ? currentCashMajor / denom : 0,
+          title: `Cash (target): ${formatAccountingMoney(cashCurrency, currentCashMajor, { compact: true })}`,
         },
         ...portfolioRows.map((r) => ({
           id: r.investmentId,
@@ -377,7 +411,7 @@ export function AllocationsSection({
         aria-hidden={!expanded}
       >
         <div className="min-h-0 overflow-hidden">
-          <div className="space-y-6 rounded-b-md rounded-t-sm border bg-background p-4 shadow-lg">
+          <div className="space-y-6 rounded-b-md rounded-t-none border bg-background p-4 shadow-lg">
             <div className="flex items-baseline justify-between">
               <h2 className="text-lg font-semibold tracking-tight">
                 Allocation targets
@@ -395,15 +429,23 @@ export function AllocationsSection({
                     Cash target:{" "}
                     {formatAccountingMoney(cashCurrency, currentCashMajor, {
                       compact: true,
-                    })}{" "}
-                    ({(cashShare * 100).toFixed(1)}%)
+                    })}
                     {savingCash ? " · saving…" : ""}
                   </span>
                 </div>
-                <AllocationBar
-                  segments={overallSegments}
-                  onBoundaryDrag={seedAssetId ? onCashBoundaryDrag : undefined}
-                />
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>Actual</span>
+                    <span>Target</span>
+                  </div>
+                  <AllocationBar segments={actualOverallSegments} compact />
+                  <AllocationBar
+                    segments={overallSegments}
+                    onBoundaryDrag={
+                      seedAssetId ? onCashBoundaryDrag : undefined
+                    }
+                  />
+                </div>
                 <p className="text-[11px] text-muted-foreground">
                   Drag the cash boundary to set the portfolio-wide cash target.
                   Investment slices reflect current realised weights.
@@ -440,22 +482,9 @@ function WrapperEditor({
   bucket: WrapperBucket;
   onDragStateChange: (active: boolean) => void;
 }) {
-  const { data } = useQuery(InvestmentAllocationsDocument, {
-    variables: { assetId: bucket.assetId },
-    fetchPolicy: "cache-and-network",
-  });
-
-  const savedByInvestment = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const a of data?.investmentAllocations?.investments ?? []) {
-      map.set(a.investment.id, a.allocation);
-    }
-    return map;
-  }, [data]);
-
   const baseline = useMemo(
-    () => seedAllocations(bucket, savedByInvestment),
-    [bucket, savedByInvestment],
+    () => seedAllocations(bucket, bucket.savedAllocations),
+    [bucket],
   );
 
   const [draft, setDraft] = useState<Map<string, number>>(baseline);
@@ -483,6 +512,9 @@ function WrapperEditor({
   const [save, { loading: saving }] = useMutation(
     InvestmentAllocationsSetDocument,
     {
+      refetchQueries: [
+        { query: AllocationsSectionDocument, variables: { first: 1000 } },
+      ],
       onError: (err) => toast.error(err.message),
       onCompleted: () => toast.success(`${bucket.assetName} allocations saved`),
     },
@@ -493,6 +525,14 @@ function WrapperEditor({
     label: h.label,
     color: h.color,
     value: draft.get(h.investmentId) ?? 0,
+  }));
+
+  const actualTotal = bucket.holdings.reduce((a, h) => a + h.valueMinor, 0);
+  const actualSegments: AllocationSegment[] = bucket.holdings.map((h) => ({
+    id: h.investmentId,
+    label: h.label,
+    color: h.color,
+    value: actualTotal > 0 ? h.valueMinor / actualTotal : 0,
   }));
 
   const commit = useCallback(
@@ -525,10 +565,12 @@ function WrapperEditor({
         const startRight = snap.map.get(rightId) ?? 0;
         const combined = startLeft + startRight;
         const maxLeft = combined - MIN_ALLOC;
-        const nextLeft = Math.max(
+        const raw = Math.max(
           MIN_ALLOC,
           Math.min(maxLeft, startLeft + fraction),
         );
+        const snapped = Math.round(raw / ALLOC_STEP) * ALLOC_STEP;
+        const nextLeft = Math.max(MIN_ALLOC, Math.min(maxLeft, snapped));
         const nextRight = combined - nextLeft;
         const nextMap = new Map(snap.map);
         nextMap.set(leftId, nextLeft);
@@ -559,7 +601,14 @@ function WrapperEditor({
           </p>
         </div>
       </div>
-      <AllocationBar segments={segments} onBoundaryDrag={onBoundaryDrag} />
+      <div className="space-y-1">
+        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+          <span>Actual</span>
+          <span>Target</span>
+        </div>
+        <AllocationBar segments={actualSegments} compact />
+        <AllocationBar segments={segments} onBoundaryDrag={onBoundaryDrag} />
+      </div>
       <AllocationTable bucket={bucket} draft={draft} baseline={baseline} />
     </div>
   );

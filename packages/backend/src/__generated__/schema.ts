@@ -7,12 +7,12 @@ import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
-import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, defaultFieldResolver, GraphQLInputObjectType } from "graphql";
+import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLUnionType, GraphQLInt, defaultFieldResolver, GraphQLBoolean, GraphQLInterfaceType, GraphQLInputObjectType } from "graphql";
+import { investmentAllocationsForAsset as netWorthCategoryAssetInvestmentAllocationsResolver, investmentAllocations as queryInvestmentAllocationsResolver, investmentAllocationsSet as mutationInvestmentAllocationsSetResolver, investmentCashAllocationSet as mutationInvestmentCashAllocationSetResolver } from "./../graphql/investments/allocations";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { cashPosition as queryCashPositionResolver } from "./../graphql/investments/cash-position";
 import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
-import { investmentAllocations as queryInvestmentAllocationsResolver, investmentAllocationsSet as mutationInvestmentAllocationsSetResolver, investmentCashAllocationSet as mutationInvestmentCashAllocationSetResolver } from "./../graphql/investments/allocations";
 import { investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
@@ -73,399 +73,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             YEARLY: {
                 value: "YEARLY"
             }
-        }
-    });
-    const NetWorthAssetTypeType: GraphQLEnumType = new GraphQLEnumType({
-        description: "Kind of asset a category represents.",
-        name: "NetWorthAssetType",
-        values: {
-            CASH: {
-                value: "CASH"
-            },
-            MISC: {
-                value: "MISC"
-            },
-            OPTION: {
-                value: "OPTION"
-            },
-            PENSION: {
-                value: "PENSION"
-            },
-            PROPERTY: {
-                value: "PROPERTY"
-            },
-            STOCK: {
-                value: "STOCK"
-            }
-        }
-    });
-    const NetWorthCategoryType: GraphQLInterfaceType = new GraphQLInterfaceType({
-        description: "A reusable bucket used to classify NetWorthValues (assets, liabilities, or options).",
-        name: "NetWorthCategory",
-        fields() {
-            return {
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                name: {
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
-    });
-    const NetWorthCategoryAssetType: GraphQLObjectType = new GraphQLObjectType({
-        name: "NetWorthCategoryAsset",
-        description: "A reusable bucket for assets (current account, pension pot, property, ...).",
-        fields() {
-            return {
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                name: {
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                type: {
-                    name: "type",
-                    type: new GraphQLNonNull(NetWorthAssetTypeType)
-                }
-            };
-        },
-        interfaces() {
-            return [NetWorthCategoryType];
-        }
-    });
-    const PlanningAccountType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningAccount",
-        description: "A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias.",
-        fields() {
-            return {
-                asset: {
-                    name: "asset",
-                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
-                },
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                name: {
-                    description: "Display name \u2014 the alias if one was set, otherwise the underlying asset's name.",
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
-    });
-    const NetWorthLiabilityTypeType: GraphQLEnumType = new GraphQLEnumType({
-        description: "Kind of liability a category represents.",
-        name: "NetWorthLiabilityType",
-        values: {
-            CREDIT_CARD: {
-                value: "CREDIT_CARD"
-            },
-            LOAN: {
-                value: "LOAN"
-            },
-            MISC: {
-                value: "MISC"
-            }
-        }
-    });
-    const NetWorthCategoryLiabilityType: GraphQLObjectType = new GraphQLObjectType({
-        name: "NetWorthCategoryLiability",
-        description: "A reusable bucket for liabilities (credit card, mortgage, personal loan, ...).",
-        fields() {
-            return {
-                asset: {
-                    description: "The asset this liability is funding (for LTV calcs), if any.",
-                    name: "asset",
-                    type: NetWorthCategoryAssetType
-                },
-                billedFromAccount: {
-                    description: "Planning account this liability is billed from (credit cards only). When set, the planner emits predicted monthly payment transactions on that account.",
-                    name: "billedFromAccount",
-                    type: PlanningAccountType
-                },
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                interestRate: {
-                    description: "Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.",
-                    name: "interestRate",
-                    type: GraphQLFloat
-                },
-                name: {
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                skip: {
-                    description: "When true, the liability is hidden from aggregate totals.",
-                    name: "skip",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                type: {
-                    name: "type",
-                    type: new GraphQLNonNull(NetWorthLiabilityTypeType)
-                }
-            };
-        },
-        interfaces() {
-            return [NetWorthCategoryType];
-        }
-    });
-    const PlanningBillType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningBill",
-        description: "A recurring bill that projects forward into future months' balances as a provisional outgoing transaction until an actual transaction is recorded for that month.",
-        fields() {
-            return {
-                amount: {
-                    description: "Amount charged per occurrence.",
-                    name: "amount",
-                    type: new GraphQLNonNull(MoneyType)
-                },
-                collectionDate: {
-                    description: "In-year occurrences, one `M-D` entry each (MONTHLY uses a bare day, no month prefix). See `billCreate` for the encoding.",
-                    name: "collectionDate",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))
-                },
-                end: {
-                    description: "Last day the bill is in effect; null if ongoing.",
-                    name: "end",
-                    type: DateType
-                },
-                frequency: {
-                    name: "frequency",
-                    type: new GraphQLNonNull(PlanningBillsFrequencyType)
-                },
-                fromAccount: {
-                    description: "Planning account (asset + alias) the bill is paid from.",
-                    name: "fromAccount",
-                    type: new GraphQLNonNull(PlanningAccountType)
-                },
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                liability: {
-                    description: "Liability this bill services \u2014 e.g. a credit-card paid off by a monthly direct debit, or a mortgage principal. Null if the bill isn't tied to a liability.",
-                    name: "liability",
-                    type: NetWorthCategoryLiabilityType
-                },
-                name: {
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                start: {
-                    description: "First day the bill is in effect.",
-                    name: "start",
-                    type: new GraphQLNonNull(DateType)
-                }
-            };
-        }
-    });
-    const PlanningBillEdgeType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningBillEdge",
-        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
-        fields() {
-            return {
-                cursor: {
-                    name: "cursor",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                node: {
-                    name: "node",
-                    type: new GraphQLNonNull(PlanningBillType)
-                }
-            };
-        }
-    });
-    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PageInfo",
-        description: "Pagination state for a cursor-paginated connection.",
-        fields() {
-            return {
-                endCursor: {
-                    name: "endCursor",
-                    type: GraphQLID
-                },
-                hasNextPage: {
-                    name: "hasNextPage",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                hasPreviousPage: {
-                    name: "hasPreviousPage",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                startCursor: {
-                    name: "startCursor",
-                    type: GraphQLID
-                }
-            };
-        }
-    });
-    const PlanningBillConnectionType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningBillConnection",
-        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
-        fields() {
-            return {
-                edges: {
-                    name: "edges",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningBillEdgeType)))
-                },
-                pageInfo: {
-                    name: "pageInfo",
-                    type: new GraphQLNonNull(PageInfoType)
-                }
-            };
-        }
-    });
-    const CurrencyType: GraphQLObjectType = new GraphQLObjectType({
-        name: "Currency",
-        description: "Metadata for a currency supported by the server.",
-        fields() {
-            return {
-                code: {
-                    description: "ISO-4217 three-letter code (e.g. `\"USD\"`).",
-                    name: "code",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                name: {
-                    description: "Human-readable currency name (e.g. `\"United States dollar\"`).",
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
-    });
-    const PlanningEarningUKTaxCodeType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningEarningUKTaxCode",
-        description: "A UK tax code active on a `PlanningEarning` over a date range. Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually.",
-        fields() {
-            return {
-                end: {
-                    description: "Last day the code applies (inclusive); null while ongoing.",
-                    name: "end",
-                    type: DateType
-                },
-                start: {
-                    name: "start",
-                    type: new GraphQLNonNull(DateType)
-                },
-                taxCode: {
-                    description: "HMRC tax code (e.g. `1257L`, `3420X`).",
-                    name: "taxCode",
-                    type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
-    });
-    const PlanningEarningType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningEarning",
-        description: "A stream of gross earnings (salary, contract income, \u2026) paid into a specific asset account.",
-        fields() {
-            return {
-                amountGross: {
-                    name: "amountGross",
-                    type: new GraphQLNonNull(MoneyType)
-                },
-                attributes: {
-                    description: "Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `\"5% salary sacrifice, 3% net pay pension, student loan plan 2\"`). Empty string if none apply.",
-                    name: "attributes",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                countryCode: {
-                    description: "ISO-3166-1 alpha-2 country where the earnings are taxed.",
-                    name: "countryCode",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                end: {
-                    name: "end",
-                    type: DateType
-                },
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                name: {
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                },
-                pensionNetPay: {
-                    description: "Fraction of gross contributed via net-pay arrangement. Null when the concept doesn't apply.",
-                    name: "pensionNetPay",
-                    type: GraphQLFloat
-                },
-                pensionReliefAtSource: {
-                    description: "Fraction of gross contributed via relief-at-source. Null when the concept doesn't apply.",
-                    name: "pensionReliefAtSource",
-                    type: GraphQLFloat
-                },
-                pensionSalarySacrifice: {
-                    description: "Fraction of gross diverted via salary sacrifice. Null when the concept doesn't apply for this earning (e.g. non-UK).",
-                    name: "pensionSalarySacrifice",
-                    type: GraphQLFloat
-                },
-                start: {
-                    name: "start",
-                    type: new GraphQLNonNull(DateType)
-                },
-                studentLoanLiability: {
-                    description: "Liability the predicted student-loan deduction pays down. Null when `studentLoanPlan2` is false or no liability has been linked.",
-                    name: "studentLoanLiability",
-                    type: NetWorthCategoryLiabilityType
-                },
-                studentLoanPlan2: {
-                    description: "Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply (e.g. non-UK earnings).",
-                    name: "studentLoanPlan2",
-                    type: GraphQLBoolean
-                },
-                toAccount: {
-                    description: "Destination planning account for the net earnings.",
-                    name: "toAccount",
-                    type: new GraphQLNonNull(PlanningAccountType)
-                },
-                ukTaxCodes: {
-                    description: "Tax codes applied to this earnings stream over time. Used when projecting predicted withholding.",
-                    name: "ukTaxCodes",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningEarningUKTaxCodeType)))
-                }
-            };
-        }
-    });
-    const PlanningEarningEdgeType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningEarningEdge",
-        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
-        fields() {
-            return {
-                cursor: {
-                    name: "cursor",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                node: {
-                    name: "node",
-                    type: new GraphQLNonNull(PlanningEarningType)
-                }
-            };
-        }
-    });
-    const PlanningEarningConnectionType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PlanningEarningConnection",
-        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
-        fields() {
-            return {
-                edges: {
-                    name: "edges",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningEarningEdgeType)))
-                },
-                pageInfo: {
-                    name: "pageInfo",
-                    type: new GraphQLNonNull(PageInfoType)
-                }
-            };
         }
     });
     const InvestmentFundType: GraphQLObjectType = new GraphQLObjectType({
@@ -667,6 +274,30 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PageInfo",
+        description: "Pagination state for a cursor-paginated connection.",
+        fields() {
+            return {
+                endCursor: {
+                    name: "endCursor",
+                    type: GraphQLID
+                },
+                hasNextPage: {
+                    name: "hasNextPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                hasPreviousPage: {
+                    name: "hasPreviousPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                startCursor: {
+                    name: "startCursor",
+                    type: GraphQLID
+                }
+            };
+        }
+    });
     const InvestmentTransactionConnectionType: GraphQLObjectType = new GraphQLObjectType({
         name: "InvestmentTransactionConnection",
         description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
@@ -859,6 +490,383 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Per-investment allocations for the wrapper. Sums to 1.",
                     name: "investments",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentAllocationType)))
+                }
+            };
+        }
+    });
+    const NetWorthAssetTypeType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Kind of asset a category represents.",
+        name: "NetWorthAssetType",
+        values: {
+            CASH: {
+                value: "CASH"
+            },
+            MISC: {
+                value: "MISC"
+            },
+            OPTION: {
+                value: "OPTION"
+            },
+            PENSION: {
+                value: "PENSION"
+            },
+            PROPERTY: {
+                value: "PROPERTY"
+            },
+            STOCK: {
+                value: "STOCK"
+            }
+        }
+    });
+    const NetWorthCategoryType: GraphQLInterfaceType = new GraphQLInterfaceType({
+        description: "A reusable bucket used to classify NetWorthValues (assets, liabilities, or options).",
+        name: "NetWorthCategory",
+        fields() {
+            return {
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const NetWorthCategoryAssetType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCategoryAsset",
+        description: "A reusable bucket for assets (current account, pension pot, property, ...).",
+        fields() {
+            return {
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                investmentAllocations: {
+                    description: "Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.",
+                    name: "investmentAllocations",
+                    type: new GraphQLNonNull(InvestmentAllocationsResultType),
+                    resolve(source) {
+                        return netWorthCategoryAssetInvestmentAllocationsResolver(source);
+                    }
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                type: {
+                    name: "type",
+                    type: new GraphQLNonNull(NetWorthAssetTypeType)
+                }
+            };
+        },
+        interfaces() {
+            return [NetWorthCategoryType];
+        }
+    });
+    const PlanningAccountType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningAccount",
+        description: "A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias.",
+        fields() {
+            return {
+                asset: {
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    description: "Display name \u2014 the alias if one was set, otherwise the underlying asset's name.",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const NetWorthLiabilityTypeType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Kind of liability a category represents.",
+        name: "NetWorthLiabilityType",
+        values: {
+            CREDIT_CARD: {
+                value: "CREDIT_CARD"
+            },
+            LOAN: {
+                value: "LOAN"
+            },
+            MISC: {
+                value: "MISC"
+            }
+        }
+    });
+    const NetWorthCategoryLiabilityType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCategoryLiability",
+        description: "A reusable bucket for liabilities (credit card, mortgage, personal loan, ...).",
+        fields() {
+            return {
+                asset: {
+                    description: "The asset this liability is funding (for LTV calcs), if any.",
+                    name: "asset",
+                    type: NetWorthCategoryAssetType
+                },
+                billedFromAccount: {
+                    description: "Planning account this liability is billed from (credit cards only). When set, the planner emits predicted monthly payment transactions on that account.",
+                    name: "billedFromAccount",
+                    type: PlanningAccountType
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                interestRate: {
+                    description: "Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.",
+                    name: "interestRate",
+                    type: GraphQLFloat
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                skip: {
+                    description: "When true, the liability is hidden from aggregate totals.",
+                    name: "skip",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                type: {
+                    name: "type",
+                    type: new GraphQLNonNull(NetWorthLiabilityTypeType)
+                }
+            };
+        },
+        interfaces() {
+            return [NetWorthCategoryType];
+        }
+    });
+    const PlanningBillType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBill",
+        description: "A recurring bill that projects forward into future months' balances as a provisional outgoing transaction until an actual transaction is recorded for that month.",
+        fields() {
+            return {
+                amount: {
+                    description: "Amount charged per occurrence.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                collectionDate: {
+                    description: "In-year occurrences, one `M-D` entry each (MONTHLY uses a bare day, no month prefix). See `billCreate` for the encoding.",
+                    name: "collectionDate",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))
+                },
+                end: {
+                    description: "Last day the bill is in effect; null if ongoing.",
+                    name: "end",
+                    type: DateType
+                },
+                frequency: {
+                    name: "frequency",
+                    type: new GraphQLNonNull(PlanningBillsFrequencyType)
+                },
+                fromAccount: {
+                    description: "Planning account (asset + alias) the bill is paid from.",
+                    name: "fromAccount",
+                    type: new GraphQLNonNull(PlanningAccountType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                liability: {
+                    description: "Liability this bill services \u2014 e.g. a credit-card paid off by a monthly direct debit, or a mortgage principal. Null if the bill isn't tied to a liability.",
+                    name: "liability",
+                    type: NetWorthCategoryLiabilityType
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                start: {
+                    description: "First day the bill is in effect.",
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                }
+            };
+        }
+    });
+    const PlanningBillEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBillEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PlanningBillType)
+                }
+            };
+        }
+    });
+    const PlanningBillConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningBillConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningBillEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const CurrencyType: GraphQLObjectType = new GraphQLObjectType({
+        name: "Currency",
+        description: "Metadata for a currency supported by the server.",
+        fields() {
+            return {
+                code: {
+                    description: "ISO-4217 three-letter code (e.g. `\"USD\"`).",
+                    name: "code",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                name: {
+                    description: "Human-readable currency name (e.g. `\"United States dollar\"`).",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningEarningUKTaxCodeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarningUKTaxCode",
+        description: "A UK tax code active on a `PlanningEarning` over a date range. Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually.",
+        fields() {
+            return {
+                end: {
+                    description: "Last day the code applies (inclusive); null while ongoing.",
+                    name: "end",
+                    type: DateType
+                },
+                start: {
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                },
+                taxCode: {
+                    description: "HMRC tax code (e.g. `1257L`, `3420X`).",
+                    name: "taxCode",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PlanningEarningType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarning",
+        description: "A stream of gross earnings (salary, contract income, \u2026) paid into a specific asset account.",
+        fields() {
+            return {
+                amountGross: {
+                    name: "amountGross",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                attributes: {
+                    description: "Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `\"5% salary sacrifice, 3% net pay pension, student loan plan 2\"`). Empty string if none apply.",
+                    name: "attributes",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                countryCode: {
+                    description: "ISO-3166-1 alpha-2 country where the earnings are taxed.",
+                    name: "countryCode",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                end: {
+                    name: "end",
+                    type: DateType
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                pensionNetPay: {
+                    description: "Fraction of gross contributed via net-pay arrangement. Null when the concept doesn't apply.",
+                    name: "pensionNetPay",
+                    type: GraphQLFloat
+                },
+                pensionReliefAtSource: {
+                    description: "Fraction of gross contributed via relief-at-source. Null when the concept doesn't apply.",
+                    name: "pensionReliefAtSource",
+                    type: GraphQLFloat
+                },
+                pensionSalarySacrifice: {
+                    description: "Fraction of gross diverted via salary sacrifice. Null when the concept doesn't apply for this earning (e.g. non-UK).",
+                    name: "pensionSalarySacrifice",
+                    type: GraphQLFloat
+                },
+                start: {
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                },
+                studentLoanLiability: {
+                    description: "Liability the predicted student-loan deduction pays down. Null when `studentLoanPlan2` is false or no liability has been linked.",
+                    name: "studentLoanLiability",
+                    type: NetWorthCategoryLiabilityType
+                },
+                studentLoanPlan2: {
+                    description: "Whether Student Loan plan 2 is being repaid on this income. Null when the concept doesn't apply (e.g. non-UK earnings).",
+                    name: "studentLoanPlan2",
+                    type: GraphQLBoolean
+                },
+                toAccount: {
+                    description: "Destination planning account for the net earnings.",
+                    name: "toAccount",
+                    type: new GraphQLNonNull(PlanningAccountType)
+                },
+                ukTaxCodes: {
+                    description: "Tax codes applied to this earnings stream over time. Used when projecting predicted withholding.",
+                    name: "ukTaxCodes",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningEarningUKTaxCodeType)))
+                }
+            };
+        }
+    });
+    const PlanningEarningEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarningEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(PlanningEarningType)
+                }
+            };
+        }
+    });
+    const PlanningEarningConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarningConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningEarningEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
                 }
             };
         }

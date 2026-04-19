@@ -8,6 +8,8 @@ export type AllocationSegment = {
   color: string;
   /** Fraction of the whole bar (values across segments should sum to 1). */
   value: number;
+  /** Optional override for the hover tooltip. Defaults to `"${label}: ${formatValue(value)}"`. */
+  title?: string;
 };
 
 export type AllocationBarProps = {
@@ -87,7 +89,7 @@ export function AllocationBar({
               backgroundColor: s.color,
               opacity: disabled ? 0.6 : 1,
             }}
-            title={`${s.label}: ${fmt(s.value)}`}
+            title={s.title ?? `${s.label}: ${fmt(s.value)}`}
           >
             {!compact ? (
               <span className="truncate drop-shadow-sm">

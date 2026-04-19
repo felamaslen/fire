@@ -970,6 +970,10 @@ A reusable bucket for assets (current account, pension pot, property, ...).
 """
 type NetWorthCategoryAsset implements NetWorthCategory {
   id: ID!
+  """
+  Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.
+  """
+  investmentAllocations: InvestmentAllocationsResult!
   name: String!
   type: NetWorthAssetType!
 }

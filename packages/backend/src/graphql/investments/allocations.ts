@@ -189,6 +189,16 @@ async function loadCashAllocation(): Promise<Money | null> {
   return Money.fromMinorDenomination(row.amount, row.currency);
 }
 
+/** Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.
+ *
+ * @gqlField investmentAllocations
+ */
+export async function investmentAllocationsForAsset(
+  asset: NetWorthCategoryAsset,
+): Promise<InvestmentAllocationsResult> {
+  return loadAllocationsForAsset(asset.id);
+}
+
 async function loadAllocationsForAsset(
   assetId: string,
 ): Promise<InvestmentAllocationsResult> {
