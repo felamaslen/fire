@@ -714,3 +714,197 @@ describe("entries", () => {
     });
   });
 });
+
+describe("netWorthHistory", () => {
+  it("returns one point per entry, oldest first, with assets bucketed by type and liabilities aggregated", async () => {
+    const seed = graphql(`
+      mutation Seed {
+        cash: netWorthCategoryCreate(
+          input: { asset: { name: "Current", type: CASH } }
+        ) {
+          id
+        }
+        stock: netWorthCategoryCreate(
+          input: { asset: { name: "ISA", type: STOCK } }
+        ) {
+          id
+        }
+        cc: netWorthCategoryCreate(
+          input: { liability: { name: "Amex", type: CREDIT_CARD } }
+        ) {
+          id
+        }
+        opt: netWorthCategoryCreate(input: { option: { name: "RSUs" } }) {
+          id
+        }
+      }
+    `);
+    const ids = await runGql(seed, {});
+    const cashId: string = ids.cash.id;
+    const stockId: string = ids.stock.id;
+    const ccId: string = ids.cc.id;
+    const optId: string = ids.opt.id;
+
+    const createEntry = graphql(`
+      mutation Entry(
+        $date: Date!
+        $cash: ID!
+        $stock: ID!
+        $cc: ID!
+        $opt: ID!
+        $cashAmt: Float!
+        $stockAmt: Float!
+        $ccAmt: Float!
+        $optAmt: Float!
+      ) {
+        netWorthCreate(
+          date: $date
+          values: [
+            {
+              asset: {
+                categoryId: $cash
+                amounts: [{ amount: $cashAmt, currency: "GBP" }]
+              }
+            }
+            {
+              asset: {
+                categoryId: $stock
+                amounts: [{ amount: $stockAmt, currency: "GBP" }]
+              }
+            }
+            {
+              liability: {
+                categoryId: $cc
+                amounts: [{ amount: $ccAmt, currency: "GBP" }]
+              }
+            }
+            {
+              option: {
+                categoryId: $opt
+                amounts: [{ amount: $optAmt, currency: "GBP" }]
+              }
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `);
+
+    await runGql(createEntry, {
+      date: "2026-02-15",
+      cash: cashId,
+      stock: stockId,
+      cc: ccId,
+      opt: optId,
+      cashAmt: 1000,
+      stockAmt: 2000,
+      ccAmt: 100,
+      optAmt: 500,
+    });
+    await runGql(createEntry, {
+      date: "2026-03-15",
+      cash: cashId,
+      stock: stockId,
+      cc: ccId,
+      opt: optId,
+      cashAmt: 1500,
+      stockAmt: 2500,
+      ccAmt: 150,
+      optAmt: 600,
+    });
+
+    const data = await runGql(
+      graphql(`
+        query {
+          netWorthHistory {
+            date
+            assetsByType {
+              type
+              amount {
+                amount
+                currency
+              }
+            }
+            liabilities {
+              amount
+            }
+            net {
+              amount
+            }
+          }
+        }
+      `),
+      {},
+    );
+
+    expect(data.netWorthHistory).toMatchInlineSnapshot(`
+      [
+        {
+          "assetsByType": [
+            {
+              "amount": {
+                "amount": 1000,
+                "currency": "GBP",
+              },
+              "type": "CASH",
+            },
+            {
+              "amount": {
+                "amount": 500,
+                "currency": "GBP",
+              },
+              "type": "OPTION",
+            },
+            {
+              "amount": {
+                "amount": 2000,
+                "currency": "GBP",
+              },
+              "type": "STOCK",
+            },
+          ],
+          "date": "2026-02-15",
+          "liabilities": {
+            "amount": 100,
+          },
+          "net": {
+            "amount": 3400,
+          },
+        },
+        {
+          "assetsByType": [
+            {
+              "amount": {
+                "amount": 1500,
+                "currency": "GBP",
+              },
+              "type": "CASH",
+            },
+            {
+              "amount": {
+                "amount": 600,
+                "currency": "GBP",
+              },
+              "type": "OPTION",
+            },
+            {
+              "amount": {
+                "amount": 2500,
+                "currency": "GBP",
+              },
+              "type": "STOCK",
+            },
+          ],
+          "date": "2026-03-15",
+          "liabilities": {
+            "amount": 150,
+          },
+          "net": {
+            "amount": 4450,
+          },
+        },
+      ]
+    `);
+  });
+});

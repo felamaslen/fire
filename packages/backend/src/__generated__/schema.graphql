@@ -1073,6 +1073,36 @@ type NetWorthEntryEdge {
 }
 
 """
+One bucket of assets at a single history point, grouped by asset `type`.
+"""
+type NetWorthHistoryAssetBucket {
+  """
+  Total value of all assets of this `type` at this point, converted into the home currency.
+  """
+  amount: Money!
+  """Asset category type this bucket aggregates."""
+  type: NetWorthAssetType!
+}
+
+"""
+A single point on the net-worth history timeline — one entry per recorded month.
+"""
+type NetWorthHistoryPoint {
+  """
+  Assets at this point, grouped by asset type. Empty buckets are omitted.
+  """
+  assetsByType: [NetWorthHistoryAssetBucket!]!
+  """Any calendar date inside the target month."""
+  date: Date!
+  """
+  Total liabilities at this point (positive magnitude), converted into the home currency. Liabilities marked `skip` are excluded.
+  """
+  liabilities: Money!
+  """Net worth at this point: sum of `assetsByType` minus `liabilities`."""
+  net: Money!
+}
+
+"""
 A single line item inside a NetWorthEntry. Exactly one of asset / liability / option is populated.
 """
 type NetWorthValue {
@@ -1572,6 +1602,10 @@ type Query {
   netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection @semanticNonNull
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
+  """
+  Full history of net-worth snapshots, oldest first, with assets split by category type and liabilities aggregated. All amounts are converted into the home currency via each entry's own captured currency rates.
+  """
+  netWorthHistory: [NetWorthHistoryPoint!] @semanticNonNull
   """
   Every recorded payslip, paginated and sorted by pay date descending (most-recent first, `id` tiebreak).
   """

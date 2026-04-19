@@ -117,7 +117,7 @@ export async function values(entry: NetWorthEntry): Promise<NetWorthValue[]> {
 
 type EntryTotals = { assetsMinor: number; liabilitiesMinor: number };
 
-function buildRateToHome(
+export function buildRateToHome(
   rows: (typeof NetWorthCurrencyRates.$inferSelect)[],
 ): Map<string, number> {
   const map = new Map<string, number>([[HOME_CURRENCY, 1]]);
@@ -129,7 +129,7 @@ function buildRateToHome(
   return map;
 }
 
-function convertToHomeMinor(
+export function convertToHomeMinor(
   amountMinor: number,
   currency: string,
   rateMap: Map<string, number>,
