@@ -1,6 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { cn } from "@/lib/cn";
+import {
+  formatAccountingMoney,
+  formatAccountingMoneyRounded,
+} from "@/lib/format";
 
 export type LineSeries = {
   label: string;
@@ -36,28 +40,18 @@ const AXIS_PAD_RIGHT = 16;
 const AXIS_PAD_TOP = 12;
 const AXIS_PAD_BOTTOM = 28;
 
-/** Cache one formatter per (currency, compact) pair. */
-const formatterCache = new Map<string, Intl.NumberFormat>();
-function money(currency: string, amount: number): string {
-  const key = `${currency}|c`;
-  let f = formatterCache.get(key);
-  if (!f) {
-    f = new Intl.NumberFormat("en-GB", {
-      style: "currency",
-      currency,
-      currencySign: "accounting",
-      notation: "compact",
-      maximumFractionDigits: 1,
-    });
-    formatterCache.set(key, f);
-  }
-  return f.format(amount).replace(/([KMBT])/g, (c) => c.toLowerCase());
-}
-
 function shortDate(d: Date): string {
   return d.toLocaleDateString("en-GB", {
     month: "short",
     year: "2-digit",
+  });
+}
+
+function fullDate(d: Date): string {
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
   });
 }
 
@@ -74,6 +68,7 @@ export function PortfolioChart({
   initialDate,
   stacked = false,
 }: Props) {
+  const [hoveredCandle, setHoveredCandle] = useState<number | null>(null);
   const { xScale, yScale, xMin, xMax, yMin, yTicks, xTicks } = useMemo(() => {
     const allXs: number[] = [];
     const allYs: number[] = [];
@@ -158,7 +153,7 @@ export function PortfolioChart({
             textAnchor="end"
             className="fill-muted-foreground text-[10px] tabular-nums"
           >
-            {money(currency, v)}
+            {formatAccountingMoney(currency, v, { compact: true })}
           </text>
         </g>
       ))}
@@ -206,6 +201,7 @@ export function PortfolioChart({
             2,
         );
         const capWidth = Math.max(3, bucketWidth * 0.45);
+        const isHovered = hoveredCandle === i;
         return (
           <g key={i}>
             {/* wick */}
@@ -241,11 +237,112 @@ export function PortfolioChart({
               y={bodyY}
               width={bucketWidth}
               height={bodyHeight}
-              className={isUp ? "fill-emerald-500" : "fill-red-500"}
+              className={
+                isUp
+                  ? isHovered
+                    ? "fill-emerald-400"
+                    : "fill-emerald-500"
+                  : isHovered
+                    ? "fill-red-400"
+                    : "fill-red-500"
+              }
+            />
+            {/* hover hitbox — full plot height, slightly wider than the
+                body so there's no dead pixel between candles */}
+            <rect
+              x={x - bucketWidth / 2 - 1}
+              y={AXIS_PAD_TOP}
+              width={bucketWidth + 2}
+              height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
+              fill="transparent"
+              onMouseEnter={() => setHoveredCandle(i)}
+              onMouseLeave={() =>
+                setHoveredCandle((cur) => (cur === i ? null : cur))
+              }
             />
           </g>
         );
       })}
+      {candles &&
+        hoveredCandle !== null &&
+        candles.points[hoveredCandle] &&
+        (() => {
+          const p = candles.points[hoveredCandle];
+          const cx = xScale(p.x);
+          const plotRight = width - AXIS_PAD_RIGHT;
+          const boxW = 148;
+          const boxH = 82;
+          const gap = 10;
+          const preferRight = cx + gap + boxW <= plotRight;
+          const boxX = preferRight
+            ? cx + gap
+            : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
+          const boxY = Math.max(AXIS_PAD_TOP, yScale(p.hi) - boxH / 2);
+          const d = initialDate
+            ? new Date(
+                initialDate.getTime() + Math.round(p.x) * 86400 * 1000,
+              )
+            : null;
+          const isUp = p.to >= p.from;
+          return (
+            <g pointerEvents="none">
+              <line
+                x1={cx}
+                x2={cx}
+                y1={AXIS_PAD_TOP}
+                y2={height - AXIS_PAD_BOTTOM}
+                stroke="currentColor"
+                strokeOpacity={0.2}
+                strokeDasharray="2 2"
+              />
+              <rect
+                x={boxX}
+                y={boxY}
+                width={boxW}
+                height={boxH}
+                rx={6}
+                className="fill-popover stroke-border"
+                strokeWidth={1}
+              />
+              <g className="fill-foreground text-[10px] tabular-nums">
+                {d && (
+                  <text x={boxX + 8} y={boxY + 14} className="font-medium">
+                    {fullDate(d)}
+                  </text>
+                )}
+                <text x={boxX + 8} y={boxY + 30} className="fill-muted-foreground">
+                  Open
+                </text>
+                <text x={boxX + boxW - 8} y={boxY + 30} textAnchor="end">
+                  {formatAccountingMoneyRounded(currency, p.from)}
+                </text>
+                <text x={boxX + 8} y={boxY + 44} className="fill-muted-foreground">
+                  Close
+                </text>
+                <text
+                  x={boxX + boxW - 8}
+                  y={boxY + 44}
+                  textAnchor="end"
+                  className={isUp ? "fill-emerald-500" : "fill-red-500"}
+                >
+                  {formatAccountingMoneyRounded(currency, p.to)}
+                </text>
+                <text x={boxX + 8} y={boxY + 58} className="fill-muted-foreground">
+                  High
+                </text>
+                <text x={boxX + boxW - 8} y={boxY + 58} textAnchor="end">
+                  {formatAccountingMoneyRounded(currency, p.hi)}
+                </text>
+                <text x={boxX + 8} y={boxY + 72} className="fill-muted-foreground">
+                  Low
+                </text>
+                <text x={boxX + boxW - 8} y={boxY + 72} textAnchor="end">
+                  {formatAccountingMoneyRounded(currency, p.lo)}
+                </text>
+              </g>
+            </g>
+          );
+        })()}
 
       {lines?.map((line, idx) => {
         if (stacked) {
