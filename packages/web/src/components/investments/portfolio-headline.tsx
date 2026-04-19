@@ -12,10 +12,18 @@ const PortfolioHeadlineDocument = graphql(
       portfolio {
         id
         currency
-        totalValue { ...Figure }
-        totalGain { amount ...Figure }
+        totalValue {
+          ...Figure
+        }
+        totalGain {
+          amount
+          ...Figure
+        }
         xirr(skipLive: $skipLive)
-        dailyGainValue(skipLive: $skipLive) { amount ...Figure }
+        dailyGainValue(skipLive: $skipLive) {
+          amount
+          ...Figure
+        }
         dailyGainPercent(skipLive: $skipLive)
       }
     }
@@ -26,25 +34,51 @@ const PortfolioHeadlineDocument = graphql(
 type FlashDirection = "up" | "down" | null;
 
 /**
- * Compare `current` to the previous rendered value; when it changes, return
- * `"up"` or `"down"` for ~1.2s then fall back to `null`. Ignores the initial
- * render (no flash on first arrival).
+ * Flash direction hook for the daily-gain cell:
+ *
+ * - On the **first** sample (cached-only, skipLive=true): no flash.
+ * - On the **first live** sample (skipLive just flipped to false): flash based
+ *   on the sign of the value itself — blue if the day is up, red if it's down.
+ * - On **every later** sample (subsequent polls): flash based on the delta —
+ *   blue if the number rose since the last poll, red if it fell.
+ *
+ * Each flash lasts ~1.2 s, then decays back to `null`.
  */
-function useFlashOnChange(current: number | null | undefined): FlashDirection {
-  const prevRef = useRef<number | null | undefined>(undefined);
+function useDailyGainFlash(
+  current: number | null | undefined,
+  skipLive: boolean,
+): FlashDirection {
+  const prevValueRef = useRef<number | null | undefined>(undefined);
+  const hasSeenLiveRef = useRef(false);
   const [flash, setFlash] = useState<FlashDirection>(null);
 
   useEffect(() => {
-    const prev = prevRef.current;
-    prevRef.current = current;
-    if (prev === undefined) return; // first render
-    if (current == null || prev == null) return;
+    const prev = prevValueRef.current;
+    prevValueRef.current = current;
+
+    if (current == null || skipLive) return;
+
+    // The effect re-runs the moment `skipLive` flips — at that point the live
+    // query is still in flight and `current` is whatever the cached-only
+    // fetch returned. Only treat the first *value change* under
+    // `skipLive === false` as the actual live sample; otherwise the "first
+    // live flash" fires against the cached number.
     if (current === prev) return;
-    const dir: FlashDirection = current > prev ? "up" : "down";
+
+    let dir: FlashDirection = null;
+    if (!hasSeenLiveRef.current) {
+      hasSeenLiveRef.current = true;
+      if (current > 0) dir = "up";
+      else if (current < 0) dir = "down";
+    } else if (prev !== undefined && prev !== null) {
+      dir = current > prev ? "up" : "down";
+    }
+
+    if (!dir) return;
     setFlash(dir);
     const t = setTimeout(() => setFlash(null), 1200);
     return () => clearTimeout(t);
-  }, [current]);
+  }, [current, skipLive]);
 
   return flash;
 }
@@ -68,16 +102,12 @@ export function PortfolioHeadline() {
   // Keep the previous render's values mounted while the refetch (e.g. when we
   // flip `skipLive`) is in flight — otherwise the headline briefly empties.
   const portfolio = (data ?? previousData)?.portfolio;
-  const flash = useFlashOnChange(portfolio?.dailyGainValue?.amount);
+  const flash = useDailyGainFlash(portfolio?.dailyGainValue?.amount, skipLive);
 
   return (
     <section className="flex flex-wrap gap-x-6 gap-y-2 rounded-md border px-4 py-2 text-sm">
       <Stat label="Value">
-        {portfolio?.totalValue ? (
-          <Figure data={portfolio.totalValue} />
-        ) : (
-          "—"
-        )}
+        {portfolio?.totalValue ? <Figure data={portfolio.totalValue} /> : "—"}
       </Stat>
       <Stat
         label="Total gain"
@@ -88,11 +118,7 @@ export function PortfolioHeadline() {
             : null
         }
       >
-        {portfolio?.totalGain ? (
-          <Figure data={portfolio.totalGain} />
-        ) : (
-          "—"
-        )}
+        {portfolio?.totalGain ? <Figure data={portfolio.totalGain} /> : "—"}
       </Stat>
       <Stat
         label="Today"
@@ -143,15 +169,11 @@ function Stat({
       )}
     >
       <span className="text-xs text-muted-foreground">{label}</span>
-      <span
-        className={cn("font-semibold tabular-nums", signColor(colorSign))}
-      >
+      <span className={cn("font-semibold tabular-nums", signColor(colorSign))}>
         {children}
       </span>
       {sub ? (
-        <span
-          className={cn("text-xs tabular-nums", signColor(colorSign))}
-        >
+        <span className={cn("text-xs tabular-nums", signColor(colorSign))}>
           {sub}
         </span>
       ) : null}

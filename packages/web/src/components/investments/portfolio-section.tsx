@@ -184,18 +184,23 @@ function PortfolioChartLoader({
   const portfolio = data.portfolio;
   if (!portfolio) return null;
 
+  const perInvestmentSeries = (data.portfolios?.edges ?? []).flatMap(
+    (edge, i) => {
+      const ts = edge.node.timeseries;
+      if (!ts) return [];
+      return [
+        {
+          label: edge.node.investment?.name ?? "?",
+          color: STACK_COLORS[i % STACK_COLORS.length],
+          points: ts.points,
+          initialDate: ts.initialDate,
+        },
+      ];
+    },
+  );
+
   const lines = stack
-    ? (data.portfolios?.edges ?? []).flatMap((edge, i) => {
-        const ts = edge.node.timeseries;
-        if (!ts) return [];
-        return [
-          {
-            label: edge.node.investment?.name ?? "?",
-            color: STACK_COLORS[i % STACK_COLORS.length],
-            points: ts.points,
-          },
-        ];
-      })
+    ? stackLines(perInvestmentSeries)
     : portfolio.timeseries
       ? [
           {
@@ -210,15 +215,63 @@ function PortfolioChartLoader({
     ? { points: portfolio.candlestick.points }
     : null;
 
+  const initialDate =
+    portfolio.timeseries?.initialDate ?? portfolio.candlestick?.initialDate;
+
   return (
     <div className="space-y-2">
       <PortfolioChart
         lines={candlestick ? undefined : lines}
         candles={candlestick ? candles : null}
+        currency={portfolio.currency}
+        initialDate={
+          typeof initialDate === "string"
+            ? new Date(`${initialDate}T00:00:00Z`)
+            : undefined
+        }
         className="w-full"
       />
     </div>
   );
+}
+
+type SeriesIn = {
+  label: string;
+  color: string;
+  points: { x: number; y: number }[];
+};
+
+/**
+ * Turn a list of per-investment series into cumulative stacked lines: each
+ * output line's `y` at `x` equals its own `y` plus every preceding line's `y`.
+ * The top line therefore equals the total portfolio value and no two lines
+ * ever cross. Unions the x domain of all series and zero-fills gaps.
+ */
+function stackLines(series: SeriesIn[]): SeriesIn[] {
+  if (series.length === 0) return [];
+  const xs = new Set<number>();
+  for (const s of series) for (const p of s.points) xs.add(p.x);
+  const xsSorted = [...xs].sort((a, b) => a - b);
+
+  const lookup = series.map((s) => {
+    const m = new Map<number, number>();
+    for (const p of s.points) m.set(p.x, p.y);
+    return m;
+  });
+
+  const running = new Map<number, number>();
+  for (const x of xsSorted) running.set(x, 0);
+
+  return series.map((s, i) => {
+    const m = lookup[i];
+    const points = xsSorted.map((x) => {
+      const prev = running.get(x) ?? 0;
+      const next = prev + (m.get(x) ?? 0);
+      running.set(x, next);
+      return { x, y: next };
+    });
+    return { ...s, points };
+  });
 }
 
 export type PortfolioSummary = ResultOf<typeof PortfolioChartDocument>;

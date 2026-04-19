@@ -459,8 +459,9 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     `);
     const data = await runGql(doc, {});
     const points = data.portfolio?.candlestick?.points ?? [];
-    expect(points.length).toBe(3);
-    expect(points[0]).toMatchObject({ x: 0, from: 50, to: 50 });
-    expect(points[2]).toMatchObject({ x: 2, from: 60, to: 60 });
+    // Bucket width is capped at a minimum of 3 days so these 3 days collapse
+    // into a single bucket: open at day 1 (£50), close at day 3 (£60).
+    expect(points.length).toBe(1);
+    expect(points[0]).toMatchObject({ x: 0, from: 50, to: 60, lo: 50, hi: 60 });
   });
 });

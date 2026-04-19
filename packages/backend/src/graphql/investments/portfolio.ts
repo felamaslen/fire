@@ -24,7 +24,9 @@ import { Investment } from "./index";
 /** Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
 export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD";
 
-const MAX_POINTS = 300;
+const MAX_LINE_POINTS = 300;
+const MAX_CANDLE_BUCKETS = 100;
+const MIN_CANDLE_BUCKET_DAYS = 3;
 
 /** One line-chart sample: `x` days since the series' `initialDate`, `y` in major units of `currency`. @gqlType */
 export type PortfolioTimeseriesPoint = {
@@ -601,7 +603,7 @@ export class Portfolio {
     length?: Int | null,
   ): Promise<PortfolioTimeseries> {
     const { days, totals } = await this.buildDaily(period, length ?? 0);
-    const picked = downsample(days, MAX_POINTS);
+    const picked = downsample(days, MAX_LINE_POINTS);
     return {
       currency: this.currency,
       initialDate: days[0] ?? new Date(),
@@ -618,16 +620,30 @@ export class Portfolio {
     length?: Int | null,
   ): Promise<PortfolioCandlestick> {
     const { days, totals } = await this.buildDaily(period, length ?? 0);
-    const buckets = bucketIndices(days.length, MAX_POINTS);
+    // Cap the bucket count by both the overall `MAX_CANDLE_BUCKETS` ceiling
+    // and a minimum per-bucket width (in days) so dense ranges don't turn into
+    // single-day candles that read as noise.
+    const maxBucketsByWidth = Math.max(
+      1,
+      Math.ceil(days.length / MIN_CANDLE_BUCKET_DAYS),
+    );
+    const buckets = bucketIndices(
+      days.length,
+      Math.min(MAX_CANDLE_BUCKETS, maxBucketsByWidth),
+    );
+    // `from` carries over from the previous bucket's `to` so successive candles
+    // line up visually (no gap between bucket N's close and bucket N+1's open).
+    let prevTo: number | null = null;
     const points: PortfolioCandlestickPoint[] = buckets.map((range) => {
       const slice = days.slice(range.start, range.end + 1);
       const values = slice.map(
         (d) => (totals.get(isoDate(d)) ?? 0) / 10 ** this.scale,
       );
-      const from = values[0];
       const to = values[values.length - 1];
-      const lo = Math.min(...values);
-      const hi = Math.max(...values);
+      const from = prevTo ?? values[0];
+      const lo = Math.min(from, ...values);
+      const hi = Math.max(from, ...values);
+      prevTo = to;
       return {
         x: daysBetween(days[0], days[range.start]) as Int,
         from: Math.round(from) as Int,
