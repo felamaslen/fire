@@ -19,6 +19,10 @@ import { z } from "zod";
 import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
 import {
+  AllocationsSection,
+  AllocationsSectionInvestmentFragment,
+} from "@/components/investments/allocations-section";
+import {
   InvestmentForm,
   InvestmentFormDocument,
 } from "@/components/investments/investment-form";
@@ -126,6 +130,7 @@ const InvestmentsPageDocument = graphql(
             id
             ...InvestmentRow
             ...InvestmentForm
+            ...AllocationsSectionInvestment
           }
         }
       }
@@ -158,6 +163,7 @@ const InvestmentsPageDocument = graphql(
     InvestmentFormDocument,
     PortfolioHeadlineFragment,
     PortfolioChartPortfolioFragment,
+    AllocationsSectionInvestmentFragment,
   ],
 );
 
@@ -359,7 +365,11 @@ function InvestmentsPageContent() {
   return (
     <>
       <PortfolioHeadline />
-      <PortfolioSection settings={chart} onChange={setChart} />
+      <PortfolioSection
+        settings={chart}
+        onChange={setChart}
+        bottomSlot={<AllocationsSection />}
+      />
       <InvestmentsList sort={sort} onSortChange={setSort} />
     </>
   );

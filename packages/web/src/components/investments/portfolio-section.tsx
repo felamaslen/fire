@@ -3,6 +3,7 @@ import { useDeferredValue } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { colorForKey } from "@/lib/color-for-key";
 
 import { graphql, readFragment } from "../../graphql";
 import { PortfolioChart, PortfolioChartLegend } from "./portfolio-chart";
@@ -100,29 +101,6 @@ export const PORTFOLIO_PERIODS: Period[] = [
   { period: "MONTH", length: 3, label: "3m" },
 ];
 
-const STACK_COLORS = [
-  "#6366f1",
-  "#ef4444",
-  "#10b981",
-  "#f59e0b",
-  "#ec4899",
-  "#0ea5e9",
-  "#a855f7",
-  "#14b8a6",
-  "#f97316",
-  "#84cc16",
-  "#06b6d4",
-  "#d946ef",
-  "#eab308",
-  "#22c55e",
-  "#3b82f6",
-  "#f43f5e",
-  "#8b5cf6",
-  "#14532d",
-  "#78350f",
-  "#be185d",
-];
-
 export type PortfolioChartSettings = {
   periodIdx: number;
   mode: "line" | "candlestick";
@@ -132,9 +110,11 @@ export type PortfolioChartSettings = {
 export function PortfolioSection({
   settings,
   onChange,
+  bottomSlot,
 }: {
   settings: PortfolioChartSettings;
   onChange: (next: PortfolioChartSettings) => void;
+  bottomSlot?: React.ReactNode;
 }) {
   const { periodIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
@@ -143,7 +123,7 @@ export function PortfolioSection({
   const p = PORTFOLIO_PERIODS[periodIdx];
 
   return (
-    <section className="space-y-3 rounded-lg border p-4">
+    <section className="relative space-y-3 rounded-lg border p-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Portfolio</h2>
         <div className="flex flex-wrap gap-1 text-xs">
@@ -188,6 +168,7 @@ export function PortfolioSection({
         candlestick={mode === "candlestick"}
         stack={stack}
       />
+      {bottomSlot}
     </section>
   );
 }
@@ -248,21 +229,23 @@ function PortfolioChartLoader({
       const inv = edge.node.investment;
       const code =
         inv?.asset?.__typename === "InvestmentStock" ? inv.asset.code : null;
+      const label = code ?? inv?.name ?? "?";
       return [
         {
-          label: code ?? inv?.name ?? "?",
+          label,
           tooltip: inv?.name ?? "",
           sortValue: inv?.position.totalValue?.amount ?? 0,
           points: ts.points,
           initialDate: ts.initialDate,
+          colorKey: code ?? inv?.name ?? label,
         },
       ];
     })
     .sort((a, b) => b.sortValue - a.sortValue)
-    .map((s, i) => ({
+    .map((s) => ({
       label: s.label,
       tooltip: s.tooltip,
-      color: STACK_COLORS[i % STACK_COLORS.length],
+      color: colorForKey(s.colorKey),
       points: s.points,
       initialDate: s.initialDate,
     }));
