@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
 import {
   createFileRoute,
-  Link,
   Outlet,
   useNavigate,
   useRouterState,
@@ -378,11 +377,8 @@ function loadPersistedSearch(): InvestmentsSearch {
 function InvestmentsDialogLayout() {
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <header className="flex items-center justify-between">
+      <header>
         <h1 className="text-2xl font-semibold tracking-tight">Investments</h1>
-        <Link to="/" className="text-sm text-muted-foreground hover:underline">
-          ← Home
-        </Link>
       </header>
       <Suspense fallback={<Spinner />}>
         <InvestmentsPageContent />
