@@ -8,6 +8,7 @@ import {
 import { ArrowDown, ArrowUp, ExternalLink, Pencil, Plus } from "lucide-react";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 
 import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
@@ -20,7 +21,6 @@ import {
   PortfolioHeadlineFragment,
 } from "@/components/investments/portfolio-headline";
 import {
-  PORTFOLIO_PERIODS,
   PortfolioChartPortfolioFragment,
   type PortfolioChartSettings,
   PortfolioSection,
@@ -167,16 +167,33 @@ type InvestmentRowNode = NonNullable<
   ResultOf<typeof InvestmentsListDocument>["investments"]
 >["edges"][number]["node"];
 
+type SortKind = "createdAt" | "value" | "gainAbs" | "gainPercent";
+type SortDirection = "ASC" | "DESC";
+type SortState = { kind: SortKind; dir: SortDirection };
+
+const RANGES = ["5y", "3y", "1y", "ytd", "3m"] as const;
+type Range = (typeof RANGES)[number];
+
+const investmentsSearchSchema = z.object({
+  range: z.enum(RANGES).optional().catch(undefined),
+  mode: z.enum(["line", "candle"]).optional().catch(undefined),
+  stack: z.coerce.boolean().optional().catch(undefined),
+  sort: z.enum(["value", "gainAbs", "gainPercent"]).optional().catch(undefined),
+  dir: z.enum(["asc", "desc"]).optional().catch(undefined),
+});
+
+type InvestmentsSearch = z.infer<typeof investmentsSearchSchema>;
+
+const SEARCH_STORAGE_KEY = "fire.investments.search";
+
 export const Route = createFileRoute("/investments")({
   component: InvestmentsDialogLayout,
+  validateSearch: investmentsSearchSchema,
 });
 
 export const investmentsRefetch = [
   { query: InvestmentsListDocument, variables: { first: 100 } },
 ];
-
-type SortKind = "createdAt" | "value" | "gainAbs" | "gainPercent";
-type SortDirection = "ASC" | "DESC";
 
 function toSortInput(
   kind: SortKind,
@@ -186,6 +203,75 @@ function toSortInput(
   if (kind === "value") return { value: dir };
   if (kind === "gainAbs") return { gainAbs: dir };
   return { gainPercent: dir };
+}
+
+function rangeToPeriod(r: Range): {
+  period: "YEAR" | "MONTH" | "YTD";
+  length: number | null;
+} {
+  switch (r) {
+    case "5y":
+      return { period: "YEAR", length: 5 };
+    case "3y":
+      return { period: "YEAR", length: 3 };
+    case "1y":
+      return { period: "YEAR", length: 1 };
+    case "ytd":
+      return { period: "YTD", length: null };
+    case "3m":
+      return { period: "MONTH", length: 3 };
+  }
+}
+
+function searchToChart(s: InvestmentsSearch): PortfolioChartSettings {
+  const range = s.range ?? "5y";
+  return {
+    periodIdx: RANGES.indexOf(range),
+    mode: s.mode === "candle" ? "candlestick" : "line",
+    stack: s.stack ?? false,
+  };
+}
+
+function chartToSearch(
+  c: PortfolioChartSettings,
+): Pick<InvestmentsSearch, "range" | "mode" | "stack"> {
+  const range = RANGES[c.periodIdx] ?? "5y";
+  return {
+    range: range === "5y" ? undefined : range,
+    mode: c.mode === "candlestick" ? "candle" : undefined,
+    stack: c.stack ? true : undefined,
+  };
+}
+
+function searchToSort(s: InvestmentsSearch): SortState {
+  const kind: SortKind = s.sort ?? "createdAt";
+  const dir: SortDirection = s.dir === "asc" ? "ASC" : "DESC";
+  return { kind, dir };
+}
+
+function sortToSearch(
+  state: SortState,
+): Pick<InvestmentsSearch, "sort" | "dir"> {
+  if (state.kind === "createdAt") return { sort: undefined, dir: undefined };
+  return {
+    sort: state.kind,
+    dir: state.dir === "ASC" ? "asc" : "desc",
+  };
+}
+
+function hasAnySearch(s: InvestmentsSearch): boolean {
+  return Object.values(s).some((v) => v !== undefined);
+}
+
+function loadPersistedSearch(): InvestmentsSearch {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(SEARCH_STORAGE_KEY);
+    if (!raw) return {};
+    return investmentsSearchSchema.parse(JSON.parse(raw));
+  } catch {
+    return {};
+  }
 }
 
 function InvestmentsDialogLayout() {
@@ -205,81 +291,58 @@ function InvestmentsDialogLayout() {
   );
 }
 
-type SortState = { kind: SortKind; dir: SortDirection };
-
-const CHART_STORAGE_KEY = "fire.investments.portfolioChart";
-const SORT_STORAGE_KEY = "fire.investments.sort";
-
-function loadChartSettings(): PortfolioChartSettings {
-  if (typeof window === "undefined") {
-    return { periodIdx: 0, mode: "line", stack: false };
-  }
-  try {
-    const raw = window.localStorage.getItem(CHART_STORAGE_KEY);
-    if (!raw) return { periodIdx: 0, mode: "line", stack: false };
-    const parsed = JSON.parse(raw) as Partial<PortfolioChartSettings>;
-    return {
-      periodIdx:
-        typeof parsed.periodIdx === "number" &&
-        parsed.periodIdx >= 0 &&
-        parsed.periodIdx < PORTFOLIO_PERIODS.length
-          ? parsed.periodIdx
-          : 0,
-      mode: parsed.mode === "candlestick" ? "candlestick" : "line",
-      stack: parsed.stack === true,
-    };
-  } catch {
-    return { periodIdx: 0, mode: "line", stack: false };
-  }
-}
-
-function loadSort(): SortState {
-  if (typeof window === "undefined") return { kind: "createdAt", dir: "DESC" };
-  try {
-    const raw = window.localStorage.getItem(SORT_STORAGE_KEY);
-    if (!raw) return { kind: "createdAt", dir: "DESC" };
-    const parsed = JSON.parse(raw) as Partial<SortState>;
-    const kind: SortKind =
-      parsed.kind === "value" ||
-      parsed.kind === "gainAbs" ||
-      parsed.kind === "gainPercent"
-        ? parsed.kind
-        : "createdAt";
-    const dir: SortDirection = parsed.dir === "ASC" ? "ASC" : "DESC";
-    return { kind, dir };
-  } catch {
-    return { kind: "createdAt", dir: "DESC" };
-  }
-}
-
-// The page component owns every setting that drives the combined initial
-// query (sort, chart period/length, candlestick). It reads localStorage
-// once on mount to build the suspense-query variables, and persists later
-// changes. Children receive state via props; their own non-suspense
-// `useQuery` calls match the cache-prewarmed variables on first render.
+// All persisted UI options (chart period/mode/stack, sort) live in the URL
+// search params. On first mount, if the URL is empty, hydrate from
+// localStorage and `replace` into the URL so it reflects current state.
+// Any URL-driven change gets mirrored back to localStorage.
 function InvestmentsPageContent() {
-  const [chart, setChart] = useState<PortfolioChartSettings>(loadChartSettings);
-  const [sort, setSort] = useState<SortState>(loadSort);
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+
+  // Bootstrap: captured once — used to seed URL + freeze initial query vars.
+  const [bootstrap] = useState<InvestmentsSearch>(() =>
+    hasAnySearch(search) ? search : loadPersistedSearch(),
+  );
 
   useEffect(() => {
-    window.localStorage.setItem(CHART_STORAGE_KEY, JSON.stringify(chart));
-  }, [chart]);
-  useEffect(() => {
-    window.localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(sort));
-  }, [sort]);
+    if (!hasAnySearch(search) && hasAnySearch(bootstrap)) {
+      void navigate({ search: bootstrap, replace: true });
+      return;
+    }
+    window.localStorage.setItem(SEARCH_STORAGE_KEY, JSON.stringify(search));
+  }, [search, bootstrap, navigate]);
 
-  // Freeze the initial variables so later setChart / setSort calls don't
+  const effective = hasAnySearch(search) ? search : bootstrap;
+  const chart = searchToChart(effective);
+  const sort = searchToSort(effective);
+
+  const setChart = (next: PortfolioChartSettings) => {
+    const patch = chartToSearch(next);
+    void navigate({
+      search: (prev) => ({ ...prev, ...patch }),
+      replace: true,
+    });
+  };
+  const setSort = (next: SortState) => {
+    const patch = sortToSearch(next);
+    void navigate({
+      search: (prev) => ({ ...prev, ...patch }),
+      replace: true,
+    });
+  };
+
+  // Freeze the initial suspense-query variables so later set* calls don't
   // re-suspend the page — children refetch via their own `useQuery`.
   const [initialVars] = useState(() => {
-    const initialChart = loadChartSettings();
-    const initialSort = loadSort();
-    const p = PORTFOLIO_PERIODS[initialChart.periodIdx];
+    const c = searchToChart(bootstrap);
+    const s = searchToSort(bootstrap);
+    const { period, length } = rangeToPeriod(RANGES[c.periodIdx] ?? "5y");
     return {
       first: 100,
-      sort: toSortInput(initialSort.kind, initialSort.dir),
-      period: p.period,
-      length: "length" in p ? p.length : null,
-      candlestick: initialChart.mode === "candlestick",
+      sort: toSortInput(s.kind, s.dir),
+      period,
+      length,
+      candlestick: c.mode === "candlestick",
       skipLive: true,
     };
   });
@@ -434,7 +497,7 @@ function SortHeader({
     <button
       type="button"
       onClick={() => onToggle(kind)}
-      className="inline-flex items-center gap-1 hover:text-foreground"
+      className="inline-flex cursor-pointer items-center gap-1 hover:text-foreground"
     >
       {label}
       {active ? (
