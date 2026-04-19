@@ -206,7 +206,11 @@ function detectPortfolioCurrency(investments: Investment[]): string {
   return "GBP";
 }
 
-export function AllocationsSection() {
+export function AllocationsSection({
+  filterAssetId,
+}: {
+  filterAssetId?: string | null;
+}) {
   const { data } = useQuery(AllocationsSectionDocument, {
     variables: { first: 1000 },
     fetchPolicy: "cache-first",
@@ -219,11 +223,25 @@ export function AllocationsSection() {
     );
   }, [data]);
 
-  const buckets = useMemo(() => bucketsByWrapper(investments), [investments]);
-  const portfolioRows = useMemo(
-    () => totalPortfolioByInvestment(investments),
+  const allBuckets = useMemo(
+    () => bucketsByWrapper(investments),
     [investments],
   );
+  const buckets = filterAssetId
+    ? allBuckets.filter((b) => b.assetId === filterAssetId)
+    : allBuckets;
+  const portfolioRows = useMemo(() => {
+    if (!filterAssetId) return totalPortfolioByInvestment(investments);
+    const bucket = allBuckets.find((b) => b.assetId === filterAssetId);
+    if (!bucket) return [];
+    return bucket.holdings.map((h) => ({
+      investmentId: h.investmentId,
+      label: h.label,
+      fullName: h.fullName,
+      color: h.color,
+      valueMinor: h.valueMinor,
+    }));
+  }, [filterAssetId, investments, allBuckets]);
   const portfolioCurrency = useMemo(
     () => detectPortfolioCurrency(investments),
     [investments],
@@ -267,20 +285,27 @@ export function AllocationsSection() {
   const denom = currentCashMajor + investValueMajor;
   const cashShare = denom > 0 ? currentCashMajor / denom : 0;
 
-  const overallSegments: AllocationSegment[] = [
-    {
-      id: "__cash__",
-      label: "Cash",
-      color: CASH_COLOR,
-      value: denom > 0 ? currentCashMajor / denom : 0,
-    },
-    ...portfolioRows.map((r) => ({
-      id: r.investmentId,
-      label: r.label,
-      color: r.color,
-      value: denom > 0 ? r.valueMinor / denom : 0,
-    })),
-  ];
+  const overallSegments: AllocationSegment[] = filterAssetId
+    ? portfolioRows.map((r) => ({
+        id: r.investmentId,
+        label: r.label,
+        color: r.color,
+        value: investValueMajor > 0 ? r.valueMinor / investValueMajor : 0,
+      }))
+    : [
+        {
+          id: "__cash__",
+          label: "Cash",
+          color: CASH_COLOR,
+          value: denom > 0 ? currentCashMajor / denom : 0,
+        },
+        ...portfolioRows.map((r) => ({
+          id: r.investmentId,
+          label: r.label,
+          color: r.color,
+          value: denom > 0 ? r.valueMinor / denom : 0,
+        })),
+      ];
 
   // Hover-expand state — stays open while a drag is in flight so the
   // overlay doesn't collapse mid-rebalance. Each child editor flips
@@ -362,27 +387,29 @@ export function AllocationsSection() {
               </span>
             </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">Overall portfolio</h3>
-                <span className="text-xs text-muted-foreground">
-                  Cash target:{" "}
-                  {formatAccountingMoney(cashCurrency, currentCashMajor, {
-                    compact: true,
-                  })}{" "}
-                  ({(cashShare * 100).toFixed(1)}%)
-                  {savingCash ? " · saving…" : ""}
-                </span>
+            {filterAssetId ? null : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium">Overall portfolio</h3>
+                  <span className="text-xs text-muted-foreground">
+                    Cash target:{" "}
+                    {formatAccountingMoney(cashCurrency, currentCashMajor, {
+                      compact: true,
+                    })}{" "}
+                    ({(cashShare * 100).toFixed(1)}%)
+                    {savingCash ? " · saving…" : ""}
+                  </span>
+                </div>
+                <AllocationBar
+                  segments={overallSegments}
+                  onBoundaryDrag={seedAssetId ? onCashBoundaryDrag : undefined}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Drag the cash boundary to set the portfolio-wide cash target.
+                  Investment slices reflect current realised weights.
+                </p>
               </div>
-              <AllocationBar
-                segments={overallSegments}
-                onBoundaryDrag={seedAssetId ? onCashBoundaryDrag : undefined}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Drag the cash boundary to set the portfolio-wide cash target.
-                Investment slices reflect current realised weights.
-              </p>
-            </div>
+            )}
 
             {buckets.length === 0 ? (
               <p className="text-sm text-muted-foreground">

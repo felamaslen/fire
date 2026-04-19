@@ -49,11 +49,13 @@ const PortfolioChartDocument = graphql(
       $period: PortfolioTimePeriod!
       $length: Int
       $candlestick: Boolean!
+      $filterAssetIdIn: [ID!]
+      $filterAssetId: ID
     ) {
-      portfolio {
+      portfolio(filterAssetIdIn: $filterAssetIdIn) {
         ...PortfolioChartPortfolio
       }
-      portfolios @skip(if: $candlestick) {
+      portfolios(filterAssetIdIn: $filterAssetIdIn) @skip(if: $candlestick) {
         edges {
           node {
             id
@@ -65,7 +67,7 @@ const PortfolioChartDocument = graphql(
                   code
                 }
               }
-              position {
+              position(filterAssetId: $filterAssetId) {
                 totalValue {
                   amount
                 }
@@ -111,10 +113,12 @@ export function PortfolioSection({
   settings,
   onChange,
   bottomSlot,
+  filterAssetId,
 }: {
   settings: PortfolioChartSettings;
   onChange: (next: PortfolioChartSettings) => void;
   bottomSlot?: React.ReactNode;
+  filterAssetId?: string | null;
 }) {
   const { periodIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
@@ -167,6 +171,7 @@ export function PortfolioSection({
         length={"length" in p ? p.length : null}
         candlestick={mode === "candlestick"}
         stack={stack}
+        filterAssetId={filterAssetId ?? null}
       />
       {bottomSlot}
     </section>
@@ -178,11 +183,13 @@ function PortfolioChartLoader({
   length,
   candlestick,
   stack,
+  filterAssetId,
 }: {
   period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
   candlestick: boolean;
   stack: boolean;
+  filterAssetId: string | null;
 }) {
   // `useSuspenseQuery` bubbles its suspend up to the page-level Suspense,
   // so the whole page waits for chart data before painting — no layout
@@ -205,11 +212,14 @@ function PortfolioChartLoader({
     deferredCandlestick !== candlestick ||
     deferredStack !== stack;
 
+  const deferredFilterAssetId = useDeferredValue(filterAssetId);
   const { data } = useSuspenseQuery(PortfolioChartDocument, {
     variables: {
       period: deferredPeriod,
       length: deferredLength,
       candlestick: deferredCandlestick,
+      filterAssetIdIn: deferredFilterAssetId ? [deferredFilterAssetId] : null,
+      filterAssetId: deferredFilterAssetId ?? null,
     },
   });
 

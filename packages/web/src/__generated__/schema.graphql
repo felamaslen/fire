@@ -357,8 +357,13 @@ type Investment {
   currency: String!
   id: ID!
   name: String!
-  """Holdings, cost basis, and gain/loss aggregated across every wrapper."""
-  position: InvestmentPosition!
+  """
+  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to a single wrapper when `filterAssetId` is supplied.
+  """
+  position(
+    """When set, the position is scoped to this wrapper."""
+    filterAssetId: ID
+  ): InvestmentPosition!
   """Stock-split events on this investment, oldest-first."""
   stockSplits: [InvestmentStockSplit!] @semanticNonNull
   """
@@ -366,9 +371,14 @@ type Investment {
   """
   transactions: [InvestmentTransaction!] @semanticNonNull
   """
-  Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default.
+  Paginated transactions (newest-first) for this investment. Returns the 15 most recent by default. Pass `filterAssetId` to scope to a single wrapper.
   """
-  transactionsPaged(after: ID, first: Int): InvestmentTransactionConnection @semanticNonNull
+  transactionsPaged(
+    after: ID
+    """When set, only transactions booked against this wrapper are returned."""
+    filterAssetId: ID
+    first: Int
+  ): InvestmentTransactionConnection @semanticNonNull
   """
   Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.
   """
@@ -1537,7 +1547,15 @@ type Query {
   """
   Paginated list of investments, sorted by the requested key. Computed sorts (`value`, `gainAbs`, `gainPercent`) use current cached values; cursors are only stable while those values don't change.
   """
-  investments(after: ID, first: Int, sort: InvestmentSort): InvestmentConnection @semanticNonNull
+  investments(
+    after: ID
+    """
+    When set, only investments with at least one transaction booked against this wrapper are returned, and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to that wrapper.
+    """
+    filterAssetId: ID
+    first: Int
+    sort: InvestmentSort
+  ): InvestmentConnection @semanticNonNull
   """Paginated list of net-worth entries, newest first."""
   netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """

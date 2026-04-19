@@ -1,6 +1,10 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { useForm } from "@tanstack/react-form";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  useNavigate,
+  useSearch,
+} from "@tanstack/react-router";
 import { Pencil, Plus } from "lucide-react";
 import { Suspense, useState } from "react";
 import { toast } from "sonner";
@@ -38,6 +42,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { graphql, type ResultOf } from "@/graphql";
 
 import { InvestmentsListDocument } from "../investments";
@@ -146,12 +156,20 @@ const InvestmentStockSplitDeleteDocument = graphql(`
 
 const InvestmentTransactionsDocument = graphql(
   `
-    query InvestmentTransactions($txFirst: Int, $txAfter: ID) {
-      investment: investments {
+    query InvestmentTransactions(
+      $txFirst: Int
+      $txAfter: ID
+      $filterAssetId: ID
+    ) {
+      investment: investments(filterAssetId: $filterAssetId) {
         edges {
           node {
             id
-            transactionsPaged(first: $txFirst, after: $txAfter) {
+            transactionsPaged(
+              first: $txFirst
+              after: $txAfter
+              filterAssetId: $filterAssetId
+            ) {
               edges {
                 cursor
                 node {
@@ -257,6 +275,8 @@ export const Route = createFileRoute("/investments/$id")({
 function InvestmentDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const parentSearch = useSearch({ from: "/investments" });
+  const filterAssetId = parentSearch["filter-wrapper-id"] ?? null;
   return (
     <Dialog
       open
@@ -273,7 +293,7 @@ function InvestmentDetailPage() {
           </DialogDescription>
         </DialogHeader>
         <Suspense fallback={<Spinner />}>
-          <InvestmentDetail id={id} />
+          <InvestmentDetail id={id} filterAssetId={filterAssetId} />
         </Suspense>
       </DialogContent>
     </Dialog>
@@ -284,7 +304,13 @@ type AssetEdge = NonNullable<
   ResultOf<typeof InvestmentDetailDocument>["stockPensionAssets"]
 >["edges"][number];
 
-function InvestmentDetail({ id }: { id: string }) {
+function InvestmentDetail({
+  id,
+  filterAssetId,
+}: {
+  id: string;
+  filterAssetId: string | null;
+}) {
   const { data } = useSuspenseQuery(InvestmentDetailDocument);
   const investment = data.investment?.edges
     .map((e) => e.node)
@@ -353,6 +379,7 @@ function InvestmentDetail({ id }: { id: string }) {
         investmentId={investment.id}
         currency={investment.currency}
         wrappers={wrappers}
+        filterAssetId={filterAssetId}
       />
     </div>
   );
@@ -362,10 +389,12 @@ function DetailTabs({
   investmentId,
   currency,
   wrappers,
+  filterAssetId,
 }: {
   investmentId: string;
   currency: string;
   wrappers: { id: string; name: string; type: string }[];
+  filterAssetId: string | null;
 }) {
   const [tab, setTab] = useState<"transactions" | "splits">("transactions");
   return (
@@ -397,6 +426,7 @@ function DetailTabs({
             investmentId={investmentId}
             currency={currency}
             wrappers={wrappers}
+            filterAssetId={filterAssetId}
           />
         ) : (
           <StockSplitsSection investmentId={investmentId} />
@@ -444,17 +474,23 @@ function TransactionsSection({
   investmentId,
   currency,
   wrappers,
+  filterAssetId,
 }: {
   investmentId: string;
   currency: string;
   wrappers: { id: string; name: string; type: string }[];
+  filterAssetId: string | null;
 }) {
   // Keyset pagination stack: each entry is the `after` cursor that produced the
   // current page. `[null]` = first page.
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
   const currentCursor = cursorStack[cursorStack.length - 1];
   const { data, refetch } = useSuspenseQuery(InvestmentTransactionsDocument, {
-    variables: { txFirst: 15, txAfter: currentCursor },
+    variables: {
+      txFirst: 15,
+      txAfter: currentCursor,
+      filterAssetId,
+    },
   });
   const investment = data.investment?.edges
     .map((e) => e.node)
@@ -506,7 +542,10 @@ function TransactionsSection({
           currency={currency}
           wrappers={wrappers}
           existing={null}
-          defaultAssetId={transactions[0]?.asset.id ?? wrappers[0]?.id ?? ""}
+          defaultAssetId={
+            filterAssetId ?? transactions[0]?.asset.id ?? wrappers[0]?.id ?? ""
+          }
+          lockedAssetId={filterAssetId}
           onDone={() => {
             setAdding(false);
             onMutate();
@@ -522,6 +561,7 @@ function TransactionsSection({
           wrappers={wrappers}
           existing={editing}
           defaultAssetId={editing.asset.id}
+          lockedAssetId={filterAssetId}
           onDone={() => {
             setEditing(null);
             onMutate();
@@ -608,6 +648,7 @@ function TransactionForm({
   wrappers,
   existing,
   defaultAssetId,
+  lockedAssetId,
   onDone,
   onCancel,
 }: {
@@ -616,6 +657,8 @@ function TransactionForm({
   wrappers: { id: string; name: string; type: string }[];
   existing: TransactionRow | null;
   defaultAssetId: string;
+  /** When set, the wrapper field is read-only and pinned to this id (applied when a page-level filter is active). */
+  lockedAssetId: string | null;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -697,26 +740,50 @@ function TransactionForm({
       className="grid grid-cols-2 gap-3 rounded border p-3 sm:grid-cols-4"
     >
       <form.Field name="assetId">
-        {(field) => (
-          <div className="space-y-1 sm:col-span-2">
-            <Label>Wrapper</Label>
-            <Select
-              value={field.state.value}
-              onValueChange={(v) => field.handleChange(v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Pick wrapper" />
-              </SelectTrigger>
-              <SelectContent>
-                {wrappers.map((w) => (
-                  <SelectItem key={w.id} value={w.id}>
-                    {w.name} ({w.type})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        {(field) => {
+          if (lockedAssetId) {
+            const locked = wrappers.find((w) => w.id === lockedAssetId);
+            return (
+              <div className="space-y-1 sm:col-span-2">
+                <Label>Wrapper</Label>
+                <TooltipProvider delayDuration={150}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Input
+                        readOnly
+                        disabled
+                        value={locked ? `${locked.name} (${locked.type})` : ""}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Remove the page filter to change the wrapper.
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            );
+          }
+          return (
+            <div className="space-y-1 sm:col-span-2">
+              <Label>Wrapper</Label>
+              <Select
+                value={field.state.value}
+                onValueChange={(v) => field.handleChange(v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Pick wrapper" />
+                </SelectTrigger>
+                <SelectContent>
+                  {wrappers.map((w) => (
+                    <SelectItem key={w.id} value={w.id}>
+                      {w.name} ({w.type})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          );
+        }}
       </form.Field>
       <form.Field name="date">
         {(field) => (

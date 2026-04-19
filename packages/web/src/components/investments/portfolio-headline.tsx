@@ -31,8 +31,8 @@ export const PortfolioHeadlineFragment = graphql(
 
 const PortfolioHeadlineDocument = graphql(
   `
-    query PortfolioHeadline($skipLive: Boolean!) {
-      portfolio {
+    query PortfolioHeadline($skipLive: Boolean!, $filterAssetIdIn: [ID!]) {
+      portfolio(filterAssetIdIn: $filterAssetIdIn) {
         ...PortfolioHeadline
       }
     }
@@ -92,7 +92,13 @@ function useDailyGainFlash(
   return flash;
 }
 
-export function PortfolioHeadline() {
+export function PortfolioHeadline({
+  filterAssetId,
+  rightSlot,
+}: {
+  filterAssetId?: string | null;
+  rightSlot?: React.ReactNode;
+}) {
   // First fetch without live pricing so the page renders quickly with
   // DB-cached values; after a short delay, swap to live pricing so the flash
   // fires even on a cache hit (the live quote shifts yesterday's close into
@@ -103,8 +109,9 @@ export function PortfolioHeadline() {
     return () => clearTimeout(t);
   }, []);
 
+  const filterAssetIdIn = filterAssetId ? [filterAssetId] : null;
   const { data, previousData } = useQuery(PortfolioHeadlineDocument, {
-    variables: { skipLive },
+    variables: { skipLive, filterAssetIdIn },
     pollInterval: 30_000,
     notifyOnNetworkStatusChange: false,
   });
@@ -146,6 +153,9 @@ export function PortfolioHeadline() {
           "—"
         )}
       </Stat>
+      {rightSlot ? (
+        <div className="ml-auto flex items-center">{rightSlot}</div>
+      ) : null}
     </section>
   );
 }

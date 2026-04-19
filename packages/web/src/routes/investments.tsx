@@ -1,4 +1,4 @@
-import { useMutation, useSuspenseQuery } from "@apollo/client/react";
+import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
 import {
   createFileRoute,
   Link,
@@ -45,6 +45,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -77,7 +84,7 @@ const InvestmentRowDocument = graphql(
           url
         }
       }
-      position {
+      position(filterAssetId: $filterAssetId) {
         units
         totalValue {
           ...Figure
@@ -96,8 +103,12 @@ const InvestmentRowDocument = graphql(
 
 export const InvestmentsListDocument = graphql(
   `
-    query InvestmentsList($first: Int, $sort: InvestmentSort) {
-      investments(first: $first, sort: $sort) {
+    query InvestmentsList(
+      $first: Int
+      $sort: InvestmentSort
+      $filterAssetId: ID
+    ) {
+      investments(first: $first, sort: $sort, filterAssetId: $filterAssetId) {
         edges {
           node {
             id
@@ -124,8 +135,10 @@ const InvestmentsPageDocument = graphql(
       $length: Int
       $candlestick: Boolean!
       $skipLive: Boolean!
+      $filterAssetId: ID
+      $filterAssetIdIn: [ID!]
     ) {
-      investments(first: $first, sort: $sort) {
+      investments(first: $first, sort: $sort, filterAssetId: $filterAssetId) {
         edges {
           node {
             id
@@ -135,11 +148,11 @@ const InvestmentsPageDocument = graphql(
           }
         }
       }
-      portfolio {
+      portfolio(filterAssetIdIn: $filterAssetIdIn) {
         ...PortfolioHeadline
         ...PortfolioChartPortfolio
       }
-      portfolios @skip(if: $candlestick) {
+      portfolios(filterAssetIdIn: $filterAssetIdIn) @skip(if: $candlestick) {
         edges {
           node {
             id
@@ -168,6 +181,75 @@ const InvestmentsPageDocument = graphql(
   ],
 );
 
+const WrapperFilterOptionsDocument = graphql(`
+  query WrapperFilterOptions {
+    investments(first: 1000) {
+      edges {
+        node {
+          id
+          wrappers {
+            asset {
+              id
+              name
+              type
+            }
+          }
+        }
+      }
+    }
+  }
+`);
+
+const FILTER_WRAPPER_TYPES = new Set(["STOCK", "PENSION"]);
+
+const WRAPPER_FILTER_ALL = "__all__";
+
+function WrapperFilterDropdown({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  const { data } = useQuery(WrapperFilterOptionsDocument, {
+    fetchPolicy: "cache-first",
+  });
+  const options = (() => {
+    const seen = new Map<string, { id: string; name: string }>();
+    for (const edge of data?.investments?.edges ?? []) {
+      for (const w of edge.node.wrappers ?? []) {
+        if (!FILTER_WRAPPER_TYPES.has(w.asset.type)) continue;
+        if (!seen.has(w.asset.id)) {
+          seen.set(w.asset.id, { id: w.asset.id, name: w.asset.name });
+        }
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+  })();
+
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>Wrapper</span>
+      <Select
+        value={value ?? WRAPPER_FILTER_ALL}
+        onValueChange={(v) => onChange(v === WRAPPER_FILTER_ALL ? null : v)}
+      >
+        <SelectTrigger className="h-8 w-40">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={WRAPPER_FILTER_ALL}>All</SelectItem>
+          {options.map((o) => (
+            <SelectItem key={o.id} value={o.id}>
+              {o.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 const InvestmentDeleteDocument = graphql(`
   mutation InvestmentDelete($id: ID!) {
     investmentDelete(id: $id) {
@@ -193,6 +275,7 @@ const investmentsSearchSchema = z.object({
   stack: z.coerce.boolean().optional().catch(undefined),
   sort: z.enum(["value", "gainAbs", "gainPercent"]).optional().catch(undefined),
   dir: z.enum(["asc", "desc"]).optional().catch(undefined),
+  "filter-wrapper-id": z.string().min(1).optional().catch(undefined),
 });
 
 type InvestmentsSearch = z.infer<typeof investmentsSearchSchema>;
@@ -337,6 +420,7 @@ function InvestmentsPageContent() {
   const effective = hasAnySearch(search) ? search : bootstrap;
   const chart = searchToChart(effective);
   const sort = searchToSort(effective);
+  const filterAssetId = effective["filter-wrapper-id"] ?? null;
 
   const setChart = (next: PortfolioChartSettings) => {
     const patch = chartToSearch(next);
@@ -352,6 +436,17 @@ function InvestmentsPageContent() {
       replace: true,
     });
   };
+  const setFilterAssetId = (id: string | null) => {
+    void navigate({
+      search: (prev) => {
+        const next = { ...prev } as InvestmentsSearch;
+        if (id) next["filter-wrapper-id"] = id;
+        else delete next["filter-wrapper-id"];
+        return next;
+      },
+      replace: true,
+    });
+  };
 
   // Freeze the initial suspense-query variables so later set* calls don't
   // re-suspend the page — children refetch via their own `useQuery`.
@@ -359,6 +454,7 @@ function InvestmentsPageContent() {
     const c = searchToChart(bootstrap);
     const s = searchToSort(bootstrap);
     const { period, length } = rangeToPeriod(RANGES[c.periodIdx] ?? "5y");
+    const fid = bootstrap["filter-wrapper-id"] ?? null;
     return {
       first: 100,
       sort: toSortInput(s.kind, s.dir),
@@ -366,19 +462,34 @@ function InvestmentsPageContent() {
       length,
       candlestick: c.mode === "candlestick",
       skipLive: true,
+      filterAssetId: fid,
+      filterAssetIdIn: fid ? [fid] : null,
     };
   });
   useSuspenseQuery(InvestmentsPageDocument, { variables: initialVars });
 
   return (
     <>
-      <PortfolioHeadline />
+      <PortfolioHeadline
+        filterAssetId={filterAssetId}
+        rightSlot={
+          <WrapperFilterDropdown
+            value={filterAssetId}
+            onChange={setFilterAssetId}
+          />
+        }
+      />
       <PortfolioSection
+        filterAssetId={filterAssetId}
         settings={chart}
         onChange={setChart}
-        bottomSlot={<AllocationsSection />}
+        bottomSlot={<AllocationsSection filterAssetId={filterAssetId} />}
       />
-      <InvestmentsList sort={sort} onSortChange={setSort} />
+      <InvestmentsList
+        sort={sort}
+        onSortChange={setSort}
+        filterAssetId={filterAssetId}
+      />
     </>
   );
 }
@@ -386,9 +497,11 @@ function InvestmentsPageContent() {
 function InvestmentsList({
   sort,
   onSortChange,
+  filterAssetId,
 }: {
   sort: SortState;
   onSortChange: (next: SortState) => void;
+  filterAssetId: string | null;
 }) {
   const setSort = (updater: (prev: SortState) => SortState) =>
     onSortChange(updater(sort));
@@ -402,9 +515,17 @@ function InvestmentsList({
   // the URL search), so those don't re-trigger the query.
   const deferredKind = useDeferredValue(sort.kind);
   const deferredDir = useDeferredValue(sort.dir);
-  const loading = deferredKind !== sort.kind || deferredDir !== sort.dir;
+  const deferredFilterAssetId = useDeferredValue(filterAssetId);
+  const loading =
+    deferredKind !== sort.kind ||
+    deferredDir !== sort.dir ||
+    deferredFilterAssetId !== filterAssetId;
   const { data } = useSuspenseQuery(InvestmentsListDocument, {
-    variables: { first: 100, sort: toSortInput(deferredKind, deferredDir) },
+    variables: {
+      first: 100,
+      sort: toSortInput(deferredKind, deferredDir),
+      filterAssetId: deferredFilterAssetId,
+    },
   });
   const allRows: InvestmentRowNode[] =
     data.investments?.edges.map((e) => e.node) ?? [];
