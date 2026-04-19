@@ -64,6 +64,16 @@ const PortfolioChartDocument = graphql(
             investment {
               id
               name
+              asset {
+                ... on InvestmentStock {
+                  code
+                }
+              }
+              position {
+                totalValue {
+                  amount
+                }
+              }
             }
             timeseries(period: $period, length: $length) {
               initialDate
@@ -208,20 +218,35 @@ function PortfolioChartLoader({
     ? readFragment(PortfolioChartPortfolioFragment, rawPortfolio)
     : null;
 
-  const perInvestmentSeries = (data?.portfolios?.edges ?? []).flatMap(
-    (edge, i) => {
+  // Sort per-investment series by current / realised value (descending) so
+  // the biggest holdings anchor the bottom of the stack and the legend reads
+  // in size order. Labels prefer the stock code (compact), with the full
+  // name surfaced via tooltip.
+  const perInvestmentSeries = (data?.portfolios?.edges ?? [])
+    .flatMap((edge) => {
       const ts = edge.node.timeseries;
       if (!ts) return [];
+      const inv = edge.node.investment;
+      const code =
+        inv?.asset?.__typename === "InvestmentStock" ? inv.asset.code : null;
       return [
         {
-          label: edge.node.investment?.name ?? "?",
-          color: STACK_COLORS[i % STACK_COLORS.length],
+          label: code ?? inv?.name ?? "?",
+          tooltip: inv?.name ?? "",
+          sortValue: inv?.position.totalValue?.amount ?? 0,
           points: ts.points,
           initialDate: ts.initialDate,
         },
       ];
-    },
-  );
+    })
+    .sort((a, b) => b.sortValue - a.sortValue)
+    .map((s, i) => ({
+      label: s.label,
+      tooltip: s.tooltip,
+      color: STACK_COLORS[i % STACK_COLORS.length],
+      points: s.points,
+      initialDate: s.initialDate,
+    }));
 
   const { lines, stackInitialDate } = stack
     ? stackLines(perInvestmentSeries)
@@ -279,7 +304,6 @@ function PortfolioChartLoader({
     : null;
   if (current) lastRef.current = current;
   const render = current ?? lastRef.current;
-  if (!render) return null;
 
   return (
     <div
@@ -288,15 +312,21 @@ function PortfolioChartLoader({
         loading && "pointer-events-none opacity-50",
       )}
     >
-      <PortfolioChart
-        lines={render.lines}
-        candles={render.candles}
-        currency={render.currency}
-        initialDate={render.initialDate}
-        stacked={render.stacked}
-        className="w-full"
-      />
-      {render.showLegend && render.lines && (
+      {render ? (
+        <PortfolioChart
+          lines={render.lines}
+          candles={render.candles}
+          currency={render.currency}
+          initialDate={render.initialDate}
+          stacked={render.stacked}
+          className="w-full"
+        />
+      ) : (
+        // Reserve the chart's height during the first paint so the rest of
+        // the page doesn't visibly jump when the SVG mounts.
+        <div style={{ height: 260 }} className="w-full" />
+      )}
+      {render?.showLegend && render.lines && (
         <PortfolioChartLegend lines={render.lines} />
       )}
     </div>
@@ -305,6 +335,7 @@ function PortfolioChartLoader({
 
 type SeriesIn = {
   label: string;
+  tooltip?: string;
   color: string;
   points: { x: number; y: number }[];
   initialDate: string;
@@ -312,6 +343,7 @@ type SeriesIn = {
 
 type SeriesOut = {
   label: string;
+  tooltip?: string;
   color: string;
   points: { x: number; y: number }[];
 };
@@ -384,7 +416,7 @@ function stackLines(series: SeriesIn[]): {
       running.set(x, nextTotal);
       return { x, y: nextTotal };
     });
-    return { label: s.label, color: s.color, points };
+    return { label: s.label, tooltip: s.tooltip, color: s.color, points };
   });
 
   return { lines, stackInitialDate };

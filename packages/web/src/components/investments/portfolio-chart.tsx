@@ -4,6 +4,7 @@ import { cn } from "@/lib/cn";
 
 export type LineSeries = {
   label: string;
+  tooltip?: string;
   color: string;
   points: { x: number; y: number }[];
 };
@@ -73,7 +74,7 @@ export function PortfolioChart({
   initialDate,
   stacked = false,
 }: Props) {
-  const { xScale, yScale, xMin, xMax, yMin, yMax } = useMemo(() => {
+  const { xScale, yScale, xMin, xMax, yMin, yTicks, xTicks } = useMemo(() => {
     const allXs: number[] = [];
     const allYs: number[] = [];
     for (const l of lines ?? []) {
@@ -93,22 +94,29 @@ export function PortfolioChart({
     // Float the Y axis to the data range rather than anchoring at 0, so a
     // portfolio that's always sat between £10k and £12k doesn't show up as
     // a flat line at the top of the chart.
-    const yMin = allYs.length ? Math.min(...allYs) : 0;
-    const yMax = allYs.length ? Math.max(...allYs) : 1;
+    const dataMin = allYs.length ? Math.min(...allYs) : 0;
+    const dataMax = allYs.length ? Math.max(...allYs) : 1;
+    const {
+      ticks: yTicks,
+      niceMin,
+      niceMax,
+    } = buildYTicks(dataMin, dataMax, 4);
     const xRange = xMax - xMin || 1;
-    const yRange = yMax - yMin || 1;
+    const yRange = niceMax - niceMin || 1;
     const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
     const plotH = height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM;
+    const xTicks = buildXTicks(xMin, xMax, initialDate, 4);
     return {
       xMin,
       xMax,
-      yMin,
-      yMax,
+      yMin: niceMin,
+      yTicks,
+      xTicks,
       xScale: (x: number) => AXIS_PAD_LEFT + ((x - xMin) / xRange) * plotW,
       yScale: (y: number) =>
-        AXIS_PAD_TOP + plotH - ((y - yMin) / yRange) * plotH,
+        AXIS_PAD_TOP + plotH - ((y - niceMin) / yRange) * plotH,
     };
-  }, [lines, candles, width, height]);
+  }, [lines, candles, width, height, initialDate]);
 
   if (!lines?.length && (!candles || candles.points.length === 0)) {
     return (
@@ -123,9 +131,6 @@ export function PortfolioChart({
       </div>
     );
   }
-
-  const yTicks = buildYTicks(yMin, yMax, 4);
-  const xTicks = buildXTicks(xMin, xMax, initialDate, 4);
 
   return (
     <svg
@@ -296,7 +301,11 @@ export function PortfolioChartLegend({
   return (
     <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
       {visible.map((l) => (
-        <li key={l.label} className="flex items-center gap-1.5">
+        <li
+          key={l.label}
+          className="flex items-center gap-1.5"
+          title={l.tooltip ?? l.label}
+        >
           <span
             aria-hidden
             className="inline-block h-2.5 w-2.5 rounded-sm"
@@ -312,12 +321,33 @@ export function PortfolioChartLegend({
   );
 }
 
-function buildYTicks(min: number, max: number, count: number): number[] {
-  if (max === min) return [min];
-  const step = (max - min) / count;
+/**
+ * Produce ~`count` ticks whose step is a "nice" round value (1/2/5 × 10ⁿ).
+ * The returned tick range extends to cover `[min, max]` — the first tick is
+ * the largest nice value ≤ min, the last is the smallest ≥ max — so the
+ * caller should use these bounds when computing the Y scale instead of the
+ * raw data extent, otherwise ticks land off-grid.
+ */
+function buildYTicks(
+  min: number,
+  max: number,
+  count: number,
+): { ticks: number[]; niceMin: number; niceMax: number } {
+  if (max === min) return { ticks: [min], niceMin: min, niceMax: min };
+  const range = max - min;
+  const roughStep = range / count;
+  const pow10 = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const normalized = roughStep / pow10;
+  const niceNormalized =
+    normalized < 1.5 ? 1 : normalized < 3 ? 2 : normalized < 7 ? 5 : 10;
+  const step = niceNormalized * pow10;
+  const niceMin = Math.floor(min / step) * step;
+  const niceMax = Math.ceil(max / step) * step;
   const ticks: number[] = [];
-  for (let i = 0; i <= count; i++) ticks.push(min + step * i);
-  return ticks;
+  for (let v = niceMin; v <= niceMax + step / 2; v += step) {
+    ticks.push(Number(v.toFixed(10)));
+  }
+  return { ticks, niceMin, niceMax };
 }
 
 function buildXTicks(
