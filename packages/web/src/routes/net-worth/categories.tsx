@@ -158,6 +158,7 @@ const ASSET_TYPE_LABELS = {
   OPTION: "Options",
   PENSION: "Pensions",
   PROPERTY: "Property",
+  VEHICLE: "Vehicles",
   MISC: "Other",
 } as const satisfies Record<AssetType, string>;
 

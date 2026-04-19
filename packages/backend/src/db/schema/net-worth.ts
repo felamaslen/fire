@@ -26,6 +26,7 @@ export const netWorthCategoryAssetType = pgEnum("netWorthCategoryAssetType", [
   "OPTION",
   "PENSION",
   "PROPERTY",
+  "VEHICLE",
   "MISC",
 ]);
 
@@ -109,19 +110,30 @@ export const netWorthCurrencyRatesRelations = relations(
 );
 
 /** Reusable bucket for assets (current account, brokerage, pension pot, house, ...). */
-export const NetWorthCategoryAssets = pgTable("NetWorthCategoryAssets", {
-  id: uuid("id")
-    .primaryKey()
-    .default(sql`uuidv7()`),
-  name: text("name").notNull(),
-  type: netWorthCategoryAssetType("type").notNull(),
-  createdAt: timestamp("createdAt", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updatedAt", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const NetWorthCategoryAssets = pgTable(
+  "NetWorthCategoryAssets",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    name: text("name").notNull(),
+    type: netWorthCategoryAssetType("type").notNull(),
+    /** Assumed annual growth rate as a decimal (0.03 = +3% p.a.). Negative for depreciation (vehicles). Used only by the net-worth forecast; null means no extrapolation. Only valid for `PROPERTY` and `VEHICLE` — enforced by check constraint. */
+    growthRate: numeric("growthRate", { precision: 6, scale: 4 }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      "NetWorthCategoryAssets_growthRate_ck",
+      sql`${t.growthRate} IS NULL OR ${t.type} IN ('PROPERTY', 'VEHICLE')`,
+    ),
+  ],
+);
 
 export const netWorthCategoryAssetsRelations = relations(
   NetWorthCategoryAssets,

@@ -46,6 +46,7 @@ const BUCKET_DEFS: { key: AssetType; label: string; color: string }[] = [
   { key: "STOCK", label: "Stock", color: "#0ea5e9" }, // sky-500
   { key: "PENSION", label: "Pension", color: "#8b5cf6" }, // violet-500
   { key: "PROPERTY", label: "Property", color: "#f59e0b" }, // amber-500
+  { key: "VEHICLE", label: "Vehicle", color: "#f43f5e" }, // rose-500
   { key: "OPTION", label: "Options", color: "#d946ef" }, // fuchsia-500
   { key: "MISC", label: "Misc", color: "#64748b" }, // slate-500
 ];

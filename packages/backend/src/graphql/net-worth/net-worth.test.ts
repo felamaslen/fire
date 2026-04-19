@@ -55,6 +55,40 @@ describe("categories", () => {
     expect(data.option).toMatchObject({ name: "My co shares" });
   });
 
+  it("stores growthRate on VEHICLE / PROPERTY and rejects it for other types", async () => {
+    const create = graphql(`
+      mutation {
+        netWorthCategoryCreate(
+          input: { asset: { name: "Tesla", type: VEHICLE, growthRate: -0.15 } }
+        ) {
+          id
+          ... on NetWorthCategoryAsset {
+            type
+            growthRate
+          }
+        }
+      }
+    `);
+    const data = await runGql(create, {});
+    expect(data.netWorthCategoryCreate).toMatchObject({
+      type: "VEHICLE",
+      growthRate: -0.15,
+    });
+
+    const bad = graphql(`
+      mutation {
+        netWorthCategoryCreate(
+          input: { asset: { name: "Savings", type: CASH, growthRate: 0.02 } }
+        ) {
+          id
+        }
+      }
+    `);
+    await expect(runGql(bad, {})).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: GraphQL errors: growthRate is only valid when type is PROPERTY or VEHICLE]`,
+    );
+  });
+
   it("rejects a LOAN liability without an interestRate", async () => {
     const doc = graphql(`
       mutation LoanWithoutRate {

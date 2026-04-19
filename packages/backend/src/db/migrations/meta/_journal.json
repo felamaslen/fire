@@ -148,6 +148,20 @@
       "when": 1776597915566,
       "tag": "0020_cash_allocation_as_absolute_amount",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1776605124197,
+      "tag": "0021_add_vehicle_type_and_growth_rate_to_asset_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1776605149435,
+      "tag": "0022_add_asset_growth_rate_check",
+      "breakpoints": true
     }
   ]
 }

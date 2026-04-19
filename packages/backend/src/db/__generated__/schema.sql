@@ -64,6 +64,7 @@ CREATE TYPE "public"."netWorthCategoryAssetType" AS ENUM (
   'OPTION',
   'PENSION',
   'PROPERTY',
+  'VEHICLE',
   'MISC'
 );
 CREATE TYPE "public"."netWorthCategoryLiabilityType" AS ENUM (
@@ -169,8 +170,14 @@ CREATE TABLE "NetWorthCategoryAssets" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "name" text NOT NULL,
   "type" "netWorthCategoryAssetType" NOT NULL,
+  "growthRate" NUMERIC(6, 4),
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "NetWorthCategoryAssets_growthRate_ck"
+    CHECK (
+      "NetWorthCategoryAssets"."growthRate" IS NULL
+      OR "NetWorthCategoryAssets"."type" IN ('PROPERTY', 'VEHICLE')
+    )
 );
 
 CREATE TABLE "NetWorthCategoryLiabilities" (

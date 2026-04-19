@@ -516,6 +516,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             },
             STOCK: {
                 value: "STOCK"
+            },
+            VEHICLE: {
+                value: "VEHICLE"
             }
         }
     });
@@ -540,6 +543,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         description: "A reusable bucket for assets (current account, pension pot, property, ...).",
         fields() {
             return {
+                growthRate: {
+                    description: "Assumed annual growth rate as a decimal (0.03 = +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.",
+                    name: "growthRate",
+                    type: GraphQLFloat
+                },
                 id: {
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
@@ -2178,6 +2186,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "NetWorthCategoryAssetInput",
         fields() {
             return {
+                growthRate: {
+                    description: "Decimal-fraction assumed annual growth rate (e.g. 0.03 for +3%/year, -0.15 for a vehicle depreciating 15%/year). Only valid for `PROPERTY` and `VEHICLE`. Omit for other types.",
+                    name: "growthRate",
+                    type: GraphQLFloat
+                },
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
@@ -2290,6 +2303,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "NetWorthCategoryAssetPatch",
         fields() {
             return {
+                growthRate: {
+                    description: "Decimal-fraction assumed annual growth rate. Pass null explicitly to clear. Only valid for `PROPERTY` and `VEHICLE`.",
+                    name: "growthRate",
+                    type: GraphQLFloat
+                },
                 name: {
                     name: "name",
                     type: GraphQLString

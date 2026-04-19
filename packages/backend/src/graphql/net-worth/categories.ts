@@ -25,6 +25,7 @@ export type NetWorthAssetType =
   | "OPTION"
   | "PENSION"
   | "PROPERTY"
+  | "VEHICLE"
   | "MISC";
 
 /** Kind of liability a category represents. @gqlEnum */
@@ -49,6 +50,8 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
     public readonly name: string,
     /** @gqlField */
     public readonly type: NetWorthAssetType,
+    /** Assumed annual growth rate as a decimal (0.03 = +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation. @gqlField */
+    public readonly growthRate: Float | null,
     private readonly createdAt: Date,
   ) {}
 
@@ -59,6 +62,7 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
       row.id as ID,
       row.name,
       row.type,
+      row.growthRate === null ? null : (Number(row.growthRate) as Float),
       row.createdAt,
     );
   }
@@ -307,6 +311,8 @@ export async function netWorthCategories(
 export type NetWorthCategoryAssetInput = {
   name: string;
   type: NetWorthAssetType;
+  /** Decimal-fraction assumed annual growth rate (e.g. 0.03 for +3%/year, -0.15 for a vehicle depreciating 15%/year). Only valid for `PROPERTY` and `VEHICLE`. Omit for other types. */
+  growthRate?: Float | null;
 };
 
 /** Create payload for a liability category. @gqlInput */
@@ -347,6 +353,8 @@ export type NetWorthCategoryInput =
 export type NetWorthCategoryAssetPatch = {
   name?: string | null;
   type?: NetWorthAssetType | null;
+  /** Decimal-fraction assumed annual growth rate. Pass null explicitly to clear. Only valid for `PROPERTY` and `VEHICLE`. */
+  growthRate?: Float | null;
 };
 
 /** Partial update for a liability category; unset fields are left unchanged. @gqlInput */
@@ -398,6 +406,17 @@ export type NetWorthCategoryRef =
       option: ID;
     };
 
+function validateAssetGrowthRate(
+  type: NetWorthAssetType,
+  growthRate: Float | null | undefined,
+): void {
+  if (growthRate == null) return;
+  assert(
+    type === "PROPERTY" || type === "VEHICLE",
+    "growthRate is only valid when type is PROPERTY or VEHICLE",
+  );
+}
+
 function validateLiabilityInput(input: NetWorthCategoryLiabilityInput): void {
   const isLoan = input.type === "LOAN";
   const hasRate =
@@ -416,9 +435,17 @@ export async function netWorthCategoryCreate(
   input: NetWorthCategoryInput,
 ): Promise<NetWorthCategory> {
   if ("asset" in input) {
+    validateAssetGrowthRate(input.asset.type, input.asset.growthRate);
     const [row] = await db
       .insert(NetWorthCategoryAssets)
-      .values({ name: input.asset.name, type: input.asset.type })
+      .values({
+        name: input.asset.name,
+        type: input.asset.type,
+        growthRate:
+          input.asset.growthRate == null
+            ? null
+            : String(input.asset.growthRate),
+      })
       .returning();
     return NetWorthCategoryAsset.load(row);
   }
@@ -457,11 +484,27 @@ export async function netWorthCategoryUpdate(
   patch: NetWorthCategoryPatch,
 ): Promise<NetWorthCategory> {
   if ("asset" in patch) {
+    if (
+      patch.asset.growthRate !== undefined &&
+      patch.asset.growthRate != null
+    ) {
+      // Only enforce the type constraint when a rate is actually being set;
+      // the DB's CHECK covers all combinations once the row is updated.
+      const nextType = patch.asset.type;
+      if (nextType != null)
+        validateAssetGrowthRate(nextType, patch.asset.growthRate);
+    }
     const [row] = await db
       .update(NetWorthCategoryAssets)
       .set({
         ...(patch.asset.name != null && { name: patch.asset.name }),
         ...(patch.asset.type != null && { type: patch.asset.type }),
+        ...(patch.asset.growthRate !== undefined && {
+          growthRate:
+            patch.asset.growthRate == null
+              ? null
+              : String(patch.asset.growthRate),
+        }),
         updatedAt: new Date(),
       })
       .where(eq(NetWorthCategoryAssets.id, id))

@@ -33,6 +33,7 @@ enum NetWorthAssetType {
   PENSION
   PROPERTY
   STOCK
+  VEHICLE
 }
 
 """Kind of liability a category represents."""
@@ -128,12 +129,20 @@ input MoneyInput {
 
 """Create payload for an asset category."""
 input NetWorthCategoryAssetInput {
+  """
+  Decimal-fraction assumed annual growth rate (e.g. 0.03 for +3%/year, -0.15 for a vehicle depreciating 15%/year). Only valid for `PROPERTY` and `VEHICLE`. Omit for other types.
+  """
+  growthRate: Float
   name: String!
   type: NetWorthAssetType!
 }
 
 """Partial update for an asset category; unset fields are left unchanged."""
 input NetWorthCategoryAssetPatch {
+  """
+  Decimal-fraction assumed annual growth rate. Pass null explicitly to clear. Only valid for `PROPERTY` and `VEHICLE`.
+  """
+  growthRate: Float
   name: String
   type: NetWorthAssetType
 }
@@ -969,6 +978,10 @@ type Mutation {
 A reusable bucket for assets (current account, pension pot, property, ...).
 """
 type NetWorthCategoryAsset implements NetWorthCategory {
+  """
+  Assumed annual growth rate as a decimal (0.03 = +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.
+  """
+  growthRate: Float
   id: ID!
   """
   Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.

@@ -1,0 +1,1 @@
+ALTER TABLE "NetWorthCategoryAssets" ADD CONSTRAINT "NetWorthCategoryAssets_growthRate_ck" CHECK ("NetWorthCategoryAssets"."growthRate" IS NULL OR "NetWorthCategoryAssets"."type" IN ('PROPERTY', 'VEHICLE'));
