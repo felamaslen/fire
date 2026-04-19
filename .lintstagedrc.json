@@ -1,4 +1,4 @@
 {
-  "*.{ts,tsx,mjs,cjs,js,jsx}": "eslint --fix --max-warnings=0",
+  "*.{ts,tsx,mjs,cjs,js,jsx}": "eslint --fix --max-warnings=0 --no-warn-ignored",
   "*.sql": "prettier --write"
 }

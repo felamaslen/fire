@@ -9,6 +9,7 @@ import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
 import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLInterfaceType, GraphQLBoolean, GraphQLInt, GraphQLUnionType, defaultFieldResolver, GraphQLInputObjectType } from "graphql";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
+import { cashPosition as queryCashPositionResolver } from "./../graphql/investments/cash-position";
 import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
 import { investmentAllocations as queryInvestmentAllocationsResolver, investmentAllocationsSet as mutationInvestmentAllocationsSetResolver, investmentCashAllocationSet as mutationInvestmentCashAllocationSetResolver } from "./../graphql/investments/allocations";
@@ -1752,6 +1753,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryBillsResolver(args.first, args.after));
+                    }
+                },
+                cashPosition: {
+                    description: "Current cash position: the sum of cash balances across every planning account (net-worth assets of type `CASH` that back a `PlanningAccount`) taken from the latest net-worth entry, minus projected and recorded outflows for the current month up to today. Cash assets that aren't wired up as planning accounts are ignored \u2014 those don't show up on the planning page and aren't part of the day-to-day cash float this field is meant to represent.",
+                    name: "cashPosition",
+                    type: MoneyType,
+                    resolve() {
+                        return assertNonNull(queryCashPositionResolver());
                     }
                 },
                 currencies: {

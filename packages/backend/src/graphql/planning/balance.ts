@@ -693,7 +693,7 @@ export function valueStartFor(
 }
 
 /** The day-of-month on which the bill collects within `monthDate`, or `null` if it does not collect that month. MONTHLY returns the bare day; QUARTERLY/YEARLY look up the matching `M-D` entry. */
-function collectionDayInMonth(
+export function collectionDayInMonth(
   frequency: "MONTHLY" | "QUARTERLY" | "YEARLY",
   collectionDate: string,
   monthDate: Date,
