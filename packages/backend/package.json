@@ -7,6 +7,7 @@
     "grats": "grats --tsconfig tsconfig.grats.json",
     "codegen": "run-p grats db:generate-schema && gql.tada generate-output",
     "dev": "NODE_ENV=development NODE_OPTIONS=\"--import=./otel.mjs\" vite",
+    "start": "NODE_ENV=production NODE_OPTIONS=\"--import=./otel.mjs\" vite-node src/index.ts",
     "typecheck": "pnpm grats && tsc --noEmit",
     "test": "vitest",
     "db:generate": "drizzle-kit generate",

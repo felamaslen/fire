@@ -27,5 +27,36 @@ services:
       - "4318:4318" # OTLP/HTTP receiver (matches backend's OTEL_EXPORTER_OTLP_ENDPOINT default)
       - "4317:4317" # OTLP/gRPC receiver
 
+  backend:
+    build:
+      # Build context is the repo root so the Dockerfile can copy workspace
+      # manifests (pnpm-workspace.yaml, root package.json, per-package package.json).
+      context: ../..
+      dockerfile: packages/backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://fire:fire@postgres:5432/fire
+      UPLOADS_DIR: /app/packages/backend/uploads
+      # Traces go to the Jaeger OTLP/HTTP receiver on the docker network.
+      OTEL_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    command: pnpm dev
+    ports:
+      - "4000:4000"
+    volumes:
+      # Mount the backend package over the image so `vite-node` picks up host
+      # edits without rebuilding. Anonymous volumes on the two `node_modules`
+      # paths preserve the image-baked installs (built for linux/musl) from
+      # being shadowed by the host's (which are built for the host's arch).
+      - ./:/app/packages/backend
+      - /app/node_modules
+      - /app/packages/backend/node_modules
+
 volumes:
   postgres-data:
