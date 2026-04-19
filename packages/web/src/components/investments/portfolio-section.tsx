@@ -137,9 +137,11 @@ export type PortfolioChartSettings = {
 export function PortfolioSection({
   settings,
   onChange,
+  pending,
 }: {
   settings: PortfolioChartSettings;
   onChange: (next: PortfolioChartSettings) => void;
+  pending: boolean;
 }) {
   const { periodIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
@@ -192,6 +194,7 @@ export function PortfolioSection({
         length={"length" in p ? p.length : null}
         candlestick={mode === "candlestick"}
         stack={stack}
+        pending={pending}
       />
     </section>
   );
@@ -202,12 +205,18 @@ function PortfolioChartLoader({
   length,
   candlestick,
   stack,
+  pending,
 }: {
   period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
   candlestick: boolean;
   stack: boolean;
+  pending: boolean;
 }) {
+  // First render is served synchronously from the page-level combined
+  // `useSuspenseQuery`'s prewarmed cache. Subsequent variable changes (mode
+  // / period / stack) refetch in the background — we render the *previous*
+  // chart dimmed via `lastRef` so the page never falls back to a spinner.
   const { data, loading } = useQuery(PortfolioChartDocument, {
     variables: { period, length, candlestick },
     notifyOnNetworkStatusChange: true,
@@ -273,10 +282,10 @@ function PortfolioChartLoader({
     portfolio?.candlestick?.initialDate ??
     null;
 
-  // Build the current render; if it has no content (initial load before
-  // cache, or the current mode hasn't fetched yet), fall back to whatever
-  // we last successfully rendered — dimmed. This removes the empty-state
-  // flash when flipping line↔candle or arriving on the page.
+  // Cache the last successfully-rendered chart props so that flipping
+  // line↔candle or refetching with new vars doesn't flash an empty chart —
+  // we keep showing whatever we drew last, dimmed, until the new data
+  // arrives.
   const hasContent = candlestick
     ? (candles?.points.length ?? 0) > 0
     : lines.length > 0;
@@ -304,29 +313,24 @@ function PortfolioChartLoader({
     : null;
   if (current) lastRef.current = current;
   const render = current ?? lastRef.current;
+  if (!render) return null;
 
   return (
     <div
       className={cn(
         "space-y-2 transition-opacity",
-        loading && "pointer-events-none opacity-50",
+        (loading || pending) && "pointer-events-none opacity-50",
       )}
     >
-      {render ? (
-        <PortfolioChart
-          lines={render.lines}
-          candles={render.candles}
-          currency={render.currency}
-          initialDate={render.initialDate}
-          stacked={render.stacked}
-          className="w-full"
-        />
-      ) : (
-        // Reserve the chart's height during the first paint so the rest of
-        // the page doesn't visibly jump when the SVG mounts.
-        <div style={{ height: 260 }} className="w-full" />
-      )}
-      {render?.showLegend && render.lines && (
+      <PortfolioChart
+        lines={render.lines}
+        candles={render.candles}
+        currency={render.currency}
+        initialDate={render.initialDate}
+        stacked={render.stacked}
+        className="w-full"
+      />
+      {render.showLegend && render.lines && (
         <PortfolioChartLegend lines={render.lines} />
       )}
     </div>
