@@ -1,3 +1,4 @@
+import DataLoader from "dataloader";
 import { asc, desc, inArray } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -45,145 +46,88 @@ export type InvestmentStats = {
 /**
  * Load the raw stats for an investment (and optionally a wrapper). Caller combines them into `Money` / `Float` fields.
  *
- * Batched per `Context`: every `loadInvestmentStats` call issued in the same microtask is coalesced into four `IN (...)` selects (one each for `Investments`, `InvestmentTransactions`, `InvestmentStockSplits`, `InvestmentPrices`). Repeated calls for the same `(investmentId, assetId)` within the same request share the resolved promise, so `Investment.position`, `investments()`'s sort key, and any per-wrapper slice all key into the same fetch.
+ * Batched per `Context` via `DataLoader`: every `loadInvestmentStats` call issued in the same tick is coalesced into four `IN (...)` selects (one each for `Investments`, `InvestmentTransactions`, `InvestmentStockSplits`, `InvestmentPrices`). Repeated calls for the same `(investmentId, assetId)` within the same request share the resolved promise, so `Investment.position`, `investments()`'s sort key, and any per-wrapper slice all key into the same fetch.
  */
 export function loadInvestmentStats(
   ctx: Context,
   investmentId: string,
   assetId?: string,
 ): Promise<InvestmentStats> {
-  const batcher = getBatcher(ctx);
-  const key = `${investmentId}|${assetId ?? ""}`;
-
-  const cached = batcher.cache.get(key);
-  if (cached) return cached;
-
-  let entry = batcher.pending.get(key);
-  if (!entry) {
-    entry = { investmentId, assetId, deferred: defer<InvestmentStats>() };
-    batcher.pending.set(key, entry);
-    if (!batcher.scheduled) {
-      batcher.scheduled = true;
-      queueMicrotask(() => {
-        void flush(batcher);
-      });
-    }
-  }
-  batcher.cache.set(key, entry.deferred.promise);
-  return entry.deferred.promise;
+  return getLoader(ctx).load({ investmentId, assetId });
 }
 
-type Deferred<T> = {
-  promise: Promise<T>;
-  resolve: (v: T) => void;
-  reject: (e: unknown) => void;
-};
+type StatsKey = { investmentId: string; assetId: string | undefined };
 
-function defer<T>(): Deferred<T> {
-  let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
+type StatsLoader = DataLoader<StatsKey, InvestmentStats, string>;
+
+const loadersByCtx = new WeakMap<Context, StatsLoader>();
+
+function getLoader(ctx: Context): StatsLoader {
+  let loader = loadersByCtx.get(ctx);
+  if (!loader) {
+    loader = new DataLoader<StatsKey, InvestmentStats, string>(batchLoadStats, {
+      cacheKeyFn: (k) => `${k.investmentId}|${k.assetId ?? ""}`,
+    });
+    loadersByCtx.set(ctx, loader);
+  }
+  return loader;
+}
+
+async function batchLoadStats(
+  keys: ReadonlyArray<StatsKey>,
+): Promise<(InvestmentStats | Error)[]> {
+  const ids = [...new Set(keys.map((k) => k.investmentId))];
+
+  const [invRows, txRows, splitRows, priceRows] = await Promise.all([
+    db
+      .select({
+        id: Investments.id,
+        currency: Investments.currency,
+        stockCode: Investments.stockCode,
+      })
+      .from(Investments)
+      .where(inArray(Investments.id, ids)),
+    db
+      .select()
+      .from(InvestmentTransactions)
+      .where(inArray(InvestmentTransactions.investmentId, ids)),
+    db
+      .select({
+        investmentId: InvestmentStockSplits.investmentId,
+        date: InvestmentStockSplits.date,
+        ratio: InvestmentStockSplits.ratio,
+      })
+      .from(InvestmentStockSplits)
+      .where(inArray(InvestmentStockSplits.investmentId, ids))
+      .orderBy(asc(InvestmentStockSplits.date)),
+    db
+      .select({
+        investmentId: InvestmentPrices.investmentId,
+        priceAdjusted: InvestmentPrices.priceAdjusted,
+      })
+      .from(InvestmentPrices)
+      .where(inArray(InvestmentPrices.investmentId, ids))
+      .orderBy(desc(InvestmentPrices.date)),
+  ]);
+
+  const invById = new Map(invRows.map((r) => [r.id, r]));
+  const txByInv = groupBy(txRows, (r) => r.investmentId);
+  const splitsByInv = groupBy(splitRows, (r) => r.investmentId);
+  // Prices are already date-desc; `pricesByInv.get(id)[0..1]` is latest + previous.
+  const pricesByInv = groupBy(priceRows, (r) => r.investmentId);
+
+  return keys.map((key) => {
+    const inv = invById.get(key.investmentId);
+    if (!inv) return new Error(`Investment ${key.investmentId} not found`);
+    return computeStats(
+      key.assetId,
+      inv.currency,
+      inv.stockCode,
+      txByInv.get(key.investmentId) ?? [],
+      splitsByInv.get(key.investmentId) ?? [],
+      pricesByInv.get(key.investmentId) ?? [],
+    );
   });
-  return { promise, resolve, reject };
-}
-
-type PendingEntry = {
-  investmentId: string;
-  assetId: string | undefined;
-  deferred: Deferred<InvestmentStats>;
-};
-
-type Batcher = {
-  pending: Map<string, PendingEntry>;
-  cache: Map<string, Promise<InvestmentStats>>;
-  scheduled: boolean;
-};
-
-const batchersByCtx = new WeakMap<Context, Batcher>();
-
-function getBatcher(ctx: Context): Batcher {
-  let b = batchersByCtx.get(ctx);
-  if (!b) {
-    b = { pending: new Map(), cache: new Map(), scheduled: false };
-    batchersByCtx.set(ctx, b);
-  }
-  return b;
-}
-
-async function flush(batcher: Batcher): Promise<void> {
-  const entries = [...batcher.pending.values()];
-  batcher.pending.clear();
-  batcher.scheduled = false;
-
-  const ids = [...new Set(entries.map((e) => e.investmentId))];
-
-  try {
-    const [invRows, txRows, splitRows, priceRows] = await Promise.all([
-      db
-        .select({
-          id: Investments.id,
-          currency: Investments.currency,
-          stockCode: Investments.stockCode,
-        })
-        .from(Investments)
-        .where(inArray(Investments.id, ids)),
-      db
-        .select()
-        .from(InvestmentTransactions)
-        .where(inArray(InvestmentTransactions.investmentId, ids)),
-      db
-        .select({
-          investmentId: InvestmentStockSplits.investmentId,
-          date: InvestmentStockSplits.date,
-          ratio: InvestmentStockSplits.ratio,
-        })
-        .from(InvestmentStockSplits)
-        .where(inArray(InvestmentStockSplits.investmentId, ids))
-        .orderBy(asc(InvestmentStockSplits.date)),
-      db
-        .select({
-          investmentId: InvestmentPrices.investmentId,
-          priceAdjusted: InvestmentPrices.priceAdjusted,
-        })
-        .from(InvestmentPrices)
-        .where(inArray(InvestmentPrices.investmentId, ids))
-        .orderBy(desc(InvestmentPrices.date)),
-    ]);
-
-    const invById = new Map(invRows.map((r) => [r.id, r]));
-    const txByInv = groupBy(txRows, (r) => r.investmentId);
-    const splitsByInv = groupBy(splitRows, (r) => r.investmentId);
-    // Prices are already date-desc; `pricesByInv.get(id)[0..1]` is latest + previous.
-    const pricesByInv = groupBy(priceRows, (r) => r.investmentId);
-
-    for (const entry of entries) {
-      try {
-        const inv = invById.get(entry.investmentId);
-        if (!inv) {
-          throw new Error(`Investment ${entry.investmentId} not found`);
-        }
-        const txs = txByInv.get(entry.investmentId) ?? [];
-        const splits = splitsByInv.get(entry.investmentId) ?? [];
-        const prices = pricesByInv.get(entry.investmentId) ?? [];
-        entry.deferred.resolve(
-          computeStats(
-            entry.assetId,
-            inv.currency,
-            inv.stockCode,
-            txs,
-            splits,
-            prices,
-          ),
-        );
-      } catch (err) {
-        entry.deferred.reject(err);
-      }
-    }
-  } catch (err) {
-    for (const entry of entries) entry.deferred.reject(err);
-  }
 }
 
 function groupBy<T, K>(xs: T[], key: (x: T) => K): Map<K, T[]> {

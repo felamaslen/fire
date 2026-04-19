@@ -27,6 +27,7 @@
     "@opentelemetry/resources": "^2.7.0",
     "@opentelemetry/sdk-node": "^0.215.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
+    "dataloader": "^2.2.3",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.8.5",
