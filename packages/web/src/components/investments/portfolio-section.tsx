@@ -1,16 +1,11 @@
-import { useQuery } from "@apollo/client/react";
-import { useRef } from "react";
+import { useSuspenseQuery } from "@apollo/client/react";
+import { useDeferredValue } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 
 import { graphql, readFragment } from "../../graphql";
-import {
-  type CandleSeries,
-  type LineSeries,
-  PortfolioChart,
-  PortfolioChartLegend,
-} from "./portfolio-chart";
+import { PortfolioChart, PortfolioChartLegend } from "./portfolio-chart";
 
 export const PortfolioChartPortfolioFragment = graphql(`
   fragment PortfolioChartPortfolio on Portfolio {
@@ -137,11 +132,9 @@ export type PortfolioChartSettings = {
 export function PortfolioSection({
   settings,
   onChange,
-  pending,
 }: {
   settings: PortfolioChartSettings;
   onChange: (next: PortfolioChartSettings) => void;
-  pending: boolean;
 }) {
   const { periodIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
@@ -194,7 +187,6 @@ export function PortfolioSection({
         length={"length" in p ? p.length : null}
         candlestick={mode === "candlestick"}
         stack={stack}
-        pending={pending}
       />
     </section>
   );
@@ -205,24 +197,42 @@ function PortfolioChartLoader({
   length,
   candlestick,
   stack,
-  pending,
 }: {
   period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
   candlestick: boolean;
   stack: boolean;
-  pending: boolean;
 }) {
-  // First render is served synchronously from the page-level combined
-  // `useSuspenseQuery`'s prewarmed cache. Subsequent variable changes (mode
-  // / period / stack) refetch in the background — we render the *previous*
-  // chart dimmed via `lastRef` so the page never falls back to a spinner.
-  const { data, loading } = useQuery(PortfolioChartDocument, {
-    variables: { period, length, candlestick },
-    notifyOnNetworkStatusChange: true,
+  // `useSuspenseQuery` bubbles its suspend up to the page-level Suspense,
+  // so the whole page waits for chart data before painting — no layout
+  // shift when the chart finally arrives.
+  //
+  // For subsequent variable changes (mode / period / stack) we'd normally
+  // rely on `useTransition` to hold the Suspense fallback, but TanStack
+  // Router's internal `useSyncExternalStore` opts out of transitions and
+  // the page-level fallback would fire immediately. `useDeferredValue`
+  // doesn't depend on how the source updated — it just defers re-reading
+  // the new value until its work can complete, keeping the previous
+  // render mounted while the suspense resolves.
+  const deferredPeriod = useDeferredValue(period);
+  const deferredLength = useDeferredValue(length);
+  const deferredCandlestick = useDeferredValue(candlestick);
+  const deferredStack = useDeferredValue(stack);
+  const pending =
+    deferredPeriod !== period ||
+    deferredLength !== length ||
+    deferredCandlestick !== candlestick ||
+    deferredStack !== stack;
+
+  const { data } = useSuspenseQuery(PortfolioChartDocument, {
+    variables: {
+      period: deferredPeriod,
+      length: deferredLength,
+      candlestick: deferredCandlestick,
+    },
   });
 
-  const rawPortfolio = data?.portfolio;
+  const rawPortfolio = data.portfolio;
   const portfolio = rawPortfolio
     ? readFragment(PortfolioChartPortfolioFragment, rawPortfolio)
     : null;
@@ -231,7 +241,7 @@ function PortfolioChartLoader({
   // the biggest holdings anchor the bottom of the stack and the legend reads
   // in size order. Labels prefer the stock code (compact), with the full
   // name surfaced via tooltip.
-  const perInvestmentSeries = (data?.portfolios?.edges ?? [])
+  const perInvestmentSeries = (data.portfolios?.edges ?? [])
     .flatMap((edge) => {
       const ts = edge.node.timeseries;
       if (!ts) return [];
@@ -257,7 +267,7 @@ function PortfolioChartLoader({
       initialDate: s.initialDate,
     }));
 
-  const { lines, stackInitialDate } = stack
+  const { lines, stackInitialDate } = deferredStack
     ? stackLines(perInvestmentSeries)
     : {
         lines: portfolio?.timeseries
@@ -282,56 +292,28 @@ function PortfolioChartLoader({
     portfolio?.candlestick?.initialDate ??
     null;
 
-  // Cache the last successfully-rendered chart props so that flipping
-  // line↔candle or refetching with new vars doesn't flash an empty chart —
-  // we keep showing whatever we drew last, dimmed, until the new data
-  // arrives.
-  const hasContent = candlestick
-    ? (candles?.points.length ?? 0) > 0
-    : lines.length > 0;
-  type ChartRender = {
-    lines?: LineSeries[];
-    candles?: CandleSeries | null;
-    currency: string;
-    initialDate: Date | undefined;
-    stacked: boolean;
-    showLegend: boolean;
-  };
-  const lastRef = useRef<ChartRender | null>(null);
-  const current: ChartRender | null = hasContent
-    ? {
-        lines: candlestick ? undefined : lines,
-        candles: candlestick ? candles : null,
-        currency: portfolio?.currency ?? "GBP",
-        initialDate:
-          typeof initialDateStr === "string"
-            ? new Date(`${initialDateStr}T00:00:00Z`)
-            : undefined,
-        stacked: !candlestick && stack,
-        showLegend: !candlestick && stack && lines.length > 1,
-      }
-    : null;
-  if (current) lastRef.current = current;
-  const render = current ?? lastRef.current;
-  if (!render) return null;
+  const initialDate =
+    typeof initialDateStr === "string"
+      ? new Date(`${initialDateStr}T00:00:00Z`)
+      : undefined;
 
   return (
     <div
       className={cn(
         "space-y-2 transition-opacity",
-        (loading || pending) && "pointer-events-none opacity-50",
+        pending && "pointer-events-none opacity-50",
       )}
     >
       <PortfolioChart
-        lines={render.lines}
-        candles={render.candles}
-        currency={render.currency}
-        initialDate={render.initialDate}
-        stacked={render.stacked}
+        lines={deferredCandlestick ? undefined : lines}
+        candles={deferredCandlestick ? candles : null}
+        currency={portfolio?.currency ?? "GBP"}
+        initialDate={initialDate}
+        stacked={!deferredCandlestick && deferredStack}
         className="w-full"
       />
-      {render.showLegend && render.lines && (
-        <PortfolioChartLegend lines={render.lines} />
+      {!deferredCandlestick && deferredStack && lines.length > 1 && (
+        <PortfolioChartLegend lines={lines} />
       )}
     </div>
   );
