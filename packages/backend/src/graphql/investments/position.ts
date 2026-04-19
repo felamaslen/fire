@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { InvestmentTransactions } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
+import type { Context } from "../context";
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
 import {
@@ -133,8 +134,8 @@ export class InvestmentWrapper {
   }
 
   /** Holdings, cost basis, and gain/loss filtered to this wrapper. @gqlField */
-  async position(): Promise<InvestmentPosition> {
-    const s = await loadInvestmentStats(this.investmentId, this.assetId);
+  async position(ctx: Context): Promise<InvestmentPosition> {
+    const s = await loadInvestmentStats(ctx, this.investmentId, this.assetId);
     return new InvestmentPosition(s);
   }
 }
