@@ -77,7 +77,7 @@ export async function loadForecastInputs(
     loadLiabilityTxs(ewmaCutoff),
     loadLoanBills(),
     loadNonLiabilityBills(asOfDate),
-    loadPortfolioInvestmentTxs(ewmaCutoff),
+    loadPortfolioInvestmentTxs(),
     loadPortfolioContributionTxs(ewmaCutoff),
     loadPayslips(ewmaCutoff),
     loadAccountIds(),
@@ -96,7 +96,11 @@ export async function loadForecastInputs(
       xirrByAsset.set(assetId, null);
       continue;
     }
-    const terminalValue = (startingBalance.get(assetId) ?? 0) / 100;
+    // Starting balance is in home-currency minor units; `units * price`
+    // for an InvestmentTransaction is also in minor units (price is
+    // stored in fractional currency units). Keep both on the minor
+    // scale so `solveXirr`'s bracket finds a sensible root.
+    const terminalValue = startingBalance.get(assetId) ?? 0;
     const flows: { date: Date; amount: number }[] = txs.map((t) => ({
       date: t.date,
       amount: -t.units * t.price,
@@ -307,8 +311,8 @@ async function loadNonLiabilityBills(asOfDate: Date): Promise<LiabilityBill[]> {
   return rows;
 }
 
-/** Per-wrapper investment transactions — used to compute each portfolio's XIRR. `units * price` gives the flow for the XIRR solver; we don't use these rows for the forward contribution EWMA (see `loadPortfolioContributionTxs`). */
-async function loadPortfolioInvestmentTxs(cutoff: Date): Promise<{
+/** Per-wrapper investment transactions — used to compute each portfolio's XIRR. `units * price` gives the flow for the XIRR solver; we don't use these rows for the forward contribution EWMA (see `loadPortfolioContributionTxs`). No time cutoff: XIRR needs the full tx history so the rate accounts for long-held buys, not just recent activity against a large terminal balance. */
+async function loadPortfolioInvestmentTxs(): Promise<{
   portfolioInvestmentTxs: Map<string, InvestmentTx[]>;
   portfolioAssetIds: string[];
 }> {
@@ -324,12 +328,7 @@ async function loadPortfolioInvestmentTxs(cutoff: Date): Promise<{
       Investments,
       eq(Investments.id, InvestmentTransactions.investmentId),
     )
-    .where(
-      and(
-        gte(InvestmentTransactions.date, cutoff),
-        eq(InvestmentTransactions.currency, HOME_CURRENCY),
-      ),
-    );
+    .where(eq(InvestmentTransactions.currency, HOME_CURRENCY));
   const out = new Map<string, InvestmentTx[]>();
   for (const r of rows) {
     const arr = out.get(r.assetId) ?? [];
