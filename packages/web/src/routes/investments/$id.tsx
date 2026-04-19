@@ -89,6 +89,59 @@ const InvestmentDetailDocument = graphql(
   [FigureDocument, InvestmentFormDocument],
 );
 
+const InvestmentStockSplitsDocument = graphql(`
+  query InvestmentStockSplits {
+    investment: investments {
+      edges {
+        node {
+          id
+          stockSplits {
+            id
+            date
+            ratio
+          }
+        }
+      }
+    }
+  }
+`);
+
+const InvestmentStockSplitCreateDocument = graphql(`
+  mutation InvestmentStockSplitCreate(
+    $investmentId: ID!
+    $date: Date!
+    $ratio: Float!
+  ) {
+    investmentStockSplitCreate(
+      investmentId: $investmentId
+      date: $date
+      ratio: $ratio
+    ) {
+      id
+    }
+  }
+`);
+
+const InvestmentStockSplitUpdateDocument = graphql(`
+  mutation InvestmentStockSplitUpdate(
+    $id: ID!
+    $date: Date
+    $ratio: Float
+  ) {
+    investmentStockSplitUpdate(id: $id, date: $date, ratio: $ratio) {
+      id
+    }
+  }
+`);
+
+const InvestmentStockSplitDeleteDocument = graphql(`
+  mutation InvestmentStockSplitDelete($id: ID!) {
+    investmentStockSplitDelete(id: $id) {
+      _
+    }
+  }
+`);
+
 const InvestmentTransactionsDocument = graphql(
   `
     query InvestmentTransactions($txFirst: Int, $txAfter: ID) {
@@ -282,6 +335,45 @@ function InvestmentDetail({ id }: { id: string }) {
         </dl>
       </header>
 
+      <DetailTabs
+        investmentId={investment.id}
+        currency={investment.currency}
+        wrappers={wrappers}
+      />
+    </div>
+  );
+}
+
+function DetailTabs({
+  investmentId,
+  currency,
+  wrappers,
+}: {
+  investmentId: string;
+  currency: string;
+  wrappers: { id: string; name: string; type: string }[];
+}) {
+  const [tab, setTab] = useState<"transactions" | "splits">("transactions");
+  return (
+    <div className="space-y-3">
+      <nav
+        role="tablist"
+        aria-label="Investment data"
+        className="flex gap-1 border-b"
+      >
+        <TabButton
+          active={tab === "transactions"}
+          onClick={() => setTab("transactions")}
+        >
+          Transactions
+        </TabButton>
+        <TabButton
+          active={tab === "splits"}
+          onClick={() => setTab("splits")}
+        >
+          Stock splits
+        </TabButton>
+      </nav>
       <Suspense
         fallback={
           <div className="flex min-h-32 items-center justify-center">
@@ -289,13 +381,43 @@ function InvestmentDetail({ id }: { id: string }) {
           </div>
         }
       >
-        <TransactionsSection
-          investmentId={investment.id}
-          currency={investment.currency}
-          wrappers={wrappers}
-        />
+        {tab === "transactions" ? (
+          <TransactionsSection
+            investmentId={investmentId}
+            currency={currency}
+            wrappers={wrappers}
+          />
+        ) : (
+          <StockSplitsSection investmentId={investmentId} />
+        )}
       </Suspense>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+        active
+          ? "border-foreground text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -693,5 +815,228 @@ function Stat({
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="tabular-nums">{value}</dd>
     </div>
+  );
+}
+
+type StockSplitRow = {
+  id: string;
+  date: string;
+  ratio: number;
+};
+
+function StockSplitsSection({ investmentId }: { investmentId: string }) {
+  const { data, refetch } = useSuspenseQuery(InvestmentStockSplitsDocument);
+  const investment = data.investment?.edges
+    .map((e) => e.node)
+    .find((n) => n.id === investmentId);
+  const splits: StockSplitRow[] = (investment?.stockSplits ?? []).map((s) => ({
+    id: s.id,
+    date: s.date,
+    ratio: s.ratio,
+  }));
+
+  const refetchLists = [
+    { query: InvestmentStockSplitsDocument },
+    { query: InvestmentDetailDocument },
+    { query: InvestmentsPageDocument, variables: { first: 100 } },
+  ];
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<StockSplitRow | null>(null);
+
+  const [deleteSplit] = useMutation(InvestmentStockSplitDeleteDocument, {
+    refetchQueries: refetchLists,
+    awaitRefetchQueries: true,
+    onCompleted: () => toast.success("Split removed"),
+    onError: (err) => toast.error(err.message),
+  });
+
+  const onMutate = () => void refetch();
+
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Stock splits</h3>
+        <Button size="sm" onClick={() => setAdding(true)}>
+          <Plus className="mr-1 h-4 w-4" /> Add
+        </Button>
+      </div>
+
+      {adding && (
+        <StockSplitForm
+          investmentId={investmentId}
+          existing={null}
+          onDone={() => {
+            setAdding(false);
+            onMutate();
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+      {editing && (
+        <StockSplitForm
+          investmentId={investmentId}
+          existing={editing}
+          onDone={() => {
+            setEditing(null);
+            onMutate();
+          }}
+          onCancel={() => setEditing(null)}
+        />
+      )}
+
+      {splits.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No stock splits recorded.
+        </p>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date</TableHead>
+              <TableHead className="text-right">Ratio</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {splits.map((s) => (
+              <TableRow key={s.id}>
+                <TableCell className="align-middle">{s.date}</TableCell>
+                <TableCell className="text-right tabular-nums align-middle">
+                  {s.ratio}
+                </TableCell>
+                <TableCell className="w-0 align-middle">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setEditing(s)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <DeleteButton
+                      onConfirm={() =>
+                        deleteSplit({ variables: { id: s.id } })
+                      }
+                    />
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </section>
+  );
+}
+
+function StockSplitForm({
+  investmentId,
+  existing,
+  onDone,
+  onCancel,
+}: {
+  investmentId: string;
+  existing: StockSplitRow | null;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const refetchLists = [
+    { query: InvestmentStockSplitsDocument },
+    { query: InvestmentDetailDocument },
+    { query: InvestmentsPageDocument, variables: { first: 100 } },
+  ];
+  const [createSplit] = useMutation(InvestmentStockSplitCreateDocument, {
+    refetchQueries: refetchLists,
+    awaitRefetchQueries: true,
+  });
+  const [updateSplit] = useMutation(InvestmentStockSplitUpdateDocument, {
+    refetchQueries: refetchLists,
+    awaitRefetchQueries: true,
+  });
+
+  const form = useForm({
+    defaultValues: {
+      date:
+        existing?.date ?? new Date().toISOString().slice(0, 10),
+      ratio: existing?.ratio ?? 2,
+    },
+    onSubmit: async ({ value }) => {
+      if (!(value.ratio > 0)) {
+        toast.error("Ratio must be positive");
+        return;
+      }
+      try {
+        if (existing) {
+          await updateSplit({
+            variables: {
+              id: existing.id,
+              date: value.date,
+              ratio: value.ratio,
+            },
+          });
+          toast.success("Split updated");
+        } else {
+          await createSplit({
+            variables: {
+              investmentId,
+              date: value.date,
+              ratio: value.ratio,
+            },
+          });
+          toast.success("Split added");
+        }
+        onDone();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      }
+    },
+  });
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        void form.handleSubmit();
+      }}
+      className="grid grid-cols-1 gap-3 rounded border p-3 sm:grid-cols-3"
+    >
+      <form.Field name="date">
+        {(field) => (
+          <div className="space-y-1">
+            <Label>Date</Label>
+            <Input
+              type="date"
+              value={field.state.value}
+              onChange={(e) => field.handleChange(e.target.value)}
+            />
+          </div>
+        )}
+      </form.Field>
+      <form.Field name="ratio">
+        {(field) => (
+          <div className="space-y-1">
+            <Label>Ratio</Label>
+            <Input
+              type="number"
+              step="any"
+              value={field.state.value}
+              onChange={(e) => field.handleChange(Number(e.target.value))}
+            />
+          </div>
+        )}
+      </form.Field>
+      <div className="col-span-full flex justify-end gap-2">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <form.Subscribe selector={(s) => s.isSubmitting}>
+          {(submitting) => (
+            <Button type="submit" disabled={submitting}>
+              {existing ? "Save" : "Add"}
+            </Button>
+          )}
+        </form.Subscribe>
+      </div>
+    </form>
   );
 }

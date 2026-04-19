@@ -144,6 +144,101 @@ describe("Query.portfolio aggregates", () => {
     expect(data.portfolio?.percentGain).toBeCloseTo(20 / 100);
   });
 
+  it("counts net capital-at-stake in totalCost; held investments use held value only", async () => {
+    const asset = await createAsset();
+    const a = await createStock("A", "AAA");
+    // Bought 10 @ £5 = £50 in. Sold 4 @ £7 = £28 out. Still holds 6.
+    await buy(a, asset, "2024-01-01", 10, 5);
+    await buy(a, asset, "2024-02-01", -4, 7);
+    await setPrice(a, "2024-03-01", 800); // £8 per share today.
+
+    const doc = graphql(`
+      query {
+        portfolio {
+          totalValue {
+            amount
+          }
+          totalCost {
+            amount
+          }
+          totalGain {
+            amount
+          }
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    // Held value: 6 × £8 = £48. totalCost: net in (50 − 28) = £22.
+    expect(data.portfolio?.totalValue?.amount).toBeCloseTo(48);
+    expect(data.portfolio?.totalCost?.amount).toBeCloseTo(22);
+    expect(data.portfolio?.totalGain?.amount).toBeCloseTo(26);
+  });
+
+  it("keeps totalValue = held-only for a fully-sold investment; realised gain surfaces via totalCost going negative", async () => {
+    const asset = await createAsset();
+    const a = await createStock("A", "AAA");
+    // Bought 10 @ £5 = £50 in; sold all 10 @ £7 = £70 out. No held units.
+    await buy(a, asset, "2024-01-01", 10, 5);
+    await buy(a, asset, "2024-02-01", -10, 7);
+
+    const doc = graphql(`
+      query {
+        portfolio {
+          totalValue {
+            amount
+          }
+          totalCost {
+            amount
+          }
+          totalGain {
+            amount
+          }
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    expect(data.portfolio?.totalValue?.amount).toBe(0);
+    // Net in: 50 − 70 = −20. totalValue − totalCost = 0 − (−20) = +20 realised.
+    expect(data.portfolio?.totalCost?.amount).toBeCloseTo(-20);
+    expect(data.portfolio?.totalGain?.amount).toBeCloseTo(20);
+  });
+
+  it("split-adjusts held units when computing totalValue", async () => {
+    const asset = await createAsset();
+    const a = await createStock("A", "AAA");
+    // Bought 100 @ £50 = £5,000 before a 10:1 split.
+    await buy(a, asset, "2021-01-01", 100, 50);
+    const { db } = await import("@/db");
+    const { InvestmentStockSplits } = await import("@/db/schema/investments");
+    await db.insert(InvestmentStockSplits).values({
+      investmentId: a,
+      date: new Date("2021-05-04"),
+      ratio: "10",
+    });
+    // Post-split price £5/share → effective holding 1,000 shares worth £5,000.
+    await setPrice(a, "2024-01-01", 500);
+
+    const doc = graphql(`
+      query {
+        portfolio {
+          totalValue {
+            amount
+          }
+          totalCost {
+            amount
+          }
+          totalGain {
+            amount
+          }
+        }
+      }
+    `);
+    const data = await runGql(doc, {});
+    expect(data.portfolio?.totalValue?.amount).toBeCloseTo(5000);
+    expect(data.portfolio?.totalCost?.amount).toBeCloseTo(5000);
+    expect(data.portfolio?.totalGain?.amount).toBeCloseTo(0);
+  });
+
   it("filters by assetId", async () => {
     const isa = await createAsset("ISA");
     const sipp = await createAsset("SIPP");
