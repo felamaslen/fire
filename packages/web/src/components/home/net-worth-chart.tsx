@@ -52,6 +52,13 @@ type Props = {
   width?: number;
   height?: number;
   className?: string;
+  /**
+   * Index into `points` at which the forecast begins. When set, all
+   * points at or after this index are tinted lighter, rendered with a
+   * dashed stroke, and a vertical "today" marker is drawn at the
+   * boundary. Leave undefined to render the whole series as history.
+   */
+  forecastStart?: number;
 };
 
 const AXIS_PAD_LEFT = 72;
@@ -106,6 +113,7 @@ export function NetWorthChart({
   width = 880,
   height = 280,
   className,
+  forecastStart,
 }: Props) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -463,6 +471,49 @@ export function NetWorthChart({
                   );
                 })}
               </g>
+            </g>
+          );
+        })()}
+
+      {forecastStart != null &&
+        forecastStart > 0 &&
+        forecastStart < points.length &&
+        (() => {
+          const markerX = xScale(forecastStart);
+          const forecastLeft = markerX;
+          const forecastWidth = plotRight - markerX;
+          return (
+            <g pointerEvents="none">
+              {/* Translucent overlay over the forecast region so past vs
+                  projected values read as visually distinct without
+                  repainting every series twice. */}
+              {forecastWidth > 0 && (
+                <rect
+                  x={forecastLeft}
+                  y={AXIS_PAD_TOP}
+                  width={forecastWidth}
+                  height={plotBottom - AXIS_PAD_TOP}
+                  fill="currentColor"
+                  fillOpacity={0.05}
+                />
+              )}
+              {/* Vertical marker at the history / forecast boundary. */}
+              <line
+                x1={markerX}
+                x2={markerX}
+                y1={AXIS_PAD_TOP}
+                y2={plotBottom}
+                stroke="currentColor"
+                strokeOpacity={0.35}
+                strokeDasharray="3 3"
+              />
+              <text
+                x={markerX + 4}
+                y={AXIS_PAD_TOP + 10}
+                className="fill-muted-foreground text-[10px]"
+              >
+                Forecast →
+              </text>
             </g>
           );
         })()}

@@ -5,35 +5,69 @@ import { Button } from "@/components/ui/button";
 import { graphql } from "@/graphql";
 import { formatAccountingMoneyRounded } from "@/lib/format";
 
+import {
+  ForecastWorkings,
+  ForecastWorkingsFragment,
+} from "./forecast-workings";
 import { NetWorthChart } from "./net-worth-chart";
 
-const HomeDocument = graphql(`
-  query Home {
-    netWorthHistory {
-      date
-      assetsByType {
-        type
-        amount {
+const HomeDocument = graphql(
+  `
+    query Home {
+      netWorthHistory {
+        date
+        assetsByType {
+          type
+          amount {
+            amount
+            currency
+          }
+        }
+        assets {
+          amount
+          currency
+        }
+        liabilities {
+          amount
+          currency
+        }
+        net {
           amount
           currency
         }
       }
-      assets {
-        amount
-        currency
+      netWorthForecast(years: 10, limit: 20) {
+        points {
+          date
+          assetsByType {
+            type
+            amount {
+              amount
+              currency
+            }
+          }
+          assets {
+            amount
+            currency
+          }
+          liabilities {
+            amount
+            currency
+          }
+          net {
+            amount
+            currency
+          }
+        }
+        workings {
+          ...ForecastWorkings
+        }
       }
-      liabilities {
-        amount
-        currency
-      }
-      net {
-        amount
-        currency
-      }
+      currencyDefault
     }
-    currencyDefault
-  }
-`);
+  `,
+  [ForecastWorkingsFragment],
+);
 
 // Deep-tone palette — high saturation, low lightness. Reads rich on the
 // card background without the neon of Tailwind's mid swatches.
@@ -49,25 +83,37 @@ const LIABILITIES_COLOR = "#8f1a1a"; // deep crimson
 export function Home() {
   const { data } = useSuspenseQuery(HomeDocument);
   const history = data.netWorthHistory ?? [];
+  const forecastPoints = data.netWorthForecast?.points ?? [];
   const currency = data.currencyDefault ?? "GBP";
 
-  const dates = history.map((h) => new Date(`${h.date}T00:00:00Z`));
-  const net = history.map((h) => h.net.amount);
-  const assets = history.map((h) => h.assets.amount);
-  const liabilities = history.map((h) => h.liabilities.amount);
+  // Stitch history + forecast into a single series per bucket. Drop any
+  // history point whose month is on or after the forecast's first point
+  // (the engine's `asOfMonthStart` is start-of-current-month, which
+  // usually overlaps with the latest snapshot).
+  const cutoff = forecastPoints[0]?.date ?? null;
+  const historyPoints = cutoff
+    ? history.filter((h) => h.date < cutoff)
+    : history;
+  const combined = [...historyPoints, ...forecastPoints];
+  const forecastStart = historyPoints.length;
+
+  const dates = combined.map((h) => new Date(`${h.date}T00:00:00Z`));
+  const net = combined.map((h) => h.net.amount);
+  const assets = combined.map((h) => h.assets.amount);
+  const liabilities = combined.map((h) => h.liabilities.amount);
 
   // Stacks on the main chart, bottom → top. The remainder band is every
   // asset that isn't cash / stock / pension net of all liabilities, so the
   // top of its stack = `net`. When it's negative the band overlays the
   // pension stack as a translucent shadow and the net line dips into it.
   const amountOf = (
-    h: (typeof history)[number],
+    h: (typeof combined)[number],
     type: "CASH" | "STOCK" | "PENSION" | "MISC",
   ) => h.assetsByType.find((b) => b.type === type)?.amount.amount ?? 0;
-  const cash = history.map((h) => amountOf(h, "CASH"));
-  const stock = history.map((h) => amountOf(h, "STOCK"));
-  const pension = history.map((h) => amountOf(h, "PENSION"));
-  const misc = history.map((h) => amountOf(h, "MISC"));
+  const cash = combined.map((h) => amountOf(h, "CASH"));
+  const stock = combined.map((h) => amountOf(h, "STOCK"));
+  const pension = combined.map((h) => amountOf(h, "PENSION"));
+  const misc = combined.map((h) => amountOf(h, "MISC"));
   const cumCash = cash;
   const cumStock = cash.map((v, i) => v + stock[i]);
   const cumPension = cumStock.map((v, i) => v + pension[i]);
@@ -209,6 +255,7 @@ export function Home() {
             ]}
             currency={currency}
             className="w-full"
+            forecastStart={forecastStart}
           />
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
@@ -297,9 +344,14 @@ export function Home() {
             ]}
             currency={currency}
             className="w-full"
+            forecastStart={forecastStart}
           />
         </div>
       </section>
+
+      {data.netWorthForecast?.workings && (
+        <ForecastWorkings data={data.netWorthForecast.workings} />
+      )}
 
       <nav className="flex flex-wrap gap-2">
         <Button asChild variant="outline">

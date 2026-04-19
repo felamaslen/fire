@@ -9,6 +9,14 @@ export const possibleTypes: Record<string, string[]> = {
     "NetWorthCategoryLiability",
     "NetWorthCategoryOption"
   ],
+  "NetWorthForecastCategory": [
+    "NetWorthForecastFlatAsset",
+    "NetWorthForecastFlatLiability",
+    "NetWorthForecastGrowthAsset",
+    "NetWorthForecastLoan",
+    "NetWorthForecastOptionCategory",
+    "NetWorthForecastPortfolio"
+  ],
   "PlanningYearTaxRates": [
     "PlanningYearTaxRatesUK"
   ]
