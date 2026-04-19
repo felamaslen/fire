@@ -1,5 +1,4 @@
 {
-  "*.ts": "eslint --fix",
-  "*.tsx": "eslint --fix",
+  "*.{ts,tsx,mjs,cjs,js,jsx}": "eslint --fix --max-warnings=0",
   "*.sql": "prettier --write"
 }

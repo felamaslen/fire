@@ -19,6 +19,7 @@ export default tseslint.config(
       "**/build/**",
       "**/.idea/**",
       "packages/backend/src/__generated__/**",
+      "packages/web/src/__generated__/**",
       "packages/web/src/routeTree.gen.ts",
     ],
   },
