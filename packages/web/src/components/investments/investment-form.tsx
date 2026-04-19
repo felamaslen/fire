@@ -102,12 +102,10 @@ export function InvestmentForm({
   const homeCurrency = homeData.currencyDefault ?? "GBP";
 
   const [createFn] = useMutation(InvestmentCreateDocument, {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     refetchQueries: refetchQueries as any,
     awaitRefetchQueries: true,
   });
   const [updateFn] = useMutation(InvestmentUpdateDocument, {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     refetchQueries: refetchQueries as any,
     awaitRefetchQueries: true,
   });

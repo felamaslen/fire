@@ -63,9 +63,15 @@ const InvestmentDetailDocument = graphql(
             }
             position {
               units
-              costBasis { ...Figure }
-              totalValue { ...Figure }
-              totalGain { ...Figure }
+              costBasis {
+                ...Figure
+              }
+              totalValue {
+                ...Figure
+              }
+              totalGain {
+                ...Figure
+              }
               percentGain
             }
             ...InvestmentForm
@@ -123,11 +129,7 @@ const InvestmentStockSplitCreateDocument = graphql(`
 `);
 
 const InvestmentStockSplitUpdateDocument = graphql(`
-  mutation InvestmentStockSplitUpdate(
-    $id: ID!
-    $date: Date
-    $ratio: Float
-  ) {
+  mutation InvestmentStockSplitUpdate($id: ID!, $date: Date, $ratio: Float) {
     investmentStockSplitUpdate(id: $id, date: $date, ratio: $ratio) {
       id
     }
@@ -157,10 +159,22 @@ const InvestmentTransactionsDocument = graphql(
                   date
                   units
                   drip
-                  price { amount ...Figure }
-                  taxes { amount ...Figure }
-                  fees { amount ...Figure }
-                  asset { id name }
+                  price {
+                    amount
+                    ...Figure
+                  }
+                  taxes {
+                    amount
+                    ...Figure
+                  }
+                  fees {
+                    amount
+                    ...Figure
+                  }
+                  asset {
+                    id
+                    name
+                  }
                 }
               }
               pageInfo {
@@ -276,7 +290,9 @@ function InvestmentDetail({ id }: { id: string }) {
     .find((n) => n.id === id);
 
   if (!investment) {
-    return <p className="text-sm text-muted-foreground">Investment not found.</p>;
+    return (
+      <p className="text-sm text-muted-foreground">Investment not found.</p>
+    );
   }
 
   const wrappers = (data.stockPensionAssets?.edges ?? [])
@@ -298,10 +314,7 @@ function InvestmentDetail({ id }: { id: string }) {
       />
       <header className="space-y-1">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
-          <Stat
-            label="Units"
-            value={investment.position.units.toString()}
-          />
+          <Stat label="Units" value={investment.position.units.toString()} />
           <Stat
             label="Cost basis"
             value={
@@ -367,10 +380,7 @@ function DetailTabs({
         >
           Transactions
         </TabButton>
-        <TabButton
-          active={tab === "splits"}
-          onClick={() => setTab("splits")}
-        >
+        <TabButton active={tab === "splits"} onClick={() => setTab("splits")}>
           Stock splits
         </TabButton>
       </nav>
@@ -462,9 +472,7 @@ function TransactionsSection({
     if (endCursor) setCursorStack((s) => [...s, endCursor]);
   };
   const onPrev: (() => void) | null =
-    cursorStack.length > 1
-      ? () => setCursorStack((s) => s.slice(0, -1))
-      : null;
+    cursorStack.length > 1 ? () => setCursorStack((s) => s.slice(0, -1)) : null;
 
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<TransactionRow | null>(null);
@@ -525,49 +533,49 @@ function TransactionsSection({
         <p className="text-sm text-muted-foreground">No transactions yet.</p>
       ) : (
         <div className="max-h-[45vh] overflow-y-auto rounded border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Wrapper</TableHead>
-              <TableHead className="text-right">Units</TableHead>
-              <TableHead className="text-right">Price</TableHead>
-              <TableHead>DRIP</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {transactions.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell className="align-middle">{t.date}</TableCell>
-                <TableCell className="align-middle">{t.asset.name}</TableCell>
-                <TableCell className="text-right tabular-nums align-middle">
-                  {t.units}
-                </TableCell>
-                <TableCell className="text-right align-middle">
-                  <Figure data={t.price} />
-                </TableCell>
-                <TableCell className="align-middle">
-                  {t.drip ? "Yes" : ""}
-                </TableCell>
-                <TableCell className="w-0 align-middle">
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => onEdit(t)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <DeleteButton
-                      onConfirm={() => deleteTx({ variables: { id: t.id } })}
-                    />
-                  </div>
-                </TableCell>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Wrapper</TableHead>
+                <TableHead className="text-right">Units</TableHead>
+                <TableHead className="text-right">Price</TableHead>
+                <TableHead>DRIP</TableHead>
+                <TableHead />
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {transactions.map((t) => (
+                <TableRow key={t.id}>
+                  <TableCell className="align-middle">{t.date}</TableCell>
+                  <TableCell className="align-middle">{t.asset.name}</TableCell>
+                  <TableCell className="text-right tabular-nums align-middle">
+                    {t.units}
+                  </TableCell>
+                  <TableCell className="text-right align-middle">
+                    <Figure data={t.price} />
+                  </TableCell>
+                  <TableCell className="align-middle">
+                    {t.drip ? "Yes" : ""}
+                  </TableCell>
+                  <TableCell className="w-0 align-middle">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => onEdit(t)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <DeleteButton
+                        onConfirm={() => deleteTx({ variables: { id: t.id } })}
+                      />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
 
@@ -803,13 +811,7 @@ function TransactionForm({
   );
 }
 
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}) {
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
@@ -914,9 +916,7 @@ function StockSplitsSection({ investmentId }: { investmentId: string }) {
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <DeleteButton
-                      onConfirm={() =>
-                        deleteSplit({ variables: { id: s.id } })
-                      }
+                      onConfirm={() => deleteSplit({ variables: { id: s.id } })}
                     />
                   </div>
                 </TableCell>
@@ -956,8 +956,7 @@ function StockSplitForm({
 
   const form = useForm({
     defaultValues: {
-      date:
-        existing?.date ?? new Date().toISOString().slice(0, 10),
+      date: existing?.date ?? new Date().toISOString().slice(0, 10),
       ratio: existing?.ratio ?? 2,
     },
     onSubmit: async ({ value }) => {

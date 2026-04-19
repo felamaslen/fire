@@ -42,10 +42,7 @@ const PlanningTaxRatesDialogDocument = graphql(`
 `);
 
 const PlanningYearSetDocument = graphql(`
-  mutation PlanningYearSet(
-    $year: ID!
-    $rates: PlanningYearTaxRatesUKInput!
-  ) {
+  mutation PlanningYearSet($year: ID!, $rates: PlanningYearTaxRatesUKInput!) {
     planningYearSet(year: $year, taxRates: { uk: $rates }) {
       id
     }
@@ -58,7 +55,9 @@ export const Route = createFileRoute("/planning/$year/tax-rates")({
 
 type CurrentRates = Extract<
   NonNullable<
-    NonNullable<ResultOf<typeof PlanningTaxRatesDialogDocument>["planningYear"]>["taxRates"]
+    NonNullable<
+      ResultOf<typeof PlanningTaxRatesDialogDocument>["planningYear"]
+    >["taxRates"]
   >,
   { __typename?: "PlanningYearTaxRatesUK" }
 >;
@@ -202,9 +201,7 @@ function PlanningTaxRatesDialog() {
               <Pounds
                 label="Personal allowance taper from"
                 value={values.thresholdPersonalAllowanceTaper}
-                onChange={(v) =>
-                  patch({ thresholdPersonalAllowanceTaper: v })
-                }
+                onChange={(v) => patch({ thresholdPersonalAllowanceTaper: v })}
               />
             </div>
           </Section>

@@ -280,9 +280,7 @@ export function PortfolioChart({
             : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
           const boxY = Math.max(AXIS_PAD_TOP, yScale(p.hi) - boxH / 2);
           const d = initialDate
-            ? new Date(
-                initialDate.getTime() + Math.round(p.x) * 86400 * 1000,
-              )
+            ? new Date(initialDate.getTime() + Math.round(p.x) * 86400 * 1000)
             : null;
           const isUp = p.to >= p.from;
           return (
@@ -311,13 +309,21 @@ export function PortfolioChart({
                     {fullDate(d)}
                   </text>
                 )}
-                <text x={boxX + 8} y={boxY + 30} className="fill-muted-foreground">
+                <text
+                  x={boxX + 8}
+                  y={boxY + 30}
+                  className="fill-muted-foreground"
+                >
                   Open
                 </text>
                 <text x={boxX + boxW - 8} y={boxY + 30} textAnchor="end">
                   {formatAccountingMoneyRounded(currency, p.from)}
                 </text>
-                <text x={boxX + 8} y={boxY + 44} className="fill-muted-foreground">
+                <text
+                  x={boxX + 8}
+                  y={boxY + 44}
+                  className="fill-muted-foreground"
+                >
                   Close
                 </text>
                 <text
@@ -328,13 +334,21 @@ export function PortfolioChart({
                 >
                   {formatAccountingMoneyRounded(currency, p.to)}
                 </text>
-                <text x={boxX + 8} y={boxY + 58} className="fill-muted-foreground">
+                <text
+                  x={boxX + 8}
+                  y={boxY + 58}
+                  className="fill-muted-foreground"
+                >
                   High
                 </text>
                 <text x={boxX + boxW - 8} y={boxY + 58} textAnchor="end">
                   {formatAccountingMoneyRounded(currency, p.hi)}
                 </text>
-                <text x={boxX + 8} y={boxY + 72} className="fill-muted-foreground">
+                <text
+                  x={boxX + 8}
+                  y={boxY + 72}
+                  className="fill-muted-foreground"
+                >
                   Low
                 </text>
                 <text x={boxX + boxW - 8} y={boxY + 72} textAnchor="end">
@@ -352,9 +366,13 @@ export function PortfolioChart({
           // bottom to top and each y is cumulative.
           const below = idx > 0 ? lines[idx - 1].points : null;
           const topPath = line.points
-            .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`)
+            .map(
+              (p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`,
+            )
             .join(" ");
-          const bottomPoints = (below ?? line.points.map((p) => ({ x: p.x, y: 0 })))
+          const bottomPoints = (
+            below ?? line.points.map((p) => ({ x: p.x, y: 0 }))
+          )
             .slice()
             .reverse();
           const bottomPath = bottomPoints
@@ -385,168 +403,163 @@ export function PortfolioChart({
         );
       })}
 
-      {lines && lines.length > 0 && !stacked && (() => {
-        const primary = lines[0].points;
-        const snapped =
-          lineHoverX !== null && primary.length > 0
-            ? findClosestPoint(primary, lineHoverX)
-            : null;
-        const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
-        return (
-          <>
-            {/* Full-plot pointer surface. Placed last so it sits on top of
+      {lines &&
+        lines.length > 0 &&
+        !stacked &&
+        (() => {
+          const primary = lines[0].points;
+          const snapped =
+            lineHoverX !== null && primary.length > 0
+              ? findClosestPoint(primary, lineHoverX)
+              : null;
+          const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
+          return (
+            <>
+              {/* Full-plot pointer surface. Placed last so it sits on top of
                 the line paths and catches every move. */}
-            <rect
-              x={AXIS_PAD_LEFT}
-              y={AXIS_PAD_TOP}
-              width={plotW}
-              height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
-              fill="transparent"
-              onPointerMove={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                if (rect.width === 0) return;
-                const svgX =
-                  ((e.clientX - rect.left) / rect.width) * width;
-                const xRange = xMax - xMin || 1;
-                const dataX =
-                  xMin + ((svgX - AXIS_PAD_LEFT) / plotW) * xRange;
-                setLineHoverX(dataX);
-              }}
-              onPointerLeave={() => setLineHoverX(null)}
-            />
-            {snapped &&
-              (() => {
-                const cx = xScale(snapped.x);
-                const perLine = lines.map((l) => ({
-                  label: l.label,
-                  color: l.color,
-                  point:
-                    l.points.length > 0
-                      ? findClosestPoint(l.points, snapped.x)
-                      : null,
-                }));
-                const rowH = 14;
-                const headerH = 18;
-                const padY = 8;
-                const boxW = 168;
-                const boxH = headerH + perLine.length * rowH + padY;
-                const gap = 10;
-                const plotRight = width - AXIS_PAD_RIGHT;
-                const preferRight = cx + gap + boxW <= plotRight;
-                const boxX = preferRight
-                  ? cx + gap
-                  : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
-                const topY = perLine.reduce(
-                  (min, pl) =>
-                    pl.point ? Math.min(min, yScale(pl.point.y)) : min,
-                  Infinity,
-                );
-                const boxY = Math.max(
-                  AXIS_PAD_TOP,
-                  Math.min(
-                    height - AXIS_PAD_BOTTOM - boxH,
-                    (isFinite(topY) ? topY : AXIS_PAD_TOP) - boxH / 2,
-                  ),
-                );
-                const d = initialDate
-                  ? new Date(
-                      initialDate.getTime() +
-                        Math.round(snapped.x) * 86400 * 1000,
-                    )
-                  : null;
-                return (
-                  <g pointerEvents="none">
-                    <line
-                      x1={cx}
-                      x2={cx}
-                      y1={AXIS_PAD_TOP}
-                      y2={height - AXIS_PAD_BOTTOM}
-                      stroke="currentColor"
-                      strokeOpacity={0.2}
-                      strokeDasharray="2 2"
-                    />
-                    {perLine.map(
-                      (pl) =>
-                        pl.point && (
-                          <circle
-                            key={pl.label}
-                            cx={cx}
-                            cy={yScale(pl.point.y)}
-                            r={3}
-                            fill={pl.color}
-                            stroke="var(--background, white)"
-                            strokeWidth={1.5}
-                          />
-                        ),
-                    )}
-                    <rect
-                      x={boxX}
-                      y={boxY}
-                      width={boxW}
-                      height={boxH}
-                      rx={6}
-                      className="fill-popover stroke-border"
-                      strokeWidth={1}
-                    />
-                    <g className="fill-foreground text-[10px] tabular-nums">
-                      {d && (
-                        <text
-                          x={boxX + 8}
-                          y={boxY + 14}
-                          className="font-medium"
-                        >
-                          {fullDate(d)}
-                        </text>
-                      )}
-                      {perLine.map((pl, i) => {
-                        const y = boxY + headerH + i * rowH + 10;
-                        return (
-                          <g key={pl.label}>
-                            <rect
-                              x={boxX + 8}
-                              y={y - 7}
-                              width={8}
-                              height={8}
-                              rx={1}
+              <rect
+                x={AXIS_PAD_LEFT}
+                y={AXIS_PAD_TOP}
+                width={plotW}
+                height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
+                fill="transparent"
+                onPointerMove={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  if (rect.width === 0) return;
+                  const svgX = ((e.clientX - rect.left) / rect.width) * width;
+                  const xRange = xMax - xMin || 1;
+                  const dataX =
+                    xMin + ((svgX - AXIS_PAD_LEFT) / plotW) * xRange;
+                  setLineHoverX(dataX);
+                }}
+                onPointerLeave={() => setLineHoverX(null)}
+              />
+              {snapped &&
+                (() => {
+                  const cx = xScale(snapped.x);
+                  const perLine = lines.map((l) => ({
+                    label: l.label,
+                    color: l.color,
+                    point:
+                      l.points.length > 0
+                        ? findClosestPoint(l.points, snapped.x)
+                        : null,
+                  }));
+                  const rowH = 14;
+                  const headerH = 18;
+                  const padY = 8;
+                  const boxW = 168;
+                  const boxH = headerH + perLine.length * rowH + padY;
+                  const gap = 10;
+                  const plotRight = width - AXIS_PAD_RIGHT;
+                  const preferRight = cx + gap + boxW <= plotRight;
+                  const boxX = preferRight
+                    ? cx + gap
+                    : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
+                  const topY = perLine.reduce(
+                    (min, pl) =>
+                      pl.point ? Math.min(min, yScale(pl.point.y)) : min,
+                    Infinity,
+                  );
+                  const boxY = Math.max(
+                    AXIS_PAD_TOP,
+                    Math.min(
+                      height - AXIS_PAD_BOTTOM - boxH,
+                      (isFinite(topY) ? topY : AXIS_PAD_TOP) - boxH / 2,
+                    ),
+                  );
+                  const d = initialDate
+                    ? new Date(
+                        initialDate.getTime() +
+                          Math.round(snapped.x) * 86400 * 1000,
+                      )
+                    : null;
+                  return (
+                    <g pointerEvents="none">
+                      <line
+                        x1={cx}
+                        x2={cx}
+                        y1={AXIS_PAD_TOP}
+                        y2={height - AXIS_PAD_BOTTOM}
+                        stroke="currentColor"
+                        strokeOpacity={0.2}
+                        strokeDasharray="2 2"
+                      />
+                      {perLine.map(
+                        (pl) =>
+                          pl.point && (
+                            <circle
+                              key={pl.label}
+                              cx={cx}
+                              cy={yScale(pl.point.y)}
+                              r={3}
                               fill={pl.color}
+                              stroke="var(--background, white)"
+                              strokeWidth={1.5}
                             />
-                            <text
-                              x={boxX + 20}
-                              y={y}
-                              className="fill-muted-foreground"
-                            >
-                              {pl.label}
-                            </text>
-                            <text
-                              x={boxX + boxW - 8}
-                              y={y}
-                              textAnchor="end"
-                            >
-                              {pl.point
-                                ? formatAccountingMoneyRounded(
-                                    currency,
-                                    pl.point.y,
-                                  )
-                                : "—"}
-                            </text>
-                          </g>
-                        );
-                      })}
+                          ),
+                      )}
+                      <rect
+                        x={boxX}
+                        y={boxY}
+                        width={boxW}
+                        height={boxH}
+                        rx={6}
+                        className="fill-popover stroke-border"
+                        strokeWidth={1}
+                      />
+                      <g className="fill-foreground text-[10px] tabular-nums">
+                        {d && (
+                          <text
+                            x={boxX + 8}
+                            y={boxY + 14}
+                            className="font-medium"
+                          >
+                            {fullDate(d)}
+                          </text>
+                        )}
+                        {perLine.map((pl, i) => {
+                          const y = boxY + headerH + i * rowH + 10;
+                          return (
+                            <g key={pl.label}>
+                              <rect
+                                x={boxX + 8}
+                                y={y - 7}
+                                width={8}
+                                height={8}
+                                rx={1}
+                                fill={pl.color}
+                              />
+                              <text
+                                x={boxX + 20}
+                                y={y}
+                                className="fill-muted-foreground"
+                              >
+                                {pl.label}
+                              </text>
+                              <text x={boxX + boxW - 8} y={y} textAnchor="end">
+                                {pl.point
+                                  ? formatAccountingMoneyRounded(
+                                      currency,
+                                      pl.point.y,
+                                    )
+                                  : "—"}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </g>
                     </g>
-                  </g>
-                );
-              })()}
-          </>
-        );
-      })()}
+                  );
+                })()}
+            </>
+          );
+        })()}
     </svg>
   );
 }
 
-function findClosestPoint<T extends { x: number }>(
-  points: T[],
-  x: number,
-): T {
+function findClosestPoint<T extends { x: number }>(points: T[], x: number): T {
   let best = points[0];
   let bestDist = Math.abs(best.x - x);
   for (let i = 1; i < points.length; i++) {
@@ -587,9 +600,7 @@ export function PortfolioChartLegend({
           </span>
         </li>
       ))}
-      {overflow > 0 && (
-        <li className="italic">+{overflow} more</li>
-      )}
+      {overflow > 0 && <li className="italic">+{overflow} more</li>}
     </ul>
   );
 }

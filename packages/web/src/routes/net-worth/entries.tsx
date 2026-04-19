@@ -3,11 +3,7 @@ import {
   useMutation,
   useSuspenseQuery,
 } from "@apollo/client/react";
-import {
-  createFileRoute,
-  Outlet,
-  useNavigate,
-} from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { Loader2, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -81,8 +77,7 @@ function NetWorthEntriesPage() {
   const navigate = useNavigate();
   const client = useApolloClient();
   const { data } = useSuspenseQuery(NetWorthEntriesDocument);
-  const entries: EntryRowNode[] =
-    data.netWorth?.edges.map((e) => e.node) ?? [];
+  const entries: EntryRowNode[] = data.netWorth?.edges.map((e) => e.node) ?? [];
 
   /** `null` when no tile is loading, otherwise the id (or `"new"`) of the tile whose dialog we're preloading. */
   const [pending, setPending] = useState<string | "new" | null>(null);

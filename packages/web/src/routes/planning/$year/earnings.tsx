@@ -175,7 +175,9 @@ type AccountOption = NonNullable<
   PlanningEarningsData["planningYear"]
 >["accounts"][number];
 type LiabilityOption = Extract<
-  NonNullable<PlanningEarningsData["netWorthCategories"]>["edges"][number]["node"],
+  NonNullable<
+    PlanningEarningsData["netWorthCategories"]
+  >["edges"][number]["node"],
   { __typename: "NetWorthCategoryLiability" }
 >;
 
@@ -235,9 +237,7 @@ function earningToForm(earning: Earning): FormValues {
         ? ""
         : String(earning.pensionReliefAtSource * 100),
     pensionNetPayPct:
-      earning.pensionNetPay == null
-        ? ""
-        : String(earning.pensionNetPay * 100),
+      earning.pensionNetPay == null ? "" : String(earning.pensionNetPay * 100),
     pensionSalarySacrificePct:
       earning.pensionSalarySacrifice == null
         ? ""
@@ -300,9 +300,7 @@ function PlanningEarningsDialog() {
 
   const earnings: Earning[] = data.earnings?.edges.map((e) => e.node) ?? [];
   const accounts: AccountOption[] = data.planningYear?.accounts ?? [];
-  const liabilities: LiabilityOption[] = (
-    data.netWorthCategories?.edges ?? []
-  )
+  const liabilities: LiabilityOption[] = (data.netWorthCategories?.edges ?? [])
     .map((e) => e.node)
     .filter(
       (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",
@@ -341,7 +339,8 @@ function PlanningEarningsDialog() {
           </ul>
           {accounts.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Assign a planning account first so earnings have somewhere to land.
+              Assign a planning account first so earnings have somewhere to
+              land.
             </p>
           ) : (
             <AddEarningForm
@@ -516,7 +515,9 @@ function EditEarningForm({
   refetch: RefetchEntry[];
   onDone: () => void;
 }) {
-  const [values, setValues] = useState<FormValues>(() => earningToForm(earning));
+  const [values, setValues] = useState<FormValues>(() =>
+    earningToForm(earning),
+  );
   const [update, { loading }] = useMutation(PlanningEarningsUpdateDocument, {
     refetchQueries: refetch,
   });
@@ -688,9 +689,7 @@ function EarningFormFields({
         </label>
         {values.studentLoanPlan2 && (
           <div className="mt-2 space-y-1">
-            <Label className="text-xs">
-              Linked liability (optional)
-            </Label>
+            <Label className="text-xs">Linked liability (optional)</Label>
             <Select
               value={
                 values.studentLoanLiabilityId === ""
@@ -739,8 +738,7 @@ function UKTaxCodesField({
   // New entries are only allowed once the last one has an end date — otherwise
   // we couldn't compute the new entry's start.
   const lastEnd = entries[entries.length - 1]?.end ?? "";
-  const canAdd =
-    !!earningStart && (entries.length === 0 || lastEnd !== "");
+  const canAdd = !!earningStart && (entries.length === 0 || lastEnd !== "");
 
   const addEntry = () => {
     onChange([...entries, { taxCode: "", end: "" }]);

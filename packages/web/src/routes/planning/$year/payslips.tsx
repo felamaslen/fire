@@ -150,7 +150,9 @@ type AccountOption = NonNullable<
   PlanningPayslipsData["planningYear"]
 >["accounts"][number];
 type LiabilityOption = Extract<
-  NonNullable<PlanningPayslipsData["netWorthCategories"]>["edges"][number]["node"],
+  NonNullable<
+    PlanningPayslipsData["netWorthCategories"]
+  >["edges"][number]["node"],
   { __typename: "NetWorthCategoryLiability" }
 >;
 
@@ -265,9 +267,7 @@ function PlanningPayslipsDialog() {
 
   const payslips: Payslip[] = data.payslips?.edges.map((e) => e.node) ?? [];
   const accounts: AccountOption[] = data.planningYear?.accounts ?? [];
-  const liabilities: LiabilityOption[] = (
-    data.netWorthCategories?.edges ?? []
-  )
+  const liabilities: LiabilityOption[] = (data.netWorthCategories?.edges ?? [])
     .map((e) => e.node)
     .filter(
       (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",
@@ -465,7 +465,9 @@ function EditPayslipForm({
   refetch: RefetchEntry[];
   onDone: () => void;
 }) {
-  const [values, setValues] = useState<FormValues>(() => payslipToForm(payslip));
+  const [values, setValues] = useState<FormValues>(() =>
+    payslipToForm(payslip),
+  );
   const [update, { loading }] = useMutation(PlanningPayslipUpdateDocument, {
     refetchQueries: refetch,
   });
