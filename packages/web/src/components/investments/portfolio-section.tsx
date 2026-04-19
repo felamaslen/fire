@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 
 import { graphql, type ResultOf } from "../../graphql";
 
-import { PortfolioChart } from "./portfolio-chart";
+import { PortfolioChart, PortfolioChartLegend } from "./portfolio-chart";
 
 const PortfolioChartDocument = graphql(`
   query PortfolioChart(
@@ -69,6 +69,17 @@ const STACK_COLORS = [
   "#a855f7",
   "#14b8a6",
   "#f97316",
+  "#84cc16",
+  "#06b6d4",
+  "#d946ef",
+  "#eab308",
+  "#22c55e",
+  "#3b82f6",
+  "#f43f5e",
+  "#8b5cf6",
+  "#14532d",
+  "#78350f",
+  "#be185d",
 ];
 
 type PortfolioChartSettings = {
@@ -199,24 +210,29 @@ function PortfolioChartLoader({
     },
   );
 
-  const lines = stack
+  const { lines, stackInitialDate } = stack
     ? stackLines(perInvestmentSeries)
-    : portfolio.timeseries
-      ? [
-          {
-            label: "Portfolio",
-            color: "#6366f1",
-            points: portfolio.timeseries.points,
-          },
-        ]
-      : [];
+    : {
+        lines: portfolio.timeseries
+          ? [
+              {
+                label: "Portfolio",
+                color: "#6366f1",
+                points: portfolio.timeseries.points,
+              },
+            ]
+          : [],
+        stackInitialDate: portfolio.timeseries?.initialDate ?? null,
+      };
 
   const candles = portfolio.candlestick
     ? { points: portfolio.candlestick.points }
     : null;
 
   const initialDate =
-    portfolio.timeseries?.initialDate ?? portfolio.candlestick?.initialDate;
+    stackInitialDate ??
+    portfolio.timeseries?.initialDate ??
+    portfolio.candlestick?.initialDate;
 
   return (
     <div className="space-y-2">
@@ -229,8 +245,12 @@ function PortfolioChartLoader({
             ? new Date(`${initialDate}T00:00:00Z`)
             : undefined
         }
+        stacked={!candlestick && stack}
         className="w-full"
       />
+      {!candlestick && stack && lines.length > 1 && (
+        <PortfolioChartLegend lines={lines} />
+      )}
     </div>
   );
 }
@@ -239,39 +259,89 @@ type SeriesIn = {
   label: string;
   color: string;
   points: { x: number; y: number }[];
+  initialDate: string;
+};
+
+type SeriesOut = {
+  label: string;
+  color: string;
+  points: { x: number; y: number }[];
 };
 
 /**
- * Turn a list of per-investment series into cumulative stacked lines: each
- * output line's `y` at `x` equals its own `y` plus every preceding line's `y`.
- * The top line therefore equals the total portfolio value and no two lines
- * ever cross. Unions the x domain of all series and zero-fills gaps.
+ * Turn a list of per-investment series into cumulative stacked lines:
+ *
+ * 1. Each series carries its own `initialDate`, so `x` (days since that date)
+ *    is series-local. Re-anchor every series onto a shared `stackInitialDate`
+ *    (the earliest `initialDate` across the set) so `x` is a shared calendar
+ *    co-ordinate.
+ * 2. Union the re-anchored x domain, filling gaps with each series' nearest
+ *    earlier point — or zero when the series hadn't started yet on that day.
+ *    This keeps the cumulative running total continuous instead of dropping
+ *    to zero on every x an individual series happens not to have a sample for.
+ * 3. Cumulate vertically: each output series' `y` at `x` = its own `y` plus
+ *    every prior series' `y`. The top line therefore equals the total
+ *    portfolio value and no two lines cross.
  */
-function stackLines(series: SeriesIn[]): SeriesIn[] {
-  if (series.length === 0) return [];
+function stackLines(series: SeriesIn[]): {
+  lines: SeriesOut[];
+  stackInitialDate: string | null;
+} {
+  if (series.length === 0) return { lines: [], stackInitialDate: null };
+
+  const ONE_DAY_MS = 86400 * 1000;
+  const initialMs = series.map((s) =>
+    new Date(`${s.initialDate}T00:00:00Z`).getTime(),
+  );
+  const globalInitialMs = Math.min(...initialMs);
+  const stackInitialDate = new Date(globalInitialMs)
+    .toISOString()
+    .slice(0, 10);
+
+  // Re-anchor each series to `globalInitialMs`: shift its x by the number of
+  // days between its own initialDate and the shared one.
+  const reanchored = series.map((s, i) => {
+    const offset = Math.round((initialMs[i] - globalInitialMs) / ONE_DAY_MS);
+    return s.points.map((p) => ({ x: p.x + offset, y: p.y }));
+  });
+
+  // Union of x values across all re-anchored series.
   const xs = new Set<number>();
-  for (const s of series) for (const p of s.points) xs.add(p.x);
+  for (const pts of reanchored) for (const p of pts) xs.add(p.x);
   const xsSorted = [...xs].sort((a, b) => a - b);
 
-  const lookup = series.map((s) => {
+  // For each series, build a lookup and an ordered list so we can carry the
+  // last-seen y forward when a specific x is absent.
+  const lookup = reanchored.map((pts) => {
     const m = new Map<number, number>();
-    for (const p of s.points) m.set(p.x, p.y);
+    for (const p of pts) m.set(p.x, p.y);
     return m;
   });
+  const firstX = reanchored.map((pts) => (pts.length ? pts[0].x : Infinity));
 
   const running = new Map<number, number>();
   for (const x of xsSorted) running.set(x, 0);
 
-  return series.map((s, i) => {
+  const lines: SeriesOut[] = series.map((s, i) => {
     const m = lookup[i];
+    const start = firstX[i];
+    let lastY = 0;
     const points = xsSorted.map((x) => {
-      const prev = running.get(x) ?? 0;
-      const next = prev + (m.get(x) ?? 0);
-      running.set(x, next);
-      return { x, y: next };
+      if (x < start) {
+        lastY = 0;
+      } else if (m.has(x)) {
+        lastY = m.get(x) ?? 0;
+      }
+      // else: carry lastY forward (fills gaps within the series' own range).
+      const prevTotal = running.get(x) ?? 0;
+      const nextTotal = prevTotal + lastY;
+      running.set(x, nextTotal);
+      return { x, y: nextTotal };
     });
-    return { ...s, points };
+    return { label: s.label, color: s.color, points };
   });
+
+  return { lines, stackInitialDate };
 }
 
 export type PortfolioSummary = ResultOf<typeof PortfolioChartDocument>;
