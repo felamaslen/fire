@@ -23,9 +23,7 @@ function EditNetWorthEntryDialog() {
   const entryQuery = useSuspenseQuery(NetWorthEntryByIdDocument, {
     variables: { id },
   });
-  const categoriesQuery = useSuspenseQuery(
-    NetWorthEntryFormCategoriesDocument,
-  );
+  const categoriesQuery = useSuspenseQuery(NetWorthEntryFormCategoriesDocument);
 
   const entryRef = entryQuery.data.netWorthEntry;
   const entry = entryRef

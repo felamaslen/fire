@@ -6,7 +6,7 @@ import type {
   ReactFormExtendedApi,
 } from "@tanstack/react-form";
 import { useForm } from "@tanstack/react-form";
-import { ChevronDown, Plus, RefreshCw, X } from "lucide-react";
+import { Plus, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -17,11 +17,6 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -518,36 +513,6 @@ export function EntryForm({
         </div>
       </form>
     </>
-  );
-}
-
-function FormSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="rounded-md border"
-    >
-      <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted/50">
-        <span>{title}</span>
-        <ChevronDown
-          className={cn(
-            "h-4 w-4 text-muted-foreground transition-transform",
-            open && "rotate-180",
-          )}
-        />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="border-t p-3">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
   );
 }
 

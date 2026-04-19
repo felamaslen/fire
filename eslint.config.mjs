@@ -25,6 +25,18 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // `.mjs` entry points (notably `packages/backend/otel.mjs`) run as Node
+    // scripts, not through the TS compiler, so their globals aren't in the
+    // default set.
+    files: ["**/*.mjs"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        console: "readonly",
+      },
+    },
+  },
+  {
     plugins: { "simple-import-sort": simpleImportSort },
     rules: {
       "simple-import-sort/imports": "error",

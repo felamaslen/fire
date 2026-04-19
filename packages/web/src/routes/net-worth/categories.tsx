@@ -474,7 +474,8 @@ function LiabilitiesSection({
           </form.Field>
           <form.Subscribe selector={(s) => s.values.type}>
             {(type) =>
-              type === "CREDIT_CARD" && planningAccounts.length > 0 && (
+              type === "CREDIT_CARD" &&
+              planningAccounts.length > 0 && (
                 <form.Field name="billedFromAccountId">
                   {(field) => (
                     <Select
@@ -634,9 +635,7 @@ function LiabilityRow({
                 <SelectValue placeholder="Billed from…" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">
-                  No billed-from account
-                </SelectItem>
+                <SelectItem value="__none__">No billed-from account</SelectItem>
                 {planningAccounts.map((a) => (
                   <SelectItem key={a.id} value={a.id}>
                     {a.name}

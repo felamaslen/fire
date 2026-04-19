@@ -3,8 +3,7 @@ import * as React from "react";
 import { cn } from "@/lib/cn";
 import { currencySymbol } from "@/lib/format";
 
-export interface InputProps
-  extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   startAdornment?: React.ReactNode;
   endAdornment?: React.ReactNode;
   /** ISO-4217 currency code (e.g. `"GBP"`). When set, the locale-appropriate currency symbol is rendered as the start adornment. Overrides `startAdornment`. */

@@ -7,11 +7,11 @@ import {
   LatestNetWorthEntryDocument,
   NetWorthEntryFormCategoriesDocument,
 } from "@/components/net-worth/entry-form";
+import { NetWorthEntryFormDocument } from "@/components/net-worth/entry-form";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 import { readFragment } from "../../../graphql";
 import { entriesRefetch } from "../entries";
-import { NetWorthEntryFormDocument } from "@/components/net-worth/entry-form";
 
 export const Route = createFileRoute("/net-worth/entries/new")({
   component: NewNetWorthEntryDialog,
@@ -20,9 +20,7 @@ export const Route = createFileRoute("/net-worth/entries/new")({
 function NewNetWorthEntryDialog() {
   const navigate = useNavigate();
   const latest = useSuspenseQuery(LatestNetWorthEntryDocument);
-  const categoriesQuery = useSuspenseQuery(
-    NetWorthEntryFormCategoriesDocument,
-  );
+  const categoriesQuery = useSuspenseQuery(NetWorthEntryFormCategoriesDocument);
 
   const latestEdge = latest.data.netWorth?.edges[0];
   const sourceEntry = latestEdge
