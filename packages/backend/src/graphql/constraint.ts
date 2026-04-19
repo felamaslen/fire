@@ -13,15 +13,20 @@ import {
   visit,
   visitWithTypeInfo,
 } from "graphql";
+import type { Int } from "grats";
 
 /**
- * Enforce a regex on the decorated string value. The provided value must match `pattern` or the request is rejected before resolution. Applies to field arguments and input-object field definitions.
+ * Enforce bounds on the decorated value before any resolver runs. `pattern` matches against strings; `min` and `max` clamp numeric values (inclusive). The constraint fails and the request is rejected if any of the provided bounds is violated. Applies to field arguments and input-object field definitions.
  *
  * @gqlDirective constraint on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
  */
 export function constraintDirective(_args: {
-  /** ECMAScript-compatible regex source (without delimiters). */
-  pattern: string;
+  /** ECMAScript-compatible regex source (without delimiters). Applies to string values only. */
+  pattern?: string | null;
+  /** Inclusive lower bound for integer values. */
+  min?: Int | null;
+  /** Inclusive upper bound for integer values. */
+  max?: Int | null;
 }): void {}
 
 /** Apollo Server plugin that enforces `@constraint(pattern: ...)` on argument definitions during `didResolveOperation` — before any resolver runs. Throws a `BAD_USER_INPUT` GraphQLError on the first violation. */
@@ -63,17 +68,30 @@ function validateConstraints(
         for (const argDef of fieldDef.args) {
           const argValue = values[argDef.name];
           const basePath = [`${fieldDef.name}.${argDef.name}`];
-          const argPattern = constraintPatternOf(argDef);
-          if (argPattern != null) {
+          const argConstraint = constraintOf(argDef);
+          if (argConstraint?.pattern != null) {
             applyPattern(
               argValue,
-              argPattern,
+              argConstraint.pattern,
               basePath,
               node,
               (path, pattern) =>
                 `Argument "${argDef.name}" on field "${fieldDef.name}"${
                   path.length > 1 ? ` at ${path.slice(1).join(".")}` : ""
                 } does not match pattern /${pattern}/`,
+            );
+          }
+          if (argConstraint?.min != null || argConstraint?.max != null) {
+            applyBounds(
+              argValue,
+              argConstraint.min,
+              argConstraint.max,
+              basePath,
+              node,
+              (path, label) =>
+                `Argument "${argDef.name}" on field "${fieldDef.name}"${
+                  path.length > 1 ? ` at ${path.slice(1).join(".")}` : ""
+                } ${label}`,
             );
           }
           validateInputValue(argDef.type, argValue, basePath, node);
@@ -110,18 +128,57 @@ function validateInputValue(
     const fieldValue = obj[fieldName];
     if (fieldValue === undefined) continue;
     const fieldPath = path.concat(fieldName);
-    const pattern = constraintPatternOf(fieldDef);
-    if (pattern != null) {
+    const constraint = constraintOf(fieldDef);
+    if (constraint?.pattern != null) {
       applyPattern(
         fieldValue,
-        pattern,
+        constraint.pattern,
         fieldPath,
         node,
         (p, pat) =>
           `Input field "${p.join(".")}" does not match pattern /${pat}/`,
       );
     }
+    if (constraint?.min != null || constraint?.max != null) {
+      applyBounds(
+        fieldValue,
+        constraint.min,
+        constraint.max,
+        fieldPath,
+        node,
+        (p, label) => `Input field "${p.join(".")}" ${label}`,
+      );
+    }
     validateInputValue(fieldDef.type, fieldValue, fieldPath, node);
+  }
+}
+
+function applyBounds(
+  value: unknown,
+  min: number | null | undefined,
+  max: number | null | undefined,
+  path: string[],
+  node: ASTNode,
+  message: (path: string[], label: string) => string,
+): void {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      applyBounds(value[i], min, max, path.concat(`[${i}]`), node, message);
+    }
+    return;
+  }
+  if (typeof value !== "number") return;
+  if (min != null && value < min) {
+    throw new GraphQLError(message(path, `is below minimum ${min}`), {
+      nodes: node,
+      extensions: { code: "BAD_USER_INPUT" },
+    });
+  }
+  if (max != null && value > max) {
+    throw new GraphQLError(message(path, `is above maximum ${max}`), {
+      nodes: node,
+      extensions: { code: "BAD_USER_INPUT" },
+    });
   }
 }
 
@@ -146,7 +203,13 @@ function applyPattern(
   });
 }
 
-function constraintPatternOf(
+type ConstraintArgs = {
+  pattern?: string | null;
+  min?: number | null;
+  max?: number | null;
+};
+
+function constraintOf(
   def:
     | {
         astNode?: { directives?: readonly unknown[] } | null;
@@ -154,7 +217,7 @@ function constraintPatternOf(
       }
     | null
     | undefined,
-): string | null {
+): ConstraintArgs | null {
   // 1) SDL-built schemas carry directives on the AST node.
   const astDirectives = def?.astNode?.directives as
     | ReadonlyArray<{
@@ -169,10 +232,20 @@ function constraintPatternOf(
     (d) => d.name.value === "constraint",
   );
   if (astDirective) {
-    const arg = astDirective.arguments?.find((a) => a.name.value === "pattern");
-    if (arg && arg.value.kind === "StringValue" && arg.value.value != null) {
-      return arg.value.value;
+    const out: ConstraintArgs = {};
+    for (const arg of astDirective.arguments ?? []) {
+      const name = arg.name.value;
+      if (name === "pattern" && arg.value.kind === "StringValue") {
+        out.pattern = arg.value.value ?? null;
+      } else if (
+        (name === "min" || name === "max") &&
+        (arg.value.kind === "IntValue" || arg.value.kind === "FloatValue") &&
+        arg.value.value != null
+      ) {
+        out[name] = Number(arg.value.value);
+      }
     }
+    return out;
   }
 
   // 2) Grats-built schemas surface directives via `extensions.grats.directives`.
@@ -189,6 +262,11 @@ function constraintPatternOf(
       | undefined
   )?.grats?.directives;
   const gratsDirective = gratsDirectives?.find((d) => d.name === "constraint");
-  const pattern = gratsDirective?.args?.pattern;
-  return typeof pattern === "string" ? pattern : null;
+  if (!gratsDirective) return null;
+  const args = gratsDirective.args ?? {};
+  return {
+    pattern: typeof args.pattern === "string" ? args.pattern : null,
+    min: typeof args.min === "number" ? args.min : null,
+    max: typeof args.max === "number" ? args.max : null,
+  };
 }

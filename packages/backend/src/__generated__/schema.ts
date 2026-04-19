@@ -7,7 +7,7 @@ import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
-import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLNonNull, GraphQLString, specifiedDirectives, GraphQLObjectType, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLUnionType, GraphQLInt, defaultFieldResolver, GraphQLBoolean, GraphQLInterfaceType, GraphQLInputObjectType } from "graphql";
+import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLString, GraphQLInt, specifiedDirectives, GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLUnionType, defaultFieldResolver, GraphQLBoolean, GraphQLInterfaceType, GraphQLInputObjectType } from "graphql";
 import { investmentAllocationsForAsset as netWorthCategoryAssetInvestmentAllocationsResolver, investmentAllocations as queryInvestmentAllocationsResolver, investmentAllocationsSet as mutationInvestmentAllocationsSetResolver, investmentCashAllocationSet as mutationInvestmentCashAllocationSetResolver } from "./../graphql/investments/allocations";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { cashPosition as queryCashPositionResolver } from "./../graphql/investments/cash-position";
@@ -3412,11 +3412,19 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         directives: [...specifiedDirectives, new GraphQLDirective({
                 name: "constraint",
                 locations: [DirectiveLocation.ARGUMENT_DEFINITION, DirectiveLocation.INPUT_FIELD_DEFINITION],
-                description: "Enforce a regex on the decorated string value. The provided value must match `pattern` or the request is rejected before resolution. Applies to field arguments and input-object field definitions.",
+                description: "Enforce bounds on the decorated value before any resolver runs. `pattern` matches against strings; `min` and `max` clamp numeric values (inclusive). The constraint fails and the request is rejected if any of the provided bounds is violated. Applies to field arguments and input-object field definitions.",
                 args: {
                     pattern: {
-                        description: "ECMAScript-compatible regex source (without delimiters).",
-                        type: new GraphQLNonNull(GraphQLString)
+                        description: "ECMAScript-compatible regex source (without delimiters). Applies to string values only.",
+                        type: GraphQLString
+                    },
+                    min: {
+                        description: "Inclusive lower bound for integer values.",
+                        type: GraphQLInt
+                    },
+                    max: {
+                        description: "Inclusive upper bound for integer values.",
+                        type: GraphQLInt
                     }
                 }
             }), new GraphQLDirective({

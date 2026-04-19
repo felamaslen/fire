@@ -3,6 +3,7 @@ import { makeExecutableSchema } from "@graphql-tools/schema";
 import gql from "fake-tag";
 import {
   GraphQLInputObjectType,
+  GraphQLInt,
   GraphQLList,
   GraphQLNonNull,
   GraphQLObjectType,
@@ -14,12 +15,15 @@ import { constraintPlugin } from "./constraint";
 
 const typeDefs = gql`
   directive @constraint(
-    pattern: String!
+    pattern: String
+    min: Int
+    max: Int
   ) on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
 
   input ContactInput {
     email: String! @constraint(pattern: "^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+$")
     tags: [String!] @constraint(pattern: "^#[a-z]+$")
+    age: Int @constraint(min: 0, max: 150)
   }
 
   type Query {
@@ -27,6 +31,7 @@ const typeDefs = gql`
     greet(greeting: String @constraint(pattern: "^hello")): String!
     register(contact: ContactInput!): String!
     untouched(n: Int): Int
+    paginate(limit: Int! @constraint(min: 5, max: 20)): Int!
   }
 `;
 
@@ -38,6 +43,7 @@ const resolvers = {
     register: (_: unknown, args: { contact: { email: string } }) =>
       `registered ${args.contact.email}`,
     untouched: (_: unknown, args: { n?: number }) => args.n ?? 0,
+    paginate: (_: unknown, args: { limit: number }) => args.limit,
   },
 };
 
@@ -149,6 +155,46 @@ it("passes a well-formed input object", async () => {
   expect(result.data).toEqual({ register: "registered a@b" });
 });
 
+describe("numeric bounds (min/max)", () => {
+  it("rejects a scalar Int below the min", async () => {
+    const result = await run(`{ paginate(limit: 2) }`);
+    expect(result.errors?.[0].message).toMatchInlineSnapshot(
+      `"Argument "limit" on field "paginate" is below minimum 5"`,
+    );
+    expect(result.errors?.[0].extensions?.code).toBe("BAD_USER_INPUT");
+  });
+
+  it("rejects a scalar Int above the max", async () => {
+    const result = await run(`{ paginate(limit: 21) }`);
+    expect(result.errors?.[0].message).toMatchInlineSnapshot(
+      `"Argument "limit" on field "paginate" is above maximum 20"`,
+    );
+  });
+
+  it("accepts values at the inclusive boundaries", async () => {
+    const lo = await run(`{ paginate(limit: 5) }`);
+    const hi = await run(`{ paginate(limit: 20) }`);
+    expect(lo.errors).toBeUndefined();
+    expect(hi.errors).toBeUndefined();
+  });
+
+  it("rejects an input-object field outside the bounds", async () => {
+    const result = await run(
+      `{ register(contact: { email: "a@b", age: 200 }) }`,
+    );
+    expect(result.errors?.[0].message).toMatchInlineSnapshot(
+      `"Input field "register.contact.age" is above maximum 150"`,
+    );
+  });
+
+  it("lets well-formed numeric input through", async () => {
+    const result = await run(
+      `{ register(contact: { email: "a@b", age: 42 }) }`,
+    );
+    expect(result.errors).toBeUndefined();
+  });
+});
+
 /**
  * Schemas built programmatically (e.g. by grats) don't carry directive AST nodes;
  * they surface them via `extensions.grats.directives`. The plugin has to honour
@@ -214,6 +260,22 @@ describe("extensions.grats.directives", () => {
             },
             resolve: () => "ok",
           },
+          paginate: {
+            type: new GraphQLNonNull(GraphQLInt),
+            args: {
+              limit: {
+                type: new GraphQLNonNull(GraphQLInt),
+                extensions: {
+                  grats: {
+                    directives: [
+                      { name: "constraint", args: { min: 5, max: 20 } },
+                    ],
+                  },
+                },
+              },
+            },
+            resolve: (_: unknown, args: { limit: number }) => args.limit,
+          },
         },
       }),
     });
@@ -277,5 +339,18 @@ describe("extensions.grats.directives", () => {
       codes: "ok",
       submit: "ok",
     });
+  });
+
+  it("honours numeric min/max surfaced via grats extensions", async () => {
+    const low = await runExt(`{ paginate(limit: 2) }`);
+    expect(low.errors?.[0].message).toMatchInlineSnapshot(
+      `"Argument "limit" on field "paginate" is below minimum 5"`,
+    );
+    const high = await runExt(`{ paginate(limit: 999) }`);
+    expect(high.errors?.[0].message).toMatchInlineSnapshot(
+      `"Argument "limit" on field "paginate" is above maximum 20"`,
+    );
+    const ok = await runExt(`{ paginate(limit: 10) }`);
+    expect(ok.errors).toBeUndefined();
   });
 });

@@ -2,11 +2,17 @@
 # Do not manually edit. Regenerate by running `npx grats`.
 
 """
-Enforce a regex on the decorated string value. The provided value must match `pattern` or the request is rejected before resolution. Applies to field arguments and input-object field definitions.
+Enforce bounds on the decorated value before any resolver runs. `pattern` matches against strings; `min` and `max` clamp numeric values (inclusive). The constraint fails and the request is rejected if any of the provided bounds is violated. Applies to field arguments and input-object field definitions.
 """
 directive @constraint(
-  """ECMAScript-compatible regex source (without delimiters)."""
-  pattern: String!
+  """
+  ECMAScript-compatible regex source (without delimiters). Applies to string values only.
+  """
+  pattern: String
+  """Inclusive lower bound for integer values."""
+  min: Int
+  """Inclusive upper bound for integer values."""
+  max: Int
 ) on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
 
 """
