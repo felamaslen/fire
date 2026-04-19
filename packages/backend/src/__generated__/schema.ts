@@ -1628,7 +1628,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: InvestmentType
                 },
                 percentGain: {
-                    description: "Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero.",
+                    description: "Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero.",
                     name: "percentGain",
                     type: GraphQLFloat
                 },
@@ -1649,17 +1649,17 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 totalCost: {
-                    description: "Net capital-in for currently held units (excluding fees and taxes). Each buy adds its consideration, each sell subtracts it.",
+                    description: "Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes.",
                     name: "totalCost",
                     type: new GraphQLNonNull(MoneyType)
                 },
                 totalGain: {
-                    description: "Unrealised gain on the filtered portfolio \u2014 `totalValue - totalCost`.",
+                    description: "Total return (realised + unrealised) on the filtered portfolio \u2014 `totalValue - totalCost`.",
                     name: "totalGain",
                     type: MoneyType
                 },
                 totalValue: {
-                    description: "Current market value of the filtered portfolio. Zero when nothing is held.",
+                    description: "Current market value of the filtered portfolio \u2014 the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down.",
                     name: "totalValue",
                     type: MoneyType
                 }

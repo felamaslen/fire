@@ -6,6 +6,7 @@ import { db } from "@/db";
 import {
   InvestmentPrices,
   Investments,
+  InvestmentStockSplits,
   InvestmentTransactions,
 } from "@/db/schema/investments";
 import { readOrRefresh } from "@/tasks/yahoo";
@@ -76,8 +77,12 @@ type Filters = {
 type HeldInvestment = {
   id: string;
   currency: string;
+  /** Split-adjusted units currently held (today's share-count terms). */
   unitsHeld: number;
-  unitsPriceSum: number;
+  /** Gross money ever spent buying this investment (buys only). */
+  buyCostSum: number;
+  /** Gross money ever received from sells (sells only, as a positive number). */
+  sellValueSum: number;
   priceLatest: number | null;
   pricePrevious: number | null;
 };
@@ -111,22 +116,62 @@ async function loadHeldInvestments(
     );
   }
 
-  const txRows = await db
-    .select({
-      investmentId: InvestmentTransactions.investmentId,
-      units: sql<number>`SUM(${InvestmentTransactions.units})`.as("units"),
-      unitsPriceSum:
-        sql<number>`SUM(${InvestmentTransactions.units} * ${InvestmentTransactions.price})`.as(
-          "unitsPriceSum",
-        ),
-    })
-    .from(InvestmentTransactions)
-    .where(and(...conditions))
-    .groupBy(InvestmentTransactions.investmentId);
+  // Pull raw transactions + splits so we can fold later splits into each
+  // transaction's unit count. A pre-split buy of 100 units at a 10:1 ratio is
+  // really 1000 of today's shares; the SQL `SUM(units)` alone would undercount.
+  const [txRows, splitRows] = await Promise.all([
+    db
+      .select({
+        investmentId: InvestmentTransactions.investmentId,
+        date: InvestmentTransactions.date,
+        units: InvestmentTransactions.units,
+        price: InvestmentTransactions.price,
+      })
+      .from(InvestmentTransactions)
+      .where(and(...conditions)),
+    db
+      .select({
+        investmentId: InvestmentStockSplits.investmentId,
+        date: InvestmentStockSplits.date,
+        ratio: InvestmentStockSplits.ratio,
+      })
+      .from(InvestmentStockSplits)
+      .where(inArray(InvestmentStockSplits.investmentId, investmentIds)),
+  ]);
 
   if (txRows.length === 0) return [];
 
-  const heldIds = txRows.map((r) => r.investmentId);
+  const splitsByInvestment = new Map<string, { date: Date; ratio: number }[]>();
+  for (const s of splitRows) {
+    const list = splitsByInvestment.get(s.investmentId) ?? [];
+    list.push({ date: s.date, ratio: Number(s.ratio) });
+    splitsByInvestment.set(s.investmentId, list);
+  }
+
+  type Agg = {
+    unitsHeld: number;
+    buyCostSum: number;
+    sellValueSum: number;
+  };
+  const aggByInvestment = new Map<string, Agg>();
+  for (const t of txRows) {
+    const splits = splitsByInvestment.get(t.investmentId) ?? [];
+    let mult = 1;
+    for (const s of splits) {
+      if (s.date.getTime() > t.date.getTime()) mult *= s.ratio;
+    }
+    const agg = aggByInvestment.get(t.investmentId) ?? {
+      unitsHeld: 0,
+      buyCostSum: 0,
+      sellValueSum: 0,
+    };
+    agg.unitsHeld += t.units * mult;
+    if (t.units > 0) agg.buyCostSum += t.units * t.price;
+    else if (t.units < 0) agg.sellValueSum += Math.abs(t.units) * t.price;
+    aggByInvestment.set(t.investmentId, agg);
+  }
+
+  const heldIds = [...aggByInvestment.keys()];
   const priceRows = await db
     .select({
       investmentId: InvestmentPrices.investmentId,
@@ -142,11 +187,11 @@ async function loadHeldInvestments(
     pricesByInvestment.set(p.investmentId, list);
   }
 
-  return txRows.map((r) => {
-    const prices = pricesByInvestment.get(r.investmentId) ?? [];
+  return [...aggByInvestment.entries()].map(([investmentId, agg]) => {
+    const prices = pricesByInvestment.get(investmentId) ?? [];
     let priceLatest: number | null = prices[0] ?? null;
     let pricePrevious: number | null = prices[1] ?? null;
-    const stockCode = stockCodeById.get(r.investmentId);
+    const stockCode = stockCodeById.get(investmentId);
     if (stockCode && !opts.skipLive) {
       const live = readOrRefresh(stockCode);
       if (live && live.currency === filters.currency) {
@@ -155,10 +200,11 @@ async function loadHeldInvestments(
       }
     }
     return {
-      id: r.investmentId,
+      id: investmentId,
       currency: filters.currency,
-      unitsHeld: Number(r.units),
-      unitsPriceSum: Number(r.unitsPriceSum),
+      unitsHeld: agg.unitsHeld,
+      buyCostSum: agg.buyCostSum,
+      sellValueSum: agg.sellValueSum,
       priceLatest,
       pricePrevious,
     };
@@ -180,14 +226,24 @@ async function loadDailySeriesMinor(
       inArray(InvestmentTransactions.assetId, filters.filterAssetIdIn),
     );
   }
-  const txRows = await db
-    .select({
-      investmentId: InvestmentTransactions.investmentId,
-      date: InvestmentTransactions.date,
-      units: InvestmentTransactions.units,
-    })
-    .from(InvestmentTransactions)
-    .where(and(...txConditions));
+  const [txRows, splitRowsAll] = await Promise.all([
+    db
+      .select({
+        investmentId: InvestmentTransactions.investmentId,
+        date: InvestmentTransactions.date,
+        units: InvestmentTransactions.units,
+      })
+      .from(InvestmentTransactions)
+      .where(and(...txConditions)),
+    db
+      .select({
+        investmentId: InvestmentStockSplits.investmentId,
+        date: InvestmentStockSplits.date,
+        ratio: InvestmentStockSplits.ratio,
+      })
+      .from(InvestmentStockSplits)
+      .where(inArray(InvestmentStockSplits.investmentId, investmentIds)),
+  ]);
 
   const priceRows = await db
     .select({
@@ -201,15 +257,20 @@ async function loadDailySeriesMinor(
 
   if (priceRows.length === 0) return new Map();
 
-  const txByInv = new Map<string, { date: Date; unitsCum: number }[]>();
+  const splitsByInv = new Map<string, { date: Date; ratio: number }[]>();
+  for (const s of splitRowsAll) {
+    const list = splitsByInv.get(s.investmentId) ?? [];
+    list.push({ date: s.date, ratio: Number(s.ratio) });
+    splitsByInv.set(s.investmentId, list);
+  }
+  const txByInv = new Map<string, { date: Date; units: number }[]>();
   for (const t of [...txRows].sort(
     (a, b) =>
       a.date.getTime() - b.date.getTime() ||
       a.investmentId.localeCompare(b.investmentId),
   )) {
     const list = txByInv.get(t.investmentId) ?? [];
-    const prev = list.length > 0 ? list[list.length - 1].unitsCum : 0;
-    list.push({ date: t.date, unitsCum: prev + t.units });
+    list.push({ date: t.date, units: t.units });
     txByInv.set(t.investmentId, list);
   }
   const priceByInv = new Map<string, { date: Date; price: number }[]>();
@@ -226,19 +287,34 @@ async function loadDailySeriesMinor(
     if (p.date > maxDate) maxDate = p.date;
   }
 
+  // Units-on-day for (investment, d) = Σ (tx.units × product(splits where
+  // tx.date < split.date ≤ d)). Accumulates each transaction's share count
+  // into today's share-count terms as of day `d`.
+  const unitsOn = (investmentId: string, day: Date): number => {
+    const txs = txByInv.get(investmentId) ?? [];
+    const splits = splitsByInv.get(investmentId) ?? [];
+    const dayMs = day.getTime();
+    let total = 0;
+    for (const t of txs) {
+      if (t.date.getTime() > dayMs) break;
+      let mult = 1;
+      const txMs = t.date.getTime();
+      for (const s of splits) {
+        const sMs = s.date.getTime();
+        if (sMs > txMs && sMs <= dayMs) mult *= s.ratio;
+      }
+      total += t.units * mult;
+    }
+    return total;
+  };
+
   const totals = new Map<string, number>();
   const msDay = 86400 * 1000;
   for (let d = minDate.getTime(); d <= maxDate.getTime(); d += msDay) {
     const day = new Date(d);
     let totalMinor = 0;
     for (const inv of held) {
-      const units = lastOnOrBefore(
-        txByInv.get(inv.id) ?? [],
-        day,
-        (x) => x.date,
-        (x) => x.unitsCum,
-        0,
-      );
+      const units = unitsOn(inv.id, day);
       const price = lastOnOrBefore(
         priceByInv.get(inv.id) ?? [],
         day,
@@ -332,20 +408,22 @@ export class Portfolio {
     return row ? Investment.load(row) : null;
   }
 
-  /** Current market value of the filtered portfolio. Zero when nothing is held. @gqlField */
+  /** Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. @gqlField */
   async totalValue(): Promise<Money | null> {
-    return this.aggregate((h) =>
-      h.priceLatest === null ? null : h.unitsHeld * h.priceLatest,
-    );
+    return this.aggregate((h) => {
+      if (h.unitsHeld === 0) return 0;
+      if (h.priceLatest === null) return null;
+      return h.unitsHeld * h.priceLatest;
+    });
   }
 
-  /** Net capital-in for currently held units (excluding fees and taxes). Each buy adds its consideration, each sell subtracts it. @gqlField */
+  /** Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes. @gqlField */
   async totalCost(): Promise<Money> {
-    const v = await this.aggregate((h) => h.unitsPriceSum);
+    const v = await this.aggregate((h) => h.buyCostSum - h.sellValueSum);
     return v ?? Money.fromMinorDenomination(0, this.currency);
   }
 
-  /** Unrealised gain on the filtered portfolio — `totalValue - totalCost`. @gqlField */
+  /** Total return (realised + unrealised) on the filtered portfolio — `totalValue - totalCost`. @gqlField */
   async totalGain(): Promise<Money | null> {
     const value = await this.totalValue();
     if (value === null) return null;
@@ -357,7 +435,7 @@ export class Portfolio {
     );
   }
 
-  /** Unrealised gain as a fraction of `totalCost`. `null` if `totalValue` is unknown or `totalCost` is zero. @gqlField */
+  /** Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero. @gqlField */
   async percentGain(): Promise<Float | null> {
     const value = await this.totalValue();
     if (value === null) return null;
