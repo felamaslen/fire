@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
+import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import {
   createFileRoute,
   Link,
@@ -6,7 +6,13 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, ExternalLink, Pencil, Plus } from "lucide-react";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -370,13 +376,20 @@ function InvestmentsList({
     onSortChange(updater(sort));
   const [hideSold, setHideSold] = useHideSold();
 
-  const { data, previousData, loading } = useQuery(InvestmentsListDocument, {
-    variables: { first: 100, sort: toSortInput(sort.kind, sort.dir) },
-    notifyOnNetworkStatusChange: true,
+  // Defer sort changes through `useDeferredValue` so switching sort
+  // suspends the fetch in a non-interrupting pass — the previous rows
+  // stay mounted until the new data arrives. Using plain scalars (not
+  // the wrapping `sort` object) keeps the deferred identity stable
+  // across unrelated page re-renders (e.g. chart mode changes updating
+  // the URL search), so those don't re-trigger the query.
+  const deferredKind = useDeferredValue(sort.kind);
+  const deferredDir = useDeferredValue(sort.dir);
+  const loading = deferredKind !== sort.kind || deferredDir !== sort.dir;
+  const { data } = useSuspenseQuery(InvestmentsListDocument, {
+    variables: { first: 100, sort: toSortInput(deferredKind, deferredDir) },
   });
-  const current = data ?? previousData;
   const allRows: InvestmentRowNode[] =
-    current?.investments?.edges.map((e) => e.node) ?? [];
+    data.investments?.edges.map((e) => e.node) ?? [];
   const rows = hideSold
     ? allRows.filter((r) => {
         const u = readFragment(InvestmentRowDocument, r).position.units;
