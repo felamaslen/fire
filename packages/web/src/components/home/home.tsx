@@ -1,7 +1,7 @@
 import { useSuspenseQuery } from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
 import { Info } from "lucide-react";
-import { useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { graphql } from "@/graphql";
+import { cn } from "@/lib/cn";
 import { formatAccountingMoneyRounded } from "@/lib/format";
 
 import {
@@ -22,7 +23,7 @@ import { NetWorthChart } from "./net-worth-chart";
 
 const HomeDocument = graphql(
   `
-    query Home {
+    query Home($years: Int!) {
       netWorthHistory {
         date
         assetsByType {
@@ -45,7 +46,7 @@ const HomeDocument = graphql(
           currency
         }
       }
-      netWorthForecast(years: 10, limit: 20) {
+      netWorthForecast(years: $years, limit: 20) {
         points {
           date
           assetsByType {
@@ -90,25 +91,78 @@ const ASSETS_COLOR = "#1a5490"; // deep blue
 const LIABILITIES_COLOR = "#8f1a1a"; // deep crimson
 
 const FORECAST_STORAGE_KEY = "fire.home.forecast";
+const LOG_SCALE_STORAGE_KEY = "fire.home.log-scale";
+const FORECAST_YEARS_STORAGE_KEY = "fire.home.forecast-years";
+const FORECAST_YEARS_MIN = 2;
+const FORECAST_YEARS_MAX = 30;
+const FORECAST_YEARS_DEFAULT = 10;
 
-function useShowForecast(): [boolean, (v: boolean) => void] {
+function usePersistedBool(
+  key: string,
+  fallback: boolean,
+): [boolean, (v: boolean) => void] {
   const [state, setState] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    const raw = window.localStorage.getItem(FORECAST_STORAGE_KEY);
-    return raw === null ? true : raw === "1";
+    if (typeof window === "undefined") return fallback;
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? fallback : raw === "1";
   });
   const set = (v: boolean) => {
     setState(v);
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(FORECAST_STORAGE_KEY, v ? "1" : "0");
+      window.localStorage.setItem(key, v ? "1" : "0");
+    }
+  };
+  return [state, set];
+}
+
+function clampYears(n: number): number {
+  if (!Number.isFinite(n)) return FORECAST_YEARS_DEFAULT;
+  return Math.max(
+    FORECAST_YEARS_MIN,
+    Math.min(FORECAST_YEARS_MAX, Math.round(n)),
+  );
+}
+
+function useForecastYears(): [number, (n: number) => void] {
+  const [state, setState] = useState<number>(() => {
+    if (typeof window === "undefined") return FORECAST_YEARS_DEFAULT;
+    const raw = window.localStorage.getItem(FORECAST_YEARS_STORAGE_KEY);
+    return raw === null ? FORECAST_YEARS_DEFAULT : clampYears(Number(raw));
+  });
+  const set = (n: number) => {
+    const v = clampYears(n);
+    setState(v);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(FORECAST_YEARS_STORAGE_KEY, String(v));
     }
   };
   return [state, set];
 }
 
 export function Home() {
-  const { data } = useSuspenseQuery(HomeDocument);
-  const [showForecast, setShowForecast] = useShowForecast();
+  const [showForecast, setShowForecast] = usePersistedBool(
+    FORECAST_STORAGE_KEY,
+    true,
+  );
+  const [logScale, setLogScale] = usePersistedBool(LOG_SCALE_STORAGE_KEY, true);
+  const [years, setYears] = useForecastYears();
+  // Keep a separate local value for the slider thumb so drag updates
+  // feel instant, then debounce into `years` (the query variable) so
+  // we don't fire a backend round-trip per pixel of drag.
+  const [draftYears, setDraftYears] = useState(years);
+  useEffect(() => {
+    if (draftYears === years) return;
+    const id = window.setTimeout(() => setYears(draftYears), 200);
+    return () => window.clearTimeout(id);
+  }, [draftYears, years, setYears]);
+  // Defer the query variable on top of the debounce so the refetch
+  // suspends in a non-interrupting pass — the previous chart stays
+  // visible while the new horizon loads.
+  const deferredYears = useDeferredValue(years);
+  const refetching = deferredYears !== years || draftYears !== years;
+  const { data } = useSuspenseQuery(HomeDocument, {
+    variables: { years: deferredYears },
+  });
   const history = data.netWorthHistory ?? [];
   const forecastPoints = showForecast
     ? (data.netWorthForecast?.points ?? [])
@@ -167,7 +221,12 @@ export function Home() {
         </Button>
       </header>
 
-      <section className="rounded-lg border bg-card p-5 shadow-sm">
+      <section
+        className={cn(
+          "rounded-lg border bg-card p-5 shadow-sm transition-opacity",
+          refetching && "opacity-60",
+        )}
+      >
         <div className="flex flex-wrap items-baseline justify-between gap-4">
           <div>
             <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
@@ -220,15 +279,41 @@ export function Home() {
                 </dd>
               </dl>
             )}
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={showForecast}
-                onChange={(e) => setShowForecast(e.target.checked)}
-                className="accent-foreground"
-              />
-              Forecast (log scale)
-            </label>
+            <div className="flex flex-col gap-1">
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={showForecast}
+                  onChange={(e) => setShowForecast(e.target.checked)}
+                  className="accent-foreground"
+                />
+                Forecast
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={logScale}
+                  onChange={(e) => setLogScale(e.target.checked)}
+                  className="accent-foreground"
+                />
+                Log scale
+              </label>
+              {showForecast && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="range"
+                    min={FORECAST_YEARS_MIN}
+                    max={FORECAST_YEARS_MAX}
+                    step={1}
+                    value={draftYears}
+                    onChange={(e) => setDraftYears(Number(e.target.value))}
+                    className="w-32 accent-foreground"
+                    aria-label="Forecast horizon (years)"
+                  />
+                  <span className="tabular-nums">{draftYears}y</span>
+                </label>
+              )}
+            </div>
           </div>
         </div>
 
@@ -304,7 +389,7 @@ export function Home() {
             currency={currency}
             className="w-full"
             forecastStart={forecastStart}
-            logY={showForecast}
+            logY={logScale}
           />
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {(
@@ -351,7 +436,12 @@ export function Home() {
         </div>
       </section>
 
-      <section className="rounded-lg border bg-card p-5 shadow-sm">
+      <section
+        className={cn(
+          "rounded-lg border bg-card p-5 shadow-sm transition-opacity",
+          refetching && "opacity-60",
+        )}
+      >
         <div className="flex items-baseline justify-between gap-4">
           <div className="text-xs uppercase tracking-wide text-muted-foreground">
             Assets vs liabilities
@@ -395,7 +485,7 @@ export function Home() {
             currency={currency}
             className="w-full"
             forecastStart={forecastStart}
-            logY={showForecast}
+            logY={logScale}
           />
         </div>
       </section>
