@@ -42,6 +42,7 @@ export default defineConfig(({ mode }) => {
       globalSetup: ["./test/global-setup.ts"],
       setupFiles: ["./test/setup.ts"],
       pool: "forks",
+      maxConcurrency: 8,
       globals: true,
       silent: "passed-only",
       env: loadEnv("test", process.cwd(), ""),
