@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { asc, desc, inArray } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -9,7 +9,7 @@ import {
 } from "@/db/schema/investments";
 import { readOrRefresh } from "@/tasks/yahoo";
 
-import { type Context, contextAwareDataLoader } from "../context";
+import type { Context } from "../context";
 
 /**
  * Aggregated numbers for an investment (optionally scoped to a single wrapper), computed from the raw transactions and the cached price history.
@@ -45,47 +45,170 @@ export type InvestmentStats = {
 /**
  * Load the raw stats for an investment (and optionally a wrapper). Caller combines them into `Money` / `Float` fields.
  *
- * Exported as a `Context`-aware loader: repeated calls for the same `(investmentId, assetId)` within a single request share the underlying DB work. Callers on hot paths (list resolvers, portfolio roll-ups) therefore don't fire the four underlying queries once per invocation — `Investment.position` and `investments()`'s sort key both key into the same cached promise.
+ * Batched per `Context`: every `loadInvestmentStats` call issued in the same microtask is coalesced into four `IN (...)` selects (one each for `Investments`, `InvestmentTransactions`, `InvestmentStockSplits`, `InvestmentPrices`). Repeated calls for the same `(investmentId, assetId)` within the same request share the resolved promise, so `Investment.position`, `investments()`'s sort key, and any per-wrapper slice all key into the same fetch.
  */
-export const loadInvestmentStats = contextAwareDataLoader(
-  (_ctx: Context, investmentId: string, assetId?: string) =>
-    loadInvestmentStatsFromDb(investmentId, assetId),
-);
-
-async function loadInvestmentStatsFromDb(
+export function loadInvestmentStats(
+  ctx: Context,
   investmentId: string,
   assetId?: string,
 ): Promise<InvestmentStats> {
-  const [investmentRow] = await db
-    .select({
-      currency: Investments.currency,
-      stockCode: Investments.stockCode,
-    })
-    .from(Investments)
-    .where(eq(Investments.id, investmentId));
-  if (!investmentRow) {
-    throw new Error(`Investment ${investmentId} not found`);
+  const batcher = getBatcher(ctx);
+  const key = `${investmentId}|${assetId ?? ""}`;
+
+  const cached = batcher.cache.get(key);
+  if (cached) return cached;
+
+  let entry = batcher.pending.get(key);
+  if (!entry) {
+    entry = { investmentId, assetId, deferred: defer<InvestmentStats>() };
+    batcher.pending.set(key, entry);
+    if (!batcher.scheduled) {
+      batcher.scheduled = true;
+      queueMicrotask(() => {
+        void flush(batcher);
+      });
+    }
   }
+  batcher.cache.set(key, entry.deferred.promise);
+  return entry.deferred.promise;
+}
 
-  const where =
-    assetId === undefined
-      ? eq(InvestmentTransactions.investmentId, investmentId)
-      : and(
-          eq(InvestmentTransactions.investmentId, investmentId),
-          eq(InvestmentTransactions.assetId, assetId),
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (v: T) => void;
+  reject: (e: unknown) => void;
+};
+
+function defer<T>(): Deferred<T> {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+type PendingEntry = {
+  investmentId: string;
+  assetId: string | undefined;
+  deferred: Deferred<InvestmentStats>;
+};
+
+type Batcher = {
+  pending: Map<string, PendingEntry>;
+  cache: Map<string, Promise<InvestmentStats>>;
+  scheduled: boolean;
+};
+
+const batchersByCtx = new WeakMap<Context, Batcher>();
+
+function getBatcher(ctx: Context): Batcher {
+  let b = batchersByCtx.get(ctx);
+  if (!b) {
+    b = { pending: new Map(), cache: new Map(), scheduled: false };
+    batchersByCtx.set(ctx, b);
+  }
+  return b;
+}
+
+async function flush(batcher: Batcher): Promise<void> {
+  const entries = [...batcher.pending.values()];
+  batcher.pending.clear();
+  batcher.scheduled = false;
+
+  const ids = [...new Set(entries.map((e) => e.investmentId))];
+
+  try {
+    const [invRows, txRows, splitRows, priceRows] = await Promise.all([
+      db
+        .select({
+          id: Investments.id,
+          currency: Investments.currency,
+          stockCode: Investments.stockCode,
+        })
+        .from(Investments)
+        .where(inArray(Investments.id, ids)),
+      db
+        .select()
+        .from(InvestmentTransactions)
+        .where(inArray(InvestmentTransactions.investmentId, ids)),
+      db
+        .select({
+          investmentId: InvestmentStockSplits.investmentId,
+          date: InvestmentStockSplits.date,
+          ratio: InvestmentStockSplits.ratio,
+        })
+        .from(InvestmentStockSplits)
+        .where(inArray(InvestmentStockSplits.investmentId, ids))
+        .orderBy(asc(InvestmentStockSplits.date)),
+      db
+        .select({
+          investmentId: InvestmentPrices.investmentId,
+          priceAdjusted: InvestmentPrices.priceAdjusted,
+        })
+        .from(InvestmentPrices)
+        .where(inArray(InvestmentPrices.investmentId, ids))
+        .orderBy(desc(InvestmentPrices.date)),
+    ]);
+
+    const invById = new Map(invRows.map((r) => [r.id, r]));
+    const txByInv = groupBy(txRows, (r) => r.investmentId);
+    const splitsByInv = groupBy(splitRows, (r) => r.investmentId);
+    // Prices are already date-desc; `pricesByInv.get(id)[0..1]` is latest + previous.
+    const pricesByInv = groupBy(priceRows, (r) => r.investmentId);
+
+    for (const entry of entries) {
+      try {
+        const inv = invById.get(entry.investmentId);
+        if (!inv) {
+          throw new Error(`Investment ${entry.investmentId} not found`);
+        }
+        const txs = txByInv.get(entry.investmentId) ?? [];
+        const splits = splitsByInv.get(entry.investmentId) ?? [];
+        const prices = pricesByInv.get(entry.investmentId) ?? [];
+        entry.deferred.resolve(
+          computeStats(
+            entry.assetId,
+            inv.currency,
+            inv.stockCode,
+            txs,
+            splits,
+            prices,
+          ),
         );
+      } catch (err) {
+        entry.deferred.reject(err);
+      }
+    }
+  } catch (err) {
+    for (const entry of entries) entry.deferred.reject(err);
+  }
+}
 
-  const [txRows, splitRows] = await Promise.all([
-    db.select().from(InvestmentTransactions).where(where),
-    db
-      .select({
-        date: InvestmentStockSplits.date,
-        ratio: InvestmentStockSplits.ratio,
-      })
-      .from(InvestmentStockSplits)
-      .where(eq(InvestmentStockSplits.investmentId, investmentId))
-      .orderBy(asc(InvestmentStockSplits.date)),
-  ]);
+function groupBy<T, K>(xs: T[], key: (x: T) => K): Map<K, T[]> {
+  const m = new Map<K, T[]>();
+  for (const x of xs) {
+    const k = key(x);
+    const arr = m.get(k);
+    if (arr) arr.push(x);
+    else m.set(k, [x]);
+  }
+  return m;
+}
+
+function computeStats(
+  assetId: string | undefined,
+  currency: string,
+  stockCode: string | null,
+  txRows: (typeof InvestmentTransactions.$inferSelect)[],
+  splitRows: { date: Date; ratio: string }[],
+  priceRows: { priceAdjusted: number }[],
+): InvestmentStats {
+  const filteredTxs =
+    assetId === undefined
+      ? txRows
+      : txRows.filter((r) => r.assetId === assetId);
 
   // Multiplier for a transaction dated `d`: product of every split's ratio
   // whose `date > d`. A pre-split buy of 100 units at a 10:1 ratio therefore
@@ -106,7 +229,7 @@ async function loadInvestmentStatsFromDb(
   let sellValueSum = 0;
   let taxesSum = 0;
   let feesSum = 0;
-  for (const r of txRows) {
+  for (const r of filteredTxs) {
     const mult = splitMultiplier(r.date);
     const adjustedUnits = r.units * mult;
     unitsHeld += adjustedUnits;
@@ -123,29 +246,22 @@ async function loadInvestmentStatsFromDb(
     }
   }
 
-  const priceRows = await db
-    .select({ priceAdjusted: InvestmentPrices.priceAdjusted })
-    .from(InvestmentPrices)
-    .where(eq(InvestmentPrices.investmentId, investmentId))
-    .orderBy(desc(InvestmentPrices.date))
-    .limit(2);
-
   let priceLatest = priceRows[0]?.priceAdjusted ?? null;
   let pricePrevious = priceRows[1]?.priceAdjusted ?? null;
 
   // When a live quote is cached for a stock investment, treat it as the latest
   // price and shift the most recent cached close into the "previous" slot so
   // `dailyGain*` tracks today's move against yesterday's close.
-  if (investmentRow.stockCode) {
-    const live = readOrRefresh(investmentRow.stockCode);
-    if (live && live.currency === investmentRow.currency) {
+  if (stockCode) {
+    const live = readOrRefresh(stockCode);
+    if (live && live.currency === currency) {
       pricePrevious = priceLatest;
       priceLatest = live.priceMinorUnits;
     }
   }
 
   return {
-    currency: investmentRow.currency,
+    currency,
     unitsHeld,
     reinvestedUnits,
     unitsPriceSum,
