@@ -90,11 +90,9 @@ type HeldInvestment = {
 };
 
 async function computePortfolioXirr(
+  held: HeldInvestment[],
   filters: Filters,
-  opts: { skipLive: boolean },
 ): Promise<Float | null> {
-  const held = await loadHeldInvestments(filters, opts);
-
   const investmentIds = held.map((h) => h.id);
   if (investmentIds.length === 0) return null;
 
@@ -321,9 +319,9 @@ async function loadHeldInvestments(
 }
 
 async function loadDailySeriesMinor(
+  held: HeldInvestment[],
   filters: Filters,
 ): Promise<Map<string, number>> {
-  const held = await loadHeldInvestments(filters);
   if (held.length === 0) return new Map();
 
   const investmentIds = held.map((h) => h.id);
@@ -516,6 +514,28 @@ export class Portfolio {
     private readonly filterInvestmentIdIn: string[] | null,
   ) {}
 
+  /**
+   * Per-instance memo of `loadHeldInvestments` keyed on whether live quotes
+   * are folded in. A fresh `Portfolio` is created per request (via
+   * `Query.portfolio` / `Query.portfolios`), so this cache is inherently
+   * request-scoped. Keeps the fanout to at most two underlying fetches
+   * regardless of how many Portfolio fields the caller selected.
+   */
+  private heldCache: Map<string, Promise<HeldInvestment[]>> = new Map();
+
+  private loadHeld(
+    opts: { skipLive?: boolean } = {},
+  ): Promise<HeldInvestment[]> {
+    const skipLive = !!opts.skipLive;
+    const key = skipLive ? "S" : "";
+    let p = this.heldCache.get(key);
+    if (!p) {
+      p = loadHeldInvestments(this.filters, { skipLive });
+      this.heldCache.set(key, p);
+    }
+    return p;
+  }
+
   /** Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key. @gqlField */
   get id(): ID {
     const assets = this.filterAssetIdIn
@@ -594,7 +614,9 @@ export class Portfolio {
     /** When `true`, ignore any live quote and terminate against the most recent cached close instead. */
     skipLive?: boolean | null,
   ): Promise<Float | null> {
-    return computePortfolioXirr(this.filters, { skipLive: skipLive ?? false });
+    const opts = { skipLive: skipLive ?? false };
+    const held = await this.loadHeld(opts);
+    return computePortfolioXirr(held, this.filters);
   }
 
   /** Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists. @gqlField */
@@ -699,7 +721,8 @@ export class Portfolio {
     period: PortfolioTimePeriod,
     length: number,
   ): Promise<{ days: Date[]; totals: Map<string, number> }> {
-    const fullTotals = await loadDailySeriesMinor(this.filters);
+    const held = await this.loadHeld();
+    const fullTotals = await loadDailySeriesMinor(held, this.filters);
     if (fullTotals.size === 0) {
       return { days: [], totals: new Map() };
     }
@@ -717,7 +740,7 @@ export class Portfolio {
     compute: (h: HeldInvestment) => number | null,
     opts: { skipLive?: boolean } = {},
   ): Promise<Money | null> {
-    const held = await loadHeldInvestments(this.filters, opts);
+    const held = await this.loadHeld(opts);
     let total = 0;
     for (const h of held) {
       const rawMinor = compute(h);
