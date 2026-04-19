@@ -50,8 +50,6 @@ import {
 } from "@/components/ui/tooltip";
 import { graphql, type ResultOf } from "@/graphql";
 
-import { InvestmentsListDocument } from "../investments";
-
 const InvestmentDetailDocument = graphql(
   `
     query InvestmentDetail {
@@ -518,7 +516,7 @@ function TransactionsSection({
     refetchQueries: [
       "InvestmentTransactions",
       { query: InvestmentDetailDocument },
-      { query: InvestmentsListDocument, variables: { first: 100 } },
+      "InvestmentsList",
     ],
     onCompleted: () => toast.success("Transaction removed"),
     onError: (err) => toast.error(err.message),
@@ -662,7 +660,7 @@ function TransactionForm({
   const refetch = [
     "InvestmentTransactions",
     { query: InvestmentDetailDocument },
-    { query: InvestmentsListDocument, variables: { first: 100 } },
+    "InvestmentsList",
   ];
   const [createTx] = useMutation(InvestmentTransactionCreateDocument, {
     refetchQueries: refetch,
@@ -902,7 +900,7 @@ function StockSplitsSection({ investmentId }: { investmentId: string }) {
   const refetchLists = [
     { query: InvestmentStockSplitsDocument },
     { query: InvestmentDetailDocument },
-    { query: InvestmentsListDocument, variables: { first: 100 } },
+    "InvestmentsList",
   ];
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<StockSplitRow | null>(null);
@@ -1005,7 +1003,7 @@ function StockSplitForm({
   const refetchLists = [
     { query: InvestmentStockSplitsDocument },
     { query: InvestmentDetailDocument },
-    { query: InvestmentsListDocument, variables: { first: 100 } },
+    "InvestmentsList",
   ];
   const [createSplit] = useMutation(InvestmentStockSplitCreateDocument, {
     refetchQueries: refetchLists,

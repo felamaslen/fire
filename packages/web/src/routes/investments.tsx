@@ -289,9 +289,7 @@ export const Route = createFileRoute("/investments")({
   validateSearch: investmentsSearchSchema,
 });
 
-export const investmentsRefetch = [
-  { query: InvestmentsListDocument, variables: { first: 100 } },
-];
+export const investmentsRefetch = ["InvestmentsList"];
 
 function toSortInput(
   kind: SortKind,
