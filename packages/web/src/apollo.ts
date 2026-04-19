@@ -9,6 +9,15 @@ export function createApolloClient() {
       uri: import.meta.env.VITE_GRAPHQL_URL ?? "http://localhost:4000/graphql",
       headers: { "apollo-require-preflight": "true" },
     }),
-    cache: new InMemoryCache({ possibleTypes }),
+    cache: new InMemoryCache({
+      possibleTypes,
+      typePolicies: {
+        // Computed value objects with no server-side identity — embed them in
+        // their parent entity instead of trying to normalise.
+        InvestmentPosition: { keyFields: false, merge: true },
+        InvestmentStock: { keyFields: false, merge: true },
+        InvestmentFund: { keyFields: false, merge: true },
+      },
+    }),
   });
 }
