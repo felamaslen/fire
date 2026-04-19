@@ -1,6 +1,7 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { DeleteButton } from "@/components/delete-button";
@@ -25,6 +26,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/cn";
 
 import {
   type FragmentOf,
@@ -39,6 +41,7 @@ const AssetRowDocument = graphql(`
     id
     name
     assetType: type
+    growthRate
   }
 `);
 
@@ -49,6 +52,10 @@ const LiabilityRowDocument = graphql(`
     liabilityType: type
     interestRate
     skip
+    asset {
+      id
+      name
+    }
     billedFromAccount {
       id
       name
@@ -68,6 +75,7 @@ const NetWorthCategorySelectionDocument = graphql(
     fragment NetWorthCategorySelection on NetWorthCategory {
       __typename
       id
+      name
       ... on NetWorthCategoryAsset {
         assetType: type
         ...AssetRow
@@ -171,16 +179,16 @@ const LIABILITY_TYPE_LABELS = {
 const ASSET_TYPES = Object.keys(ASSET_TYPE_LABELS) as AssetType[];
 const LIABILITY_TYPES = Object.keys(LIABILITY_TYPE_LABELS) as LiabilityType[];
 
-function decimalToPercent(decimal: number | null): string {
-  if (decimal == null) return "";
-  return (decimal * 100).toString();
+function percentToStr(pct: number | null): string {
+  if (pct == null) return "";
+  return String(pct);
 }
 
-function percentToDecimal(percent: string): number | null {
-  if (!percent) return null;
-  const n = Number.parseFloat(percent);
+function strToPercent(s: string): number | null {
+  if (!s) return null;
+  const n = Number.parseFloat(s);
   if (Number.isNaN(n)) return null;
-  return n / 100;
+  return n;
 }
 
 export const Route = createFileRoute("/net-worth/categories")({
@@ -214,6 +222,7 @@ function NetWorthCategoriesPage() {
       <AssetsSection data={assets} />
       <LiabilitiesSection
         data={liabilities}
+        assets={assets}
         planningAccounts={planningAccounts}
       />
       <OptionsSection data={options} />
@@ -221,10 +230,16 @@ function NetWorthCategoriesPage() {
   );
 }
 
+const ASSET_DND_MIME = "application/x-fire-asset-id";
+
 function AssetsSection({ data }: { data: AssetSelection[] }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
     refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
+  });
+  const [updateType] = useMutation(NetWorthCategoryUpdateDocument, {
+    refetchQueries: refetch,
+    onCompleted: () => toast.success("Asset moved"),
   });
   const form = useForm({
     defaultValues: { name: "", type: "CASH" as AssetType },
@@ -237,6 +252,26 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
     },
   });
 
+  const moveAsset = (id: string, nextType: AssetType) => {
+    const existing = data.find((d) => d.id === id);
+    if (!existing || existing.assetType === nextType) return;
+    // Clear any growthRate when moving away from PROPERTY/VEHICLE so the
+    // CHECK constraint stays satisfied; the user can re-enter it in the new
+    // bucket if applicable.
+    const canKeepGrowth = nextType === "PROPERTY" || nextType === "VEHICLE";
+    void updateType({
+      variables: {
+        id,
+        patch: {
+          asset: {
+            type: nextType,
+            growthRate: canKeepGrowth ? undefined : null,
+          },
+        },
+      },
+    }).catch((err: Error) => toast.error(err.message));
+  };
+
   return (
     <AccordionItem value="assets">
       <AccordionTrigger>Assets</AccordionTrigger>
@@ -244,18 +279,13 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
         <Accordion type="single" collapsible className="space-y-2">
           {ASSET_TYPES.map((group) => {
             const rows = data.filter((d) => d.assetType === group);
-            if (rows.length === 0) return null;
             return (
-              <AccordionItem key={group} value={group}>
-                <AccordionTrigger>{ASSET_TYPE_LABELS[group]}</AccordionTrigger>
-                <AccordionContent>
-                  <div className="space-y-2">
-                    {rows.map((d) => (
-                      <AssetRow key={d.id} data={d} />
-                    ))}
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
+              <AssetTypeGroup
+                key={group}
+                group={group}
+                rows={rows}
+                onDropAsset={(id) => moveAsset(id, group)}
+              />
             );
           })}
         </Accordion>
@@ -303,6 +333,60 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
   );
 }
 
+function AssetTypeGroup({
+  group,
+  rows,
+  onDropAsset,
+}: {
+  group: AssetType;
+  rows: AssetSelection[];
+  onDropAsset: (id: string) => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  return (
+    <AccordionItem
+      value={group}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes(ASSET_DND_MIME)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          setDragOver(true);
+        }
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        setDragOver(false);
+        const id = e.dataTransfer.getData(ASSET_DND_MIME);
+        if (id) onDropAsset(id);
+      }}
+      className={cn(
+        "rounded-md border border-transparent transition-colors",
+        dragOver && "border-primary/70 bg-primary/5",
+      )}
+    >
+      <AccordionTrigger>
+        <span className="flex-1 text-left">{ASSET_TYPE_LABELS[group]}</span>
+        <span className="mr-2 w-8 text-right text-xs tabular-nums text-muted-foreground">
+          {rows.length}
+        </span>
+      </AccordionTrigger>
+      <AccordionContent>
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Drop an asset here to move it into {ASSET_TYPE_LABELS[group]}.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((d) => (
+              <AssetRow key={d.id} data={d} />
+            ))}
+          </div>
+        )}
+      </AccordionContent>
+    </AccordionItem>
+  );
+}
+
 function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
   const asset = readFragment(AssetRowDocument, data);
   const [update] = useMutation(NetWorthCategoryUpdateDocument, {
@@ -313,13 +397,26 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
     onCompleted: () => toast.success("Category deleted"),
   });
 
+  const supportsGrowth =
+    asset.assetType === "PROPERTY" || asset.assetType === "VEHICLE";
+
   const form = useForm({
-    defaultValues: { name: asset.name },
+    defaultValues: {
+      name: asset.name,
+      growthRate: percentToStr(asset.growthRate),
+    },
     onSubmit: async ({ value }) => {
       await update({
         variables: {
           id: asset.id,
-          patch: { asset: { name: value.name } },
+          patch: {
+            asset: {
+              name: value.name,
+              growthRate: supportsGrowth
+                ? strToPercent(value.growthRate)
+                : null,
+            },
+          },
         },
       }).catch((err: Error) => toast.error(err.message));
       form.reset(value);
@@ -329,11 +426,23 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
   return (
     <form
       className="flex items-center gap-2"
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(ASSET_DND_MIME, asset.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
       onSubmit={(e) => {
         e.preventDefault();
         void form.handleSubmit();
       }}
     >
+      <span
+        className="cursor-grab select-none text-muted-foreground active:cursor-grabbing"
+        aria-hidden
+        title="Drag to change asset type"
+      >
+        ⋮⋮
+      </span>
       <form.Field name="name">
         {(field) => (
           <Input
@@ -342,6 +451,30 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
           />
         )}
       </form.Field>
+      {supportsGrowth && (
+        <form.Field name="growthRate">
+          {(field) => (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Input
+                  inputMode="decimal"
+                  className="w-28"
+                  aria-label="Annual growth rate (%)"
+                  endAdornment="%/yr"
+                  placeholder={asset.assetType === "VEHICLE" ? "-15" : "3"}
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                />
+              </TooltipTrigger>
+              <TooltipContent>
+                Assumed annual growth rate used by the net-worth forecast. Use a
+                negative number for depreciation (e.g. −15 for a vehicle losing
+                15% of its value per year).
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </form.Field>
+      )}
       <form.Subscribe selector={(s) => [s.canSubmit, s.isDirty]}>
         {([canSubmit, isDirty]) => (
           <Button
@@ -367,15 +500,20 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
 
 function LiabilitiesSection({
   data,
+  assets,
   planningAccounts,
 }: {
   data: LiabilitySelection[];
+  assets: AssetSelection[];
   planningAccounts: PlanningAccountOption[];
 }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
     refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
   });
+  const loanSecurableAssets = assets.filter(
+    (a) => a.assetType === "PROPERTY" || a.assetType === "VEHICLE",
+  );
   const form = useForm({
     defaultValues: {
       name: "",
@@ -383,6 +521,7 @@ function LiabilitiesSection({
       interestRate: "",
       skip: false,
       billedFromAccountId: "" as string,
+      assetId: "" as string,
     },
     onSubmit: async ({ value }) => {
       if (!value.name.trim()) return;
@@ -394,13 +533,13 @@ function LiabilitiesSection({
               name: value.name,
               type: value.type,
               interestRate:
-                value.type === "LOAN" && value.interestRate
-                  ? Number.parseFloat(value.interestRate) / 100
-                  : null,
+                value.type === "LOAN" ? strToPercent(value.interestRate) : null,
               billedFromAccountId:
                 value.type === "CREDIT_CARD" && value.billedFromAccountId
                   ? value.billedFromAccountId
                   : null,
+              assetId:
+                value.type === "LOAN" && value.assetId ? value.assetId : null,
               skip: value.type === "LOAN" ? value.skip : null,
             },
           },
@@ -429,6 +568,7 @@ function LiabilitiesSection({
                       <LiabilityRow
                         key={d.id}
                         data={d}
+                        assets={assets}
                         planningAccounts={planningAccounts}
                       />
                     ))}
@@ -520,6 +660,32 @@ function LiabilitiesSection({
                       />
                     )}
                   </form.Field>
+                  {loanSecurableAssets.length > 0 && (
+                    <form.Field name="assetId">
+                      {(field) => (
+                        <Select
+                          value={field.state.value || "__none__"}
+                          onValueChange={(v) =>
+                            field.handleChange(v === "__none__" ? "" : v)
+                          }
+                        >
+                          <SelectTrigger className="w-48">
+                            <SelectValue placeholder="Secured against…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">
+                              Not secured against an asset
+                            </SelectItem>
+                            {loanSecurableAssets.map((a) => (
+                              <SelectItem key={a.id} value={a.id}>
+                                {a.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </form.Field>
+                  )}
                   <form.Field name="skip">
                     {(field) => (
                       <Tooltip>
@@ -558,9 +724,11 @@ function LiabilitiesSection({
 
 function LiabilityRow({
   data,
+  assets,
   planningAccounts,
 }: {
   data: FragmentOf<typeof LiabilityRowDocument>;
+  assets: AssetSelection[];
   planningAccounts: PlanningAccountOption[];
 }) {
   const liability = readFragment(LiabilityRowDocument, data);
@@ -568,7 +736,7 @@ function LiabilityRow({
   // any toggle must invalidate every visible entry total — refetch the
   // entries grid alongside the category list.
   const [update] = useMutation(NetWorthCategoryUpdateDocument, {
-    refetchQueries: entriesRefetch,
+    refetchQueries: [...refetch, ...entriesRefetch],
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
@@ -578,12 +746,16 @@ function LiabilityRow({
 
   const isLoan = liability.liabilityType === "LOAN";
   const isCreditCard = liability.liabilityType === "CREDIT_CARD";
+  const loanSecurableAssets = assets.filter(
+    (a) => a.assetType === "PROPERTY" || a.assetType === "VEHICLE",
+  );
   const form = useForm({
     defaultValues: {
       name: liability.name,
-      interestRate: decimalToPercent(liability.interestRate),
+      interestRate: percentToStr(liability.interestRate),
       skip: liability.skip ?? false,
       billedFromAccountId: liability.billedFromAccount?.id ?? "",
+      assetId: liability.asset?.id ?? "",
     },
     onSubmit: async ({ value }) => {
       await update({
@@ -592,12 +764,11 @@ function LiabilityRow({
           patch: {
             liability: {
               name: value.name,
-              interestRate: isLoan
-                ? percentToDecimal(value.interestRate)
-                : null,
+              interestRate: isLoan ? strToPercent(value.interestRate) : null,
               billedFromAccountId: isCreditCard
                 ? value.billedFromAccountId || null
                 : null,
+              assetId: isLoan ? value.assetId || null : null,
               skip: isLoan ? value.skip : null,
             },
           },
@@ -661,6 +832,32 @@ function LiabilityRow({
               />
             )}
           </form.Field>
+          {loanSecurableAssets.length > 0 && (
+            <form.Field name="assetId">
+              {(field) => (
+                <Select
+                  value={field.state.value || "__none__"}
+                  onValueChange={(v) =>
+                    field.handleChange(v === "__none__" ? "" : v)
+                  }
+                >
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="Secured against…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">
+                      Not secured against an asset
+                    </SelectItem>
+                    {loanSecurableAssets.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </form.Field>
+          )}
           <form.Field name="skip">
             {(field) => (
               <Tooltip>

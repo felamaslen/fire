@@ -168,7 +168,7 @@ input NetWorthCategoryLiabilityInput {
   """
   billedFromAccountId: ID
   """
-  Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN.
+  Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Required iff type is LOAN.
   """
   interestRate: Float
   name: String!
@@ -187,7 +187,7 @@ input NetWorthCategoryLiabilityPatch {
   `PlanningAccount.id` this liability is billed from — only valid when the liability is a credit card. Pass null explicitly to clear.
   """
   billedFromAccountId: ID
-  """Decimal-fraction annual rate (e.g. 0.0525 = 5.25%)."""
+  """Annual interest rate as a percentage (e.g. 5.25 for 5.25%)."""
   interestRate: Float
   name: String
   """Hide this liability from aggregate totals."""
@@ -979,7 +979,7 @@ A reusable bucket for assets (current account, pension pot, property, ...).
 """
 type NetWorthCategoryAsset implements NetWorthCategory {
   """
-  Assumed annual growth rate as a decimal (0.03 = +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.
+  Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.
   """
   growthRate: Float
   id: ID!
@@ -1019,7 +1019,7 @@ type NetWorthCategoryLiability implements NetWorthCategory {
   billedFromAccount: PlanningAccount
   id: ID!
   """
-  Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.
+  Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Present iff type is LOAN.
   """
   interestRate: Float
   name: String!

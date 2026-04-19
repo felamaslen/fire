@@ -50,7 +50,7 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
     public readonly name: string,
     /** @gqlField */
     public readonly type: NetWorthAssetType,
-    /** Assumed annual growth rate as a decimal (0.03 = +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation. @gqlField */
+    /** Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation. @gqlField */
     public readonly growthRate: Float | null,
     private readonly createdAt: Date,
   ) {}
@@ -79,7 +79,7 @@ export class NetWorthCategoryLiability implements NetWorthCategory {
     public readonly name: string,
     /** @gqlField */
     public readonly type: NetWorthLiabilityType,
-    /** Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN. @gqlField */
+    /** Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Present iff type is LOAN. @gqlField */
     public readonly interestRate: Float | null,
     /** When true, the liability is hidden from aggregate totals. @gqlField */
     public readonly skip: boolean,
@@ -255,10 +255,14 @@ export async function netWorthCategories(
       )
       .limit(limit + 1)) as unknown as T[];
 
-    return rows.map((row) => ({
-      ...map(row),
-      createdAtDate: row.createdAt,
-    }));
+    // Attach `createdAtDate` onto the mapped instance in place so class
+    // methods on the NetWorth*Category types (e.g. `asset()` /
+    // `billedFromAccount()`) survive — a plain-object spread would drop
+    // prototype methods and the corresponding fields would resolve to null.
+    return rows.map(
+      (row) =>
+        Object.assign(map(row), { createdAtDate: row.createdAt }) as Fetched,
+    );
   };
 
   const [assets, liabilities, options] = await Promise.all([
@@ -321,7 +325,7 @@ export type NetWorthCategoryLiabilityInput = {
   type: NetWorthLiabilityType;
   /** Optional link to the asset this liability funds. */
   assetId?: ID | null;
-  /** Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN. */
+  /** Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Required iff type is LOAN. */
   interestRate?: Float | null;
   /** `PlanningAccount.id` this liability is billed from — only valid when `type` is `CREDIT_CARD`. */
   billedFromAccountId?: ID | null;
@@ -363,7 +367,7 @@ export type NetWorthCategoryLiabilityPatch = {
   type?: NetWorthLiabilityType | null;
   /** Link to the asset this liability funds. */
   assetId?: ID | null;
-  /** Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). */
+  /** Annual interest rate as a percentage (e.g. 5.25 for 5.25%). */
   interestRate?: Float | null;
   /** `PlanningAccount.id` this liability is billed from — only valid when the liability is a credit card. Pass null explicitly to clear. */
   billedFromAccountId?: ID | null;

@@ -59,7 +59,7 @@ describe("categories", () => {
     const create = graphql(`
       mutation {
         netWorthCategoryCreate(
-          input: { asset: { name: "Tesla", type: VEHICLE, growthRate: -0.15 } }
+          input: { asset: { name: "Tesla", type: VEHICLE, growthRate: -15 } }
         ) {
           id
           ... on NetWorthCategoryAsset {
@@ -72,13 +72,13 @@ describe("categories", () => {
     const data = await runGql(create, {});
     expect(data.netWorthCategoryCreate).toMatchObject({
       type: "VEHICLE",
-      growthRate: -0.15,
+      growthRate: -15,
     });
 
     const bad = graphql(`
       mutation {
         netWorthCategoryCreate(
-          input: { asset: { name: "Savings", type: CASH, growthRate: 0.02 } }
+          input: { asset: { name: "Savings", type: CASH, growthRate: 2 } }
         ) {
           id
         }
@@ -87,6 +87,101 @@ describe("categories", () => {
     await expect(runGql(bad, {})).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Error: GraphQL errors: growthRate is only valid when type is PROPERTY or VEHICLE]`,
     );
+  });
+
+  it("associates a LOAN liability with an asset on create and preserves/clears it on update", async () => {
+    const seed = graphql(`
+      mutation {
+        asset: netWorthCategoryCreate(
+          input: { asset: { name: "House", type: PROPERTY } }
+        ) {
+          id
+        }
+        loan: netWorthCategoryCreate(
+          input: {
+            liability: { name: "Mortgage", type: LOAN, interestRate: 5.25 }
+          }
+        ) {
+          id
+        }
+      }
+    `);
+    const { asset, loan } = await runGql(seed, {});
+
+    const attach = graphql(`
+      mutation Attach($id: ID!, $aid: ID!) {
+        netWorthCategoryUpdate(
+          id: $id
+          patch: { liability: { assetId: $aid } }
+        ) {
+          id
+          ... on NetWorthCategoryLiability {
+            asset {
+              id
+              name
+            }
+          }
+        }
+      }
+    `);
+    const attached = await runGql(attach, { id: loan.id, aid: asset.id });
+    expect(attached.netWorthCategoryUpdate).toMatchObject({
+      id: loan.id,
+      asset: { id: asset.id, name: "House" },
+    });
+
+    // Verify the link actually persisted — not just echoed in the mutation
+    // response. Regression: an earlier implementation returned the updated
+    // row from `UPDATE ... RETURNING` before the assetId set was applied,
+    // so the mutation response showed the asset but a subsequent read did
+    // not.
+    const readBack = await runGql(
+      graphql(`
+        query ReadBack {
+          netWorthCategories(first: 100) {
+            edges {
+              node {
+                __typename
+                id
+                ... on NetWorthCategoryLiability {
+                  asset {
+                    id
+                  }
+                }
+              }
+            }
+          }
+        }
+      `),
+      {},
+    );
+    const loanNode = readBack.netWorthCategories!.edges.find(
+      (e) =>
+        e.node.__typename === "NetWorthCategoryLiability" &&
+        e.node.id === loan.id,
+    )?.node as { asset: { id: string } | null } | undefined;
+    expect(loanNode?.asset?.id).toBe(asset.id);
+
+    const clear = graphql(`
+      mutation Clear($id: ID!) {
+        netWorthCategoryUpdate(
+          id: $id
+          patch: { liability: { assetId: null } }
+        ) {
+          id
+          ... on NetWorthCategoryLiability {
+            asset {
+              id
+            }
+          }
+        }
+      }
+    `);
+    const cleared = await runGql(clear, { id: loan.id });
+    expect(cleared.netWorthCategoryUpdate).toMatchObject({
+      id: loan.id,
+      asset: null,
+    });
   });
 
   it("rejects a LOAN liability without an interestRate", async () => {

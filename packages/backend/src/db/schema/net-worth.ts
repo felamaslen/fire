@@ -118,7 +118,7 @@ export const NetWorthCategoryAssets = pgTable(
       .default(sql`uuidv7()`),
     name: text("name").notNull(),
     type: netWorthCategoryAssetType("type").notNull(),
-    /** Assumed annual growth rate as a decimal (0.03 = +3% p.a.). Negative for depreciation (vehicles). Used only by the net-worth forecast; null means no extrapolation. Only valid for `PROPERTY` and `VEHICLE` — enforced by check constraint. */
+    /** Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation (vehicles). Used only by the net-worth forecast; null means no extrapolation. Only valid for `PROPERTY` and `VEHICLE` — enforced by check constraint. */
     growthRate: numeric("growthRate", { precision: 6, scale: 4 }),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
@@ -157,7 +157,7 @@ export const NetWorthCategoryLiabilities = pgTable(
       () => NetWorthCategoryAssets.id,
       { onDelete: "set null" },
     ),
-    /** Annual interest rate as a decimal (0.0525 = 5.25%). Required iff type=LOAN. */
+    /** Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Required iff type=LOAN. */
     interestRate: numeric("interestRate", { precision: 6, scale: 4 }),
     /** Planning account this liability is billed from (e.g. a credit card paid off from a current account). When set, the planner emits predicted monthly payment transactions on that account. Only valid for `CREDIT_CARD` type — enforced by check constraint. */
     billedFromAccountId: uuid("billedFromAccountId").references(

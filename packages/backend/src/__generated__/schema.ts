@@ -544,7 +544,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 growthRate: {
-                    description: "Assumed annual growth rate as a decimal (0.03 = +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.",
+                    description: "Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.",
                     name: "growthRate",
                     type: GraphQLFloat
                 },
@@ -630,7 +630,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLID)
                 },
                 interestRate: {
-                    description: "Annual rate as a decimal fraction (e.g. 0.0525 = 5.25%). Present iff type is LOAN.",
+                    description: "Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Present iff type is LOAN.",
                     name: "interestRate",
                     type: GraphQLFloat
                 },
@@ -2218,7 +2218,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: GraphQLID
                 },
                 interestRate: {
-                    description: "Decimal-fraction annual rate (e.g. 0.0525 = 5.25%). Required iff type is LOAN.",
+                    description: "Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Required iff type is LOAN.",
                     name: "interestRate",
                     type: GraphQLFloat
                 },
@@ -2335,7 +2335,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: GraphQLID
                 },
                 interestRate: {
-                    description: "Decimal-fraction annual rate (e.g. 0.0525 = 5.25%).",
+                    description: "Annual interest rate as a percentage (e.g. 5.25 for 5.25%).",
                     name: "interestRate",
                     type: GraphQLFloat
                 },
