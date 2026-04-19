@@ -171,7 +171,7 @@ type SortKind = "createdAt" | "value" | "gainAbs" | "gainPercent";
 type SortDirection = "ASC" | "DESC";
 type SortState = { kind: SortKind; dir: SortDirection };
 
-const RANGES = ["5y", "3y", "1y", "ytd", "3m"] as const;
+const RANGES = ["all", "5y", "3y", "1y", "ytd", "3m"] as const;
 type Range = (typeof RANGES)[number];
 
 const investmentsSearchSchema = z.object({
@@ -206,10 +206,12 @@ function toSortInput(
 }
 
 function rangeToPeriod(r: Range): {
-  period: "YEAR" | "MONTH" | "YTD";
+  period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
 } {
   switch (r) {
+    case "all":
+      return { period: "ALL", length: null };
     case "5y":
       return { period: "YEAR", length: 5 };
     case "3y":

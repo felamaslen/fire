@@ -53,6 +53,7 @@ enum PlanningBillsFrequency {
 Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.
 """
 enum PortfolioTimePeriod {
+  ALL
   MONTH
   YEAR
   YTD

@@ -22,7 +22,7 @@ import {
 import { Investment } from "./index";
 
 /** Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
-export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD";
+export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD" | "ALL";
 
 const MAX_LINE_POINTS = 300;
 const MAX_CANDLE_BUCKETS = 100;
@@ -486,7 +486,8 @@ function periodStart(
   today: Date,
   period: PortfolioTimePeriod,
   length: number,
-): Date {
+): Date | null {
+  if (period === "ALL") return null;
   if (period === "YTD") {
     return new Date(Date.UTC(today.getUTCFullYear(), 0, 1));
   }
@@ -697,7 +698,7 @@ export class Portfolio {
     const days: Date[] = [];
     for (const key of [...fullTotals.keys()].sort()) {
       const d = new Date(`${key}T00:00:00Z`);
-      if (d >= start && d <= today) days.push(d);
+      if (d <= today && (start === null || d >= start)) days.push(d);
     }
     return { days, totals: fullTotals };
   }
