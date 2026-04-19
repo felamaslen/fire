@@ -277,7 +277,9 @@ function CategoryBreakdown({ categories }: { categories: Category[] }) {
   return (
     <div className="space-y-5">
       {groups.map((g) => {
-        const rows = categories.filter((c) => c.__typename === g.key);
+        const rows = categories
+          .filter((c) => c.__typename === g.key)
+          .filter((c) => c.startingBalance.amount !== 0);
         if (rows.length === 0) return null;
         return (
           <div key={g.key}>
