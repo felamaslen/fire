@@ -6,30 +6,48 @@ import {
   formatAccountingMoneyRounded,
 } from "@/lib/format";
 
-export type NetWorthChartBucket = {
-  /** Stable key identifying this stack slot (usually the asset type). */
+export type NetWorthChartSeries = {
+  /** Stable key used in tooltips and to identify the series. */
   key: string;
-  /** Label shown in the legend / tooltip. */
+  /** Human-readable label shown in the tooltip. */
   label: string;
-  /** Tailwind/CSS colour used for the stack area. */
+  /** Stroke colour (also the fill colour when `fill !== "none"`). */
   color: string;
-};
-
-export type NetWorthChartPoint = {
-  /** Snapshot date. */
-  date: Date;
-  /** Major-unit amount per bucket key. Missing keys are treated as 0. */
-  assetsByKey: Record<string, number>;
-  /** Major-unit magnitude of liabilities (positive value, plotted below 0). */
-  liabilities: number;
-  /** Major-unit net worth (assetsTotal − liabilities). */
-  net: number;
+  /**
+   * When `fill === "zero"`, paint colour used for the portion of the fill
+   * that is below the zero line (negative values). Ignored otherwise.
+   */
+  negativeColor?: string;
+  /**
+   * `"zero"` — fill between the line and the zero baseline; `negativeColor`
+   * tints any section that dips below zero.
+   * `"baseline"` — fill between this series' line and `baseline`'s line at
+   * the same x. Useful for stacking (e.g. a debt band painted between
+   * `net` and `assets`, so the coloured region reads as "value claimed by
+   * debt").
+   * `"none"` — render the line only.
+   */
+  fill: "zero" | "baseline" | "none";
+  /** Values of another series to use as the lower bound when `fill` is `"baseline"`. */
+  baseline?: number[];
+  /** Opacity of the fill. Default 0.2. */
+  fillOpacity?: number;
+  /** Stroke width. Default 1.5; set to 0 to hide the line. */
+  strokeWidth?: number;
+  /** Major-unit value per point; must match the length of `points`. */
+  values: number[];
+  /**
+   * Optional per-point values to display in the tooltip in place of
+   * `values`. Useful when `values` is a cumulative stack total but the
+   * tooltip should show the individual band amount.
+   */
+  tooltipValues?: number[];
 };
 
 type Props = {
-  points: NetWorthChartPoint[];
-  /** Ordered bottom-to-top for the positive stack. */
-  buckets: NetWorthChartBucket[];
+  /** Snapshot dates, in plot order. */
+  points: Date[];
+  series: NetWorthChartSeries[];
   currency: string;
   width?: number;
   height?: number;
@@ -40,8 +58,6 @@ const AXIS_PAD_LEFT = 72;
 const AXIS_PAD_RIGHT = 16;
 const AXIS_PAD_TOP = 12;
 const AXIS_PAD_BOTTOM = 28;
-
-const LIABILITIES_COLOR = "#dc2626"; // red-600
 
 function shortDate(d: Date): string {
   return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
@@ -78,42 +94,44 @@ function buildYTicks(
 }
 
 /**
- * Stacked-area net worth chart. Positive buckets (assets by type) stack above
- * zero in `buckets` order; liabilities stack below zero as a single red band.
- * A net-worth line is drawn on top.
+ * Generic signed-line chart used on the home dashboard. Each series is
+ * drawn as a stroke on top of an optional fill to the zero baseline; fills
+ * pick up `negativeColor` wherever the underlying value is below zero so
+ * negative balances read visually distinct from positive ones.
  */
 export function NetWorthChart({
   points,
-  buckets,
+  series,
   currency,
   width = 880,
-  height = 320,
+  height = 280,
   className,
 }: Props) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  const { xScale, yScale, xTicks, yTicks, plotRight, plotBottom } =
+  const { xScale, yScale, xTicks, yTicks, plotRight, plotBottom, zeroY } =
     useMemo(() => {
       const n = points.length;
       const xMin = 0;
       const xMax = Math.max(1, n - 1);
 
-      let maxAssets = 0;
-      let maxLiab = 0;
-      for (const p of points) {
-        const sum = buckets.reduce(
-          (acc, b) => acc + (p.assetsByKey[b.key] ?? 0),
-          0,
-        );
-        if (sum > maxAssets) maxAssets = sum;
-        if (p.liabilities > maxLiab) maxLiab = p.liabilities;
+      let dataMin = 0;
+      let dataMax = 0;
+      for (const s of series) {
+        for (const v of s.values) {
+          if (v < dataMin) dataMin = v;
+          if (v > dataMax) dataMax = v;
+        }
+        if (s.baseline) {
+          for (const v of s.baseline) {
+            if (v < dataMin) dataMin = v;
+            if (v > dataMax) dataMax = v;
+          }
+        }
       }
+      if (dataMin === dataMax) dataMax = dataMin + 1;
 
-      const { ticks, niceMin, niceMax } = buildYTicks(
-        -maxLiab,
-        Math.max(maxAssets, 1),
-        5,
-      );
+      const { ticks, niceMin, niceMax } = buildYTicks(dataMin, dataMax, 5);
       const yRange = niceMax - niceMin || 1;
       const xRange = xMax - xMin || 1;
       const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
@@ -129,7 +147,7 @@ export function NetWorthChart({
       for (let i = 0; i < xTickCount; i++) {
         const idx = Math.round((i * (n - 1)) / (xTickCount - 1));
         const p = points[idx];
-        if (p) xTicks.push({ x: idx, label: shortDate(p.date) });
+        if (p) xTicks.push({ x: idx, label: shortDate(p) });
       }
 
       return {
@@ -139,8 +157,9 @@ export function NetWorthChart({
         yTicks: ticks,
         plotRight: width - AXIS_PAD_RIGHT,
         plotBottom: height - AXIS_PAD_BOTTOM,
+        zeroY: yScale(0),
       };
-    }, [points, buckets, width, height]);
+    }, [points, series, width, height]);
 
   if (points.length === 0) {
     return (
@@ -156,43 +175,93 @@ export function NetWorthChart({
     );
   }
 
-  // Pre-compute cumulative running tops for each bucket at each point: at
-  // index (b, i) = sum of buckets[0..b].amountAtPoint(i). Bottom of bucket b
-  // = cumulative[b-1][i] (or 0 for b=0).
-  const cumulative = buckets.map(() =>
-    new Array<number>(points.length).fill(0),
-  );
-  for (let i = 0; i < points.length; i++) {
-    let running = 0;
-    for (let b = 0; b < buckets.length; b++) {
-      running += points[i].assetsByKey[buckets[b].key] ?? 0;
-      cumulative[b][i] = running;
+  // Fritsch–Carlson monotone cubic Hermite interpolation. Unlike
+  // Catmull-Rom, this is guaranteed not to overshoot between consecutive
+  // data points, so a sharp step (e.g. a big one-off transfer) stays
+  // visually close to the actual data instead of ringing.
+  const pathThrough = (
+    pts: { x: number; y: number }[],
+    command: "M" | "L",
+  ): string => {
+    if (pts.length === 0) return "";
+    const first = `${command} ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    if (pts.length === 1) return first;
+
+    const n = pts.length;
+    const dx: number[] = new Array(n - 1);
+    const slope: number[] = new Array(n - 1);
+    for (let i = 0; i < n - 1; i++) {
+      dx[i] = pts[i + 1].x - pts[i].x;
+      slope[i] = (pts[i + 1].y - pts[i].y) / (dx[i] || 1);
     }
-  }
+    // Tangents at each knot.
+    const t: number[] = new Array(n);
+    t[0] = slope[0];
+    t[n - 1] = slope[n - 2];
+    for (let i = 1; i < n - 1; i++) {
+      const m0 = slope[i - 1];
+      const m1 = slope[i];
+      if (m0 * m1 <= 0) {
+        t[i] = 0; // local extremum — flatten to avoid overshoot
+      } else {
+        // weighted harmonic mean (preserves monotonicity)
+        const w1 = 2 * dx[i] + dx[i - 1];
+        const w2 = dx[i] + 2 * dx[i - 1];
+        t[i] = (w1 + w2) / (w1 / m0 + w2 / m1);
+      }
+    }
+    // Fritsch–Carlson clamp — keep |a|² + |b|² ≤ 9 per segment, where
+    // a = t[i]/slope, b = t[i+1]/slope.
+    for (let i = 0; i < n - 1; i++) {
+      if (slope[i] === 0) {
+        t[i] = 0;
+        t[i + 1] = 0;
+        continue;
+      }
+      const a = t[i] / slope[i];
+      const b = t[i + 1] / slope[i];
+      const s = a * a + b * b;
+      if (s > 9) {
+        const tau = 3 / Math.sqrt(s);
+        t[i] = tau * a * slope[i];
+        t[i + 1] = tau * b * slope[i];
+      }
+    }
 
-  const netPath = points
-    .map(
-      (p, i) =>
-        `${i === 0 ? "M" : "L"} ${xScale(i).toFixed(1)} ${yScale(p.net).toFixed(1)}`,
-    )
-    .join(" ");
+    const segs: string[] = [first];
+    for (let i = 0; i < n - 1; i++) {
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const c1x = p1.x + dx[i] / 3;
+      const c1y = p1.y + (t[i] * dx[i]) / 3;
+      const c2x = p2.x - dx[i] / 3;
+      const c2y = p2.y - (t[i + 1] * dx[i]) / 3;
+      segs.push(
+        `C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`,
+      );
+    }
+    return segs.join(" ");
+  };
 
-  const liabPath = (() => {
-    const top = points
-      .map(
-        (p, i) =>
-          `${i === 0 ? "M" : "L"} ${xScale(i).toFixed(1)} ${yScale(-p.liabilities).toFixed(1)}`,
-      )
-      .join(" ");
-    const bottom = [...points]
-      .map((_, j) => j)
-      .reverse()
-      .map((i) => `L ${xScale(i).toFixed(1)} ${yScale(0).toFixed(1)}`)
-      .join(" ");
+  const toPts = (values: number[]) =>
+    values.map((v, i) => ({ x: xScale(i), y: yScale(v) }));
+
+  const linePath = (values: number[]) => pathThrough(toPts(values), "M");
+
+  const closedAreaPath = (values: number[], baseline?: number[]) => {
+    const topPts = toPts(values);
+    const bottomPts = baseline
+      ? toPts(baseline).reverse()
+      : values
+          .map((_, j) => values.length - 1 - j)
+          .map((i) => ({
+            x: xScale(i),
+            y: zeroY,
+          }));
+    const top = pathThrough(topPts, "M");
+    const bottom = pathThrough(bottomPts, "L");
     return `${top} ${bottom} Z`;
-  })();
-
-  const zeroY = yScale(0);
+  };
 
   return (
     <svg
@@ -242,74 +311,85 @@ export function NetWorthChart({
         strokeOpacity={0.25}
       />
 
-      {/* Positive stack: bottom-up */}
-      {buckets.map((b, bi) => {
-        const topPath = points
-          .map(
-            (_, i) =>
-              `${i === 0 ? "M" : "L"} ${xScale(i).toFixed(1)} ${yScale(cumulative[bi][i]).toFixed(1)}`,
-          )
-          .join(" ");
-        const bottomPath = [...points]
-          .map((_, j) => j)
-          .reverse()
-          .map((i) => {
-            const y = bi === 0 ? 0 : cumulative[bi - 1][i];
-            return `L ${xScale(i).toFixed(1)} ${yScale(y).toFixed(1)}`;
-          })
-          .join(" ");
+      {series.map((s) => {
+        if (s.fill === "none") return null;
+        const opacity = s.fillOpacity ?? 0.2;
+        if (s.fill === "baseline" && s.baseline) {
+          return (
+            <path
+              key={`fill-${s.key}`}
+              d={closedAreaPath(s.values, s.baseline)}
+              fill={s.color}
+              fillOpacity={opacity}
+            />
+          );
+        }
+        // fill === "zero": split at the zero line so the positive and
+        // negative halves get their own colours via clip-path.
+        const hasNegative = s.negativeColor && s.values.some((v) => v < 0);
+        return (
+          <g key={`fill-${s.key}`}>
+            <defs>
+              <clipPath id={`clip-pos-${s.key}`}>
+                <rect
+                  x={AXIS_PAD_LEFT}
+                  y={AXIS_PAD_TOP}
+                  width={plotRight - AXIS_PAD_LEFT}
+                  height={Math.max(0, zeroY - AXIS_PAD_TOP)}
+                />
+              </clipPath>
+              {hasNegative && (
+                <clipPath id={`clip-neg-${s.key}`}>
+                  <rect
+                    x={AXIS_PAD_LEFT}
+                    y={zeroY}
+                    width={plotRight - AXIS_PAD_LEFT}
+                    height={Math.max(0, plotBottom - zeroY)}
+                  />
+                </clipPath>
+              )}
+            </defs>
+            <path
+              d={closedAreaPath(s.values)}
+              fill={s.color}
+              fillOpacity={opacity}
+              clipPath={`url(#clip-pos-${s.key})`}
+            />
+            {hasNegative && (
+              <path
+                d={closedAreaPath(s.values)}
+                fill={s.negativeColor}
+                fillOpacity={opacity}
+                clipPath={`url(#clip-neg-${s.key})`}
+              />
+            )}
+          </g>
+        );
+      })}
+
+      {series.map((s) => {
+        const sw = s.strokeWidth ?? 1.5;
+        if (sw === 0) return null;
         return (
           <path
-            key={b.key}
-            d={`${topPath} ${bottomPath} Z`}
-            fill={b.color}
-            fillOpacity={0.75}
-            stroke={b.color}
-            strokeWidth={0.5}
+            key={`line-${s.key}`}
+            d={linePath(s.values)}
+            fill="none"
+            stroke={s.color}
+            strokeWidth={sw}
           />
         );
       })}
 
-      {/* Liabilities band below zero */}
-      <path
-        d={liabPath}
-        fill={LIABILITIES_COLOR}
-        fillOpacity={0.7}
-        stroke={LIABILITIES_COLOR}
-        strokeWidth={0.5}
-      />
-
-      {/* Net worth line */}
-      <path d={netPath} fill="none" stroke="currentColor" strokeWidth={1.5} />
-
       {hoverIdx !== null &&
         (() => {
-          const p = points[hoverIdx];
+          const date = points[hoverIdx];
           const cx = xScale(hoverIdx);
-          const rowH = 14;
-          const rows = [
-            ...buckets
-              .filter((b) => (p.assetsByKey[b.key] ?? 0) > 0)
-              .map((b) => ({
-                label: b.label,
-                color: b.color,
-                value: p.assetsByKey[b.key] ?? 0,
-              })),
-            ...(p.liabilities > 0
-              ? [
-                  {
-                    label: "Liabilities",
-                    color: LIABILITIES_COLOR,
-                    value: -p.liabilities,
-                  },
-                ]
-              : []),
-          ];
-          const headerH = 32;
-          const footerH = 18;
+          const rowH = 16;
+          const headerH = 22;
           const padY = 10;
-          const boxW = 200;
-          const boxH = headerH + rows.length * rowH + footerH + padY;
+          const boxW = 220;
+          const boxH = headerH + series.length * rowH + padY;
           const gap = 10;
           const preferRight = cx + gap + boxW <= plotRight;
           const boxX = preferRight
@@ -330,14 +410,20 @@ export function NetWorthChart({
                 strokeOpacity={0.2}
                 strokeDasharray="2 2"
               />
-              <circle
-                cx={cx}
-                cy={yScale(p.net)}
-                r={3}
-                fill="currentColor"
-                stroke="var(--background, white)"
-                strokeWidth={1.5}
-              />
+              {series.map((s) => {
+                const v = s.values[hoverIdx];
+                return (
+                  <circle
+                    key={`dot-${s.key}`}
+                    cx={cx}
+                    cy={yScale(v)}
+                    r={3}
+                    fill={v < 0 && s.negativeColor ? s.negativeColor : s.color}
+                    stroke="var(--background, white)"
+                    strokeWidth={1.5}
+                  />
+                );
+              })}
               <rect
                 x={boxX}
                 y={boxY}
@@ -349,60 +435,38 @@ export function NetWorthChart({
               />
               <g className="fill-foreground text-[10px] tabular-nums">
                 <text x={boxX + 10} y={boxY + 16} className="font-medium">
-                  {fullDate(p.date)}
+                  {fullDate(date)}
                 </text>
-                <text
-                  x={boxX + boxW - 10}
-                  y={boxY + 16}
-                  textAnchor="end"
-                  className="font-medium"
-                >
-                  {formatAccountingMoneyRounded(currency, p.net)}
-                </text>
-                <text
-                  x={boxX + 10}
-                  y={boxY + 28}
-                  className="fill-muted-foreground"
-                >
-                  Net worth
-                </text>
-                {rows.map((r, i) => (
-                  <g
-                    key={r.label}
-                    transform={`translate(0, ${boxY + headerH + i * rowH})`}
-                  >
-                    <rect
-                      x={boxX + 10}
-                      y={2}
-                      width={8}
-                      height={8}
-                      fill={r.color}
-                    />
-                    <text x={boxX + 24} y={9}>
-                      {r.label}
-                    </text>
-                    <text x={boxX + boxW - 10} y={9} textAnchor="end">
-                      {formatAccountingMoneyRounded(currency, r.value)}
-                    </text>
-                  </g>
-                ))}
+                {series.map((s, i) => {
+                  const display = (s.tooltipValues ?? s.values)[hoverIdx];
+                  const swatch =
+                    display < 0 && s.negativeColor ? s.negativeColor : s.color;
+                  return (
+                    <g
+                      key={`row-${s.key}`}
+                      transform={`translate(0, ${boxY + headerH + i * rowH})`}
+                    >
+                      <rect
+                        x={boxX + 10}
+                        y={2}
+                        width={8}
+                        height={8}
+                        fill={swatch}
+                      />
+                      <text x={boxX + 24} y={9}>
+                        {s.label}
+                      </text>
+                      <text x={boxX + boxW - 10} y={9} textAnchor="end">
+                        {formatAccountingMoneyRounded(currency, display)}
+                      </text>
+                    </g>
+                  );
+                })}
               </g>
             </g>
           );
         })()}
 
-      {/* Zero baseline stroke */}
-      <line
-        x1={AXIS_PAD_LEFT}
-        x2={plotRight}
-        y1={zeroY}
-        y2={zeroY}
-        stroke="currentColor"
-        strokeOpacity={0.3}
-      />
-      {/* Pointer surface — sits on top so it catches every move. Reading
-          `clientX / rect.width` on this rect avoids the svg-vs-CSS width
-          skew that was misaligning the hover dot. */}
       <rect
         x={AXIS_PAD_LEFT}
         y={AXIS_PAD_TOP}
@@ -426,40 +490,5 @@ export function NetWorthChart({
         }}
       />
     </svg>
-  );
-}
-
-export function NetWorthChartLegend({
-  buckets,
-  showLiabilities,
-}: {
-  buckets: NetWorthChartBucket[];
-  showLiabilities: boolean;
-}) {
-  return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-      {buckets.map((b) => (
-        <span key={b.key} className="inline-flex items-center gap-1.5">
-          <span
-            className="inline-block h-2 w-3 rounded-sm"
-            style={{ background: b.color }}
-          />
-          {b.label}
-        </span>
-      ))}
-      {showLiabilities && (
-        <span className="inline-flex items-center gap-1.5">
-          <span
-            className="inline-block h-2 w-3 rounded-sm"
-            style={{ background: LIABILITIES_COLOR }}
-          />
-          Liabilities
-        </span>
-      )}
-      <span className="inline-flex items-center gap-1.5">
-        <span className="inline-block h-0.5 w-3 bg-foreground" />
-        Net worth
-      </span>
-    </div>
   );
 }

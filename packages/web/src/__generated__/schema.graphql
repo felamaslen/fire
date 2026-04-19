@@ -1085,12 +1085,10 @@ type NetWorthEntryEdge {
   node: NetWorthEntry!
 }
 
-"""
-One bucket of assets at a single history point, grouped by asset `type`.
-"""
+"""One bucket at a single history point, grouped by asset `type`."""
 type NetWorthHistoryAssetBucket {
   """
-  Total value of all assets of this `type` at this point, converted into the home currency.
+  Aggregated amount for this bucket at this point, converted into the home currency.
   """
   amount: Money!
   """Asset category type this bucket aggregates."""
@@ -1101,17 +1099,21 @@ type NetWorthHistoryAssetBucket {
 A single point on the net-worth history timeline — one entry per recorded month.
 """
 type NetWorthHistoryPoint {
+  """Gross assets total at this point, in the home currency."""
+  assets: Money!
   """
-  Assets at this point, grouped by asset type. Empty buckets are omitted.
+  Gross assets at this point, grouped by asset type. Empty buckets are omitted.
   """
   assetsByType: [NetWorthHistoryAssetBucket!]!
   """Any calendar date inside the target month."""
   date: Date!
   """
-  Total liabilities at this point (positive magnitude), converted into the home currency. Liabilities marked `skip` are excluded.
+  Total liabilities at this point (positive magnitude), in the home currency. Liabilities marked `skip` are excluded.
   """
   liabilities: Money!
-  """Net worth at this point: sum of `assetsByType` minus `liabilities`."""
+  """
+  Net worth at this point: `assets − liabilities`. May be negative when debts exceed assets.
+  """
   net: Money!
 }
 
@@ -1616,7 +1618,7 @@ type Query {
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
   """
-  Full history of net-worth snapshots, oldest first, with assets split by category type and liabilities aggregated. All amounts are converted into the home currency via each entry's own captured currency rates.
+  Full history of net-worth snapshots, oldest first. Each point exposes gross assets split by type plus the overall assets / liabilities / net totals. All amounts are converted into the home currency via each entry's own captured currency rates.
   """
   netWorthHistory: [NetWorthHistoryPoint!] @semanticNonNull
   """

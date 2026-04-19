@@ -2,15 +2,10 @@ import { useSuspenseQuery } from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
-import { graphql, type ResultOf } from "@/graphql";
+import { graphql } from "@/graphql";
 import { formatAccountingMoneyRounded } from "@/lib/format";
 
-import {
-  NetWorthChart,
-  type NetWorthChartBucket,
-  NetWorthChartLegend,
-  type NetWorthChartPoint,
-} from "./net-worth-chart";
+import { NetWorthChart } from "./net-worth-chart";
 
 const HomeDocument = graphql(`
   query Home {
@@ -22,6 +17,10 @@ const HomeDocument = graphql(`
           amount
           currency
         }
+      }
+      assets {
+        amount
+        currency
       }
       liabilities {
         amount
@@ -36,51 +35,50 @@ const HomeDocument = graphql(`
   }
 `);
 
-type HomeData = ResultOf<typeof HomeDocument>;
-type HistoryPoint = NonNullable<HomeData["netWorthHistory"]>[number];
-type AssetType = HistoryPoint["assetsByType"][number]["type"];
-
-// Ordered bottom-to-top in the stack; first entry sits on the zero line.
-const BUCKET_DEFS: { key: AssetType; label: string; color: string }[] = [
-  { key: "CASH", label: "Cash", color: "#10b981" }, // emerald-500
-  { key: "STOCK", label: "Stock", color: "#0ea5e9" }, // sky-500
-  { key: "PENSION", label: "Pension", color: "#8b5cf6" }, // violet-500
-  { key: "PROPERTY", label: "Property", color: "#f59e0b" }, // amber-500
-  { key: "VEHICLE", label: "Vehicle", color: "#f43f5e" }, // rose-500
-  { key: "OPTION", label: "Options", color: "#d946ef" }, // fuchsia-500
-  { key: "MISC", label: "Misc", color: "#64748b" }, // slate-500
-];
+// Deep-tone palette — high saturation, low lightness. Reads rich on the
+// card background without the neon of Tailwind's mid swatches.
+const CASH_COLOR = "#176b4a"; // deep forest green
+const STOCK_COLOR = "#4a4a4a"; // medium-dark grey
+const PENSION_COLOR = "#1a5490"; // deep blue
+const MISC_COLOR = "#5b3a80"; // deep purple
+const REMAINDER_COLOR = "#8f6b18"; // deep ochre
+const NET_LINE_COLOR = "currentColor";
+const ASSETS_COLOR = "#1a5490"; // deep blue
+const LIABILITIES_COLOR = "#8f1a1a"; // deep crimson
 
 export function Home() {
   const { data } = useSuspenseQuery(HomeDocument);
   const history = data.netWorthHistory ?? [];
   const currency = data.currencyDefault ?? "GBP";
 
-  const usedKeys = new Set<string>();
-  for (const p of history) {
-    for (const b of p.assetsByType)
-      if (b.amount.amount > 0) usedKeys.add(b.type);
-  }
-  const buckets: NetWorthChartBucket[] = BUCKET_DEFS.filter((b) =>
-    usedKeys.has(b.key),
-  );
+  const dates = history.map((h) => new Date(`${h.date}T00:00:00Z`));
+  const net = history.map((h) => h.net.amount);
+  const assets = history.map((h) => h.assets.amount);
+  const liabilities = history.map((h) => h.liabilities.amount);
 
-  const points: NetWorthChartPoint[] = history.map((h) => {
-    const assetsByKey: Record<string, number> = {};
-    for (const b of h.assetsByType) assetsByKey[b.type] = b.amount.amount;
-    return {
-      date: new Date(`${h.date}T00:00:00Z`),
-      assetsByKey,
-      liabilities: h.liabilities.amount,
-      net: h.net.amount,
-    };
-  });
+  // Stacks on the main chart, bottom → top. The remainder band is every
+  // asset that isn't cash / stock / pension net of all liabilities, so the
+  // top of its stack = `net`. When it's negative the band overlays the
+  // pension stack as a translucent shadow and the net line dips into it.
+  const amountOf = (
+    h: (typeof history)[number],
+    type: "CASH" | "STOCK" | "PENSION" | "MISC",
+  ) => h.assetsByType.find((b) => b.type === type)?.amount.amount ?? 0;
+  const cash = history.map((h) => amountOf(h, "CASH"));
+  const stock = history.map((h) => amountOf(h, "STOCK"));
+  const pension = history.map((h) => amountOf(h, "PENSION"));
+  const misc = history.map((h) => amountOf(h, "MISC"));
+  const cumCash = cash;
+  const cumStock = cash.map((v, i) => v + stock[i]);
+  const cumPension = cumStock.map((v, i) => v + pension[i]);
+  const cumMisc = cumPension.map((v, i) => v + misc[i]);
+  // Top of the remainder band equals net worth by construction:
+  //   net = cash + stock + pension + misc + remainder
+  const cumRemainder = net;
 
   const latest = history.at(-1);
   const prev = history.length > 1 ? history.at(-2) : null;
   const deltaNet = latest && prev ? latest.net.amount - prev.net.amount : null;
-
-  const showLiabilities = history.some((h) => h.liabilities.amount > 0);
 
   return (
     <main className="mx-auto flex min-h-svh max-w-6xl flex-col gap-6 p-6">
@@ -127,10 +125,7 @@ export function Home() {
             <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm tabular-nums">
               <dt className="text-muted-foreground">Assets</dt>
               <dd className="text-right">
-                {formatAccountingMoneyRounded(
-                  currency,
-                  latest.assetsByType.reduce((a, b) => a + b.amount.amount, 0),
-                )}
+                {formatAccountingMoneyRounded(currency, latest.assets.amount)}
               </dd>
               <dt className="text-muted-foreground">Liabilities</dt>
               <dd className="text-right">
@@ -145,14 +140,163 @@ export function Home() {
 
         <div className="mt-4 space-y-2">
           <NetWorthChart
-            points={points}
-            buckets={buckets}
+            points={dates}
+            series={[
+              {
+                key: "cash",
+                label: "Cash",
+                color: CASH_COLOR,
+                fill: "zero",
+                fillOpacity: 0.7,
+                strokeWidth: 0,
+                values: cumCash,
+                tooltipValues: cash,
+              },
+              {
+                key: "stock",
+                label: "Stocks",
+                color: STOCK_COLOR,
+                fill: "baseline",
+                baseline: cumCash,
+                values: cumStock,
+                tooltipValues: stock,
+                fillOpacity: 0.7,
+                strokeWidth: 0,
+              },
+              {
+                key: "pension",
+                label: "Pension",
+                color: PENSION_COLOR,
+                fill: "baseline",
+                baseline: cumStock,
+                values: cumPension,
+                tooltipValues: pension,
+                fillOpacity: 0.7,
+                strokeWidth: 0,
+              },
+              {
+                key: "misc",
+                label: "Other",
+                color: MISC_COLOR,
+                fill: "baseline",
+                baseline: cumPension,
+                values: cumMisc,
+                tooltipValues: misc,
+                fillOpacity: 0.7,
+                strokeWidth: 0,
+              },
+              {
+                key: "remainder",
+                label: "Remaining net equity",
+                color: REMAINDER_COLOR,
+                // Translucent so the layer beneath shows through when this
+                // band is negative and painted on top of it.
+                fill: "baseline",
+                baseline: cumMisc,
+                values: cumRemainder,
+                tooltipValues: net.map((n, i) => n - cumMisc[i]),
+                fillOpacity: 0.35,
+                strokeWidth: 0,
+              },
+              {
+                key: "net",
+                label: "Net worth",
+                color: NET_LINE_COLOR,
+                fill: "none",
+                strokeWidth: 1.5,
+                values: net,
+              },
+            ]}
             currency={currency}
             className="w-full"
           />
-          <NetWorthChartLegend
-            buckets={buckets}
-            showLiabilities={showLiabilities}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2 w-3 rounded-sm"
+                style={{ background: CASH_COLOR }}
+              />
+              Cash
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2 w-3 rounded-sm"
+                style={{ background: STOCK_COLOR }}
+              />
+              Stocks
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2 w-3 rounded-sm"
+                style={{ background: PENSION_COLOR }}
+              />
+              Pension
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2 w-3 rounded-sm"
+                style={{ background: MISC_COLOR }}
+              />
+              Other
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2 w-3 rounded-sm"
+                style={{ background: REMAINDER_COLOR, opacity: 0.5 }}
+              />
+              Remaining net equity
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-0.5 w-3 bg-foreground" />
+              Net worth
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border bg-card p-5 shadow-sm">
+        <div className="flex items-baseline justify-between gap-4">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
+            Assets vs liabilities
+          </div>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-0.5 w-3"
+                style={{ background: ASSETS_COLOR }}
+              />
+              Assets
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-0.5 w-3"
+                style={{ background: LIABILITIES_COLOR }}
+              />
+              Liabilities
+            </span>
+          </div>
+        </div>
+        <div className="mt-3">
+          <NetWorthChart
+            points={dates}
+            series={[
+              {
+                key: "assets",
+                label: "Assets",
+                color: ASSETS_COLOR,
+                fill: "zero",
+                values: assets,
+              },
+              {
+                key: "liabilities",
+                label: "Liabilities",
+                color: LIABILITIES_COLOR,
+                fill: "zero",
+                values: liabilities,
+              },
+            ]}
+            currency={currency}
+            className="w-full"
           />
         </div>
       </section>
