@@ -261,7 +261,8 @@ function InvestmentDetailPage() {
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) void navigate({ to: "/investments" });
+        if (!open)
+          void navigate({ to: "/investments", search: (prev) => prev });
       }}
     >
       <DialogContent className="max-w-3xl">

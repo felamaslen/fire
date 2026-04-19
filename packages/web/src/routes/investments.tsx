@@ -4,6 +4,7 @@ import {
   Link,
   Outlet,
   useNavigate,
+  useRouterState,
 } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, ExternalLink, Pencil, Plus } from "lucide-react";
 import {
@@ -312,6 +313,12 @@ function InvestmentsDialogLayout() {
 function InvestmentsPageContent() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  // Only bootstrap/persist when the router is actually on `/investments` —
+  // if a child route (`/investments/$id`) is active, navigating with the
+  // parent's search params here would redirect away from the dialog.
+  const isOnListPage = useRouterState({
+    select: (s) => s.location.pathname === "/investments",
+  });
 
   // Bootstrap: captured once — used to seed URL + freeze initial query vars.
   const [bootstrap] = useState<InvestmentsSearch>(() =>
@@ -319,12 +326,13 @@ function InvestmentsPageContent() {
   );
 
   useEffect(() => {
+    if (!isOnListPage) return;
     if (!hasAnySearch(search) && hasAnySearch(bootstrap)) {
       void navigate({ search: bootstrap, replace: true });
       return;
     }
     window.localStorage.setItem(SEARCH_STORAGE_KEY, JSON.stringify(search));
-  }, [search, bootstrap, navigate]);
+  }, [search, bootstrap, navigate, isOnListPage]);
 
   const effective = hasAnySearch(search) ? search : bootstrap;
   const chart = searchToChart(effective);
@@ -489,6 +497,7 @@ function InvestmentsList({
                     void navigate({
                       to: "/investments/$id",
                       params: { id },
+                      search: (prev) => prev,
                     })
                   }
                 />
