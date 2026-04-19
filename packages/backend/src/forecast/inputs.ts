@@ -3,17 +3,7 @@
  */
 
 import { addMonths, startOfMonth } from "date-fns";
-import {
-  and,
-  desc,
-  eq,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lte,
-  or,
-} from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull } from "drizzle-orm";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
@@ -27,13 +17,7 @@ import {
   NetWorthValueAmounts,
   NetWorthValues,
 } from "@/db/schema/net-worth";
-import {
-  PlanningAccounts,
-  PlanningBills,
-  PlanningPayslipAdjustments,
-  PlanningPayslips,
-  PlanningTransactions,
-} from "@/db/schema/planning";
+import { PlanningBills, PlanningTransactions } from "@/db/schema/planning";
 
 import {
   buildRateToHome,
@@ -44,11 +28,10 @@ import {
   type InvestmentTx,
   type LiabilityBill,
   type LiabilityTx,
-  type Payslip,
   solveXirr,
 } from "./growth";
 
-/** Lookback window for planning transactions / investment transactions / payslips feeding the EWMAs. */
+/** Lookback window for planning transactions / investment transactions feeding the EWMAs. */
 const EWMA_LOOKBACK_MONTHS = 36;
 
 /**
@@ -66,21 +49,15 @@ export async function loadForecastInputs(
     { startingBalance, latestEntryDate },
     liabilityTxs,
     loanBills,
-    nonLiabilityBills,
     { portfolioInvestmentTxs, portfolioAssetIds },
     portfolioContributionTxs,
-    payslips,
-    accountIds,
   ] = await Promise.all([
     loadCategories(),
     loadStartingBalances(),
-    loadLiabilityTxs(ewmaCutoff),
+    loadLoanTxs(ewmaCutoff),
     loadLoanBills(),
-    loadNonLiabilityBills(asOfDate),
     loadPortfolioInvestmentTxs(),
     loadPortfolioContributionTxs(ewmaCutoff),
-    loadPayslips(ewmaCutoff),
-    loadAccountIds(),
   ]);
 
   // Compute XIRR per STOCK / PENSION wrapper, using that wrapper's
@@ -96,10 +73,6 @@ export async function loadForecastInputs(
       xirrByAsset.set(assetId, null);
       continue;
     }
-    // Starting balance is in home-currency minor units; `units * price`
-    // for an InvestmentTransaction is also in minor units (price is
-    // stored in fractional currency units). Keep both on the minor
-    // scale so `solveXirr`'s bracket finds a sensible root.
     const terminalValue = startingBalance.get(assetId) ?? 0;
     const flows: { date: Date; amount: number }[] = txs.map((t) => ({
       date: t.date,
@@ -111,7 +84,6 @@ export async function loadForecastInputs(
     xirrByAsset.set(assetId, solveXirr(flows));
   }
 
-  // Attach xirr to the relevant categories.
   const categoriesWithXirr: ForecastCategory[] = categories.map((c) => {
     if (
       c.kind === "asset" &&
@@ -130,9 +102,6 @@ export async function loadForecastInputs(
     liabilityTxs,
     loanBills,
     portfolioContributionTxs,
-    payslips,
-    accountIds,
-    nonLiabilityBills,
   };
 }
 
@@ -210,9 +179,8 @@ async function loadStartingBalances(): Promise<{
       v.categoryAssetId ?? v.categoryLiabilityId ?? v.categoryOptionId;
     if (!categoryId) continue;
     // Liabilities are stored signed — normally negative. We want the
-    // starting *magnitude* so the engine's projectLoanBalance /
-    // projectCreditCardBalance treat it as debt to pay down rather
-    // than negative assets.
+    // starting *magnitude* so `projectLoanBalance` treats it as debt
+    // to pay down rather than negative assets.
     const add = v.categoryLiabilityId ? Math.abs(homeMinor) : homeMinor;
     startingBalance.set(
       categoryId,
@@ -222,9 +190,7 @@ async function loadStartingBalances(): Promise<{
   return { startingBalance, latestEntryDate: latest.date };
 }
 
-async function loadLiabilityTxs(
-  cutoff: Date,
-): Promise<Map<string, LiabilityTx[]>> {
+async function loadLoanTxs(cutoff: Date): Promise<Map<string, LiabilityTx[]>> {
   const rows = await db
     .select({
       liabilityId: PlanningTransactions.liabilityId,
@@ -232,9 +198,14 @@ async function loadLiabilityTxs(
       amount: PlanningTransactions.amount,
     })
     .from(PlanningTransactions)
+    .innerJoin(
+      NetWorthCategoryLiabilities,
+      eq(NetWorthCategoryLiabilities.id, PlanningTransactions.liabilityId),
+    )
     .where(
       and(
         isNotNull(PlanningTransactions.liabilityId),
+        eq(NetWorthCategoryLiabilities.type, "LOAN"),
         gte(PlanningTransactions.date, cutoff),
         eq(PlanningTransactions.currency, HOME_CURRENCY),
       ),
@@ -284,31 +255,6 @@ async function loadLoanBills(): Promise<Map<string, LiabilityBill[]>> {
     out.set(r.liabilityId, arr);
   }
   return out;
-}
-
-async function loadNonLiabilityBills(asOfDate: Date): Promise<LiabilityBill[]> {
-  const rows = await db
-    .select({
-      start: PlanningBills.start,
-      end: PlanningBills.end,
-      frequency: PlanningBills.frequency,
-      collectionDate: PlanningBills.collectionDate,
-      amount: PlanningBills.amount,
-    })
-    .from(PlanningBills)
-    .where(
-      and(
-        isNull(PlanningBills.liabilityId),
-        eq(PlanningBills.currency, HOME_CURRENCY),
-        lte(PlanningBills.start, asOfDate),
-        // `end` null ⇒ open-ended; otherwise the bill must still be
-        // in effect as of today. Without this, bills for expired
-        // rentals / previous mortgages / sold vehicles inflate the
-        // monthly spend projection.
-        or(isNull(PlanningBills.end), gte(PlanningBills.end, asOfDate)),
-      ),
-    );
-  return rows;
 }
 
 /** Per-wrapper investment transactions — used to compute each portfolio's XIRR. `units * price` gives the flow for the XIRR solver; we don't use these rows for the forward contribution EWMA (see `loadPortfolioContributionTxs`). No time cutoff: XIRR needs the full tx history so the rate accounts for long-held buys, not just recent activity against a large terminal balance. */
@@ -367,53 +313,4 @@ async function loadPortfolioContributionTxs(
     out.set(r.assetId, arr);
   }
   return out;
-}
-
-async function loadPayslips(cutoff: Date): Promise<Payslip[]> {
-  const slips = await db
-    .select({
-      id: PlanningPayslips.id,
-      date: PlanningPayslips.date,
-      toAccountId: PlanningPayslips.toAccountId,
-      amountGross: PlanningPayslips.amountGross,
-    })
-    .from(PlanningPayslips)
-    .where(
-      and(
-        gte(PlanningPayslips.date, cutoff),
-        eq(PlanningPayslips.currency, HOME_CURRENCY),
-      ),
-    );
-  if (slips.length === 0) return [];
-  const adjRows = await db
-    .select({
-      payslipId: PlanningPayslipAdjustments.payslipId,
-      amount: PlanningPayslipAdjustments.amount,
-    })
-    .from(PlanningPayslipAdjustments)
-    .where(
-      inArray(
-        PlanningPayslipAdjustments.payslipId,
-        slips.map((s) => s.id),
-      ),
-    );
-  const adjByPayslip = new Map<string, number>();
-  for (const a of adjRows) {
-    adjByPayslip.set(
-      a.payslipId,
-      (adjByPayslip.get(a.payslipId) ?? 0) + a.amount,
-    );
-  }
-  return slips.map((s) => ({
-    date: s.date,
-    toAccountId: s.toAccountId,
-    netAmount: s.amountGross + (adjByPayslip.get(s.id) ?? 0),
-  }));
-}
-
-async function loadAccountIds(): Promise<string[]> {
-  const rows = await db
-    .select({ accountId: PlanningAccounts.accountId })
-    .from(PlanningAccounts);
-  return rows.map((r) => r.accountId);
 }

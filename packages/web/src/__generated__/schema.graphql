@@ -1109,31 +1109,7 @@ type NetWorthForecast {
 }
 
 """
-Monthly cashflow component breakdown — the "spending side" of the forecast. Each amount is the engine's projected-constant monthly number and is held flat across the forecast horizon.
-"""
-type NetWorthForecastCashflow {
-  """
-  Monthly-equivalent total across every scheduled bill not tagged to a liability.
-  """
-  monthlyBills: Money!
-  """Sum of all out-flow components."""
-  monthlyCashOut: Money!
-  """EWMA credit-card spend on cards paid from a cash account each month."""
-  monthlyCreditCardPayoff: Money!
-  """EWMA sum of recent payslip nets across every planning account."""
-  monthlyIncome: Money!
-  """
-  EWMA monthly investment contribution across every `STOCK` / `PENSION` portfolio.
-  """
-  monthlyInvestmentContribution: Money!
-  """EWMA monthly loan repayment across every active loan."""
-  monthlyLoanRepayment: Money!
-  """`monthlyIncome − monthlyCashOut`. May be negative."""
-  monthlyNetCashFlow: Money!
-}
-
-"""
-Projection for an asset category with no configured growth or return inputs — `OPTION`, `MISC`, and `PROPERTY` / `VEHICLE` / `STOCK` / `PENSION` categories that haven't yet got a growth rate or XIRR. The balance is held flat across the forecast horizon.
+Projection for an asset category that's held flat across the horizon — `CASH`, `OPTION`, `MISC`, and any `PROPERTY` / `VEHICLE` / `STOCK` / `PENSION` category without a growth rate or computable XIRR. The balance stays at today's value for the whole forecast.
 """
 type NetWorthForecastFlatAsset {
   category: NetWorthCategoryAsset!
@@ -1146,7 +1122,7 @@ type NetWorthForecastFlatAsset {
 }
 
 """
-Projection for a liability the engine holds flat: `MISC`, every `CREDIT_CARD` (assumed paid off in full each month — see README), and a `LOAN` that hasn't got enough history to derive a monthly repayment. The balance stays constant across the forecast horizon.
+Projection for a liability held flat across the horizon: `MISC`, every `CREDIT_CARD`, and any `LOAN` without enough history to derive a monthly repayment.
 """
 type NetWorthForecastFlatLiability {
   category: NetWorthCategoryLiability!
@@ -1232,17 +1208,7 @@ type NetWorthForecastPortfolio {
 Engine workings exposed so the client can show how the forecast was derived.
 """
 type NetWorthForecastWorkings {
-  """Cash balance at each returned forecast point."""
-  cashBalance: [Money!]!
-  """
-  Aggregated cash balance across every `CASH` category at the starting point.
-  """
-  cashStart: Money!
-  """Monthly cashflow component breakdown."""
-  cashflow: NetWorthForecastCashflow!
-  """
-  Per-category projection, excluding `CASH` (which is rolled into `cashBalance`) and skipped liabilities.
-  """
+  """Per-category projection. Skipped liabilities drop out entirely."""
   categories: [NetWorthForecastCategory!]!
 }
 

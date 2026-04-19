@@ -28,9 +28,25 @@ A personal net-worth tracker. Records assets, investments, and month-by-month ca
 - Rolling balance projection forward from a starting point.
 - UK tax helpers (PAYE-style computation) baked into earnings.
 
+### Net-worth forecast
+
+The overview page projects monthly net worth forward from today's snapshot (`netWorthForecast` GraphQL query, engine in `packages/backend/src/forecast/engine.ts`). Each category evolves independently:
+
+- **Cash** — held flat at today's balance.
+- **Property / vehicle (growth assets)** — compound monthly at the category's configured annual growth rate. Negative rates model depreciation.
+- **Investment portfolios (stock / pension wrappers)** — compound at the portfolio's XIRR (derived from its transaction history) plus an EWMA of the last 36 months of cash contributions.
+- **Loans** — accrue interest monthly at the loan's APR and drop by an EWMA of recent repayments (actual transactions, falling back to the scheduled bill amount in months with no activity). Clamped at zero.
+- **Flat assets / liabilities, credit cards, options, misc** — held at today's value for the whole horizon.
+
+#### Why cashflow isn't modelled
+
+The forecast deliberately doesn't simulate income or spending. Over the user's history, the sum of ongoing investment contributions plus loan repayments already matches the post-spending cash surplus in each month — i.e. money left over after rent, food, and everything else is already flowing out via the contribution / repayment EWMAs the engine uses. Adding a separate "income − bills − card spend" layer on top would double-count it and make the projection drift. Holding cash flat is the honest model: the things that actually move cash up or down (contributions, loan paydown, asset growth) all show up elsewhere in the forecast.
+
+Retirement-age modelling is a different question — it needs an explicit picture of monthly spend so we can simulate drawing down assets once income stops. The scaffolding for that sits in `packages/backend/src/forecast/spending.ts` (loaders + `computeCashflow`), marked unused and waiting to be wired in.
+
 ### Assumptions
 
-- **Credit cards are paid off in full each month.** The app doesn't model revolving debt, grace periods, or interest accrual on card balances; a card's balance at any point represents this month's charges due on the next payment date. Credit-card activity shows up as a monthly-spending line on the forecast (`monthlyCreditCardPayoff`) rather than as a growing liability. If you carry a balance, track it as a `LOAN` liability with an explicit interest rate instead.
+- **Credit cards are paid off in full each month.** The app doesn't model revolving debt, grace periods, or interest accrual on card balances; a card's balance at any point represents this month's charges due on the next payment date. If you carry a balance, track it as a `LOAN` liability with an explicit interest rate instead.
 
 ### Other
 - File uploads (local disk) for attaching documents to records.

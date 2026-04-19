@@ -15,9 +15,6 @@ function baseInputs(overrides: Partial<ForecastInputs> = {}): ForecastInputs {
     liabilityTxs: new Map(),
     loanBills: new Map(),
     portfolioContributionTxs: new Map(),
-    payslips: [],
-    accountIds: [],
-    nonLiabilityBills: [],
     ...overrides,
   };
 }
@@ -47,6 +44,22 @@ describe("runForecast", () => {
     );
     expect(points[0].assets).toBe(2000);
     expect(points[12].assets).toBe(2000);
+  });
+
+  it("holds CASH balances flat across the horizon", () => {
+    const cash: ForecastCategory = {
+      id: "cash",
+      kind: "asset",
+      assetType: "CASH",
+    };
+    const { points } = runForecast(
+      baseInputs({
+        categories: [cash],
+        startingBalance: new Map([[cash.id, 12345]]),
+      }),
+    );
+    expect(points[0].assets).toBe(12345);
+    expect(points[12].assets).toBe(12345);
   });
 
   it("compounds PROPERTY monthly at its annual growth rate", () => {
@@ -93,9 +106,7 @@ describe("runForecast", () => {
     );
     const w = workings.categories.find((c) => c.categoryId === isa.id);
     expect(w?.monthlyContribution).toBeCloseTo(1000);
-    // start 100k + 12 × 1000 contribution = 112k (xirr 0 ⇒ no growth);
-    // the engine also debits those contributions from cash, but asserting
-    // on the isolated per-category projection side-steps that coupling.
+    // start 100k + 12 × 1000 contribution = 112k (xirr 0 ⇒ no growth)
     expect(w?.projectedBalance[12]).toBeCloseTo(112000);
   });
 
@@ -122,42 +133,6 @@ describe("runForecast", () => {
     );
     expect(points[0].liabilities).toBe(0);
     expect(points[0].net).toBe(10000);
-  });
-
-  it("nets income − cashflow-out onto the cash bucket", () => {
-    const cash: ForecastCategory = {
-      id: "cash",
-      kind: "asset",
-      assetType: "CASH",
-    };
-    // Payslip EWMA: constant £3000/month to account 'acc-1'
-    const payslips = Array.from({ length: 10 }, (_, i) => ({
-      date: new Date(Date.UTC(2026, 2 - (i % 10), 15)),
-      toAccountId: "acc-1",
-      netAmount: 3000,
-    }));
-    const nonLiabilityBills = [
-      {
-        start: new Date(Date.UTC(2020, 0, 1)),
-        end: null,
-        frequency: "MONTHLY" as const,
-        collectionDate: "1",
-        amount: 2000,
-      },
-    ];
-    const { points, workings } = runForecast(
-      baseInputs({
-        categories: [cash],
-        startingBalance: new Map([[cash.id, 0]]),
-        payslips,
-        accountIds: ["acc-1"],
-        nonLiabilityBills,
-      }),
-    );
-    expect(workings.cashflow.monthlyIncome).toBeCloseTo(3000);
-    expect(workings.cashflow.monthlyBills).toBeCloseTo(2000);
-    expect(workings.cashflow.monthlyNetCashFlow).toBeCloseTo(1000);
-    expect(points[12].assets).toBeCloseTo(12000);
   });
 
   it("exposes per-category workings for a LOAN", () => {

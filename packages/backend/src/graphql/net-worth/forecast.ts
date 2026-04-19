@@ -1,5 +1,5 @@
 /**
- * GraphQL surface for the net-worth forecast. Accepts `years` (horizon) and `limit` (number of evenly-spaced points to return) so the server does monthly projection internally but thins the output down for the chart. Surfaces the engine's full "workings" breakdown so clients can show how the final number was produced rather than trusting a black box.
+ * GraphQL surface for the net-worth forecast. Accepts `years` (horizon) and `limit` (number of evenly-spaced points to return) so the server does monthly projection internally but thins the output down for the chart. Surfaces the engine's per-category "workings" so clients can show how the final number was produced rather than trusting a black box.
  */
 
 import { strict as assert } from "node:assert";
@@ -22,24 +22,6 @@ import {
   type NetWorthHistoryAssetBucket,
   type NetWorthHistoryPoint,
 } from "./history";
-
-/** Monthly cashflow component breakdown — the "spending side" of the forecast. Each amount is the engine's projected-constant monthly number and is held flat across the forecast horizon. @gqlType */
-export type NetWorthForecastCashflow = {
-  /** EWMA sum of recent payslip nets across every planning account. @gqlField */
-  monthlyIncome: Money;
-  /** Monthly-equivalent total across every scheduled bill not tagged to a liability. @gqlField */
-  monthlyBills: Money;
-  /** EWMA credit-card spend on cards paid from a cash account each month. @gqlField */
-  monthlyCreditCardPayoff: Money;
-  /** EWMA monthly loan repayment across every active loan. @gqlField */
-  monthlyLoanRepayment: Money;
-  /** EWMA monthly investment contribution across every `STOCK` / `PENSION` portfolio. @gqlField */
-  monthlyInvestmentContribution: Money;
-  /** Sum of all out-flow components. @gqlField */
-  monthlyCashOut: Money;
-  /** `monthlyIncome − monthlyCashOut`. May be negative. @gqlField */
-  monthlyNetCashFlow: Money;
-};
 
 /** Projection for a `PROPERTY` / `VEHICLE` asset with an assumed growth rate. The balance compounds monthly at `growthRate`. @gqlType */
 export class NetWorthForecastGrowthAsset {
@@ -73,7 +55,7 @@ export class NetWorthForecastPortfolio {
   ) {}
 }
 
-/** Projection for an asset category with no configured growth or return inputs — `OPTION`, `MISC`, and `PROPERTY` / `VEHICLE` / `STOCK` / `PENSION` categories that haven't yet got a growth rate or XIRR. The balance is held flat across the forecast horizon. @gqlType */
+/** Projection for an asset category that's held flat across the horizon — `CASH`, `OPTION`, `MISC`, and any `PROPERTY` / `VEHICLE` / `STOCK` / `PENSION` category without a growth rate or computable XIRR. The balance stays at today's value for the whole forecast. @gqlType */
 export class NetWorthForecastFlatAsset {
   readonly __typename = "NetWorthForecastFlatAsset" as const;
   constructor(
@@ -103,7 +85,7 @@ export class NetWorthForecastLoan {
   ) {}
 }
 
-/** Projection for a liability the engine holds flat: `MISC`, every `CREDIT_CARD` (assumed paid off in full each month — see README), and a `LOAN` that hasn't got enough history to derive a monthly repayment. The balance stays constant across the forecast horizon. @gqlType */
+/** Projection for a liability held flat across the horizon: `MISC`, every `CREDIT_CARD`, and any `LOAN` without enough history to derive a monthly repayment. @gqlType */
 export class NetWorthForecastFlatLiability {
   readonly __typename = "NetWorthForecastFlatLiability" as const;
   constructor(
@@ -140,13 +122,7 @@ export type NetWorthForecastCategory =
 
 /** Engine workings exposed so the client can show how the forecast was derived. @gqlType */
 export type NetWorthForecastWorkings = {
-  /** Aggregated cash balance across every `CASH` category at the starting point. @gqlField */
-  cashStart: Money;
-  /** Cash balance at each returned forecast point. @gqlField */
-  cashBalance: Money[];
-  /** Monthly cashflow component breakdown. @gqlField */
-  cashflow: NetWorthForecastCashflow;
-  /** Per-category projection, excluding `CASH` (which is rolled into `cashBalance`) and skipped liabilities. @gqlField */
+  /** Per-category projection. Skipped liabilities drop out entirely. @gqlField */
   categories: NetWorthForecastCategory[];
 };
 
@@ -200,10 +176,6 @@ export async function netWorthForecast(
     ),
     net: Money.fromMinorDenomination(points[i].net, HOME_CURRENCY),
   }));
-
-  const sampledCashBalance = sampledIndices.map((i) =>
-    Money.fromMinorDenomination(workings.cashBalance[i], HOME_CURRENCY),
-  );
 
   const loadedCategories = await loadCategoriesByIds(
     workings.categories.map((w) => w.categoryId),
@@ -266,10 +238,7 @@ export async function netWorthForecast(
           ),
         );
       } else {
-        // CREDIT_CARD + MISC + unqualified LOAN → held flat. Card
-        // spending feeds `workings.cashflow.monthlyCreditCardPayoff`
-        // instead of appearing as balance growth here (see README
-        // assumption about cards being paid off in full each month).
+        // CREDIT_CARD + MISC + unqualified LOAN → held flat.
         projectedCategories.push(
           new NetWorthForecastFlatLiability(
             loaded,
@@ -289,43 +258,9 @@ export async function netWorthForecast(
     }
   }
 
-  const cashflow: NetWorthForecastCashflow = {
-    monthlyIncome: Money.fromMinorDenomination(
-      workings.cashflow.monthlyIncome,
-      HOME_CURRENCY,
-    ),
-    monthlyBills: Money.fromMinorDenomination(
-      workings.cashflow.monthlyBills,
-      HOME_CURRENCY,
-    ),
-    monthlyCreditCardPayoff: Money.fromMinorDenomination(
-      workings.cashflow.monthlyCreditCardPayoff,
-      HOME_CURRENCY,
-    ),
-    monthlyLoanRepayment: Money.fromMinorDenomination(
-      workings.cashflow.monthlyLoanRepayment,
-      HOME_CURRENCY,
-    ),
-    monthlyInvestmentContribution: Money.fromMinorDenomination(
-      workings.cashflow.monthlyInvestmentContribution,
-      HOME_CURRENCY,
-    ),
-    monthlyCashOut: Money.fromMinorDenomination(
-      workings.cashflow.monthlyCashOut,
-      HOME_CURRENCY,
-    ),
-    monthlyNetCashFlow: Money.fromMinorDenomination(
-      workings.cashflow.monthlyNetCashFlow,
-      HOME_CURRENCY,
-    ),
-  };
-
   return {
     points: sampledPoints,
     workings: {
-      cashStart: Money.fromMinorDenomination(workings.cashStart, HOME_CURRENCY),
-      cashBalance: sampledCashBalance,
-      cashflow,
       categories: projectedCategories,
     },
   };

@@ -1,7 +1,16 @@
 import { useSuspenseQuery } from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
+import { Info } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { graphql } from "@/graphql";
 import { formatAccountingMoneyRounded } from "@/lib/format";
 
@@ -141,8 +150,11 @@ export function Home() {
       <section className="rounded-lg border bg-card p-5 shadow-sm">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
           <div>
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">
-              Net worth
+            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
+              <span>Net worth</span>
+              {data.netWorthForecast?.workings && (
+                <ForecastInfoButton workings={data.netWorthForecast.workings} />
+              )}
             </div>
             <div className="text-3xl font-semibold tabular-nums">
               {latest
@@ -353,10 +365,37 @@ export function Home() {
           />
         </div>
       </section>
-
-      {data.netWorthForecast?.workings && (
-        <ForecastWorkings data={data.netWorthForecast.workings} />
-      )}
     </main>
+  );
+}
+
+function ForecastInfoButton({
+  workings,
+}: {
+  workings: React.ComponentProps<typeof ForecastWorkings>["data"];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex cursor-pointer items-center rounded-sm text-muted-foreground hover:text-foreground"
+        aria-label="Forecast workings"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Forecast workings</DialogTitle>
+            <DialogDescription>
+              How the projection is built from your current categories.
+            </DialogDescription>
+          </DialogHeader>
+          <ForecastWorkings data={workings} />
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
