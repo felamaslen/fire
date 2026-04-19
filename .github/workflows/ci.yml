@@ -10,22 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Typecheck + lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .tool-versions
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm exec eslint .
-
-  backend-test:
-    name: Backend tests
+  ci:
+    name: Typecheck, lint, and backend tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -51,4 +37,8 @@ jobs:
           node-version-file: .tool-versions
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Run the cheap checks first so a failure short-circuits the job before
+      # the (slower) backend test suite runs against the Postgres service.
+      - run: pnpm typecheck
+      - run: pnpm exec eslint .
       - run: pnpm --filter backend test
