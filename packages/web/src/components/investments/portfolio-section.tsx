@@ -1,57 +1,91 @@
-import { useSuspenseQuery } from "@apollo/client/react";
-import { Suspense, useEffect, useState } from "react";
+import { useQuery } from "@apollo/client/react";
+import { useRef } from "react";
 
-import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/cn";
 
-import { graphql, type ResultOf } from "../../graphql";
+import { graphql, readFragment } from "../../graphql";
+import {
+  type CandleSeries,
+  type LineSeries,
+  PortfolioChart,
+  PortfolioChartLegend,
+} from "./portfolio-chart";
 
-import { PortfolioChart, PortfolioChartLegend } from "./portfolio-chart";
-
-const PortfolioChartDocument = graphql(`
-  query PortfolioChart(
-    $period: PortfolioTimePeriod!
-    $length: Int
-    $candlestick: Boolean!
-  ) {
-    portfolio {
-      id
+export const PortfolioChartPortfolioFragment = graphql(`
+  fragment PortfolioChartPortfolio on Portfolio {
+    id
+    currency
+    totalValue {
+      amount
       currency
-      totalValue { amount currency }
-      totalGain { amount currency }
-      percentGain
-      timeseries(period: $period, length: $length) @skip(if: $candlestick) {
-        currency
-        initialDate
-        points { x y }
-      }
-      candlestick(period: $period, length: $length) @include(if: $candlestick) {
-        currency
-        initialDate
-        points { x from to lo hi }
+    }
+    totalGain {
+      amount
+      currency
+    }
+    percentGain
+    timeseries(period: $period, length: $length) @skip(if: $candlestick) {
+      currency
+      initialDate
+      points {
+        x
+        y
       }
     }
-    portfolios @skip(if: $candlestick) {
-      edges {
-        node {
-          id
-          investment { id name }
-          timeseries(period: $period, length: $length) {
-            initialDate
-            points { x y }
-          }
-        }
+    candlestick(period: $period, length: $length) @include(if: $candlestick) {
+      currency
+      initialDate
+      points {
+        x
+        from
+        to
+        lo
+        hi
       }
     }
   }
 `);
+
+const PortfolioChartDocument = graphql(
+  `
+    query PortfolioChart(
+      $period: PortfolioTimePeriod!
+      $length: Int
+      $candlestick: Boolean!
+    ) {
+      portfolio {
+        ...PortfolioChartPortfolio
+      }
+      portfolios @skip(if: $candlestick) {
+        edges {
+          node {
+            id
+            investment {
+              id
+              name
+            }
+            timeseries(period: $period, length: $length) {
+              initialDate
+              points {
+                x
+                y
+              }
+            }
+          }
+        }
+      }
+    }
+  `,
+  [PortfolioChartPortfolioFragment],
+);
 
 type Period =
   | { period: "YEAR"; length: number; label: string }
   | { period: "MONTH"; length: number; label: string }
   | { period: "YTD"; length: 0; label: string };
 
-const PERIODS: Period[] = [
+export const PORTFOLIO_PERIODS: Period[] = [
   { period: "YEAR", length: 5, label: "5y" },
   { period: "YEAR", length: 3, label: "3y" },
   { period: "YEAR", length: 1, label: "1y" },
@@ -82,55 +116,31 @@ const STACK_COLORS = [
   "#be185d",
 ];
 
-type PortfolioChartSettings = {
+export type PortfolioChartSettings = {
   periodIdx: number;
   mode: "line" | "candlestick";
   stack: boolean;
 };
 
-const STORAGE_KEY = "fire.investments.portfolioChart";
-
-function loadSettings(): PortfolioChartSettings {
-  if (typeof window === "undefined") {
-    return { periodIdx: 0, mode: "line", stack: false };
-  }
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { periodIdx: 0, mode: "line", stack: false };
-    const parsed = JSON.parse(raw) as Partial<PortfolioChartSettings>;
-    return {
-      periodIdx:
-        typeof parsed.periodIdx === "number" &&
-        parsed.periodIdx >= 0 &&
-        parsed.periodIdx < PERIODS.length
-          ? parsed.periodIdx
-          : 0,
-      mode: parsed.mode === "candlestick" ? "candlestick" : "line",
-      stack: parsed.stack === true,
-    };
-  } catch {
-    return { periodIdx: 0, mode: "line", stack: false };
-  }
-}
-
-export function PortfolioSection() {
-  const [settings, setSettings] = useState<PortfolioChartSettings>(loadSettings);
+export function PortfolioSection({
+  settings,
+  onChange,
+}: {
+  settings: PortfolioChartSettings;
+  onChange: (next: PortfolioChartSettings) => void;
+}) {
   const { periodIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
-    setSettings((prev) => ({ ...prev, ...patch }));
+    onChange({ ...settings, ...patch });
 
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  }, [settings]);
-
-  const p = PERIODS[periodIdx];
+  const p = PORTFOLIO_PERIODS[periodIdx];
 
   return (
     <section className="space-y-3 rounded-lg border p-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Portfolio</h2>
         <div className="flex flex-wrap gap-1 text-xs">
-          {PERIODS.map((per, i) => (
+          {PORTFOLIO_PERIODS.map((per, i) => (
             <Button
               key={per.label}
               size="sm"
@@ -165,14 +175,12 @@ export function PortfolioSection() {
           </Button>
         </div>
       </header>
-      <Suspense fallback={<Spinner />}>
-        <PortfolioChartLoader
-          period={p.period}
-          length={"length" in p ? p.length : null}
-          candlestick={mode === "candlestick"}
-          stack={stack}
-        />
-      </Suspense>
+      <PortfolioChartLoader
+        period={p.period}
+        length={"length" in p ? p.length : null}
+        candlestick={mode === "candlestick"}
+        stack={stack}
+      />
     </section>
   );
 }
@@ -188,14 +196,17 @@ function PortfolioChartLoader({
   candlestick: boolean;
   stack: boolean;
 }) {
-  const { data } = useSuspenseQuery(PortfolioChartDocument, {
+  const { data, loading } = useQuery(PortfolioChartDocument, {
     variables: { period, length, candlestick },
+    notifyOnNetworkStatusChange: true,
   });
 
-  const portfolio = data.portfolio;
-  if (!portfolio) return null;
+  const rawPortfolio = data?.portfolio;
+  const portfolio = rawPortfolio
+    ? readFragment(PortfolioChartPortfolioFragment, rawPortfolio)
+    : null;
 
-  const perInvestmentSeries = (data.portfolios?.edges ?? []).flatMap(
+  const perInvestmentSeries = (data?.portfolios?.edges ?? []).flatMap(
     (edge, i) => {
       const ts = edge.node.timeseries;
       if (!ts) return [];
@@ -213,7 +224,7 @@ function PortfolioChartLoader({
   const { lines, stackInitialDate } = stack
     ? stackLines(perInvestmentSeries)
     : {
-        lines: portfolio.timeseries
+        lines: portfolio?.timeseries
           ? [
               {
                 label: "Portfolio",
@@ -222,34 +233,69 @@ function PortfolioChartLoader({
               },
             ]
           : [],
-        stackInitialDate: portfolio.timeseries?.initialDate ?? null,
+        stackInitialDate: portfolio?.timeseries?.initialDate ?? null,
       };
 
-  const candles = portfolio.candlestick
+  const candles = portfolio?.candlestick
     ? { points: portfolio.candlestick.points }
     : null;
 
-  const initialDate =
+  const initialDateStr =
     stackInitialDate ??
-    portfolio.timeseries?.initialDate ??
-    portfolio.candlestick?.initialDate;
+    portfolio?.timeseries?.initialDate ??
+    portfolio?.candlestick?.initialDate ??
+    null;
+
+  // Build the current render; if it has no content (initial load before
+  // cache, or the current mode hasn't fetched yet), fall back to whatever
+  // we last successfully rendered — dimmed. This removes the empty-state
+  // flash when flipping line↔candle or arriving on the page.
+  const hasContent = candlestick
+    ? (candles?.points.length ?? 0) > 0
+    : lines.length > 0;
+  type ChartRender = {
+    lines?: LineSeries[];
+    candles?: CandleSeries | null;
+    currency: string;
+    initialDate: Date | undefined;
+    stacked: boolean;
+    showLegend: boolean;
+  };
+  const lastRef = useRef<ChartRender | null>(null);
+  const current: ChartRender | null = hasContent
+    ? {
+        lines: candlestick ? undefined : lines,
+        candles: candlestick ? candles : null,
+        currency: portfolio?.currency ?? "GBP",
+        initialDate:
+          typeof initialDateStr === "string"
+            ? new Date(`${initialDateStr}T00:00:00Z`)
+            : undefined,
+        stacked: !candlestick && stack,
+        showLegend: !candlestick && stack && lines.length > 1,
+      }
+    : null;
+  if (current) lastRef.current = current;
+  const render = current ?? lastRef.current;
+  if (!render) return null;
 
   return (
-    <div className="space-y-2">
+    <div
+      className={cn(
+        "space-y-2 transition-opacity",
+        loading && "pointer-events-none opacity-50",
+      )}
+    >
       <PortfolioChart
-        lines={candlestick ? undefined : lines}
-        candles={candlestick ? candles : null}
-        currency={portfolio.currency}
-        initialDate={
-          typeof initialDate === "string"
-            ? new Date(`${initialDate}T00:00:00Z`)
-            : undefined
-        }
-        stacked={!candlestick && stack}
+        lines={render.lines}
+        candles={render.candles}
+        currency={render.currency}
+        initialDate={render.initialDate}
+        stacked={render.stacked}
         className="w-full"
       />
-      {!candlestick && stack && lines.length > 1 && (
-        <PortfolioChartLegend lines={lines} />
+      {render.showLegend && render.lines && (
+        <PortfolioChartLegend lines={render.lines} />
       )}
     </div>
   );
@@ -294,9 +340,7 @@ function stackLines(series: SeriesIn[]): {
     new Date(`${s.initialDate}T00:00:00Z`).getTime(),
   );
   const globalInitialMs = Math.min(...initialMs);
-  const stackInitialDate = new Date(globalInitialMs)
-    .toISOString()
-    .slice(0, 10);
+  const stackInitialDate = new Date(globalInitialMs).toISOString().slice(0, 10);
 
   // Re-anchor each series to `globalInitialMs`: shift its x by the number of
   // days between its own initialDate and the shared one.
@@ -343,5 +387,3 @@ function stackLines(series: SeriesIn[]): {
 
   return { lines, stackInitialDate };
 }
-
-export type PortfolioSummary = ResultOf<typeof PortfolioChartDocument>;

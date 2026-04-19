@@ -4,31 +4,40 @@ import { useEffect, useRef, useState } from "react";
 import { Figure, FigureDocument } from "@/components/figure";
 import { cn } from "@/lib/cn";
 
-import { graphql } from "../../graphql";
+import { graphql, readFragment } from "../../graphql";
+
+export const PortfolioHeadlineFragment = graphql(
+  `
+    fragment PortfolioHeadline on Portfolio {
+      id
+      currency
+      totalValue {
+        ...Figure
+      }
+      totalGain {
+        amount
+        ...Figure
+      }
+      xirr(skipLive: $skipLive)
+      dailyGainValue(skipLive: $skipLive) {
+        amount
+        ...Figure
+      }
+      dailyGainPercent(skipLive: $skipLive)
+    }
+  `,
+  [FigureDocument],
+);
 
 const PortfolioHeadlineDocument = graphql(
   `
     query PortfolioHeadline($skipLive: Boolean!) {
       portfolio {
-        id
-        currency
-        totalValue {
-          ...Figure
-        }
-        totalGain {
-          amount
-          ...Figure
-        }
-        xirr(skipLive: $skipLive)
-        dailyGainValue(skipLive: $skipLive) {
-          amount
-          ...Figure
-        }
-        dailyGainPercent(skipLive: $skipLive)
+        ...PortfolioHeadline
       }
     }
   `,
-  [FigureDocument],
+  [PortfolioHeadlineFragment],
 );
 
 type FlashDirection = "up" | "down" | null;
@@ -101,7 +110,8 @@ export function PortfolioHeadline() {
   });
   // Keep the previous render's values mounted while the refetch (e.g. when we
   // flip `skipLive`) is in flight — otherwise the headline briefly empties.
-  const portfolio = (data ?? previousData)?.portfolio;
+  const raw = (data ?? previousData)?.portfolio;
+  const portfolio = raw ? readFragment(PortfolioHeadlineFragment, raw) : null;
   const flash = useDailyGainFlash(portfolio?.dailyGainValue?.amount, skipLive);
 
   return (

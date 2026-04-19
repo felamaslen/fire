@@ -1,4 +1,4 @@
-import { useMutation, useSuspenseQuery } from "@apollo/client/react";
+import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
 import {
   createFileRoute,
   Link,
@@ -9,16 +9,22 @@ import { ArrowDown, ArrowUp, ExternalLink, Pencil, Plus } from "lucide-react";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { cn } from "@/lib/cn";
-
 import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
 import {
   InvestmentForm,
   InvestmentFormDocument,
 } from "@/components/investments/investment-form";
-import { PortfolioHeadline } from "@/components/investments/portfolio-headline";
-import { PortfolioSection } from "@/components/investments/portfolio-section";
+import {
+  PortfolioHeadline,
+  PortfolioHeadlineFragment,
+} from "@/components/investments/portfolio-headline";
+import {
+  PORTFOLIO_PERIODS,
+  PortfolioChartPortfolioFragment,
+  type PortfolioChartSettings,
+  PortfolioSection,
+} from "@/components/investments/portfolio-section";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +48,7 @@ import {
   type ResultOf,
   type VariablesOf,
 } from "@/graphql";
+import { cn } from "@/lib/cn";
 
 const InvestmentRowDocument = graphql(
   `
@@ -76,9 +83,9 @@ const InvestmentRowDocument = graphql(
   [FigureDocument, InvestmentFormDocument],
 );
 
-export const InvestmentsPageDocument = graphql(
+export const InvestmentsListDocument = graphql(
   `
-    query InvestmentsPage($first: Int, $sort: InvestmentSort) {
+    query InvestmentsList($first: Int, $sort: InvestmentSort) {
       investments(first: $first, sort: $sort) {
         edges {
           node {
@@ -93,6 +100,61 @@ export const InvestmentsPageDocument = graphql(
   [InvestmentRowDocument, InvestmentFormDocument],
 );
 
+// Combined document fired once on initial page load — prewarms the Apollo
+// cache so each child's own `useQuery` renders synchronously without a
+// per-widget spinner. Each child keeps its own document for refreshes
+// (headline polling, chart period/mode changes, list sort changes).
+const InvestmentsPageDocument = graphql(
+  `
+    query InvestmentsPage(
+      $first: Int
+      $sort: InvestmentSort
+      $period: PortfolioTimePeriod!
+      $length: Int
+      $candlestick: Boolean!
+      $skipLive: Boolean!
+    ) {
+      investments(first: $first, sort: $sort) {
+        edges {
+          node {
+            id
+            ...InvestmentRow
+            ...InvestmentForm
+          }
+        }
+      }
+      portfolio {
+        ...PortfolioHeadline
+        ...PortfolioChartPortfolio
+      }
+      portfolios @skip(if: $candlestick) {
+        edges {
+          node {
+            id
+            investment {
+              id
+              name
+            }
+            timeseries(period: $period, length: $length) {
+              initialDate
+              points {
+                x
+                y
+              }
+            }
+          }
+        }
+      }
+    }
+  `,
+  [
+    InvestmentRowDocument,
+    InvestmentFormDocument,
+    PortfolioHeadlineFragment,
+    PortfolioChartPortfolioFragment,
+  ],
+);
+
 const InvestmentDeleteDocument = graphql(`
   mutation InvestmentDelete($id: ID!) {
     investmentDelete(id: $id) {
@@ -102,7 +164,7 @@ const InvestmentDeleteDocument = graphql(`
 `);
 
 type InvestmentRowNode = NonNullable<
-  ResultOf<typeof InvestmentsPageDocument>["investments"]
+  ResultOf<typeof InvestmentsListDocument>["investments"]
 >["edges"][number]["node"];
 
 export const Route = createFileRoute("/investments")({
@@ -110,7 +172,7 @@ export const Route = createFileRoute("/investments")({
 });
 
 export const investmentsRefetch = [
-  { query: InvestmentsPageDocument, variables: { first: 100 } },
+  { query: InvestmentsListDocument, variables: { first: 100 } },
 ];
 
 type SortKind = "createdAt" | "value" | "gainAbs" | "gainPercent";
@@ -119,7 +181,7 @@ type SortDirection = "ASC" | "DESC";
 function toSortInput(
   kind: SortKind,
   dir: SortDirection,
-): VariablesOf<typeof InvestmentsPageDocument>["sort"] {
+): VariablesOf<typeof InvestmentsListDocument>["sort"] {
   if (kind === "createdAt") return null;
   if (kind === "value") return { value: dir };
   if (kind === "gainAbs") return { gainAbs: dir };
@@ -135,30 +197,121 @@ function InvestmentsDialogLayout() {
           ← Home
         </Link>
       </header>
-      <Suspense fallback={null}>
-        <PortfolioHeadline />
-      </Suspense>
-      <PortfolioSection />
       <Suspense fallback={<Spinner />}>
-        <InvestmentsList />
+        <InvestmentsPageContent />
       </Suspense>
       <Outlet />
     </main>
   );
 }
 
-function InvestmentsList() {
-  const [sort, setSort] = useState<{ kind: SortKind; dir: SortDirection }>({
-    kind: "createdAt",
-    dir: "DESC",
+type SortState = { kind: SortKind; dir: SortDirection };
+
+const CHART_STORAGE_KEY = "fire.investments.portfolioChart";
+const SORT_STORAGE_KEY = "fire.investments.sort";
+
+function loadChartSettings(): PortfolioChartSettings {
+  if (typeof window === "undefined") {
+    return { periodIdx: 0, mode: "line", stack: false };
+  }
+  try {
+    const raw = window.localStorage.getItem(CHART_STORAGE_KEY);
+    if (!raw) return { periodIdx: 0, mode: "line", stack: false };
+    const parsed = JSON.parse(raw) as Partial<PortfolioChartSettings>;
+    return {
+      periodIdx:
+        typeof parsed.periodIdx === "number" &&
+        parsed.periodIdx >= 0 &&
+        parsed.periodIdx < PORTFOLIO_PERIODS.length
+          ? parsed.periodIdx
+          : 0,
+      mode: parsed.mode === "candlestick" ? "candlestick" : "line",
+      stack: parsed.stack === true,
+    };
+  } catch {
+    return { periodIdx: 0, mode: "line", stack: false };
+  }
+}
+
+function loadSort(): SortState {
+  if (typeof window === "undefined") return { kind: "createdAt", dir: "DESC" };
+  try {
+    const raw = window.localStorage.getItem(SORT_STORAGE_KEY);
+    if (!raw) return { kind: "createdAt", dir: "DESC" };
+    const parsed = JSON.parse(raw) as Partial<SortState>;
+    const kind: SortKind =
+      parsed.kind === "value" ||
+      parsed.kind === "gainAbs" ||
+      parsed.kind === "gainPercent"
+        ? parsed.kind
+        : "createdAt";
+    const dir: SortDirection = parsed.dir === "ASC" ? "ASC" : "DESC";
+    return { kind, dir };
+  } catch {
+    return { kind: "createdAt", dir: "DESC" };
+  }
+}
+
+// The page component owns every setting that drives the combined initial
+// query (sort, chart period/length, candlestick). It reads localStorage
+// once on mount to build the suspense-query variables, and persists later
+// changes. Children receive state via props; their own non-suspense
+// `useQuery` calls match the cache-prewarmed variables on first render.
+function InvestmentsPageContent() {
+  const [chart, setChart] = useState<PortfolioChartSettings>(loadChartSettings);
+  const [sort, setSort] = useState<SortState>(loadSort);
+
+  useEffect(() => {
+    window.localStorage.setItem(CHART_STORAGE_KEY, JSON.stringify(chart));
+  }, [chart]);
+  useEffect(() => {
+    window.localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(sort));
+  }, [sort]);
+
+  // Freeze the initial variables so later setChart / setSort calls don't
+  // re-suspend the page — children refetch via their own `useQuery`.
+  const [initialVars] = useState(() => {
+    const initialChart = loadChartSettings();
+    const initialSort = loadSort();
+    const p = PORTFOLIO_PERIODS[initialChart.periodIdx];
+    return {
+      first: 100,
+      sort: toSortInput(initialSort.kind, initialSort.dir),
+      period: p.period,
+      length: "length" in p ? p.length : null,
+      candlestick: initialChart.mode === "candlestick",
+      skipLive: true,
+    };
   });
+  useSuspenseQuery(InvestmentsPageDocument, { variables: initialVars });
+
+  return (
+    <>
+      <PortfolioHeadline />
+      <PortfolioSection settings={chart} onChange={setChart} />
+      <InvestmentsList sort={sort} onSortChange={setSort} />
+    </>
+  );
+}
+
+function InvestmentsList({
+  sort,
+  onSortChange,
+}: {
+  sort: SortState;
+  onSortChange: (next: SortState) => void;
+}) {
+  const setSort = (updater: (prev: SortState) => SortState) =>
+    onSortChange(updater(sort));
   const [hideSold, setHideSold] = useHideSold();
 
-  const { data } = useSuspenseQuery(InvestmentsPageDocument, {
+  const { data, previousData, loading } = useQuery(InvestmentsListDocument, {
     variables: { first: 100, sort: toSortInput(sort.kind, sort.dir) },
+    notifyOnNetworkStatusChange: true,
   });
+  const current = data ?? previousData;
   const allRows: InvestmentRowNode[] =
-    data.investments?.edges.map((e) => e.node) ?? [];
+    current?.investments?.edges.map((e) => e.node) ?? [];
   const rows = hideSold
     ? allRows.filter((r) => {
         const u = readFragment(InvestmentRowDocument, r).position.units;
@@ -178,7 +331,12 @@ function InvestmentsList() {
   };
 
   return (
-    <div className="space-y-3">
+    <div
+      className={cn(
+        "space-y-3 transition-opacity",
+        loading && "pointer-events-none opacity-50",
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-sm">
           <input
