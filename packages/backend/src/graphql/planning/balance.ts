@@ -24,6 +24,7 @@ import {
   PlanningYearUKTaxRates,
 } from "@/db/schema/planning";
 import { UnreachableCaseError } from "@/errors";
+import { ewma } from "@/forecast/growth";
 
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
@@ -359,19 +360,8 @@ async function loadCreditCardPredictions(
       liabilityId: l.id,
       name: l.name,
       billedFromAccountId: l.billedFromAccountId as string,
-      ewmaMinor: exponentialWeightedAverage(byLiability.get(l.id) ?? []),
+      ewmaMinor: Math.round(ewma(byLiability.get(l.id) ?? [])),
     }));
-}
-
-/** EWMA over values ordered most-recent-first. Uses α = 2/(n+1) (Pandas default). Returns 0 when `values` is empty. */
-function exponentialWeightedAverage(values: number[]): number {
-  if (values.length === 0) return 0;
-  const alpha = 2 / (values.length + 1);
-  let s = values[values.length - 1];
-  for (let i = values.length - 2; i >= 0; i--) {
-    s = alpha * values[i] + (1 - alpha) * s;
-  }
-  return Math.round(s);
 }
 
 /** Pure in-memory filter: the transactions visible to `(assetId, monthDate)` given a pre-loaded year bundle. */
