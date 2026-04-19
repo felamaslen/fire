@@ -35,9 +35,9 @@ A personal net-worth tracker. Records assets, investments, and month-by-month ca
 ## Dev setup
 
 ### Prerequisites
-- Node ≥ 22
+- Node ≥ 24 (see `.tool-versions`)
 - `pnpm` (repo pins a version via `packageManager`)
-- Docker (for Postgres + Jaeger)
+- Docker (runs Postgres, Jaeger, and the backend)
 
 ### First-time bootstrap
 
@@ -45,39 +45,37 @@ A personal net-worth tracker. Records assets, investments, and month-by-month ca
 pnpm install
 ```
 
-Start the dependent services (Postgres and Jaeger):
+Start the backing services (Postgres, Jaeger) and the backend itself:
 
 ```bash
 cd packages/backend
 docker compose up -d
 ```
 
-Create a `.env` in `packages/backend`:
+This builds and runs the backend in a container against the containerised Postgres and Jaeger. The backend's source tree is mounted from the host, so `vite-node` hot-reloads on file changes without rebuilding the image.
 
-```
-DATABASE_URL=postgres://fire:fire@localhost:5433/fire
-UPLOADS_DIR=./uploads
-```
-
-Apply migrations:
+Apply migrations (against the containerised Postgres, exposed on `localhost:5433`):
 
 ```bash
-pnpm --filter backend db:migrate
+DATABASE_URL=postgres://fire:fire@localhost:5433/fire \
+  pnpm --filter backend db:migrate
 ```
 
 ### Running
 
-Backend (`:4000`, GraphQL at `/graphql`):
+The backend (`:4000`, GraphQL at `/graphql`) runs inside docker compose. Tail its logs with:
 
 ```bash
-pnpm --filter backend dev
+docker compose -f packages/backend/docker-compose.yml logs -f backend
 ```
 
-Web app (`:4001`):
+Web app (`:4001`) runs on the host:
 
 ```bash
 pnpm --filter web dev
 ```
+
+> Running the backend on the host instead of in docker is still possible (`pnpm --filter backend dev`) — just stop the container first and point `DATABASE_URL` at `localhost:5433`. The `OTEL_*` defaults in `src/env.ts` already target the containerised Jaeger.
 
 With both running, regenerate the frontend's typed GraphQL from the backend's live schema whenever resolvers change:
 
