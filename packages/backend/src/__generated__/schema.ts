@@ -1154,11 +1154,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const NetWorthHistoryAssetBucketType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthHistoryAssetBucket",
-        description: "One bucket of assets at a single history point, grouped by asset `type`.",
+        description: "One bucket at a single history point, grouped by asset `type`.",
         fields() {
             return {
                 amount: {
-                    description: "Total value of all assets of this `type` at this point, converted into the home currency.",
+                    description: "Aggregated amount for this bucket at this point, converted into the home currency.",
                     name: "amount",
                     type: new GraphQLNonNull(MoneyType)
                 },
@@ -1175,8 +1175,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         description: "A single point on the net-worth history timeline \u2014 one entry per recorded month.",
         fields() {
             return {
+                assets: {
+                    description: "Gross assets total at this point, in the home currency.",
+                    name: "assets",
+                    type: new GraphQLNonNull(MoneyType)
+                },
                 assetsByType: {
-                    description: "Assets at this point, grouped by asset type. Empty buckets are omitted.",
+                    description: "Gross assets at this point, grouped by asset type. Empty buckets are omitted.",
                     name: "assetsByType",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthHistoryAssetBucketType)))
                 },
@@ -1186,12 +1191,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(DateType)
                 },
                 liabilities: {
-                    description: "Total liabilities at this point (positive magnitude), converted into the home currency. Liabilities marked `skip` are excluded.",
+                    description: "Total liabilities at this point (positive magnitude), in the home currency. Liabilities marked `skip` are excluded.",
                     name: "liabilities",
                     type: new GraphQLNonNull(MoneyType)
                 },
                 net: {
-                    description: "Net worth at this point: sum of `assetsByType` minus `liabilities`.",
+                    description: "Net worth at this point: `assets \u2212 liabilities`. May be negative when debts exceed assets.",
                     name: "net",
                     type: new GraphQLNonNull(MoneyType)
                 }
@@ -1953,7 +1958,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 netWorthHistory: {
-                    description: "Full history of net-worth snapshots, oldest first, with assets split by category type and liabilities aggregated. All amounts are converted into the home currency via each entry's own captured currency rates.",
+                    description: "Full history of net-worth snapshots, oldest first. Each point exposes gross assets split by type plus the overall assets / liabilities / net totals. All amounts are converted into the home currency via each entry's own captured currency rates.",
                     name: "netWorthHistory",
                     type: new GraphQLList(new GraphQLNonNull(NetWorthHistoryPointType)),
                     resolve() {

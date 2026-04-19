@@ -178,7 +178,10 @@ async function loadTotals(entryId: string): Promise<EntryTotals> {
     const homeMinor = convertToHomeMinor(row.amount, row.currency, rateMap);
     if (row.categoryLiabilityId) {
       if (row.liabilitySkip) continue;
-      liabilitiesMinor += homeMinor;
+      // Liability value amounts are stored signed (typically negative — "you
+      // owe £X" is entered as -X). We surface liabilities as a positive
+      // magnitude, so take abs here and subtract in `totalNet`.
+      liabilitiesMinor += Math.abs(homeMinor);
     } else {
       assetsMinor += homeMinor;
     }

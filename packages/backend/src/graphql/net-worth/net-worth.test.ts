@@ -842,6 +842,67 @@ describe("entries", () => {
       totalNet: { amount: 5800, currency: "GBP" },
     });
   });
+
+  it("treats signed liability amounts as magnitudes so net worth stays assets − liabilities", async () => {
+    // Real data stores liability balances signed (typically negative — "you
+    // owe £X" entered as -X). Regardless of sign, the aggregate totals
+    // should report a positive liability magnitude and subtract it from
+    // assets when computing net worth.
+    const liabilityId = (
+      await runGql(
+        graphql(`
+          mutation {
+            netWorthCategoryCreate(
+              input: {
+                liability: { name: "Mortgage", type: LOAN, interestRate: 5 }
+              }
+            ) {
+              id
+            }
+          }
+        `),
+        {},
+      )
+    ).netWorthCategoryCreate.id;
+
+    const create = graphql(`
+      mutation ($a: ID!, $l: ID!) {
+        netWorthCreate(
+          date: "2026-04-15"
+          values: [
+            {
+              asset: {
+                categoryId: $a
+                amounts: [{ amount: 500000, currency: "GBP" }]
+              }
+            }
+            {
+              liability: {
+                categoryId: $l
+                amounts: [{ amount: -300000, currency: "GBP" }]
+              }
+            }
+          ]
+        ) {
+          totalAssets {
+            amount
+          }
+          totalLiabilities {
+            amount
+          }
+          totalNet {
+            amount
+          }
+        }
+      }
+    `);
+    const data = await runGql(create, { a: assetId, l: liabilityId });
+    expect(data.netWorthCreate).toMatchObject({
+      totalAssets: { amount: 500000 },
+      totalLiabilities: { amount: 300000 },
+      totalNet: { amount: 200000 },
+    });
+  });
 });
 
 describe("netWorthHistory", () => {
@@ -952,8 +1013,10 @@ describe("netWorthHistory", () => {
               type
               amount {
                 amount
-                currency
               }
+            }
+            assets {
+              amount
             }
             liabilities {
               amount
@@ -970,25 +1033,25 @@ describe("netWorthHistory", () => {
     expect(data.netWorthHistory).toMatchInlineSnapshot(`
       [
         {
+          "assets": {
+            "amount": 3500,
+          },
           "assetsByType": [
             {
               "amount": {
                 "amount": 1000,
-                "currency": "GBP",
               },
               "type": "CASH",
             },
             {
               "amount": {
                 "amount": 500,
-                "currency": "GBP",
               },
               "type": "OPTION",
             },
             {
               "amount": {
                 "amount": 2000,
-                "currency": "GBP",
               },
               "type": "STOCK",
             },
@@ -1002,25 +1065,25 @@ describe("netWorthHistory", () => {
           },
         },
         {
+          "assets": {
+            "amount": 4600,
+          },
           "assetsByType": [
             {
               "amount": {
                 "amount": 1500,
-                "currency": "GBP",
               },
               "type": "CASH",
             },
             {
               "amount": {
                 "amount": 600,
-                "currency": "GBP",
               },
               "type": "OPTION",
             },
             {
               "amount": {
                 "amount": 2500,
-                "currency": "GBP",
               },
               "type": "STOCK",
             },

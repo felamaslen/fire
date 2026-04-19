@@ -16,11 +16,11 @@ import { Money } from "../money";
 import type { NetWorthAssetType } from "./categories";
 import { buildRateToHome, convertToHomeMinor } from "./index";
 
-/** One bucket of assets at a single history point, grouped by asset `type`. @gqlType */
+/** One bucket at a single history point, grouped by asset `type`. @gqlType */
 export type NetWorthHistoryAssetBucket = {
   /** Asset category type this bucket aggregates. @gqlField */
   type: NetWorthAssetType;
-  /** Total value of all assets of this `type` at this point, converted into the home currency. @gqlField */
+  /** Aggregated amount for this bucket at this point, converted into the home currency. @gqlField */
   amount: Money;
 };
 
@@ -28,16 +28,18 @@ export type NetWorthHistoryAssetBucket = {
 export type NetWorthHistoryPoint = {
   /** Any calendar date inside the target month. @gqlField */
   date: CalendarDate;
-  /** Assets at this point, grouped by asset type. Empty buckets are omitted. @gqlField */
+  /** Gross assets at this point, grouped by asset type. Empty buckets are omitted. @gqlField */
   assetsByType: NetWorthHistoryAssetBucket[];
-  /** Total liabilities at this point (positive magnitude), converted into the home currency. Liabilities marked `skip` are excluded. @gqlField */
+  /** Gross assets total at this point, in the home currency. @gqlField */
+  assets: Money;
+  /** Total liabilities at this point (positive magnitude), in the home currency. Liabilities marked `skip` are excluded. @gqlField */
   liabilities: Money;
-  /** Net worth at this point: sum of `assetsByType` minus `liabilities`. @gqlField */
+  /** Net worth at this point: `assets − liabilities`. May be negative when debts exceed assets. @gqlField */
   net: Money;
 };
 
 /**
- * Full history of net-worth snapshots, oldest first, with assets split by category type and liabilities aggregated. All amounts are converted into the home currency via each entry's own captured currency rates.
+ * Full history of net-worth snapshots, oldest first. Each point exposes gross assets split by type plus the overall assets / liabilities / net totals. All amounts are converted into the home currency via each entry's own captured currency rates.
  *
  * @gqlQueryField
  * @gqlAnnotate semanticNonNull
@@ -103,36 +105,44 @@ export async function netWorthHistory(): Promise<
   const out: NetWorthHistoryPoint[] = [];
   for (const e of entries) {
     const rateMap = buildRateToHome(ratesByEntry.get(e.id) ?? []);
-    const byType = new Map<NetWorthAssetType, number>();
-    let liabMinor = 0;
+    const assetsByType = new Map<NetWorthAssetType, number>();
+    let assetsTotal = 0;
+    let liabTotal = 0;
 
     for (const row of valuesByEntry.get(e.id) ?? []) {
       if (row.amount == null || row.currency == null) continue;
       const homeMinor = convertToHomeMinor(row.amount, row.currency, rateMap);
+
       if (row.categoryLiabilityId) {
         if (row.liabilitySkip) continue;
-        liabMinor += homeMinor;
+        // Liability amounts are stored signed (typically negative); surface
+        // as a positive magnitude so `net = assets - liabilities` is correct.
+        liabTotal += Math.abs(homeMinor);
       } else if (row.categoryOptionId) {
-        byType.set("OPTION", (byType.get("OPTION") ?? 0) + homeMinor);
+        assetsByType.set(
+          "OPTION",
+          (assetsByType.get("OPTION") ?? 0) + homeMinor,
+        );
+        assetsTotal += homeMinor;
       } else if (row.categoryAssetId && row.assetType) {
         const t = row.assetType as NetWorthAssetType;
-        byType.set(t, (byType.get(t) ?? 0) + homeMinor);
+        assetsByType.set(t, (assetsByType.get(t) ?? 0) + homeMinor);
+        assetsTotal += homeMinor;
       }
     }
 
-    const assetsByType: NetWorthHistoryAssetBucket[] = [...byType.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([type, amt]) => ({
-        type,
-        amount: Money.fromMinorDenomination(amt, HOME_CURRENCY),
-      }));
-    const assetsTotal = [...byType.values()].reduce((a, b) => a + b, 0);
-
     out.push({
       date: e.date,
-      assetsByType,
-      liabilities: Money.fromMinorDenomination(liabMinor, HOME_CURRENCY),
-      net: Money.fromMinorDenomination(assetsTotal - liabMinor, HOME_CURRENCY),
+      assetsByType: [...assetsByType.entries()]
+        .filter(([, amt]) => amt !== 0)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([type, amt]) => ({
+          type,
+          amount: Money.fromMinorDenomination(amt, HOME_CURRENCY),
+        })),
+      assets: Money.fromMinorDenomination(assetsTotal, HOME_CURRENCY),
+      liabilities: Money.fromMinorDenomination(liabTotal, HOME_CURRENCY),
+      net: Money.fromMinorDenomination(assetsTotal - liabTotal, HOME_CURRENCY),
     });
   }
 
