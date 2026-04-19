@@ -428,10 +428,12 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     const series = data.portfolio?.timeseries;
     expect(series?.currency).toBe("GBP");
     const points = series?.points ?? [];
-    expect(points).toHaveLength(3);
+    // Series now extends from the first cached price to today (frozen at
+    // TEST_NOW = 2026-04-18) with forward-filled values after the last
+    // recorded price, and downsampled to MAX_LINE_POINTS.
     expect(points[0]).toEqual({ x: 0, y: 50 });
-    expect(points[1]).toEqual({ x: 1, y: 55 });
-    expect(points[2]).toEqual({ x: 2, y: 60 });
+    // Last cached price was £6/share on day 2, forward-filled afterwards.
+    expect(points[points.length - 1]).toMatchObject({ y: 60 });
   });
 
   it("returns OHLC candlestick over the same period", async () => {
@@ -459,9 +461,8 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     `);
     const data = await runGql(doc, {});
     const points = data.portfolio?.candlestick?.points ?? [];
-    // Bucket width is capped at a minimum of 3 days so these 3 days collapse
-    // into a single bucket: open at day 1 (£50), close at day 3 (£60).
-    expect(points.length).toBe(1);
-    expect(points[0]).toMatchObject({ x: 0, from: 50, to: 60, lo: 50, hi: 60 });
+    expect(points[0]).toMatchObject({ x: 0, from: 50 });
+    // Series forward-fills at £60 once the last cached price is consumed.
+    expect(points[points.length - 1]).toMatchObject({ to: 60, hi: 60 });
   });
 });
