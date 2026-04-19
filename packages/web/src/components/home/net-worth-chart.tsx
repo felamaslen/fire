@@ -197,26 +197,8 @@ export function NetWorthChart({
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
-      width={width}
-      height={height}
       className={cn("overflow-visible", className)}
-      onPointerLeave={() => setHoverIdx(null)}
-      onPointerMove={(e) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        if (rect.width === 0) return;
-        const svgX = ((e.clientX - rect.left) / rect.width) * width;
-        const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
-        const rel = (svgX - AXIS_PAD_LEFT) / plotW;
-        if (rel < 0 || rel > 1) {
-          setHoverIdx(null);
-          return;
-        }
-        const idx = Math.max(
-          0,
-          Math.min(points.length - 1, Math.round(rel * (points.length - 1))),
-        );
-        setHoverIdx(idx);
-      }}
+      style={{ aspectRatio: `${width} / ${height}` }}
     >
       {yTicks.map((v) => (
         <g key={`y${v}`}>
@@ -409,15 +391,7 @@ export function NetWorthChart({
           );
         })()}
 
-      {/* Pointer surface */}
-      <rect
-        x={AXIS_PAD_LEFT}
-        y={AXIS_PAD_TOP}
-        width={width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT}
-        height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
-        fill="transparent"
-      />
-      {/* Zero baseline stroke (above fills so it stays visible) */}
+      {/* Zero baseline stroke */}
       <line
         x1={AXIS_PAD_LEFT}
         x2={plotRight}
@@ -425,6 +399,31 @@ export function NetWorthChart({
         y2={zeroY}
         stroke="currentColor"
         strokeOpacity={0.3}
+      />
+      {/* Pointer surface — sits on top so it catches every move. Reading
+          `clientX / rect.width` on this rect avoids the svg-vs-CSS width
+          skew that was misaligning the hover dot. */}
+      <rect
+        x={AXIS_PAD_LEFT}
+        y={AXIS_PAD_TOP}
+        width={width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT}
+        height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
+        fill="transparent"
+        onPointerLeave={() => setHoverIdx(null)}
+        onPointerMove={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (rect.width === 0) return;
+          const rel = (e.clientX - rect.left) / rect.width;
+          if (rel < 0 || rel > 1) {
+            setHoverIdx(null);
+            return;
+          }
+          const idx = Math.max(
+            0,
+            Math.min(points.length - 1, Math.round(rel * (points.length - 1))),
+          );
+          setHoverIdx(idx);
+        }}
       />
     </svg>
   );
