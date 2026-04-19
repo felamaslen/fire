@@ -22,11 +22,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   Table,
   TableBody,
   TableCell,
@@ -34,7 +29,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { useToday } from "@/lib/use-today";
 
 import {
   type FragmentOf,
@@ -42,7 +43,6 @@ import {
   readFragment,
   type ResultOf,
 } from "../../graphql";
-import { useToday } from "@/lib/use-today";
 
 const PlanningTransactionRowDocument = graphql(
   `
@@ -589,7 +589,7 @@ function TransactionRow({
   data,
   monoRight,
   monthId,
-  year,
+  year: _year,
 }: {
   data: FragmentOf<typeof PlanningTransactionRowDocument>;
   monoRight: string;
@@ -749,7 +749,7 @@ function InlineDeleteButton({
 
 function CreateTransactionTrigger({
   monthId,
-  year,
+  year: _year,
   accountId,
   accounts,
   liabilities,

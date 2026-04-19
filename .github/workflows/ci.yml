@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: fire
+          POSTGRES_USER: fire
+          POSTGRES_PASSWORD: fire
+        # Tests hard-code `localhost:5433` (see `test/global-setup.ts`), so
+        # expose the container port on the runner host at 5433.
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U fire -d fire"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .tool-versions
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Run the cheap checks first so a failure short-circuits the job before
+      # the (slower) backend test suite runs against the Postgres service.
+      - run: pnpm typecheck
+      - run: pnpm exec eslint .
+      - run: pnpm --filter backend test

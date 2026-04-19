@@ -4,10 +4,7 @@ import { cn } from "@/lib/cn";
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
-    <div
-      data-slot="table-container"
-      className="relative w-full overflow-auto"
-    >
+    <div data-slot="table-container" className="relative w-full overflow-auto">
       <table
         data-slot="table"
         className={cn("w-full caption-bottom text-sm", className)}
@@ -80,10 +77,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   return (
     <td
       data-slot="table-cell"
-      className={cn(
-        "px-2 py-1.5 align-top whitespace-nowrap",
-        className,
-      )}
+      className={cn("px-2 py-1.5 align-top whitespace-nowrap", className)}
       {...props}
     />
   );

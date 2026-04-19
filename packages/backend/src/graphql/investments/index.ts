@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { Investments } from "@/db/schema/investments";
 import { readOrRefresh } from "@/tasks/yahoo";
 
+import type { Context } from "../context";
 import type { DateTime } from "../date-time";
 import { assertCurrencyCode, Money } from "../money";
 import {
@@ -120,8 +121,8 @@ export class Investment {
   }
 
   /** Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet. @gqlField */
-  async unitPriceCached(): Promise<Money | null> {
-    const s = await loadInvestmentStats(this.id);
+  async unitPriceCached(ctx: Context): Promise<Money | null> {
+    const s = await loadInvestmentStats(ctx, this.id);
     if (s.priceLatest === null) return null;
     return Money.fromMinorDenomination(s.priceLatest, s.currency);
   }
@@ -138,8 +139,8 @@ export class Investment {
   }
 
   /** Holdings, cost basis, and gain/loss aggregated across every wrapper. @gqlField */
-  async position(): Promise<InvestmentPosition> {
-    const s = await loadInvestmentStats(this.id);
+  async position(ctx: Context): Promise<InvestmentPosition> {
+    const s = await loadInvestmentStats(ctx, this.id);
     return new InvestmentPosition(s);
   }
 
@@ -259,6 +260,7 @@ function parseSortInput(sort: InvestmentSort | null | undefined): {
  * @gqlAnnotate semanticNonNull
  */
 export async function investments(
+  ctx: Context,
   first?: Int | null,
   after?: ID | null,
   sort?: InvestmentSort | null,
@@ -283,7 +285,7 @@ export async function investments(
         }))
       : await Promise.all(
           rows.map(async (row) => {
-            const s = await loadInvestmentStats(row.id);
+            const s = await loadInvestmentStats(ctx, row.id);
             const totalValue =
               s.priceLatest === null ? null : s.unitsHeld * s.priceLatest;
             const totalGain =

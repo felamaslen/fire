@@ -26,7 +26,9 @@ export function DeleteButton({ onConfirm }: DeleteButtonProps) {
         aria-hidden={!pending}
         className={cn(
           "overflow-hidden transition-[width,margin-left,opacity] duration-200",
-          pending ? "ml-1 w-9 opacity-100" : "pointer-events-none w-0 opacity-0",
+          pending
+            ? "ml-1 w-9 opacity-100"
+            : "pointer-events-none w-0 opacity-0",
         )}
       >
         <Button

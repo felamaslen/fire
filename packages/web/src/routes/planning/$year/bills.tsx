@@ -144,9 +144,7 @@ export const Route = createFileRoute("/planning/$year/bills")({
 });
 
 type PlanningBillsData = ResultOf<typeof PlanningBillsDialogDocument>;
-type Bill = NonNullable<
-  PlanningBillsData["bills"]
->["edges"][number]["node"];
+type Bill = NonNullable<PlanningBillsData["bills"]>["edges"][number]["node"];
 type AccountOption = NonNullable<
   PlanningBillsData["planningYear"]
 >["accounts"][number];
@@ -241,9 +239,7 @@ function PlanningBillsDialog() {
 
   const bills: Bill[] = data.bills?.edges.map((e) => e.node) ?? [];
   const accounts: AccountOption[] = data.planningYear?.accounts ?? [];
-  const liabilities: LiabilityOption[] = (
-    data.netWorthCategories?.edges ?? []
-  )
+  const liabilities: LiabilityOption[] = (data.netWorthCategories?.edges ?? [])
     .map((e) => e.node)
     .filter(
       (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",

@@ -1,0 +1,54 @@
+# Build context is the repo root (see `packages/backend/docker-compose.yml`).
+# Keep the layer that copies workspace sources small and deterministic.
+
+# Dependency installs — always reinstalled inside the image.
+**/node_modules
+
+# Build outputs — regenerated inside the image.
+**/dist
+**/.vite
+
+# VCS / tooling.
+.git
+.gitignore
+**/.DS_Store
+
+# Editor / scratch areas.
+.idea
+.vscode
+**/.idea
+**/.vscode
+
+# Local env and logs.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+**/npm-debug.log*
+**/pnpm-debug.log*
+
+# Test + CI caches.
+**/coverage
+**/.nyc_output
+**/.eslintcache
+**/.turbo
+**/.cache
+
+# Docker itself.
+**/Dockerfile
+**/docker-compose.yml
+**/.dockerignore
+
+# Only the backend needs its sources in the image; skip the web package to
+# keep the backend image small and cache-friendly.
+packages/web/src
+packages/web/public
+packages/web/vite.config.ts
+packages/web/tsconfig.json
+packages/web/scripts
+
+# Local uploads directory — bind-mounted at runtime instead.
+packages/backend/uploads
+
+# Yahoo quote disk cache — re-populated at runtime.
+packages/backend/.yahoo-cache.json

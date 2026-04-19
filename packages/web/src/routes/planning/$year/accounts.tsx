@@ -76,11 +76,16 @@ type Account = NonNullable<
   PlanningAccountsData["planningYear"]
 >["accounts"][number];
 type RefetchEntry =
-  | { query: typeof PlanningAccountsDialogDocument; variables: { year: string } }
+  | {
+      query: typeof PlanningAccountsDialogDocument;
+      variables: { year: string };
+    }
   | { query: typeof PlanningYearViewDocument; variables: { id: string } };
 
 type AssetOption = Extract<
-  NonNullable<PlanningAccountsData["netWorthCategories"]>["edges"][number]["node"],
+  NonNullable<
+    PlanningAccountsData["netWorthCategories"]
+  >["edges"][number]["node"],
   { __typename: "NetWorthCategoryAsset" }
 >;
 
