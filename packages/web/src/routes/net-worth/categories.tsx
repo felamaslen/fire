@@ -780,7 +780,10 @@ function LiabilityRow({
 
   return (
     <form
-      className="flex items-center gap-2"
+      className={cn(
+        "items-center gap-2",
+        isLoan ? "grid grid-cols-[1fr_7rem_12rem_4rem_auto_auto]" : "flex",
+      )}
       onSubmit={(e) => {
         e.preventDefault();
         void form.handleSubmit();
