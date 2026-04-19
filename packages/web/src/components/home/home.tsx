@@ -89,10 +89,30 @@ const NET_LINE_COLOR = "currentColor";
 const ASSETS_COLOR = "#1a5490"; // deep blue
 const LIABILITIES_COLOR = "#8f1a1a"; // deep crimson
 
+const FORECAST_STORAGE_KEY = "fire.home.forecast";
+
+function useShowForecast(): [boolean, (v: boolean) => void] {
+  const [state, setState] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const raw = window.localStorage.getItem(FORECAST_STORAGE_KEY);
+    return raw === null ? true : raw === "1";
+  });
+  const set = (v: boolean) => {
+    setState(v);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(FORECAST_STORAGE_KEY, v ? "1" : "0");
+    }
+  };
+  return [state, set];
+}
+
 export function Home() {
   const { data } = useSuspenseQuery(HomeDocument);
+  const [showForecast, setShowForecast] = useShowForecast();
   const history = data.netWorthHistory ?? [];
-  const forecastPoints = data.netWorthForecast?.points ?? [];
+  const forecastPoints = showForecast
+    ? (data.netWorthForecast?.points ?? [])
+    : [];
   const currency = data.currencyDefault ?? "GBP";
 
   // Stitch history + forecast into a single series per bucket. Drop any
@@ -104,7 +124,7 @@ export function Home() {
     ? history.filter((h) => h.date < cutoff)
     : history;
   const combined = [...historyPoints, ...forecastPoints];
-  const forecastStart = historyPoints.length;
+  const forecastStart = showForecast ? historyPoints.length : undefined;
 
   const dates = combined.map((h) => new Date(`${h.date}T00:00:00Z`));
   const net = combined.map((h) => h.net.amount);
@@ -184,21 +204,32 @@ export function Home() {
               </div>
             )}
           </div>
-          {latest && (
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm tabular-nums">
-              <dt className="text-muted-foreground">Assets</dt>
-              <dd className="text-right">
-                {formatAccountingMoneyRounded(currency, latest.assets.amount)}
-              </dd>
-              <dt className="text-muted-foreground">Liabilities</dt>
-              <dd className="text-right">
-                {formatAccountingMoneyRounded(
-                  currency,
-                  latest.liabilities.amount,
-                )}
-              </dd>
-            </dl>
-          )}
+          <div className="flex items-center gap-4">
+            {latest && (
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm tabular-nums">
+                <dt className="text-muted-foreground">Assets</dt>
+                <dd className="text-right">
+                  {formatAccountingMoneyRounded(currency, latest.assets.amount)}
+                </dd>
+                <dt className="text-muted-foreground">Liabilities</dt>
+                <dd className="text-right">
+                  {formatAccountingMoneyRounded(
+                    currency,
+                    latest.liabilities.amount,
+                  )}
+                </dd>
+              </dl>
+            )}
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={showForecast}
+                onChange={(e) => setShowForecast(e.target.checked)}
+                className="accent-foreground"
+              />
+              Forecast (log scale)
+            </label>
+          </div>
         </div>
 
         <div className="mt-4 space-y-2">
@@ -273,47 +304,49 @@ export function Home() {
             currency={currency}
             className="w-full"
             forecastStart={forecastStart}
+            logY={showForecast}
           />
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="inline-block h-2 w-3 rounded-sm"
-                style={{ background: CASH_COLOR }}
-              />
-              Cash
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="inline-block h-2 w-3 rounded-sm"
-                style={{ background: STOCK_COLOR }}
-              />
-              Stocks
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="inline-block h-2 w-3 rounded-sm"
-                style={{ background: PENSION_COLOR }}
-              />
-              Pension
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="inline-block h-2 w-3 rounded-sm"
-                style={{ background: MISC_COLOR }}
-              />
-              Other
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="inline-block h-2 w-3 rounded-sm"
-                style={{ background: REMAINDER_COLOR, opacity: 0.5 }}
-              />
-              Remaining net equity
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-0.5 w-3 bg-foreground" />
-              Net worth
-            </span>
+            {(
+              [
+                { label: "Cash", color: CASH_COLOR, values: cash },
+                { label: "Stocks", color: STOCK_COLOR, values: stock },
+                { label: "Pension", color: PENSION_COLOR, values: pension },
+                { label: "Other", color: MISC_COLOR, values: misc },
+                {
+                  label: "Remaining net equity",
+                  color: REMAINDER_COLOR,
+                  opacity: 0.5,
+                  values: net.map((n, i) => n - cumMisc[i]),
+                },
+                {
+                  label: "Net worth",
+                  color: NET_LINE_COLOR,
+                  line: true,
+                  values: net,
+                },
+              ] as const
+            )
+              .filter((item) => item.values.some((v) => v !== 0))
+              .map((item) => (
+                <span
+                  key={item.label}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  {"line" in item && item.line ? (
+                    <span className="inline-block h-0.5 w-3 bg-foreground" />
+                  ) : (
+                    <span
+                      className="inline-block h-2 w-3 rounded-sm"
+                      style={{
+                        background: item.color,
+                        opacity: "opacity" in item ? item.opacity : undefined,
+                      }}
+                    />
+                  )}
+                  {item.label}
+                </span>
+              ))}
           </div>
         </div>
       </section>
@@ -362,6 +395,7 @@ export function Home() {
             currency={currency}
             className="w-full"
             forecastStart={forecastStart}
+            logY={showForecast}
           />
         </div>
       </section>

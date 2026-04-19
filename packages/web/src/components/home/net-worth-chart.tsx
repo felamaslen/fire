@@ -59,6 +59,13 @@ type Props = {
    * boundary. Leave undefined to render the whole series as history.
    */
   forecastStart?: number;
+  /**
+   * When true, the y-axis is rendered on a log10 scale. Zero and
+   * negative values are clamped to the lowest tick for display, and
+   * all fills are suppressed (the zero baseline doesn't exist in log
+   * space, so stacked bands stop being meaningful).
+   */
+  logY?: boolean;
 };
 
 const AXIS_PAD_LEFT = 72;
@@ -101,6 +108,34 @@ function buildYTicks(
 }
 
 /**
+ * Log10 y-axis ticks at {1, 2, 5} × 10^k covering [min, max]. `min` is
+ * clamped up to 1 before bucketing so we never try to take log10 of
+ * zero. Returns the pixel-space extents too so the caller can build the
+ * log scale without re-deriving them.
+ */
+function buildLogYTicks(
+  min: number,
+  max: number,
+): { ticks: number[]; niceMin: number; niceMax: number } {
+  const lo = Math.max(1, min);
+  const hi = Math.max(lo * 10, max);
+  const loExp = Math.floor(Math.log10(lo));
+  const hiExp = Math.ceil(Math.log10(hi));
+  const ticks: number[] = [];
+  for (let e = loExp; e <= hiExp; e++) {
+    for (const m of [1, 2, 5]) {
+      const v = m * Math.pow(10, e);
+      if (v >= Math.pow(10, loExp) && v <= Math.pow(10, hiExp)) ticks.push(v);
+    }
+  }
+  return {
+    ticks,
+    niceMin: Math.pow(10, loExp),
+    niceMax: Math.pow(10, hiExp),
+  };
+}
+
+/**
  * Generic signed-line chart used on the home dashboard. Each series is
  * drawn as a stroke on top of an optional fill to the zero baseline; fills
  * pick up `negativeColor` wherever the underlying value is below zero so
@@ -114,16 +149,15 @@ export function NetWorthChart({
   height = 280,
   className,
   forecastStart,
+  logY = false,
 }: Props) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const { xScale, yScale, xTicks, yTicks, plotRight, plotBottom, zeroY } =
     useMemo(() => {
       const n = points.length;
-      const xMin = 0;
-      const xMax = Math.max(1, n - 1);
 
-      let dataMin = 0;
+      let dataMin = logY ? Infinity : 0;
       let dataMax = 0;
       for (const s of series) {
         for (const v of s.values) {
@@ -137,26 +171,60 @@ export function NetWorthChart({
           }
         }
       }
+      if (!Number.isFinite(dataMin)) dataMin = 0;
       if (dataMin === dataMax) dataMax = dataMin + 1;
 
-      const { ticks, niceMin, niceMax } = buildYTicks(dataMin, dataMax, 5);
-      const yRange = niceMax - niceMin || 1;
-      const xRange = xMax - xMin || 1;
       const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
       const plotH = height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM;
 
+      // X-axis is linear in calendar time so irregular gaps in the
+      // recorded history (e.g. a skipped month) and the monthly forecast
+      // tail render with a single consistent spacing — no visual jump
+      // where history hands over to forecast.
+      const tMin = points[0]?.getTime() ?? 0;
+      const tMax = points[n - 1]?.getTime() ?? tMin + 1;
+      const tRange = tMax - tMin || 1;
       const xScale = (i: number) =>
-        AXIS_PAD_LEFT + ((i - xMin) / xRange) * plotW;
-      const yScale = (v: number) =>
-        AXIS_PAD_TOP + plotH - ((v - niceMin) / yRange) * plotH;
+        AXIS_PAD_LEFT + ((points[i].getTime() - tMin) / tRange) * plotW;
 
       const xTickCount = Math.min(6, Math.max(2, n));
       const xTicks: { x: number; label: string }[] = [];
       for (let i = 0; i < xTickCount; i++) {
-        const idx = Math.round((i * (n - 1)) / (xTickCount - 1));
-        const p = points[idx];
-        if (p) xTicks.push({ x: idx, label: shortDate(p) });
+        const t = tMin + (i * tRange) / (xTickCount - 1);
+        const pxX = AXIS_PAD_LEFT + ((t - tMin) / tRange) * plotW;
+        xTicks.push({ x: pxX, label: shortDate(new Date(t)) });
       }
+
+      if (logY) {
+        const { ticks, niceMin, niceMax } = buildLogYTicks(dataMin, dataMax);
+        const logMin = Math.log10(niceMin);
+        const logMax = Math.log10(niceMax);
+        const logRange = logMax - logMin || 1;
+        const yScale = (v: number) => {
+          const clamped = Math.max(v, niceMin);
+          return (
+            AXIS_PAD_TOP +
+            plotH -
+            ((Math.log10(clamped) - logMin) / logRange) * plotH
+          );
+        };
+        return {
+          xScale,
+          yScale,
+          xTicks,
+          yTicks: ticks,
+          plotRight: width - AXIS_PAD_RIGHT,
+          plotBottom: height - AXIS_PAD_BOTTOM,
+          // Treat £1 (= log10 0) as the zero baseline so `fill: "zero"`
+          // stacks still paint meaningfully in log space.
+          zeroY: yScale(niceMin),
+        };
+      }
+
+      const { ticks, niceMin, niceMax } = buildYTicks(dataMin, dataMax, 5);
+      const yRange = niceMax - niceMin || 1;
+      const yScale = (v: number) =>
+        AXIS_PAD_TOP + plotH - ((v - niceMin) / yRange) * plotH;
 
       return {
         xScale,
@@ -167,7 +235,7 @@ export function NetWorthChart({
         plotBottom: height - AXIS_PAD_BOTTOM,
         zeroY: yScale(0),
       };
-    }, [points, series, width, height]);
+    }, [points, series, width, height, logY]);
 
   if (points.length === 0) {
     return (
@@ -301,7 +369,7 @@ export function NetWorthChart({
       {xTicks.map((t) => (
         <text
           key={`x${t.x}`}
-          x={xScale(t.x)}
+          x={t.x}
           y={height - 8}
           textAnchor="middle"
           className="fill-muted-foreground text-[10px]"
@@ -393,11 +461,17 @@ export function NetWorthChart({
         (() => {
           const date = points[hoverIdx];
           const cx = xScale(hoverIdx);
+          // Drop series whose tooltipValues (falling back to values) are
+          // all zero across the range — a legend item the user just hid
+          // shouldn't reappear in the hover card either.
+          const tooltipSeries = series.filter((s) =>
+            (s.tooltipValues ?? s.values).some((v) => v !== 0),
+          );
           const rowH = 16;
           const headerH = 22;
           const padY = 10;
           const boxW = 220;
-          const boxH = headerH + series.length * rowH + padY;
+          const boxH = headerH + tooltipSeries.length * rowH + padY;
           const gap = 10;
           const preferRight = cx + gap + boxW <= plotRight;
           const boxX = preferRight
@@ -418,7 +492,7 @@ export function NetWorthChart({
                 strokeOpacity={0.2}
                 strokeDasharray="2 2"
               />
-              {series.map((s) => {
+              {tooltipSeries.map((s) => {
                 const v = s.values[hoverIdx];
                 return (
                   <circle
@@ -445,7 +519,7 @@ export function NetWorthChart({
                 <text x={boxX + 10} y={boxY + 16} className="font-medium">
                   {fullDate(date)}
                 </text>
-                {series.map((s, i) => {
+                {tooltipSeries.map((s, i) => {
                   const display = (s.tooltipValues ?? s.values)[hoverIdx];
                   const swatch =
                     display < 0 && s.negativeColor ? s.negativeColor : s.color;
@@ -533,11 +607,21 @@ export function NetWorthChart({
             setHoverIdx(null);
             return;
           }
-          const idx = Math.max(
-            0,
-            Math.min(points.length - 1, Math.round(rel * (points.length - 1))),
-          );
-          setHoverIdx(idx);
+          // Points aren't uniformly spaced along the index — x is
+          // linear in calendar time — so pick the nearest point by
+          // viewBox-x distance rather than by rel-based rounding.
+          const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
+          const targetPx = AXIS_PAD_LEFT + rel * plotW;
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < points.length; i++) {
+            const d = Math.abs(xScale(i) - targetPx);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i;
+            }
+          }
+          setHoverIdx(bestIdx);
         }}
       />
     </svg>
