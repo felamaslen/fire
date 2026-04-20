@@ -1908,7 +1908,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: MoneyType
                 },
                 id: {
-                    description: "Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key.",
+                    description: "Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities \u2014 otherwise Apollo would merge them and the first response's values would be clobbered by the second.",
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
                 },

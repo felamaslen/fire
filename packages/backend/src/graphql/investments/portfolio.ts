@@ -623,7 +623,7 @@ export class Portfolio {
     return this.heldCache;
   }
 
-  /** Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key. @gqlField */
+  /** Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities — otherwise Apollo would merge them and the first response's values would be clobbered by the second. @gqlField */
   get id(): ID {
     const assets = this.filterAssetIdIn
       ? [...this.filterAssetIdIn].sort().join(",")
@@ -631,7 +631,7 @@ export class Portfolio {
     const investments = this.filterInvestmentIdIn
       ? [...this.filterInvestmentIdIn].sort().join(",")
       : "*";
-    return `portfolio:${this.currency}:${assets}:${investments}` as ID;
+    return `portfolio:${this.currency}:${assets}:${investments}:${this.skipLive ? "cached" : "live"}` as ID;
   }
 
   private get filters(): Filters {

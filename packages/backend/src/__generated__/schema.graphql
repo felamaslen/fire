@@ -1656,7 +1656,7 @@ type Portfolio {
   """
   dailyGainValue: Money
   """
-  Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key.
+  Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities — otherwise Apollo would merge them and the first response's values would be clobbered by the second.
   """
   id: ID!
   """
