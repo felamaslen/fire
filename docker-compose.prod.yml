@@ -16,6 +16,8 @@ services:
       PORT: 4000
       OTEL_ENABLED: "false"
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      AUTH_PIN: ${AUTH_PIN:-}
     ports:
       - "127.0.0.1:${APP_PORT:-4000}:4000"
     volumes:
