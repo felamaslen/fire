@@ -488,12 +488,17 @@ async function computeDailySeriesMinorByInvestment(
 
   const msDay = 86400 * 1000;
   const now = new Date();
-  const today = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  const todayMs = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
   );
-  const todayMs = today.getTime();
-  const todayKey = today.toISOString().slice(0, 10);
 
+  // Historical only — today's bucket is stitched on at read time in
+  // `Portfolio.buildDaily`, using the live-overlaid `HeldInvestment` for the
+  // calling Portfolio. Keeping today out of the cached map lets intraday
+  // Yahoo refreshes reach the chart without invalidating `dailyCache`
+  // (matches the behaviour of `Portfolio.totalValue`).
   for (const inv of held) {
     const invSplitMs = new Set(
       (splitsByInv.get(inv.id) ?? []).map((s) => s.date.getTime()),
@@ -521,11 +526,6 @@ async function computeDailySeriesMinorByInvestment(
       totals.set(key, v);
       lastValue = v;
     }
-    const todayV =
-      inv.unitsHeld === 0 || inv.priceLatest === null
-        ? 0
-        : inv.unitsHeld * inv.priceLatest;
-    totals.set(todayKey, todayV);
     perInv.set(inv.id, totals);
   }
 
@@ -813,20 +813,37 @@ export class Portfolio {
     period: PortfolioTimePeriod,
     length: number,
   ): Promise<{ days: Date[]; totals: Map<string, number> }> {
-    const fullTotals =
+    const historical =
       this.preload?.dailySeriesMinor ??
       (await loadDailySeriesMinor(this.filters));
-    if (fullTotals.size === 0) {
+    if (historical.size === 0) {
       return { days: [], totals: new Map() };
     }
+    // Overlay today's bucket from the live-overlaid held map, so intraday
+    // Yahoo refreshes reach the timeseries / candlestick without needing to
+    // bust `dailyCache`. `historical` is memoised and excludes today; we
+    // copy into a fresh map so we don't mutate the cached value.
+    const held = await this.loadHeld();
+    let todayMinor = 0;
+    for (const h of held) {
+      if (h.unitsHeld === 0 || h.priceLatest === null) continue;
+      todayMinor += h.unitsHeld * h.priceLatest;
+    }
     const today = new Date();
+    const todayKey = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()),
+    )
+      .toISOString()
+      .slice(0, 10);
+    const totals = new Map(historical);
+    totals.set(todayKey, todayMinor);
     const start = periodStart(today, period, length);
     const days: Date[] = [];
-    for (const key of [...fullTotals.keys()].sort()) {
+    for (const key of [...totals.keys()].sort()) {
       const d = new Date(`${key}T00:00:00Z`);
       if (d <= today && (start === null || d >= start)) days.push(d);
     }
-    return { days, totals: fullTotals };
+    return { days, totals };
   }
 
   private async aggregate(
