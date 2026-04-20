@@ -113,18 +113,33 @@ docker buildx build "${BUILD_ARGS[@]}" -f Dockerfile .
 echo "==> Preparing $HOST:$LOCATION"
 ssh "$HOST" "mkdir -p '$LOCATION/var/db' '$LOCATION/var/uploads' '$LOCATION/var/backups' '$LOCATION/var/cache'"
 
-# Generate a Postgres password on first deploy. Subsequent deploys read the
-# existing `.env` — the password is the key to the persisted DB volume, so
-# regenerating it would lock us out of our own data.
+# Seed the server's `.env` on first deploy + top it up with any newly-
+# required secrets. Each key is generated only if it's missing — never
+# rotated — because these are effectively the keys to persistent state:
+#   - `POSTGRES_PASSWORD` keys the on-disk DB volume (rotating locks us out
+#     of our own data).
+#   - `AUTH_SECRET` signs outstanding `Authorization: Bearer` tokens
+#     (rotating logs every user out).
+#   - `AUTH_PIN` is the real-user gate; regenerating would quietly change
+#     it under the operator. We generate a random 4-digit PIN and print
+#     it so the operator can capture it; they can edit `.env` afterwards
+#     to set a chosen value.
 ssh "$HOST" "bash -s" <<EOSH
 set -euo pipefail
 cd '$LOCATION'
-if [[ ! -f .env ]]; then
-  umask 077
-  pw="\$(openssl rand -hex 24)"
-  printf 'POSTGRES_PASSWORD=%s\n' "\$pw" > .env
-  echo '==> Generated new POSTGRES_PASSWORD in $LOCATION/.env'
-fi
+umask 077
+touch .env
+ensure_key() {
+  local key="\$1"
+  local value="\$2"
+  if ! grep -q "^\$key=" .env; then
+    printf '%s=%s\n' "\$key" "\$value" >> .env
+    echo "==> Seeded \$key in $LOCATION/.env"
+  fi
+}
+ensure_key POSTGRES_PASSWORD "\$(openssl rand -hex 24)"
+ensure_key AUTH_SECRET       "\$(openssl rand -hex 32)"
+ensure_key AUTH_PIN          "\$(( RANDOM % 9000 + 1000 ))"
 EOSH
 
 # --- ship the compose file --------------------------------------------------
@@ -156,20 +171,36 @@ docker compose up -d --wait postgres
 echo '==> Running database migrations'
 docker compose run --rm app pnpm db:migrate
 
-# Bring \`backup\` (and anything else) up / prune orphans. Does NOT touch
-# \`app\` — we handle that explicitly below because \`--force-recreate\`
-# on an \`up\` invocation has proven unreliable in this setup (sometimes
-# the container is merely restarted rather than replaced, which loses new
-# mounts / env added to the compose file).
+# Bring \`backup\` (and anything else non-app) up / prune orphans. Does NOT
+# touch \`app\` — that's handled explicitly below with stronger recreation
+# semantics.
 docker compose up -d --wait --remove-orphans --no-deps backup
 
-# Explicit rm + up for \`app\`. Guarantees a new container so:
-#   - fresh Node process → module-level caches cleared on every deploy
-#   - any compose-file changes (new volumes, env vars, image digest) land
-# \`--no-deps\` so Postgres isn't touched; \`rm -sf\` stops + removes in one go.
-docker compose rm -sf app
-docker compose up -d --wait --no-deps app
-docker compose ps
+# Replace the \`app\` container from scratch:
+#   - \`--pull always\`    : re-fetch the tag right before recreating, so a
+#                           \`:latest\` we pushed a moment ago isn't missed
+#                           by whatever image ID compose already has on
+#                           file from the earlier \`docker compose pull\`.
+#   - \`--force-recreate\` : replace the existing container even if compose
+#                           thinks the config is unchanged. Previous
+#                           deploys hit cases where \`up\` decided to
+#                           restart-in-place, silently keeping the old
+#                           image and dropping new mounts / env.
+#   - \`--no-deps\`        : leave Postgres + backup alone.
+#   - \`--wait\`           : fail the deploy if the new container's
+#                           healthcheck doesn't flip green.
+#
+# Kill any stray \`app\` container first in case an earlier compose run
+# left one orphaned under a different project name / label — belt-and-
+# braces, the combined flags above should already handle the common case.
+docker compose rm -sf app || true
+if docker compose up -d --wait --no-deps --force-recreate --pull always app; then
+  docker compose ps
+else
+  echo '==> app failed to come up — tailing logs' >&2
+  docker compose logs --tail=100 app >&2 || true
+  exit 1
+fi
 EOSH
 
 echo "==> Deploy complete: $IMAGE:$TAG is live on $HOST"
