@@ -49,6 +49,7 @@ type TaxCodeRow = typeof PlanningEarningsUKTaxCodes.$inferSelect;
 type BillRow = typeof PlanningBills.$inferSelect;
 type OverrideRow = typeof PlanningMonthBills.$inferSelect;
 type RateRow = typeof PlanningYearUKTaxRates.$inferSelect;
+export type LiabilityRow = typeof NetWorthCategoryLiabilities.$inferSelect;
 
 /** Credit-card liability billed from a planning account, with the pre-computed EWMA of its 24 most recent balance snapshots (GBP minor units). */
 export type CreditCardPrediction = {
@@ -81,6 +82,8 @@ export type PlanningYearData = {
   snapshots: Array<{ date: Date; assetId: string; minor: number }>;
   /** Credit-card liabilities with a `billedFromAccountId` pointing at one of the planning accounts, plus the EWMA of their recent balance history that feeds the monthly predicted payment. */
   creditCardPredictions: CreditCardPrediction[];
+  /** Every `NetWorthCategoryLiability` referenced by this year's transactions / bills / payslip adjustments, pre-loaded in a single batched `WHERE id IN (…)` so `PlanningTransaction.liability` doesn't fan out into an N+1 of per-row point selects. */
+  liabilitiesById: Map<string, LiabilityRow>;
 };
 
 /** Look up every planning account and return the (account, asset) pair — used at PlanningYear load time. */
@@ -288,6 +291,30 @@ export async function loadPlanningYearData(
     snapshots.push({ date: s.date, assetId: s.assetId, minor: s.minor });
   }
 
+  // Collect every liability id referenced anywhere in the year — manual
+  // transactions, bills, payslip adjustments, and earnings' student-loan
+  // tags — then batch-load those rows. `creditCardPredictions` already ran
+  // its own `SELECT`, so fold those into the map for free.
+  const liabilityIds = new Set<string>();
+  for (const t of txs) if (t.liabilityId) liabilityIds.add(t.liabilityId);
+  for (const { bill: b } of billJoin)
+    if (b.liabilityId) liabilityIds.add(b.liabilityId);
+  for (const { adjustment: a } of payslipJoin)
+    if (a?.liabilityId) liabilityIds.add(a.liabilityId);
+  for (const { earning: e } of earningJoin)
+    if (e.studentLoanLiabilityId) liabilityIds.add(e.studentLoanLiabilityId);
+  for (const cc of creditCardPredictions) liabilityIds.add(cc.liabilityId);
+  const extraIds = Array.from(liabilityIds);
+  const liabilityRows =
+    extraIds.length > 0
+      ? await db
+          .select()
+          .from(NetWorthCategoryLiabilities)
+          .where(inArray(NetWorthCategoryLiabilities.id, extraIds))
+      : [];
+  const liabilitiesById = new Map<string, LiabilityRow>();
+  for (const r of liabilityRows) liabilitiesById.set(r.id, r);
+
   return {
     year: yearNumber,
     accounts,
@@ -298,6 +325,7 @@ export async function loadPlanningYearData(
     rates,
     snapshots,
     creditCardPredictions,
+    liabilitiesById,
   };
 }
 
@@ -372,6 +400,14 @@ export function monthTransactionsFor(
   const monthStart = startOfMonthUTC(monthDate);
   const monthEnd = addMonthsUTC(monthStart, 1);
   const out: PlanningTransaction[] = [];
+  // Every tx built inside a year roll-up gets the shared pre-loaded liability map, so `PlanningTransaction.liability` resolves from memory instead of firing a per-row `SELECT`.
+  const mkTx = (
+    spec: ConstructorParameters<typeof PlanningTransaction>[0],
+  ): PlanningTransaction =>
+    new PlanningTransaction({
+      ...spec,
+      liabilitiesById: data.liabilitiesById,
+    });
 
   // 1) Explicit PlanningTransactions
   for (const tx of data.transactions) {
@@ -379,7 +415,7 @@ export function monthTransactionsFor(
     if (tx.date.getTime() >= monthEnd.getTime()) continue;
     if (tx.accountId === assetId) {
       out.push(
-        new PlanningTransaction({
+        mkTx({
           id: encodePlanningTransactionId({ kind: "tx", id: tx.id }),
           name: tx.name,
           amount: Money.fromMinorDenomination(tx.amount, tx.currency),
@@ -393,7 +429,7 @@ export function monthTransactionsFor(
     }
     if (tx.toAccountId === assetId) {
       out.push(
-        new PlanningTransaction({
+        mkTx({
           id: encodePlanningTransactionId({ kind: "to", id: tx.id }),
           name: tx.name,
           amount: Money.fromMinorDenomination(-tx.amount, tx.currency),
@@ -417,7 +453,7 @@ export function monthTransactionsFor(
   );
   for (const { payslip: p, adjustments } of payslipsThisMonth) {
     out.push(
-      new PlanningTransaction({
+      mkTx({
         id: encodePlanningTransactionId({ kind: "pay", id: p.id }),
         name: p.name,
         amount: Money.fromMinorDenomination(p.amountGross, p.currency),
@@ -431,7 +467,7 @@ export function monthTransactionsFor(
     );
     for (const a of adjustments) {
       out.push(
-        new PlanningTransaction({
+        mkTx({
           id: encodePlanningTransactionId({ kind: "adj", id: a.id }),
           name: a.name,
           amount: Money.fromMinorDenomination(a.amount, p.currency),
@@ -469,7 +505,7 @@ export function monthTransactionsFor(
       const perMonth = (n: number) => Math.round((n / 12) * coverage);
       const monthKey = monthId(monthStart);
       out.push(
-        new PlanningTransaction({
+        mkTx({
           id: encodePlanningTransactionId({
             kind: "earn",
             part: "gross",
@@ -488,7 +524,7 @@ export function monthTransactionsFor(
       );
       if (take.incomeTax > 0) {
         out.push(
-          new PlanningTransaction({
+          mkTx({
             id: encodePlanningTransactionId({
               kind: "earn",
               part: "tax",
@@ -510,7 +546,7 @@ export function monthTransactionsFor(
       }
       if (take.nic > 0) {
         out.push(
-          new PlanningTransaction({
+          mkTx({
             id: encodePlanningTransactionId({
               kind: "earn",
               part: "nic",
@@ -532,7 +568,7 @@ export function monthTransactionsFor(
       }
       if (take.studentLoan > 0) {
         out.push(
-          new PlanningTransaction({
+          mkTx({
             id: encodePlanningTransactionId({
               kind: "earn",
               part: "sl",
@@ -554,7 +590,7 @@ export function monthTransactionsFor(
       }
       if (take.pensionEmployee > 0) {
         out.push(
-          new PlanningTransaction({
+          mkTx({
             id: encodePlanningTransactionId({
               kind: "earn",
               part: "pen",
@@ -591,7 +627,7 @@ export function monthTransactionsFor(
     );
     if (suppressed) continue;
     out.push(
-      new PlanningTransaction({
+      mkTx({
         id: encodePlanningTransactionId({
           kind: "liab",
           id: cc.liabilityId,
@@ -633,7 +669,7 @@ export function monthTransactionsFor(
     if (override) {
       if (override.amount == null || override.currency == null) continue;
       out.push(
-        new PlanningTransaction({
+        mkTx({
           id: encodePlanningTransactionId({
             kind: "bill",
             id: b.id,
@@ -654,7 +690,7 @@ export function monthTransactionsFor(
       );
     } else {
       out.push(
-        new PlanningTransaction({
+        mkTx({
           id: encodePlanningTransactionId({
             kind: "bill",
             id: b.id,

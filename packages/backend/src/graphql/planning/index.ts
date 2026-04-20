@@ -26,6 +26,7 @@ import {
 } from "../pagination";
 import { VOID, type Void } from "../void";
 import {
+  type LiabilityRow,
   loadPlanningAccountInfos,
   loadPlanningYearData,
   monthEndSnapshotFor,
@@ -46,50 +47,64 @@ export class PlanningYear {
   /** @gqlField */
   id!: ID;
   yearNumber!: number;
-  /** Pre-loaded bundle of every row the year's downstream resolvers might want. Built once at `PlanningYear.load` so no resolver below this point issues SQL. */
-  data!: PlanningYearData;
-  monthDates!: Date[];
 
-  constructor(data: { yearData: PlanningYearData; monthDates: Date[] }) {
-    this.yearNumber = data.yearData.year;
-    this.id = String(this.yearNumber) as ID;
-    this.data = data.yearData;
-    this.monthDates = data.monthDates;
+  /** Memoised bundle of every row the year's downstream resolvers might want. Lazy so that resolvers reading only `{ id }` (e.g. the year-switcher footer's `planningYears(last: 9)` edge list) don't fire ~10 SQL queries per year just to materialise the object. */
+  private loadedPromise: Promise<{
+    data: PlanningYearData;
+    monthDates: Date[];
+  }> | null = null;
+
+  constructor(yearNumber: number) {
+    this.yearNumber = yearNumber;
+    this.id = String(yearNumber) as ID;
   }
 
-  /** Load a planning year by its starting calendar year. Always returns a `PlanningYear`: if no `PlanningYears` row exists, the returned year is a synthetic view — months are generated from the year number, tax rates are null, and transactions/bills/earnings are whatever happens to overlap the FY. A `PlanningYears` row is only needed as a parent for tax-rate and month-scoped writes. */
-  static async load(yearNumber: number): Promise<PlanningYear> {
-    const [monthRows, accounts] = await Promise.all([
-      db
-        .select()
-        .from(PlanningMonths)
-        .where(eq(PlanningMonths.year, yearNumber)),
-      loadPlanningAccountInfos(),
-    ]);
-    const yearData = await loadPlanningYearData(yearNumber, accounts);
-    const monthDates =
-      monthRows.length > 0
-        ? monthRows.map((r) => r.date).sort((a, b) => a.getTime() - b.getTime())
-        : monthsInFYYear(yearNumber);
-    return new PlanningYear({ yearData, monthDates });
+  /** Construct a `PlanningYear` by id without touching the database — year data is loaded lazily by the field resolvers that actually need it. A year is always returned (even when no `PlanningYears` row exists yet) because the downstream view is synthetic in that case. */
+  static load(yearNumber: number): PlanningYear {
+    return new PlanningYear(yearNumber);
+  }
+
+  /** Load (and memoise) the per-year data bundle and the month key dates. Shared between `taxRates` / `months` / `accounts` so a single query selecting all three fires one DB batch, not three. */
+  private loaded(): Promise<{ data: PlanningYearData; monthDates: Date[] }> {
+    this.loadedPromise ??= (async () => {
+      const [monthRows, accounts] = await Promise.all([
+        db
+          .select()
+          .from(PlanningMonths)
+          .where(eq(PlanningMonths.year, this.yearNumber)),
+        loadPlanningAccountInfos(),
+      ]);
+      const data = await loadPlanningYearData(this.yearNumber, accounts);
+      const monthDates =
+        monthRows.length > 0
+          ? monthRows
+              .map((r) => r.date)
+              .sort((a, b) => a.getTime() - b.getTime())
+          : monthsInFYYear(this.yearNumber);
+      return { data, monthDates };
+    })();
+    return this.loadedPromise;
   }
 
   /** Tax parameters for this year (`null` if none configured). @gqlField */
-  taxRates(): PlanningYearTaxRates | null {
-    return this.data.rates ? new PlanningYearTaxRatesUK(this.data.rates) : null;
+  async taxRates(): Promise<PlanningYearTaxRates | null> {
+    const { data } = await this.loaded();
+    return data.rates ? new PlanningYearTaxRatesUK(data.rates) : null;
   }
 
   /** The months making up this financial year. @gqlField */
-  months(): PlanningMonth[] {
-    return this.monthDates.map(
+  async months(): Promise<PlanningMonth[]> {
+    const { data, monthDates } = await this.loaded();
+    return monthDates.map(
       (date) =>
-        new PlanningMonth({ year: this.yearNumber, date, yearData: this.data }),
+        new PlanningMonth({ year: this.yearNumber, date, yearData: data }),
     );
   }
 
   /** All assigned planning accounts (not year-scoped — returned here for convenience). @gqlField */
-  accounts(): PlanningAccount[] {
-    return this.data.accounts.map((info) =>
+  async accounts(): Promise<PlanningAccount[]> {
+    const { data } = await this.loaded();
+    return data.accounts.map((info) =>
       PlanningAccount.load({
         assetId: info.assetId,
         alias: info.alias,
@@ -253,6 +268,8 @@ export class PlanningTransaction {
   private readonly fromAccountId: string | null;
   private readonly liabilityId: string | null;
   private readonly assetId: string | null;
+  /** When constructed from inside a `PlanningYear` roll-up, a shared map of every liability referenced anywhere in the year (pre-loaded in one batch by `loadPlanningYearData`). Lets `liability()` resolve synchronously without firing a per-row `SELECT` — avoids an N+1 across the dozens of transactions a planning-grid query returns. Null on one-off constructions (e.g. mutation return values) where lazy `fromId` loading is fine. */
+  private readonly liabilitiesById: Map<string, LiabilityRow> | null;
 
   constructor(data: {
     id: ID;
@@ -266,6 +283,7 @@ export class PlanningTransaction {
     fromAccountId?: string | null;
     liabilityId: string | null;
     assetId: string | null;
+    liabilitiesById?: Map<string, LiabilityRow> | null;
   }) {
     this.id = data.id;
     this.name = data.name;
@@ -278,6 +296,7 @@ export class PlanningTransaction {
     this.fromAccountId = data.fromAccountId ?? null;
     this.liabilityId = data.liabilityId;
     this.assetId = data.assetId;
+    this.liabilitiesById = data.liabilitiesById ?? null;
   }
 
   /** Destination planning account for the from-side of a manual transfer. Null on every other kind of transaction (the to-side, predictions, payslips, ...). @gqlField */
@@ -296,8 +315,10 @@ export class PlanningTransaction {
 
   /** Liability this row services (e.g. a payslip adjustment tagged with a student-loan liability, a credit-card payment). Null on every other kind of transaction. @gqlField */
   liability(): NetWorthCategoryLiability | null {
-    return this.liabilityId == null
-      ? null
+    if (this.liabilityId == null) return null;
+    const preloaded = this.liabilitiesById?.get(this.liabilityId);
+    return preloaded
+      ? NetWorthCategoryLiability.load(preloaded)
       : NetWorthCategoryLiability.fromId(this.liabilityId);
   }
 
@@ -474,7 +495,7 @@ export async function planningYears(
     hasPreviousPage = windowStart > 0;
   }
 
-  const loaded = await Promise.all(page.map((y) => PlanningYear.load(y)));
+  const loaded = page.map((y) => PlanningYear.load(y));
   return buildConnection<PlanningYear>(
     loaded,
     (node) => encodeCursor(String(node.yearNumber), String(node.yearNumber)),
@@ -585,12 +606,10 @@ export async function planningAccountUnassign(assetId: ID): Promise<Void> {
 /**
  * Resolve a list of starting-calendar-year numbers into `PlanningYear` objects. Since `PlanningYear.load` always synthesises a year, every requested year is returned (sorted ascending).
  */
-export async function planningYearsForYears(
-  yearNumbers: number[],
-): Promise<PlanningYear[]> {
+export function planningYearsForYears(yearNumbers: number[]): PlanningYear[] {
   if (yearNumbers.length === 0) return [];
   const sorted = [...new Set(yearNumbers)].sort((a, b) => a - b);
-  return Promise.all(sorted.map((y) => PlanningYear.load(y)));
+  return sorted.map((y) => PlanningYear.load(y));
 }
 
 /**
