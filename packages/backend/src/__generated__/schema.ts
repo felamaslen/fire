@@ -1526,13 +1526,28 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "asset",
                     type: NetWorthCategoryAssetType
                 },
+                fromAccount: {
+                    description: "Source planning account for the to-side of a manual transfer (the mirror credit landing in the receiving account). Null on every other kind of transaction.",
+                    name: "fromAccount",
+                    type: PlanningAccountType
+                },
                 id: {
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
                 },
+                isBill: {
+                    description: "True when the row is a recurring bill (predicted or override). Bills that service a liability also set `liability`; bills without one are generic (utilities, rent, subscriptions, ...).",
+                    name: "isBill",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
                 isEditable: {
                     description: "True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable.",
                     name: "isEditable",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                isPayslipGross: {
+                    description: "True when the row is the gross pay line of a payslip \u2014 either a real `PlanningPayslips` row or a projected earning that will materialise into one. Payslip *deductions* (tax / NIC / student loan) are not flagged here.",
+                    name: "isPayslipGross",
                     type: new GraphQLNonNull(GraphQLBoolean)
                 },
                 isProvisional: {

@@ -241,11 +241,16 @@ export class PlanningTransaction {
   readonly isProvisional: boolean;
   /** True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable. @gqlField */
   readonly isEditable: boolean;
+  /** True when the row is a recurring bill (predicted or override). Bills that service a liability also set `liability`; bills without one are generic (utilities, rent, subscriptions, ...). @gqlField */
+  readonly isBill: boolean;
+  /** True when the row is the gross pay line of a payslip — either a real `PlanningPayslips` row or a projected earning that will materialise into one. Payslip *deductions* (tax / NIC / student loan) are not flagged here. @gqlField */
+  readonly isPayslipGross: boolean;
   // The link FKs are stored opaque; we only materialise the full
   // `PlanningAccount` / `NetWorthCategoryLiability` / `NetWorthCategoryAsset`
   // instances lazily via their `fromId` factories so selecting just `{ id }`
   // doesn't hit the DB. Each lazy instance caches its row once loaded.
   private readonly toAccountId: string | null;
+  private readonly fromAccountId: string | null;
   private readonly liabilityId: string | null;
   private readonly assetId: string | null;
 
@@ -255,7 +260,10 @@ export class PlanningTransaction {
     amount: Money;
     isProvisional: boolean;
     isEditable: boolean;
+    isBill?: boolean;
+    isPayslipGross?: boolean;
     toAccountId: string | null;
+    fromAccountId?: string | null;
     liabilityId: string | null;
     assetId: string | null;
   }) {
@@ -264,7 +272,10 @@ export class PlanningTransaction {
     this.amount = data.amount;
     this.isProvisional = data.isProvisional;
     this.isEditable = data.isEditable;
+    this.isBill = data.isBill ?? false;
+    this.isPayslipGross = data.isPayslipGross ?? false;
     this.toAccountId = data.toAccountId;
+    this.fromAccountId = data.fromAccountId ?? null;
     this.liabilityId = data.liabilityId;
     this.assetId = data.assetId;
   }
@@ -274,6 +285,13 @@ export class PlanningTransaction {
     return this.toAccountId == null
       ? null
       : PlanningAccount.fromId(this.toAccountId);
+  }
+
+  /** Source planning account for the to-side of a manual transfer (the mirror credit landing in the receiving account). Null on every other kind of transaction. @gqlField */
+  fromAccount(): PlanningAccount | null {
+    return this.fromAccountId == null
+      ? null
+      : PlanningAccount.fromId(this.fromAccountId);
   }
 
   /** Liability this row services (e.g. a payslip adjustment tagged with a student-loan liability, a credit-card payment). Null on every other kind of transaction. @gqlField */

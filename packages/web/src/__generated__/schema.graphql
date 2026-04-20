@@ -940,6 +940,7 @@ type Mutation {
   - `adj:…` — deletes the single adjustment.
   - `bill:…` — writes a per-month bill override with null amount, which skips the bill for this month only.
   - `earn:…` — inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.
+  - `liab:…` — materialises a zero-amount manual transaction tagged with the liability, which suppresses the credit-card spend prediction for this month while leaving the liability visible in the grid.
   """
   transactionDelete(
     """Composite id as returned on `PlanningTransaction.id`."""
@@ -1493,11 +1494,23 @@ type PlanningTransaction {
   Asset this transaction invests into (stock or pension). Null on every other kind of transaction.
   """
   asset: NetWorthCategoryAsset
+  """
+  Source planning account for the to-side of a manual transfer (the mirror credit landing in the receiving account). Null on every other kind of transaction.
+  """
+  fromAccount: PlanningAccount
   id: ID!
+  """
+  True when the row is a recurring bill (predicted or override). Bills that service a liability also set `liability`; bills without one are generic (utilities, rent, subscriptions, ...).
+  """
+  isBill: Boolean!
   """
   True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable.
   """
   isEditable: Boolean!
+  """
+  True when the row is the gross pay line of a payslip — either a real `PlanningPayslips` row or a projected earning that will materialise into one. Payslip *deductions* (tax / NIC / student loan) are not flagged here.
+  """
+  isPayslipGross: Boolean!
   """
   True when the transaction is a prediction (e.g. forthcoming bill, predicted salary).
   """
@@ -1814,11 +1827,11 @@ type Query {
     accountId: ID!
   ): [NetWorthCategoryAsset!] @semanticNonNull
   """
-  Liability categories most commonly referenced by existing planning transactions paid out of `accountId`, ordered by descending use count. Intended as a "frequently used" shortlist for the credit-card / bill-payment transaction form.
+  Liability categories most commonly serviced from `accountId`, ordered by descending use count. Counts both manual planning transactions debited from this account and recurring bills paid from this account (e.g. a mortgage bill tagged with its LOAN liability), so loan / mortgage liabilities that are only ever touched via the bills flow still surface here. Intended as a "frequently used" shortlist for the credit-card / bill-payment transaction form.
   """
   transactionLiabilitiesFrequent(
     """
-    Planning account (`PlanningAccount.id`) to scope the frequency count to — only transactions debited from this account are counted.
+    Planning account (`PlanningAccount.id`) to scope the frequency count to — only rows debited from this account are counted.
     """
     accountId: ID!
   ): [NetWorthCategoryLiability!] @semanticNonNull

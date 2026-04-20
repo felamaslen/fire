@@ -3,18 +3,20 @@ import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { isSameMonth } from "date-fns/isSameMonth";
 import {
   AlertTriangle,
-  ArrowLeftRight,
+  ArrowDownLeft,
+  ArrowUpRight,
   Briefcase,
+  ChartCandlestick,
   Check,
   CreditCard,
-  LineChart,
+  HandCoins,
+  Landmark,
   Pencil,
   PiggyBank,
   Plus,
-  Receipt,
   Scale,
+  ScrollText,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -70,14 +72,21 @@ const PlanningTransactionRowDocument = graphql(
       name
       isProvisional
       isEditable
+      isBill
+      isPayslipGross
       toAccount {
+        id
+      }
+      fromAccount {
         id
       }
       liability {
         id
+        type
       }
       asset {
         id
+        type
       }
       amount {
         amount
@@ -368,16 +377,16 @@ function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
           icon={<Briefcase className="size-6" />}
         />
         <ManageIconLink
-          to="/planning/$year/bills"
-          year={year}
-          label="Manage bills"
-          icon={<Receipt className="size-6" />}
-        />
-        <ManageIconLink
           to="/planning/$year/payslips"
           year={year}
           label="Manage payslips"
-          icon={<Upload className="size-6" />}
+          icon={<HandCoins className="size-6" />}
+        />
+        <ManageIconLink
+          to="/planning/$year/bills"
+          year={year}
+          label="Manage bills"
+          icon={<ScrollText className="size-6" />}
         />
         <ManageIconLink
           to="/planning/$year/tax-rates"
@@ -873,9 +882,24 @@ function TransactionKindIcon({
   tx: ResultOf<typeof PlanningTransactionRowDocument>;
 }) {
   const cls = "size-3 shrink-0 text-muted-foreground/60";
-  if (tx.toAccount) return <ArrowLeftRight className={cls} />;
-  if (tx.liability) return <CreditCard className={cls} />;
-  if (tx.asset) return <LineChart className={cls} />;
+  if (tx.toAccount) return <ArrowUpRight className={cls} />;
+  if (tx.fromAccount) return <ArrowDownLeft className={cls} />;
+  if (tx.liability) {
+    return tx.liability.type === "CREDIT_CARD" ? (
+      <CreditCard className={cls} />
+    ) : (
+      <Landmark className={cls} />
+    );
+  }
+  if (tx.asset) {
+    return tx.asset.type === "PENSION" ? (
+      <PiggyBank className={cls} />
+    ) : (
+      <ChartCandlestick className={cls} />
+    );
+  }
+  if (tx.isBill) return <ScrollText className={cls} />;
+  if (tx.isPayslipGross) return <HandCoins className={cls} />;
   return null;
 }
 
@@ -951,15 +975,15 @@ const CREATE_KIND_META: Record<
   },
   transfer: {
     label: "Add transfer",
-    icon: <ArrowLeftRight className="size-3" />,
+    icon: <ArrowUpRight className="size-3" />,
   },
   liability: {
-    label: "Add credit-card / bill payment",
-    icon: <CreditCard className="size-3" />,
+    label: "Add credit-card / loan payment",
+    icon: <Landmark className="size-3" />,
   },
   investment: {
     label: "Add investment",
-    icon: <LineChart className="size-3" />,
+    icon: <PiggyBank className="size-3" />,
   },
 };
 
