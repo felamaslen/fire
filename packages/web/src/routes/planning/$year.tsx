@@ -1,10 +1,13 @@
-import { useMutation, useSuspenseQuery } from "@apollo/client/react";
+import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { isSameMonth } from "date-fns/isSameMonth";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   Briefcase,
   Check,
+  CreditCard,
+  LineChart,
   Pencil,
   PiggyBank,
   Plus,
@@ -30,7 +33,10 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -64,8 +70,15 @@ const PlanningTransactionRowDocument = graphql(
       name
       isProvisional
       isEditable
-      liabilityId
-      assetId
+      toAccount {
+        id
+      }
+      liability {
+        id
+      }
+      asset {
+        id
+      }
       amount {
         amount
         currency
@@ -147,6 +160,22 @@ export const PlanningYearViewDocument = graphql(
   [PlanningMonthAccountCellDocument],
 );
 
+/** Frequently-used liability and asset categories for a given planning
+ * account — used to surface a "Frequently used" section on top of the plain
+ * alphabetical dropdown in the create-transaction popover. Fetched lazily
+ * when the user opens a popover so the main grid query stays minimal and
+ * the counts re-read whenever a popover reopens. */
+const PlanningFrequentTargetsDocument = graphql(`
+  query PlanningFrequentTargets($accountId: ID!) {
+    transactionLiabilitiesFrequent(accountId: $accountId) {
+      id
+    }
+    transactionAssetsFrequent(accountId: $accountId) {
+      id
+    }
+  }
+`);
+
 const TransactionCreateDocument = graphql(`
   mutation PlanningTransactionCreate(
     $monthId: ID!
@@ -177,12 +206,18 @@ const TransactionUpdateDocument = graphql(`
     $id: ID!
     $amount: MoneyInput
     $name: String
+    $toAccountId: ID
+    $liabilityId: ID
+    $assetId: ID
   ) {
     transactionUpdate(
       monthId: $monthId
       id: $id
       amount: $amount
       name: $name
+      toAccountId: $toAccountId
+      liabilityId: $liabilityId
+      assetId: $assetId
     ) {
       id
     }
@@ -604,12 +639,40 @@ function MonthAccountCell({
             monoRight={monoRight}
             monthId={monthId}
             year={year}
+            accountId={accountId}
+            accounts={accounts}
+            liabilities={liabilities}
+            investableAssets={investableAssets}
           />
         ))}
-        <li className="flex justify-end px-1 py-0.5">
+        <li className="flex justify-end gap-0.5 px-1 py-0.5">
           <CreateTransactionTrigger
+            kind="adhoc"
             monthId={monthId}
-            year={year}
+            accountId={accountId}
+            accounts={accounts}
+            liabilities={liabilities}
+            investableAssets={investableAssets}
+          />
+          <CreateTransactionTrigger
+            kind="transfer"
+            monthId={monthId}
+            accountId={accountId}
+            accounts={accounts}
+            liabilities={liabilities}
+            investableAssets={investableAssets}
+          />
+          <CreateTransactionTrigger
+            kind="liability"
+            monthId={monthId}
+            accountId={accountId}
+            accounts={accounts}
+            liabilities={liabilities}
+            investableAssets={investableAssets}
+          />
+          <CreateTransactionTrigger
+            kind="investment"
+            monthId={monthId}
             accountId={accountId}
             accounts={accounts}
             liabilities={liabilities}
@@ -670,11 +733,19 @@ function TransactionRow({
   monoRight,
   monthId,
   year: _year,
+  accountId,
+  accounts,
+  liabilities,
+  investableAssets,
 }: {
   data: FragmentOf<typeof PlanningTransactionRowDocument>;
   monoRight: string;
   monthId: string;
   year: string;
+  accountId: string;
+  accounts: PlanningYearData["accounts"];
+  liabilities: LiabilityOption[];
+  investableAssets: AssetOption[];
 }) {
   const tx = readFragment(PlanningTransactionRowDocument, data);
   const [editOpen, setEditOpen] = useState(false);
@@ -693,12 +764,19 @@ function TransactionRow({
     // new row without us having to name every downstream query here.
     refetchQueries: "active",
   });
+  // Lazy-loaded frequently-used targets for this row's source account —
+  // fetched only when the edit popover is opened.
+  const frequentQuery = useQuery(PlanningFrequentTargetsDocument, {
+    variables: { accountId },
+    skip: !editOpen,
+    fetchPolicy: "cache-and-network",
+  });
+  const frequentLiabilityIds =
+    frequentQuery.data?.transactionLiabilitiesFrequent?.map((l) => l.id) ?? [];
+  const frequentAssetIds =
+    frequentQuery.data?.transactionAssetsFrequent?.map((a) => a.id) ?? [];
 
-  const onSaveEdit = async (patch: {
-    name: string;
-    amount: number;
-    direction: "+" | "-";
-  }) => {
+  const onSaveEdit = async (patch: FullFormValues) => {
     const signed = patch.direction === "+" ? patch.amount : -patch.amount;
     await update({
       variables: {
@@ -706,6 +784,9 @@ function TransactionRow({
         id: tx.id,
         name: patch.name,
         amount: { amount: signed, currency: tx.amount.currency },
+        toAccountId: patch.toAccountId,
+        liabilityId: patch.liabilityId,
+        assetId: patch.assetId,
       },
     });
     toast.success("Saved");
@@ -745,13 +826,23 @@ function TransactionRow({
                   <Pencil className="size-3" />
                 </IconButton>
               </PopoverTrigger>
-              <PopoverContent className="w-72" align="end">
-                <EditTransactionForm
+              <PopoverContent className="w-80" align="end">
+                <FullTransactionForm
+                  submitLabel="Save"
                   initial={{
                     name: tx.name,
                     amount: Math.abs(tx.amount.amount),
                     direction: tx.amount.amount < 0 ? "-" : "+",
+                    toAccountId: tx.toAccount?.id ?? null,
+                    liabilityId: tx.liability?.id ?? null,
+                    assetId: tx.asset?.id ?? null,
                   }}
+                  accounts={accounts}
+                  liabilities={liabilities}
+                  investableAssets={investableAssets}
+                  excludeAccountId={accountId}
+                  frequentLiabilityIds={frequentLiabilityIds}
+                  frequentAssetIds={frequentAssetIds}
                   onSubmit={onSaveEdit}
                   onCancel={() => setEditOpen(false)}
                 />
@@ -827,16 +918,43 @@ function InlineDeleteButton({
   );
 }
 
+type CreateKind = "adhoc" | "transfer" | "liability" | "investment";
+
+const CREATE_KIND_META: Record<
+  CreateKind,
+  {
+    label: string;
+    icon: React.ReactNode;
+  }
+> = {
+  adhoc: {
+    label: "Add ad-hoc transaction",
+    icon: <Plus className="size-3" />,
+  },
+  transfer: {
+    label: "Add transfer",
+    icon: <ArrowLeftRight className="size-3" />,
+  },
+  liability: {
+    label: "Add credit-card / bill payment",
+    icon: <CreditCard className="size-3" />,
+  },
+  investment: {
+    label: "Add investment",
+    icon: <LineChart className="size-3" />,
+  },
+};
+
 function CreateTransactionTrigger({
+  kind,
   monthId,
-  year: _year,
   accountId,
   accounts,
   liabilities,
   investableAssets,
 }: {
+  kind: CreateKind;
   monthId: string;
-  year: string;
   accountId: string;
   accounts: PlanningYearData["accounts"];
   liabilities: LiabilityOption[];
@@ -850,15 +968,43 @@ function CreateTransactionTrigger({
     // new row without us having to name every downstream query here.
     refetchQueries: "active",
   });
+  // Only kinds whose dropdown shows a frequency section need this —
+  // transfer has no "frequently used" bucket.
+  const needsFrequent =
+    kind === "liability" || kind === "investment" || kind === "adhoc";
+  const frequentQuery = useQuery(PlanningFrequentTargetsDocument, {
+    variables: { accountId },
+    skip: !open || !needsFrequent,
+    // Re-read on every open so a just-created transaction shows up in the
+    // "Frequently used" list next time the popover appears.
+    fetchPolicy: "cache-and-network",
+  });
+  const frequentLiabilityIds =
+    frequentQuery.data?.transactionLiabilitiesFrequent?.map((l) => l.id) ?? [];
+  const frequentAssetIds =
+    frequentQuery.data?.transactionAssetsFrequent?.map((a) => a.id) ?? [];
 
-  const onSubmit = async (v: {
+  const onKindedSubmit = async (v: {
     name: string;
     amount: number;
-    direction: "+" | "-";
-    toAccountId: string | null;
-    liabilityId: string | null;
-    assetId: string | null;
+    targetId: string;
   }) => {
+    await create({
+      variables: {
+        monthId,
+        accountId,
+        name: v.name,
+        amount: { amount: -v.amount, currency: "GBP" },
+        toAccountId: kind === "transfer" ? v.targetId : null,
+        liabilityId: kind === "liability" ? v.targetId : null,
+        assetId: kind === "investment" ? v.targetId : null,
+      },
+    });
+    toast.success("Transaction added");
+    setOpen(false);
+  };
+
+  const onAdHocSubmit = async (v: FullFormValues) => {
     const signed = v.direction === "+" ? v.amount : -v.amount;
     await create({
       variables: {
@@ -866,153 +1012,153 @@ function CreateTransactionTrigger({
         accountId,
         name: v.name,
         amount: { amount: signed, currency: "GBP" },
-        toAccountId: v.direction === "+" ? null : v.toAccountId,
-        liabilityId: v.direction === "+" ? null : v.liabilityId,
-        assetId: v.direction === "+" ? null : v.assetId,
+        toAccountId: v.toAccountId,
+        liabilityId: v.liabilityId,
+        assetId: v.assetId,
       },
     });
     toast.success("Transaction added");
     setOpen(false);
   };
 
+  const meta = CREATE_KIND_META[kind];
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <IconButton
-          aria-label="Add transaction"
-          className="opacity-0 transition-opacity group-hover:opacity-100"
-        >
-          <Plus className="size-3" />
-        </IconButton>
+        <IconButton aria-label={meta.label}>{meta.icon}</IconButton>
       </PopoverTrigger>
       <PopoverContent className="w-80" align="end">
-        <CreateTransactionForm
-          accounts={accounts}
-          liabilities={liabilities}
-          investableAssets={investableAssets}
-          excludeAccountId={accountId}
-          onSubmit={onSubmit}
-          onCancel={() => setOpen(false)}
-        />
+        {kind === "adhoc" ? (
+          <FullTransactionForm
+            submitLabel="Add"
+            accounts={accounts}
+            liabilities={liabilities}
+            investableAssets={investableAssets}
+            excludeAccountId={accountId}
+            frequentLiabilityIds={frequentLiabilityIds}
+            frequentAssetIds={frequentAssetIds}
+            onSubmit={onAdHocSubmit}
+            onCancel={() => setOpen(false)}
+          />
+        ) : (
+          <CreateTransactionForm
+            kind={kind}
+            accounts={accounts}
+            liabilities={liabilities}
+            investableAssets={investableAssets}
+            excludeAccountId={accountId}
+            frequentLiabilityIds={frequentLiabilityIds}
+            frequentAssetIds={frequentAssetIds}
+            onSubmit={onKindedSubmit}
+            onCancel={() => setOpen(false)}
+          />
+        )}
       </PopoverContent>
     </Popover>
   );
 }
 
-function EditTransactionForm({
-  initial,
-  onSubmit,
-  onCancel,
-}: {
-  initial: { name: string; amount: number; direction: "+" | "-" };
-  onSubmit: (v: {
-    name: string;
-    amount: number;
-    direction: "+" | "-";
-  }) => void | Promise<void>;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(initial.name);
-  const [amount, setAmount] = useState(String(initial.amount));
-  const [direction, setDirection] = useState<"+" | "-">(initial.direction);
-  const parsed = Number(amount);
-  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed < 0;
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (disabled) return;
-    await onSubmit({ name: name.trim(), amount: parsed, direction });
-  };
-  return (
-    <form onSubmit={submit} className="space-y-3">
-      <div className="space-y-1">
-        <Label className="text-xs">Name</Label>
-        <Input value={name} onChange={(e) => setName(e.target.value)} />
-      </div>
-      <div className="space-y-1">
-        <Label className="text-xs">Amount</Label>
-        <div className="flex items-center gap-2">
-          <Select
-            value={direction}
-            onValueChange={(v) => setDirection(v as "+" | "-")}
-          >
-            <SelectTrigger className="w-14 rounded-r-none border-r-0">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="-">−</SelectItem>
-              <SelectItem value="+">+</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            type="number"
-            inputMode="decimal"
-            step="0.01"
-            min="0"
-            currency="GBP"
-            className="rounded-l-none"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-        </div>
-      </div>
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" size="sm" disabled={disabled}>
-          Save
-        </Button>
-      </div>
-    </form>
-  );
-}
+type FullFormValues = {
+  name: string;
+  amount: number;
+  direction: "+" | "-";
+  toAccountId: string | null;
+  liabilityId: string | null;
+  assetId: string | null;
+};
 
-function CreateTransactionForm({
+const NONE = "__none__" as const;
+
+function FullTransactionForm({
+  initial,
+  submitLabel,
   accounts,
   liabilities,
   investableAssets,
   excludeAccountId,
+  frequentLiabilityIds,
+  frequentAssetIds,
   onSubmit,
   onCancel,
 }: {
+  initial?: FullFormValues;
+  submitLabel: string;
   accounts: PlanningYearData["accounts"];
   liabilities: LiabilityOption[];
   investableAssets: AssetOption[];
   excludeAccountId: string;
-  onSubmit: (v: {
-    name: string;
-    amount: number;
-    direction: "+" | "-";
-    toAccountId: string | null;
-    liabilityId: string | null;
-    assetId: string | null;
-  }) => void | Promise<void>;
+  frequentLiabilityIds: string[];
+  frequentAssetIds: string[];
+  onSubmit: (v: FullFormValues) => void | Promise<void>;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
-  const [direction, setDirection] = useState<"+" | "-">("-");
-  const [toAccountId, setToAccountId] = useState("__none__");
-  const [liabilityId, setLiabilityId] = useState("__none__");
-  const [assetId, setAssetId] = useState("__none__");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
+  const [direction, setDirection] = useState<"+" | "-">(
+    initial?.direction ?? "-",
+  );
+  const [toAccountId, setToAccountId] = useState<string>(
+    initial?.toAccountId ?? NONE,
+  );
+  const [liabilityId, setLiabilityId] = useState<string>(
+    initial?.liabilityId ?? NONE,
+  );
+  const [assetId, setAssetId] = useState<string>(initial?.assetId ?? NONE);
+
+  const hasTarget =
+    toAccountId !== NONE || liabilityId !== NONE || assetId !== NONE;
+  // When a target is set the transaction is implicitly an outflow — force
+  // the sign negative and lock the dropdown so users can't create an
+  // inconsistent record.
+  const effectiveDirection: "+" | "-" = hasTarget ? "-" : direction;
+
   const parsed = Number(amount);
-  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed < 0;
-  const isInflow = direction === "+";
-  const hasLiability = !isInflow && liabilityId !== "__none__";
-  const hasAsset = !isInflow && assetId !== "__none__";
+  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (disabled) return;
     await onSubmit({
       name: name.trim(),
       amount: parsed,
-      direction,
-      toAccountId: toAccountId === "__none__" ? null : toAccountId,
-      liabilityId: liabilityId === "__none__" ? null : liabilityId,
-      assetId: assetId === "__none__" ? null : assetId,
+      direction: effectiveDirection,
+      toAccountId: toAccountId === NONE ? null : toAccountId,
+      liabilityId: liabilityId === NONE ? null : liabilityId,
+      assetId: assetId === NONE ? null : assetId,
     });
   };
+
   const transferTargets = accounts.filter((a) => a.id !== excludeAccountId);
+  const liabilityPartition = partitionFrequent(
+    liabilities,
+    frequentLiabilityIds,
+  );
+  const assetPartition = partitionFrequent(investableAssets, frequentAssetIds);
+
+  // Mutex: picking one of the three target kinds clears the other two.
+  const onSelectToAccount = (v: string) => {
+    setToAccountId(v);
+    if (v !== NONE) {
+      setLiabilityId(NONE);
+      setAssetId(NONE);
+    }
+  };
+  const onSelectLiability = (v: string) => {
+    setLiabilityId(v);
+    if (v !== NONE) {
+      setToAccountId(NONE);
+      setAssetId(NONE);
+    }
+  };
+  const onSelectAsset = (v: string) => {
+    setAssetId(v);
+    if (v !== NONE) {
+      setToAccountId(NONE);
+      setLiabilityId(NONE);
+    }
+  };
+
   return (
     <form onSubmit={submit} className="space-y-3">
       <div className="space-y-1">
@@ -1025,10 +1171,11 @@ function CreateTransactionForm({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Amount</Label>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center">
           <Select
-            value={direction}
+            value={effectiveDirection}
             onValueChange={(v) => setDirection(v as "+" | "-")}
+            disabled={hasTarget}
           >
             <SelectTrigger className="w-14 rounded-r-none border-r-0">
               <SelectValue />
@@ -1044,7 +1191,7 @@ function CreateTransactionForm({
             step="0.01"
             min="0"
             currency="GBP"
-            className="-ml-2 flex-1 rounded-l-none"
+            className="flex-1 rounded-l-none"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
@@ -1052,16 +1199,12 @@ function CreateTransactionForm({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Transfer to (optional)</Label>
-        <Select
-          value={isInflow ? "__none__" : toAccountId}
-          onValueChange={setToAccountId}
-          disabled={isInflow}
-        >
+        <Select value={toAccountId} onValueChange={onSelectToAccount}>
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__none__">External outflow</SelectItem>
+            <SelectItem value={NONE}>None</SelectItem>
             {transferTargets.map((a) => (
               <SelectItem key={a.id} value={a.id}>
                 {a.name}
@@ -1072,43 +1215,217 @@ function CreateTransactionForm({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Pays down liability (optional)</Label>
-        <Select
-          value={isInflow ? "__none__" : liabilityId}
-          onValueChange={setLiabilityId}
-          disabled={isInflow || hasAsset}
-        >
+        <Select value={liabilityId} onValueChange={onSelectLiability}>
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__none__">None</SelectItem>
-            {liabilities.map((l) => (
-              <SelectItem key={l.id} value={l.id}>
-                {l.name}
-              </SelectItem>
-            ))}
+            <SelectItem value={NONE}>None</SelectItem>
+            {liabilityPartition.frequent.length > 0 && (
+              <>
+                <SelectGroup>
+                  <SelectLabel>Frequently used</SelectLabel>
+                  {liabilityPartition.frequent.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                {liabilityPartition.rest.length > 0 && <SelectSeparator />}
+              </>
+            )}
+            {liabilityPartition.rest.length > 0 && (
+              <SelectGroup>
+                {liabilityPartition.frequent.length > 0 && (
+                  <SelectLabel>All</SelectLabel>
+                )}
+                {liabilityPartition.rest.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
           </SelectContent>
         </Select>
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Invests into asset (optional)</Label>
-        <Select
-          value={isInflow ? "__none__" : assetId}
-          onValueChange={setAssetId}
-          disabled={isInflow || hasLiability}
-        >
+        <Select value={assetId} onValueChange={onSelectAsset}>
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__none__">None</SelectItem>
-            {investableAssets.map((a) => (
-              <SelectItem key={a.id} value={a.id}>
-                {a.name}
-              </SelectItem>
-            ))}
+            <SelectItem value={NONE}>None</SelectItem>
+            {assetPartition.frequent.length > 0 && (
+              <>
+                <SelectGroup>
+                  <SelectLabel>Frequently used</SelectLabel>
+                  {assetPartition.frequent.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                {assetPartition.rest.length > 0 && <SelectSeparator />}
+              </>
+            )}
+            {assetPartition.rest.length > 0 && (
+              <SelectGroup>
+                {assetPartition.frequent.length > 0 && (
+                  <SelectLabel>All</SelectLabel>
+                )}
+                {assetPartition.rest.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
           </SelectContent>
         </Select>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={disabled}>
+          {submitLabel}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function CreateTransactionForm({
+  kind,
+  accounts,
+  liabilities,
+  investableAssets,
+  excludeAccountId,
+  frequentLiabilityIds,
+  frequentAssetIds,
+  onSubmit,
+  onCancel,
+}: {
+  kind: CreateKind;
+  accounts: PlanningYearData["accounts"];
+  liabilities: LiabilityOption[];
+  investableAssets: AssetOption[];
+  excludeAccountId: string;
+  frequentLiabilityIds: string[];
+  frequentAssetIds: string[];
+  onSubmit: (v: {
+    name: string;
+    amount: number;
+    targetId: string;
+  }) => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const options: { id: string; name: string }[] =
+    kind === "transfer"
+      ? accounts.filter((a) => a.id !== excludeAccountId)
+      : kind === "liability"
+        ? liabilities
+        : investableAssets;
+  const frequentIds =
+    kind === "liability"
+      ? frequentLiabilityIds
+      : kind === "investment"
+        ? frequentAssetIds
+        : [];
+  const { frequent, rest } = partitionFrequent(options, frequentIds);
+
+  const [name, setName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [targetId, setTargetId] = useState("");
+  const parsed = Number(amount);
+  const disabled =
+    !name.trim() || !Number.isFinite(parsed) || parsed <= 0 || targetId === "";
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (disabled) return;
+    await onSubmit({ name: name.trim(), amount: parsed, targetId });
+  };
+
+  const targetLabel =
+    kind === "transfer"
+      ? "Transfer to"
+      : kind === "liability"
+        ? "Pays down liability"
+        : "Invests into asset";
+  const targetPlaceholder =
+    kind === "transfer"
+      ? "Choose account"
+      : kind === "liability"
+        ? "Choose liability"
+        : "Choose asset";
+
+  const onTargetChange = (value: string) => {
+    setTargetId(value);
+    // Prefill name from the chosen target when the user hasn't typed anything
+    // yet — a small nicety for the liability / investment flows where the row
+    // label almost always mirrors the account name.
+    if (!name.trim()) {
+      const opt = options.find((o) => o.id === value);
+      if (opt) setName(opt.name);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <div className="space-y-1">
+        <Label className="text-xs">{targetLabel}</Label>
+        <Select value={targetId} onValueChange={onTargetChange}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder={targetPlaceholder} />
+          </SelectTrigger>
+          <SelectContent>
+            {frequent.length > 0 && (
+              <>
+                <SelectGroup>
+                  <SelectLabel>Frequently used</SelectLabel>
+                  {frequent.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                {rest.length > 0 && <SelectSeparator />}
+              </>
+            )}
+            {rest.length > 0 && (
+              <SelectGroup>
+                {frequent.length > 0 && <SelectLabel>All</SelectLabel>}
+                {rest.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Name</Label>
+        <Input
+          placeholder="e.g. Rent"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Amount</Label>
+        <Input
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          currency="GBP"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>
@@ -1120,6 +1437,25 @@ function CreateTransactionForm({
       </div>
     </form>
   );
+}
+
+/** Split `options` into a `frequent` list (in `frequentIds` order) and a
+ * `rest` list sorted alphabetically by name. Options whose id appears in
+ * `frequentIds` never appear in `rest`. */
+function partitionFrequent<T extends { id: string; name: string }>(
+  options: T[],
+  frequentIds: string[],
+): { frequent: T[]; rest: T[] } {
+  const byId = new Map(options.map((o) => [o.id, o]));
+  const frequent = frequentIds
+    .map((id) => byId.get(id))
+    .filter((o): o is T => o != null);
+  const frequentSet = new Set(frequent.map((o) => o.id));
+  const rest = options
+    .filter((o) => !frequentSet.has(o.id))
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { frequent, rest };
 }
 
 function formatMonth(d: string): string {

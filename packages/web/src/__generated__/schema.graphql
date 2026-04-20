@@ -1490,9 +1490,9 @@ type PlanningTransaction {
   """Signed amount — negative for outflows (bills, taxes, transfers out)."""
   amount: Money!
   """
-  `NetWorthCategoryAsset.id` if this transaction invests into an asset (stock or pension). Null on every other kind of transaction.
+  Asset this transaction invests into (stock or pension). Null on every other kind of transaction.
   """
-  assetId: ID
+  asset: NetWorthCategoryAsset
   id: ID!
   """
   True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable.
@@ -1503,10 +1503,14 @@ type PlanningTransaction {
   """
   isProvisional: Boolean!
   """
-  `NetWorthCategoryLiability.id` if this row is a payslip adjustment linked to a liability (e.g. a student-loan deduction). Null on every other kind of transaction.
+  Liability this row services (e.g. a payslip adjustment tagged with a student-loan liability, a credit-card payment). Null on every other kind of transaction.
   """
-  liabilityId: ID
+  liability: NetWorthCategoryLiability
   name: String!
+  """
+  Destination planning account for the from-side of a manual transfer. Null on every other kind of transaction (the to-side, predictions, payslips, ...).
+  """
+  toAccount: PlanningAccount
 }
 
 """
@@ -1800,6 +1804,24 @@ type Query {
     filterAssetIdIn: [ID!]
     first: Int
   ): PortfolioConnection @semanticNonNull
+  """
+  Asset categories (`STOCK` / `PENSION`) most commonly referenced by existing planning transactions paid out of `accountId`, ordered by descending use count. Intended as a "frequently used" shortlist for the investment-transaction form.
+  """
+  transactionAssetsFrequent(
+    """
+    Planning account (`PlanningAccount.id`) to scope the frequency count to — only transactions debited from this account are counted.
+    """
+    accountId: ID!
+  ): [NetWorthCategoryAsset!] @semanticNonNull
+  """
+  Liability categories most commonly referenced by existing planning transactions paid out of `accountId`, ordered by descending use count. Intended as a "frequently used" shortlist for the credit-card / bill-payment transaction form.
+  """
+  transactionLiabilitiesFrequent(
+    """
+    Planning account (`PlanningAccount.id`) to scope the frequency count to — only transactions debited from this account are counted.
+    """
+    accountId: ID!
+  ): [NetWorthCategoryLiability!] @semanticNonNull
 }
 
 """
