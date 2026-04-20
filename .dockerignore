@@ -39,14 +39,6 @@
 **/docker-compose.yml
 **/.dockerignore
 
-# Only the backend needs its sources in the image; skip the web package to
-# keep the backend image small and cache-friendly.
-packages/web/src
-packages/web/public
-packages/web/vite.config.ts
-packages/web/tsconfig.json
-packages/web/scripts
-
 # Local uploads directory — bind-mounted at runtime instead.
 packages/backend/uploads
 

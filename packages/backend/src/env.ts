@@ -19,6 +19,8 @@ const schema = z.object({
   GEMINI_API_KEY: z.string().min(1).optional(),
   /** Which Gemini model to call from `payslipParse`. Defaults to `gemini-2.5-flash-lite` because it's significantly cheaper and — crucially — sits in a less congested serving pool than flagship Flash, which frequently returns 503 UNAVAILABLE on free + paid tiers alike. Override if you need the bigger model for a harder PDF. */
   GEMINI_MODEL: z.string().min(1).default("gemini-2.5-flash-lite"),
+  /** Directory containing a built `packages/web` SPA (the `dist/` output from `vite build`). When set, the server serves those static assets and falls back to `index.html` for non-API GETs so client-side routing works. Leave unset in dev where the web package is served by its own Vite dev server. */
+  WEB_DIST_DIR: z.string().min(1).optional(),
 });
 
 export const env = schema.parse(process.env);

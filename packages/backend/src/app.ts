@@ -1,6 +1,7 @@
 import "./graphql/server";
 import "./graphql/schema-download";
 import "./uploads";
+import "./spa";
 
 import { env } from "./env";
 import { router } from "./router";
