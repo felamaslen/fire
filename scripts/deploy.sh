@@ -166,10 +166,17 @@ docker pull '$IMAGE:latest'
 docker compose up -d --wait postgres
 
 # Run drizzle-kit migrate in a one-off container built from the app image.
-# \`--rm\` so it doesn't leave a stopped container around; the service's env
-# (DATABASE_URL etc.) is inherited from docker-compose.yml.
+# \`--rm\`  — don't leave a stopped container around; env (DATABASE_URL etc.)
+#            is inherited from docker-compose.yml.
+# \`-T\`   — **critical**: without this, \`docker compose run\` forwards its
+#            stdin into the container. We run the whole script via
+#            \`ssh bash -s <<EOSH\`, so stdin here *is* the heredoc, and
+#            every line after this command silently gets consumed by
+#            pnpm instead of executed by the shell (including the app
+#            recreate below). Resulting deploys looked green but left
+#            the old container running.
 echo '==> Running database migrations'
-docker compose run --rm app pnpm db:migrate
+docker compose run --rm -T app pnpm db:migrate
 
 # Bring \`backup\` (and anything else non-app) up / prune orphans. Does NOT
 # touch \`app\` — that's handled explicitly below with stronger recreation
