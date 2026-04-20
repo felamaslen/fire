@@ -1,8 +1,9 @@
-import { and, desc, inArray, sql } from "drizzle-orm";
+import { and, inArray, sql } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
 import { CURRENCIES, HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
+import { model } from "@/db/drizzle-model";
 import {
   InvestmentPrices,
   Investments,
@@ -10,7 +11,7 @@ import {
   InvestmentTransactions,
 } from "@/db/schema/investments";
 import { solveXirr } from "@/forecast/growth";
-import { readOrRefresh } from "@/tasks/yahoo";
+import { readCachedQuote, readOrRefresh } from "@/tasks/yahoo";
 
 import type { Date as CalendarDate } from "../date";
 import { assertCurrencyCode, Money } from "../money";
@@ -134,10 +135,116 @@ async function computePortfolioXirr(
   return solveXirr(flows) as Float | null;
 }
 
+/**
+ * Canonical cache key for the portfolio-scope loaders, ignoring `filterInvestmentIdIn` — per-investment filtering is applied in memory on the shared result so a single underlying load answers both `portfolio()` (which spans all matching investments) and `portfolios()` (which paginates one Portfolio per investment). Live-quote state is *not* in the key either; the cached value only holds the slow DB-derived pieces (units held, cost basis, cached close prices) and the live quote is overlaid on every read via `readOrRefresh`, so an intraday quote refresh is always reflected in the next `Portfolio.totalValue` / `dailyGain*` call.
+ */
+function portfolioCacheKey(
+  currency: string,
+  filterAssetIdIn: string[] | null,
+): string {
+  const assets = filterAssetIdIn ? [...filterAssetIdIn].sort().join(",") : "*";
+  return `${currency}|${assets}`;
+}
+
+type HeldCore = {
+  id: string;
+  currency: string;
+  unitsHeld: number;
+  buyCostSum: number;
+  sellValueSum: number;
+  priceLatestCached: number | null;
+  pricePreviousCached: number | null;
+  stockCode: string | null;
+};
+
+const heldCoreCache = new Map<string, Promise<HeldCore[]>>();
+const dailyCache = new Map<string, Promise<Map<string, Map<string, number>>>>();
+
+/** Drop every memoised held / daily-series result. Call from any mutation that changes InvestmentTransactions / InvestmentStockSplits / InvestmentPrices / Investments. The backend owns every mutation on these tables so stale reads never leak further than one mutation boundary. Live-quote drift is handled separately — the live overlay is applied at read time and doesn't depend on this cache. */
+export function invalidatePortfolioCaches(): void {
+  heldCoreCache.clear();
+  dailyCache.clear();
+}
+
 async function loadHeldInvestments(
   filters: Filters,
   opts: { skipLive?: boolean } = {},
 ): Promise<HeldInvestment[]> {
+  const skipLive = !!opts.skipLive;
+  const key = portfolioCacheKey(filters.currency, filters.filterAssetIdIn);
+  let p = heldCoreCache.get(key);
+  if (!p) {
+    p = loadHeldInvestmentsUncached({
+      currency: filters.currency,
+      filterAssetIdIn: filters.filterAssetIdIn,
+      filterInvestmentIdIn: null,
+    });
+    heldCoreCache.set(key, p);
+  }
+  const core = await p;
+  // Apply the live-quote overlay on every read so intraday quote refreshes
+  // immediately surface in `Portfolio.totalValue` / `dailyGain*` without
+  // needing to invalidate `heldCoreCache`. Skipping live keeps `priceLatest`
+  // on the cached close for callers that want close-to-close comparisons.
+  const overlaid = core.map((c) => overlayLive(c, filters.currency, skipLive));
+  if (
+    !filters.filterInvestmentIdIn ||
+    filters.filterInvestmentIdIn.length === 0
+  ) {
+    return overlaid;
+  }
+  const allowed = new Set(filters.filterInvestmentIdIn);
+  return overlaid.filter((h) => allowed.has(h.id));
+}
+
+function overlayLive(
+  core: HeldCore,
+  portfolioCurrency: string,
+  skipLive: boolean,
+): HeldInvestment {
+  let priceLatest = core.priceLatestCached;
+  let pricePrevious = core.pricePreviousCached;
+  // `skipLive` controls *network* behaviour — it gates the stale-refresh
+  // fetch, not the use of the live-quote LRU. Both modes read the cached
+  // quote; the difference is which side of the day they report:
+  //
+  // - `skipLive: false` → `priceLatest = live`, `pricePrevious = previousClose`.
+  //   `totalValue` = today's value, `dailyGain = live − previousClose`.
+  // - `skipLive: true`  → `priceLatest = previousClose` for both sides.
+  //   `totalValue` = yesterday's close value, `dailyGain = 0`.
+  //
+  // Sourcing yesterday's number from the live quote (rather than the DB's
+  // `priceAdjusted`) keeps `totalValue(skipLive=true)` and
+  // `totalValue(skipLive=false)` on the same measurement scale, so the
+  // difference between the two matches `dailyGainValue` (which always
+  // compares live vs. Yahoo's `previousClose`). The DB close is used only
+  // as a last-resort fallback when the live LRU has never seen the ticker.
+  if (core.stockCode && core.unitsHeld > 0) {
+    const live = skipLive
+      ? readCachedQuote(core.stockCode)
+      : readOrRefresh(core.stockCode);
+    if (live && live.currency === portfolioCurrency) {
+      const prevClose = live.previousClosePriceMinorUnits;
+      priceLatest = skipLive
+        ? (prevClose ?? live.priceMinorUnits)
+        : live.priceMinorUnits;
+      pricePrevious = prevClose;
+    }
+  }
+  return {
+    id: core.id,
+    currency: core.currency,
+    unitsHeld: core.unitsHeld,
+    buyCostSum: core.buyCostSum,
+    sellValueSum: core.sellValueSum,
+    priceLatest,
+    pricePrevious,
+  };
+}
+
+async function loadHeldInvestmentsUncached(
+  filters: Filters,
+): Promise<HeldCore[]> {
   // Restrict to investments whose currency matches the portfolio's currency.
   const matchingInvestments = await db
     .select({ id: Investments.id, stockCode: Investments.stockCode })
@@ -147,11 +254,7 @@ async function loadHeldInvestments(
   const stockCodeById = new Map(
     matchingInvestments.map((r) => [r.id, r.stockCode]),
   );
-  let investmentIds = matchingInvestments.map((r) => r.id);
-  if (filters.filterInvestmentIdIn && filters.filterInvestmentIdIn.length > 0) {
-    const allowed = new Set(filters.filterInvestmentIdIn);
-    investmentIds = investmentIds.filter((id) => allowed.has(id));
-  }
+  const investmentIds = matchingInvestments.map((r) => r.id);
   if (investmentIds.length === 0) return [];
 
   const conditions = [
@@ -219,14 +322,32 @@ async function loadHeldInvestments(
   }
 
   const heldIds = [...aggByInvestment.keys()];
+  // Only the two most-recent `priceAdjusted` per investment are consumed
+  // below (for `priceLatest` / `pricePrevious`). A `ROW_NUMBER()` window
+  // narrows it to 2 rows per investment before the driver even sees the
+  // data — still a seq-scan on the seed DB but we only pay for it once per
+  // unique cache key (see `heldCache`).
+  const recentPrice = db.$with("recent_price").as(
+    db
+      .select({
+        investmentId: InvestmentPrices.investmentId,
+        priceAdjusted: InvestmentPrices.priceAdjusted,
+        rn: sql<number>`ROW_NUMBER() OVER (PARTITION BY ${InvestmentPrices.investmentId} ORDER BY ${InvestmentPrices.date} DESC)`.as(
+          "rn",
+        ),
+      })
+      .from(InvestmentPrices)
+      .where(inArray(InvestmentPrices.investmentId, heldIds)),
+  );
   const priceRows = await db
+    .with(recentPrice)
     .select({
-      investmentId: InvestmentPrices.investmentId,
-      priceAdjusted: InvestmentPrices.priceAdjusted,
+      investmentId: recentPrice.investmentId,
+      priceAdjusted: recentPrice.priceAdjusted,
     })
-    .from(InvestmentPrices)
-    .where(inArray(InvestmentPrices.investmentId, heldIds))
-    .orderBy(InvestmentPrices.investmentId, desc(InvestmentPrices.date));
+    .from(recentPrice)
+    .where(sql`${recentPrice.rn} <= 2`)
+    .orderBy(recentPrice.investmentId, recentPrice.rn);
   const pricesByInvestment = new Map<string, number[]>();
   for (const p of priceRows) {
     const list = pricesByInvestment.get(p.investmentId) ?? [];
@@ -234,35 +355,50 @@ async function loadHeldInvestments(
     pricesByInvestment.set(p.investmentId, list);
   }
 
+  // Return the "core" (DB-derived, live-independent) shape. Live-quote
+  // overlay is applied in `loadHeldInvestments` → `overlayLive` on every
+  // read, so intraday quote refreshes don't require invalidating this cache.
   return [...aggByInvestment.entries()].map(([investmentId, agg]) => {
     const prices = pricesByInvestment.get(investmentId) ?? [];
-    let priceLatest: number | null = prices[0] ?? null;
-    let pricePrevious: number | null = prices[1] ?? null;
-    const stockCode = stockCodeById.get(investmentId);
-    if (stockCode && !opts.skipLive) {
-      const live = readOrRefresh(stockCode);
-      if (live && live.currency === filters.currency) {
-        pricePrevious = priceLatest;
-        priceLatest = live.priceMinorUnits;
-      }
-    }
     return {
       id: investmentId,
       currency: filters.currency,
       unitsHeld: agg.unitsHeld,
       buyCostSum: agg.buyCostSum,
       sellValueSum: agg.sellValueSum,
-      priceLatest,
-      pricePrevious,
+      priceLatestCached: prices[0] ?? null,
+      pricePreviousCached: prices[1] ?? null,
+      stockCode: stockCodeById.get(investmentId) ?? null,
     };
   });
 }
 
-async function loadDailySeriesMinor(
-  held: HeldInvestment[],
+/**
+ * Returns each investment's daily contributions separately, memoised by `(currency, filterAssetIdIn)` — the expensive per-day iteration runs once per unique filter scope and is shared across `portfolio.buildDaily` (sums every investment) and `portfolios()` (one Portfolio per investment, each takes its own slice).
+ *
+ * Always computes for every investment matching `(currency, filterAssetIdIn)` regardless of `filterInvestmentIdIn` — callers are expected to aggregate only the investments they care about via `sumDailySeriesMinor` with an `investmentIds` filter.
+ */
+async function loadDailySeriesMinorByInvestment(
   filters: Filters,
-): Promise<Map<string, number>> {
-  if (held.length === 0) return new Map();
+): Promise<Map<string, Map<string, number>>> {
+  const key = portfolioCacheKey(filters.currency, filters.filterAssetIdIn);
+  let p = dailyCache.get(key);
+  if (!p) {
+    p = computeDailySeriesMinorByInvestment(filters);
+    dailyCache.set(key, p);
+  }
+  return p;
+}
+
+async function computeDailySeriesMinorByInvestment(
+  filters: Filters,
+): Promise<Map<string, Map<string, number>>> {
+  const held = await loadHeldInvestments({
+    ...filters,
+    filterInvestmentIdIn: null,
+  });
+  const perInv = new Map<string, Map<string, number>>();
+  if (held.length === 0) return perInv;
 
   const investmentIds = held.map((h) => h.id);
   const txConditions = [
@@ -302,7 +438,7 @@ async function loadDailySeriesMinor(
     .where(inArray(InvestmentPrices.investmentId, investmentIds))
     .orderBy(InvestmentPrices.investmentId, InvestmentPrices.date);
 
-  if (priceRows.length === 0) return new Map();
+  if (priceRows.length === 0) return perInv;
 
   const splitsByInv = new Map<string, { date: Date; ratio: number }[]>();
   for (const s of splitRowsAll) {
@@ -332,9 +468,6 @@ async function loadDailySeriesMinor(
     if (p.date < minDate) minDate = p.date;
   }
 
-  // Units-on-day for (investment, d) = Σ (tx.units × product(splits where
-  // tx.date < split.date ≤ d)). Accumulates each transaction's share count
-  // into today's share-count terms as of day `d`.
   const unitsOn = (investmentId: string, day: Date): number => {
     const txs = txByInv.get(investmentId) ?? [];
     const splits = splitsByInv.get(investmentId) ?? [];
@@ -353,7 +486,6 @@ async function loadDailySeriesMinor(
     return total;
   };
 
-  const totals = new Map<string, number>();
   const msDay = 86400 * 1000;
   const now = new Date();
   const today = new Date(
@@ -362,25 +494,12 @@ async function loadDailySeriesMinor(
   const todayMs = today.getTime();
   const todayKey = today.toISOString().slice(0, 10);
 
-  // Accumulate each investment's contribution into `totals` one investment at
-  // a time, running the loop all the way to today:
-  // - Carry the *previous* day's value across each split date, since the
-  //   stored `price` row and the `unitsOn` split multiplier don't always
-  //   agree on which side of the split boundary to land on (data providers
-  //   differ on whether ex-date close is pre- or post-split) — otherwise
-  //   shows up as a one-day spike in candlestick wicks.
-  // - Past the investment's last cached price row, keep multiplying a stale
-  //   price by `unitsOn(day)` so a sale transaction dated after that last
-  //   price still zeros the investment's contribution at the sell date. If
-  //   we stopped at the last cached price, a sold stock whose prices stopped
-  //   being tracked would leave a ghost band persisting to today.
-  // - Use the live-quote-aware `priceLatest` / `unitsHeld` from `held` for
-  //   today's point so the chart lines up with the headline totals.
   for (const inv of held) {
     const invSplitMs = new Set(
       (splitsByInv.get(inv.id) ?? []).map((s) => s.date.getTime()),
     );
     const invPrices = priceByInv.get(inv.id) ?? [];
+    const totals = new Map<string, number>();
     let lastValue = 0;
     for (let d = minDate.getTime(); d < todayMs; d += msDay) {
       const day = new Date(d);
@@ -399,17 +518,44 @@ async function loadDailySeriesMinor(
         v = price === null || units === 0 ? 0 : units * price;
       }
       const key = day.toISOString().slice(0, 10);
-      totals.set(key, (totals.get(key) ?? 0) + v);
+      totals.set(key, v);
       lastValue = v;
     }
     const todayV =
       inv.unitsHeld === 0 || inv.priceLatest === null
         ? 0
         : inv.unitsHeld * inv.priceLatest;
-    totals.set(todayKey, (totals.get(todayKey) ?? 0) + todayV);
+    totals.set(todayKey, todayV);
+    perInv.set(inv.id, totals);
   }
 
-  return totals;
+  return perInv;
+}
+
+function sumDailySeriesMinor(
+  perInv: Map<string, Map<string, number>>,
+  investmentIds?: Iterable<string>,
+): Map<string, number> {
+  const ids = investmentIds !== undefined ? new Set(investmentIds) : null;
+  const out = new Map<string, number>();
+  for (const [id, totals] of perInv) {
+    if (ids !== null && !ids.has(id)) continue;
+    for (const [key, v] of totals) {
+      out.set(key, (out.get(key) ?? 0) + v);
+    }
+  }
+  return out;
+}
+
+async function loadDailySeriesMinor(
+  filters: Filters,
+): Promise<Map<string, number>> {
+  const perInv = await loadDailySeriesMinorByInvestment(filters);
+  const includeIds =
+    filters.filterInvestmentIdIn && filters.filterInvestmentIdIn.length > 0
+      ? filters.filterInvestmentIdIn
+      : undefined;
+  return sumDailySeriesMinor(perInv, includeIds);
 }
 
 function lastOnOrBefore<T, V>(
@@ -445,6 +591,14 @@ function periodStart(
   return d;
 }
 
+/**
+ * Optional pre-computed data used by `Portfolio` to avoid refetching when a single batch (e.g. `portfolios()`) has already loaded the full held + daily-series set for a shared `(currency, filterAssetIdIn)` scope. Only the `skipLive=false` `held` variant is preloaded; requesting `skipLive=true` (only `xirr` / `dailyGain*` do) falls back to a fresh fetch.
+ */
+export type PortfolioPreload = {
+  held: HeldInvestment[];
+  dailySeriesMinor: Map<string, number>;
+};
+
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
   constructor(
@@ -452,28 +606,21 @@ export class Portfolio {
     public readonly currency: string,
     private readonly filterAssetIdIn: string[] | null,
     private readonly filterInvestmentIdIn: string[] | null,
-  ) {}
+    /** When `true`, every live-quote-sensitive field on this instance — `totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*` — falls back to the most recent cached close instead of the live intraday price. One portfolio-wide switch so the client can pin "end-of-last-trading-day" numbers across the whole dashboard without toggling each field. */
+    private readonly skipLive: boolean = false,
+    private readonly preload?: PortfolioPreload,
+  ) {
+    if (preload) this.heldCache = Promise.resolve(preload.held);
+  }
 
-  /**
-   * Per-instance memo of `loadHeldInvestments` keyed on whether live quotes
-   * are folded in. A fresh `Portfolio` is created per request (via
-   * `Query.portfolio` / `Query.portfolios`), so this cache is inherently
-   * request-scoped. Keeps the fanout to at most two underlying fetches
-   * regardless of how many Portfolio fields the caller selected.
-   */
-  private heldCache: Map<string, Promise<HeldInvestment[]>> = new Map();
+  /** Per-instance memo of `loadHeldInvestments`. The live / skip-live choice is fixed at construction (via the `skipLive` arg on `Query.portfolio` / `Query.portfolios`), so a single fetch covers every Portfolio field the caller selected. */
+  private heldCache: Promise<HeldInvestment[]> | null = null;
 
-  private loadHeld(
-    opts: { skipLive?: boolean } = {},
-  ): Promise<HeldInvestment[]> {
-    const skipLive = !!opts.skipLive;
-    const key = skipLive ? "S" : "";
-    let p = this.heldCache.get(key);
-    if (!p) {
-      p = loadHeldInvestments(this.filters, { skipLive });
-      this.heldCache.set(key, p);
-    }
-    return p;
+  private loadHeld(): Promise<HeldInvestment[]> {
+    this.heldCache ??= loadHeldInvestments(this.filters, {
+      skipLive: this.skipLive,
+    });
+    return this.heldCache;
   }
 
   /** Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key. @gqlField */
@@ -504,13 +651,10 @@ export class Portfolio {
     if (!this.filterInvestmentIdIn || this.filterInvestmentIdIn.length !== 1) {
       return null;
     }
-    const id = this.filterInvestmentIdIn[0];
-    const { eq } = await import("drizzle-orm");
-    const [row] = await db
-      .select()
-      .from(Investments)
-      .where(eq(Investments.id, id));
-    return row ? Investment.load(row) : null;
+    const row = await model("Investments").findById(
+      this.filterInvestmentIdIn[0],
+    );
+    return Investment.load(row);
   }
 
   /** Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. @gqlField */
@@ -549,50 +693,59 @@ export class Portfolio {
     return ((value.amount - cost.amount) / cost.amount) as Float;
   }
 
-  /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. @gqlField */
-  async xirr(
-    /** When `true`, ignore any live quote and terminate against the most recent cached close instead. */
-    skipLive?: boolean | null,
-  ): Promise<Float | null> {
-    const opts = { skipLive: skipLive ?? false };
-    const held = await this.loadHeld(opts);
+  /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
+  async xirr(): Promise<Float | null> {
+    const held = await this.loadHeld();
     return computePortfolioXirr(held, this.filters);
   }
 
-  /** Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists. @gqlField */
-  async dailyGainValue(
-    /** When `true`, ignore any live quote and compare the two most recent cached closes. */
-    skipLive?: boolean | null,
-  ): Promise<Money | null> {
-    return this.aggregate(
-      (h) => {
-        if (h.priceLatest === null || h.pricePrevious === null) return null;
-        return (h.priceLatest - h.pricePrevious) * h.unitsHeld;
-      },
-      { skipLive: skipLive ?? false },
-    );
+  /** Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote (`pricePrevious === null`) are excluded, so a lapsed price history for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set. @gqlField */
+  async dailyGainValue(): Promise<Money | null> {
+    const totalMinor = await this.sumDailyGainMinor();
+    if (totalMinor === null) return null;
+    return Money.fromMinorDenomination(totalMinor, this.currency);
   }
 
-  /** Fractional change in portfolio value over the most recent pricing interval. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists, or when the previous total is zero. @gqlField */
-  async dailyGainPercent(
-    /** When `true`, ignore any live quote and compare the two most recent cached closes. */
-    skipLive?: boolean | null,
-  ): Promise<Float | null> {
-    const opts = { skipLive: skipLive ?? false };
-    const [curr, prev] = await Promise.all([
-      this.aggregate(
-        (h) => (h.priceLatest === null ? null : h.unitsHeld * h.priceLatest),
-        opts,
-      ),
-      this.aggregate(
-        (h) =>
-          h.pricePrevious === null ? null : h.unitsHeld * h.pricePrevious,
-        opts,
-      ),
-    ]);
-    if (curr === null || prev === null) return null;
-    if (prev.amount === 0) return null;
-    return ((curr.amount - prev.amount) / prev.amount) as Float;
+  /** Fractional change in portfolio value over the most recent pricing interval, computed from the same subset of currently-held, live-priced positions as `dailyGainValue` — `Σ Δ / Σ previousValue`. `null` when no qualifying position exists, when the previous total is zero, or when `skipLive` is set. @gqlField */
+  async dailyGainPercent(): Promise<Float | null> {
+    if (this.skipLive) return null;
+    const held = await this.loadHeld();
+    let gain = 0;
+    let prev = 0;
+    let any = false;
+    for (const h of held) {
+      if (
+        h.unitsHeld === 0 ||
+        h.priceLatest === null ||
+        h.pricePrevious === null
+      ) {
+        continue;
+      }
+      any = true;
+      gain += (h.priceLatest - h.pricePrevious) * h.unitsHeld;
+      prev += h.pricePrevious * h.unitsHeld;
+    }
+    if (!any || prev === 0) return null;
+    return (gain / prev) as Float;
+  }
+
+  private async sumDailyGainMinor(): Promise<number | null> {
+    if (this.skipLive) return null;
+    const held = await this.loadHeld();
+    let total = 0;
+    let any = false;
+    for (const h of held) {
+      if (
+        h.unitsHeld === 0 ||
+        h.priceLatest === null ||
+        h.pricePrevious === null
+      ) {
+        continue;
+      }
+      any = true;
+      total += (h.priceLatest - h.pricePrevious) * h.unitsHeld;
+    }
+    return any ? total : null;
   }
 
   /** Daily-sampled line series of portfolio total over the requested period. @gqlField */
@@ -661,8 +814,9 @@ export class Portfolio {
     period: PortfolioTimePeriod,
     length: number,
   ): Promise<{ days: Date[]; totals: Map<string, number> }> {
-    const held = await this.loadHeld();
-    const fullTotals = await loadDailySeriesMinor(held, this.filters);
+    const fullTotals =
+      this.preload?.dailySeriesMinor ??
+      (await loadDailySeriesMinor(this.filters));
     if (fullTotals.size === 0) {
       return { days: [], totals: new Map() };
     }
@@ -678,9 +832,8 @@ export class Portfolio {
 
   private async aggregate(
     compute: (h: HeldInvestment) => number | null,
-    opts: { skipLive?: boolean } = {},
   ): Promise<Money | null> {
-    const held = await this.loadHeld(opts);
+    const held = await this.loadHeld();
     let total = 0;
     for (const h of held) {
       const rawMinor = compute(h);
@@ -740,6 +893,8 @@ export async function portfolios(
   currency?: string | null,
   first?: Int | null,
   after?: ID | null,
+  /** When `true`, every value field on the returned `Portfolio` nodes (`totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*`) falls back to cached closes instead of the live intraday price. */
+  skipLive?: boolean | null,
 ): Promise<Connection<Portfolio> | null> {
   const target = currency ?? HOME_CURRENCY;
   assertCurrencyCode(target);
@@ -786,7 +941,31 @@ export async function portfolios(
   const page = hasNextPage ? slice.slice(0, limit) : slice;
 
   const filterAssets = filterAssetIdIn ? (filterAssetIdIn as string[]) : null;
-  const nodes = page.map((r) => new Portfolio(target, filterAssets, [r.id]));
+
+  // Precompute held + per-investment daily series once for the whole page
+  // instead of fanning out N independent loads — one `Portfolio` per
+  // investment then receives its own single-investment slice via `preload`,
+  // so building 100 nodes costs the same DB work as building one.
+  const baseFilters = {
+    filterAssetIdIn: filterAssets,
+    filterInvestmentIdIn: null,
+    currency: target,
+  };
+  const skip = skipLive ?? false;
+  const [heldAll, seriesByInv] = await Promise.all([
+    loadHeldInvestments(baseFilters, { skipLive: skip }),
+    loadDailySeriesMinorByInvestment(baseFilters),
+  ]);
+  const heldById = new Map(heldAll.map((h) => [h.id, h]));
+  const emptySeries = new Map<string, number>();
+
+  const nodes = page.map((r) => {
+    const held = heldById.get(r.id);
+    return new Portfolio(target, filterAssets, [r.id], skip, {
+      held: held ? [held] : [],
+      dailySeriesMinor: seriesByInv.get(r.id) ?? emptySeries,
+    });
+  });
   return buildConnection<Portfolio>(
     nodes,
     (node) => {
@@ -807,6 +986,8 @@ export async function portfolio(
   filterInvestmentIdIn?: ID[] | null,
   /** ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency. */
   currency?: string | null,
+  /** When `true`, every value field on the returned `Portfolio` (`totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*`) falls back to cached closes instead of the live intraday price. */
+  skipLive?: boolean | null,
 ): Promise<Portfolio | null> {
   const target = currency ?? HOME_CURRENCY;
   assertCurrencyCode(target);
@@ -814,5 +995,6 @@ export async function portfolio(
     target,
     filterAssetIdIn ? (filterAssetIdIn as string[]) : null,
     filterInvestmentIdIn ? (filterInvestmentIdIn as string[]) : null,
+    skipLive ?? false,
   );
 }

@@ -75,6 +75,20 @@ beforeEach(async () => {
   }
   // Wipe the uploads bucket so file-count assertions in upload tests are deterministic.
   await rm(path.resolve(env.UPLOADS_DIR), { recursive: true, force: true });
+  // Process-wide caches added for performance (DrizzleModel rows, portfolio
+  // held / daily-series, per-asset allocations, per-investment wrappers) live
+  // for the life of the Node process — after a test TRUNCATE they'd serve
+  // stale rows to the next test. Flush them alongside the DB reset.
+  const [dm, pf, ps, al] = await Promise.all([
+    import("@/db/drizzle-model"),
+    import("@/graphql/investments/portfolio"),
+    import("@/graphql/investments/position"),
+    import("@/graphql/investments/allocations"),
+  ]);
+  dm.TEST__clearModelCaches();
+  pf.invalidatePortfolioCaches();
+  ps.TEST__clearWrapperCache();
+  al.TEST__clearAllocationCaches();
 });
 
 afterAll(async () => {

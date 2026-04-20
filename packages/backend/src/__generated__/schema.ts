@@ -1898,32 +1898,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 dailyGainPercent: {
-                    description: "Fractional change in portfolio value over the most recent pricing interval. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists, or when the previous total is zero.",
+                    description: "Fractional change in portfolio value over the most recent pricing interval, computed from the same subset of currently-held, live-priced positions as `dailyGainValue` \u2014 `\u03A3 \u0394 / \u03A3 previousValue`. `null` when no qualifying position exists, when the previous total is zero, or when `skipLive` is set.",
                     name: "dailyGainPercent",
-                    type: GraphQLFloat,
-                    args: {
-                        skipLive: {
-                            description: "When `true`, ignore any live quote and compare the two most recent cached closes.",
-                            type: GraphQLBoolean
-                        }
-                    },
-                    resolve(source, args) {
-                        return source.dailyGainPercent(args.skipLive);
-                    }
+                    type: GraphQLFloat
                 },
                 dailyGainValue: {
-                    description: "Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists.",
+                    description: "Change in portfolio value over the most recent pricing interval \u2014 `\u03A3 (live_price \u2212 previousClose) \u00D7 unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote (`pricePrevious === null`) are excluded, so a lapsed price history for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set.",
                     name: "dailyGainValue",
-                    type: MoneyType,
-                    args: {
-                        skipLive: {
-                            description: "When `true`, ignore any live quote and compare the two most recent cached closes.",
-                            type: GraphQLBoolean
-                        }
-                    },
-                    resolve(source, args) {
-                        return source.dailyGainValue(args.skipLive);
-                    }
+                    type: MoneyType
                 },
                 id: {
                     description: "Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key.",
@@ -1972,18 +1954,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: MoneyType
                 },
                 xirr: {
-                    description: "Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge.",
+                    description: "Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` \u2014 with `skipLive`, the terminal flow uses the most recent cached close instead of the live price.",
                     name: "xirr",
-                    type: GraphQLFloat,
-                    args: {
-                        skipLive: {
-                            description: "When `true`, ignore any live quote and terminate against the most recent cached close instead.",
-                            type: GraphQLBoolean
-                        }
-                    },
-                    resolve(source, args) {
-                        return source.xirr(args.skipLive);
-                    }
+                    type: GraphQLFloat
                 }
             };
         }
@@ -2293,10 +2266,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         },
                         filterInvestmentIdIn: {
                             type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        },
+                        skipLive: {
+                            description: "When `true`, every value field on the returned `Portfolio` (`totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*`) falls back to cached closes instead of the live intraday price.",
+                            type: GraphQLBoolean
                         }
                     },
                     resolve(_source, args) {
-                        return assertNonNull(queryPortfolioResolver(args.filterAssetIdIn, args.filterInvestmentIdIn, args.currency));
+                        return assertNonNull(queryPortfolioResolver(args.filterAssetIdIn, args.filterInvestmentIdIn, args.currency, args.skipLive));
                     }
                 },
                 portfolios: {
@@ -2316,10 +2293,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         },
                         first: {
                             type: GraphQLInt
+                        },
+                        skipLive: {
+                            description: "When `true`, every value field on the returned `Portfolio` nodes (`totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*`) falls back to cached closes instead of the live intraday price.",
+                            type: GraphQLBoolean
                         }
                     },
                     resolve(_source, args) {
-                        return assertNonNull(queryPortfoliosResolver(args.filterAssetIdIn, args.currency, args.first, args.after));
+                        return assertNonNull(queryPortfoliosResolver(args.filterAssetIdIn, args.currency, args.first, args.after, args.skipLive));
                     }
                 },
                 transactionAssetsFrequent: {

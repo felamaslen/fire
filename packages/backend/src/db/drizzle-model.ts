@@ -62,7 +62,7 @@ type Row = Record<string, unknown>;
 export class DrizzleModel<N extends DrizzleTableName> {
   private readonly table: TableOf<N>;
   private readonly pkColumns: readonly string[];
-  private readonly loader: DataLoader<DrizzleModelId<N>, RowOf<N>>;
+  private readonly loader: DataLoader<DrizzleModelId<N>, RowOf<N> | null>;
 
   constructor(public readonly tableName: N) {
     const table = schema[tableName] as TableOf<N>;
@@ -74,6 +74,16 @@ export class DrizzleModel<N extends DrizzleTableName> {
   }
 
   async findById(id: DrizzleModelId<N>): Promise<RowOf<N>> {
+    const row = await this.loader.load(id);
+    assert(
+      row !== null,
+      `${this.tableName}: row not found for id ${this.describeId(id)}`,
+    );
+    return row;
+  }
+
+  /** Like `findById` but resolves to `null` (cached, batched just like a hit) when the row doesn't exist, instead of throwing. Useful for singleton-row tables whose only PK value may or may not yet have a row. */
+  async findByIdOrNull(id: DrizzleModelId<N>): Promise<RowOf<N> | null> {
     return this.loader.load(id);
   }
 
@@ -116,9 +126,19 @@ export class DrizzleModel<N extends DrizzleTableName> {
     return insertInto(this.table, row);
   }
 
+  /** Drop a cached row for `id` so the next `findById` / `findByIdOrNull` re-reads from the database. Use when a mutation path wrote to the table without going through `updateById` / `deleteById`. */
+  clearCache(id: DrizzleModelId<N>): void {
+    this.loader.clear(id);
+  }
+
+  /** Drop every cached row, so every subsequent lookup re-reads from the database. Use after a bulk mutation (delete-all, transactional rewrite) where listing each affected id isn't practical. */
+  clearAll(): void {
+    this.loader.clearAll();
+  }
+
   private async batchLoad(
     ids: readonly DrizzleModelId<N>[],
-  ): Promise<(RowOf<N> | Error)[]> {
+  ): Promise<(RowOf<N> | null)[]> {
     const predicates = ids.map((id) => this.idPredicate(id));
     const where = predicates.length === 1 ? predicates[0] : or(...predicates);
     const rows = await selectWhere(this.table, where);
@@ -126,13 +146,7 @@ export class DrizzleModel<N extends DrizzleTableName> {
     for (const row of rows) {
       byKey.set(this.rowCacheKey(row), row);
     }
-    return ids.map(
-      (id) =>
-        byKey.get(this.cacheKey(id)) ??
-        new Error(
-          `${this.tableName}: row not found for id ${this.describeId(id)}`,
-        ),
-    );
+    return ids.map((id) => byKey.get(this.cacheKey(id)) ?? null);
   }
 
   private idPredicate(id: DrizzleModelId<N>): SQL {
@@ -252,6 +266,12 @@ function insertInto<T extends PgTable>(table: T, row: T["$inferInsert"]) {
 }
 
 const modelCache = new Map<DrizzleTableName, DrizzleModel<DrizzleTableName>>();
+
+/** Discard every `DrizzleModel` instance and their DataLoader caches. Tests only — production mutations invalidate entries via `updateById` / `deleteById` / `clearCache`. */
+export function TEST__clearModelCaches(): void {
+  for (const m of modelCache.values()) m.clearAll();
+  modelCache.clear();
+}
 
 /**
  * Process-wide `DrizzleModel` for `tableName`, lazily constructed on first access and memoised thereafter. The backend owns every mutation on these tables, so caching rows across requests is safe; `updateById` / `deleteById` invalidate the relevant entry, and other mutation paths in this codebase should do the same when they run alongside a long-running process.

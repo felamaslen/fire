@@ -1,4 +1,5 @@
-import { eq, sql } from "drizzle-orm";
+import DataLoader from "dataloader";
+import { inArray } from "drizzle-orm";
 import type { Float, Int } from "grats";
 
 import { db } from "@/db";
@@ -135,18 +136,47 @@ export class InvestmentWrapper {
 }
 
 /**
+ * Batches `InvestmentWrapper` lookups across investments: a page of N investments fires one `GROUP BY (investmentId, assetId)` instead of N separate queries. Caches results across requests since the backend owns every `InvestmentTransactions` write.
+ */
+const wrappersByInvestmentLoader = new DataLoader<string, InvestmentWrapper[]>(
+  async (investmentIds) => {
+    const rows = await db
+      .select({
+        investmentId: InvestmentTransactions.investmentId,
+        assetId: InvestmentTransactions.assetId,
+      })
+      .from(InvestmentTransactions)
+      .where(
+        inArray(InvestmentTransactions.investmentId, investmentIds as string[]),
+      )
+      .groupBy(
+        InvestmentTransactions.investmentId,
+        InvestmentTransactions.assetId,
+      );
+    const byInvestment = new Map<string, InvestmentWrapper[]>();
+    for (const row of rows) {
+      const list = byInvestment.get(row.investmentId) ?? [];
+      list.push(new InvestmentWrapper(row.investmentId, row.assetId));
+      byInvestment.set(row.investmentId, list);
+    }
+    return investmentIds.map((id) => byInvestment.get(id) ?? []);
+  },
+);
+
+/**
  * Load every wrapper in which an investment has any recorded transactions (including ones where units have net-zero after sells, so callers can see historically-held positions).
  */
 export async function loadInvestmentWrappers(
   investmentId: string,
 ): Promise<InvestmentWrapper[]> {
-  const rows = await db
-    .select({
-      assetId: InvestmentTransactions.assetId,
-      units: sql<number>`SUM(${InvestmentTransactions.units})`.as("units"),
-    })
-    .from(InvestmentTransactions)
-    .where(eq(InvestmentTransactions.investmentId, investmentId))
-    .groupBy(InvestmentTransactions.assetId);
-  return rows.map((r) => new InvestmentWrapper(investmentId, r.assetId));
+  return wrappersByInvestmentLoader.load(investmentId);
+}
+
+export function invalidateInvestmentWrappers(investmentId: string): void {
+  wrappersByInvestmentLoader.clear(investmentId);
+}
+
+/** Tests only. */
+export function TEST__clearWrapperCache(): void {
+  wrappersByInvestmentLoader.clearAll();
 }

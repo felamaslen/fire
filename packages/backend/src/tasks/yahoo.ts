@@ -17,6 +17,8 @@ const MAX_ENTRIES = 1000;
 
 type Quote = {
   priceMinorUnits: number;
+  /** Previous-trading-day close in the same fractional units as `priceMinorUnits`. Sourced from Yahoo's `regularMarketPreviousClose`; used to compute `dailyGain*` without relying on cached close-history (which can be arbitrarily old). `null` when Yahoo doesn't report a previous close. */
+  previousClosePriceMinorUnits: number | null;
   currency: string;
   fetchedAt: Date;
 };
@@ -37,6 +39,7 @@ const PERSIST_PATH = resolve(process.cwd(), ".yahoo-cache.json");
 type PersistedEntry = {
   key: string;
   priceMinorUnits: number;
+  previousClosePriceMinorUnits: number | null;
   currency: string;
   fetchedAt: string;
 };
@@ -47,8 +50,15 @@ function loadCacheFromDisk(): void {
     const raw = readFileSync(PERSIST_PATH, "utf8");
     const entries = JSON.parse(raw) as PersistedEntry[];
     for (const e of entries) {
+      // Skip entries persisted before `previousClosePriceMinorUnits` was
+      // added — loading them would serve a stale quote with null prev-close,
+      // which makes `dailyGain*` null for the ticker until the cache entry
+      // eventually ages out. Dropping them forces the next read to refetch
+      // via Yahoo and land a fully-populated quote.
+      if (e.previousClosePriceMinorUnits === undefined) continue;
       cache.set(e.key, {
         priceMinorUnits: e.priceMinorUnits,
+        previousClosePriceMinorUnits: e.previousClosePriceMinorUnits,
         currency: e.currency,
         fetchedAt: new Date(e.fetchedAt),
       });
@@ -72,6 +82,7 @@ function schedulePersist(): void {
       entries.push({
         key,
         priceMinorUnits: value.priceMinorUnits,
+        previousClosePriceMinorUnits: value.previousClosePriceMinorUnits,
         currency: value.currency,
         fetchedAt: value.fetchedAt.toISOString(),
       });
@@ -116,8 +127,13 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
         symbol,
         {},
         { validateResult: false },
-      )) as { regularMarketPrice?: number; currency?: string };
+      )) as {
+        regularMarketPrice?: number;
+        regularMarketPreviousClose?: number;
+        currency?: string;
+      };
       const price = res.regularMarketPrice;
+      const previousClose = res.regularMarketPreviousClose;
       const currency = res.currency;
       if (price == null || currency == null) return null;
       // Yahoo reports LSE stocks in `GBp` / `GBX` (pence) — the price is
@@ -129,8 +145,11 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
         currencyCode
       ]?.scale;
       if (scale == null) return null;
+      const toMinor = (v: number) => (alreadyMinor ? v : v * 10 ** scale);
       const quote: Quote = {
-        priceMinorUnits: alreadyMinor ? price : price * 10 ** scale,
+        priceMinorUnits: toMinor(price),
+        previousClosePriceMinorUnits:
+          previousClose == null ? null : toMinor(previousClose),
         currency: currencyCode,
         fetchedAt: new Date(),
       };

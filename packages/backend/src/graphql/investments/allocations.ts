@@ -1,15 +1,15 @@
-import { eq, ne, sql, sum } from "drizzle-orm";
+import DataLoader from "dataloader";
+import { eq, inArray, ne, sql, sum } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { Float, ID } from "grats";
 
 import { db } from "@/db";
+import { model } from "@/db/drizzle-model";
 import {
   InvestmentAllocations,
   InvestmentCashAllocation,
-  Investments,
   InvestmentTransactions,
 } from "@/db/schema/investments";
-import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
 import {
   getMoneyInputFractionalAmount,
@@ -42,27 +42,13 @@ export class InvestmentAllocation {
 
   /** @gqlField */
   async asset(): Promise<NetWorthCategoryAsset> {
-    const [row] = await db
-      .select()
-      .from(NetWorthCategoryAssets)
-      .where(eq(NetWorthCategoryAssets.id, this.assetId));
-    if (!row)
-      throw new GraphQLError(
-        `NetWorthCategoryAsset ${this.assetId} missing for allocation`,
-      );
+    const row = await model("NetWorthCategoryAssets").findById(this.assetId);
     return NetWorthCategoryAsset.load(row);
   }
 
   /** @gqlField */
   async investment(): Promise<Investment> {
-    const [row] = await db
-      .select()
-      .from(Investments)
-      .where(eq(Investments.id, this.investmentId));
-    if (!row)
-      throw new GraphQLError(
-        `Investment ${this.investmentId} missing for allocation`,
-      );
+    const row = await model("Investments").findById(this.investmentId);
     return Investment.load(row);
   }
 }
@@ -153,6 +139,7 @@ export async function investmentAllocationsSet(
       );
     }
   });
+  invalidateAllocationsForAsset(assetId);
 
   return loadAllocationsForAsset(assetId);
 }
@@ -168,25 +155,47 @@ export async function investmentCashAllocationSet(
       `Cash target must be non-negative, got ${amount.amount}`,
     );
   }
-  await db
-    .insert(InvestmentCashAllocation)
-    .values({ singleton: true, amount: amountMinor, currency })
+  await model("InvestmentCashAllocation")
+    .insert({ singleton: true, amount: amountMinor, currency })
     .onConflictDoUpdate({
       target: InvestmentCashAllocation.singleton,
       set: { amount: amountMinor, currency, updatedAt: new Date() },
     });
+  model("InvestmentCashAllocation").clearCache(true);
   return Money.fromMinorDenomination(amountMinor, currency);
 }
 
 async function loadCashAllocation(): Promise<Money | null> {
-  const [row] = await db
-    .select({
-      amount: InvestmentCashAllocation.amount,
-      currency: InvestmentCashAllocation.currency,
-    })
-    .from(InvestmentCashAllocation);
-  if (!row) return null;
-  return Money.fromMinorDenomination(row.amount, row.currency);
+  const row = await model("InvestmentCashAllocation").findByIdOrNull(true);
+  return row ? Money.fromMinorDenomination(row.amount, row.currency) : null;
+}
+
+/**
+ * Batches `InvestmentAllocations` lookups across wrappers so a page of N wrappers fires one `WHERE assetId IN (...)` instead of N separate queries.
+ */
+const allocationsByAssetLoader = new DataLoader<string, InvestmentAllocation[]>(
+  async (assetIds) => {
+    const rows = await db
+      .select()
+      .from(InvestmentAllocations)
+      .where(inArray(InvestmentAllocations.assetId, assetIds as string[]));
+    const byAsset = new Map<string, InvestmentAllocation[]>();
+    for (const row of rows) {
+      const list = byAsset.get(row.assetId) ?? [];
+      list.push(InvestmentAllocation.load(row));
+      byAsset.set(row.assetId, list);
+    }
+    return assetIds.map((id) => byAsset.get(id) ?? []);
+  },
+);
+
+function invalidateAllocationsForAsset(assetId: string): void {
+  allocationsByAssetLoader.clear(assetId);
+}
+
+/** Tests only. */
+export function TEST__clearAllocationCaches(): void {
+  allocationsByAssetLoader.clearAll();
 }
 
 /** Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.
@@ -202,15 +211,11 @@ export async function investmentAllocationsForAsset(
 async function loadAllocationsForAsset(
   assetId: string,
 ): Promise<InvestmentAllocationsResult> {
-  const rows = await db
-    .select()
-    .from(InvestmentAllocations)
-    .where(eq(InvestmentAllocations.assetId, assetId));
-  const cash = await loadCashAllocation();
-  return new InvestmentAllocationsResult(
-    rows.map(InvestmentAllocation.load),
-    cash,
-  );
+  const [allocations, cash] = await Promise.all([
+    allocationsByAssetLoader.load(assetId),
+    loadCashAllocation(),
+  ]);
+  return new InvestmentAllocationsResult(allocations, cash);
 }
 
 /** Allocations configured for one wrapper. When `assetId` is `null`, portfolio-wide allocations (weighted across wrappers) — **not yet implemented**, returns an error.

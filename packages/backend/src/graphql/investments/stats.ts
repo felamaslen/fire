@@ -39,7 +39,7 @@ export type InvestmentStats = {
   feesSum: number;
   /** Most recent adjusted unit price, or `null` if no prices recorded. */
   priceLatest: number | null;
-  /** Second-most-recent adjusted unit price, or `null` if fewer than two prices recorded. */
+  /** Previous-trading-day close used only for `dailyGain*`. Sourced from the live quote (`regularMarketPreviousClose`) when one is available, so it's always the real yesterday-close regardless of how old the cached close-history is. `null` when no live quote is available or when the position is fully sold — in both cases daily gain isn't meaningful. */
   pricePrevious: number | null;
 };
 
@@ -191,16 +191,20 @@ function computeStats(
   }
 
   let priceLatest = priceRows[0]?.priceAdjusted ?? null;
-  let pricePrevious = priceRows[1]?.priceAdjusted ?? null;
-
-  // When a live quote is cached for a stock investment, treat it as the latest
-  // price and shift the most recent cached close into the "previous" slot so
-  // `dailyGain*` tracks today's move against yesterday's close.
-  if (stockCode) {
+  // `pricePrevious` falls back to the 2nd-most-recent cached close
+  // (close-to-close move for consumers that don't use the live quote). When
+  // a live quote is available, it's the canonical source for both sides:
+  // `priceLatest` = live price, `pricePrevious` = the quote's own
+  // `regularMarketPreviousClose`. Sourcing prev-close from the live quote
+  // keeps `dailyGain*` correct even when the cached close-history lapsed —
+  // the stale cached close is never promoted into `pricePrevious`.
+  // Fully-sold positions skip the live fetch (no point hitting Yahoo).
+  let pricePrevious: number | null = priceRows[1]?.priceAdjusted ?? null;
+  if (stockCode && unitsHeld > 0) {
     const live = readOrRefresh(stockCode);
     if (live && live.currency === currency) {
-      pricePrevious = priceLatest;
       priceLatest = live.priceMinorUnits;
+      pricePrevious = live.previousClosePriceMinorUnits;
     }
   }
 
