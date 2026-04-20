@@ -12,7 +12,6 @@ import { possibleTypes } from "./__generated__/possible-types";
 import { clearToken, getToken } from "./auth/token";
 
 export function createApolloClient() {
-  let clientRef: ApolloClient | null = null;
   const authLink = new SetContextLink((prevContext) => {
     const token = getToken();
     const headers = (prevContext.headers ?? {}) as Record<string, string>;
@@ -26,11 +25,17 @@ export function createApolloClient() {
   });
 
   // Any `UNAUTHENTICATED` GraphQL error (expired / tampered / missing token on
-  // a gated field) drops the stored token, clears the Apollo cache, and
-  // bounces the user to /login. The login route itself calls `login` /
-  // `demoLogin` which are `@noAuth`, so they never trip this. Cache is
-  // cleared before the hard redirect so nothing the previous session
-  // normalised hangs around if the redirect is intercepted / delayed.
+  // a gated field) drops the stored token and bounces the user to /login.
+  // We deliberately do NOT call `client.clearStore()` here: clearStore
+  // aborts every in-flight observable, and if more than one query is in
+  // the air when the error arrives (e.g. `netWorthHistory` failing at the
+  // same time the login page is loading `demos`) the unrelated query gets
+  // cancelled and its component never re-renders — meaning the login
+  // page's demo chooser comes up empty until a manual refresh. The hard
+  // `window.location.assign` below is a full reload, which discards the
+  // cache anyway; for the no-redirect branch (already on `/login`) there's
+  // nothing to clear because any cached data belongs to the still-valid
+  // anon session.
   const errorLink = new ErrorLink(({ error }) => {
     if (!CombinedGraphQLErrors.is(error)) return;
     const unauthenticated = error.errors.some(
@@ -38,7 +43,6 @@ export function createApolloClient() {
     );
     if (unauthenticated) {
       clearToken();
-      void clientRef?.clearStore();
       if (window.location.pathname !== "/login") {
         window.location.assign("/login");
       }
@@ -49,7 +53,7 @@ export function createApolloClient() {
     uri: import.meta.env.VITE_GRAPHQL_URL ?? "http://localhost:4000/graphql",
   });
 
-  const client = new ApolloClient({
+  return new ApolloClient({
     link: ApolloLink.from([errorLink, authLink, httpLink]),
     cache: new InMemoryCache({
       possibleTypes,
@@ -62,6 +66,4 @@ export function createApolloClient() {
       },
     }),
   });
-  clientRef = client;
-  return client;
 }
