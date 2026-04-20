@@ -29,6 +29,11 @@ export const seedStudentSideJob: DemoSeedFn = async ({ db, today }) => {
         type: "STOCK",
         startValue: 4200,
         endValue: 15000,
+        holdings: [
+          { ticker: "TLRY", weight: 0.5 },
+          { ticker: "CGC", weight: 0.3 },
+          { ticker: "SMT.L", weight: 0.2 },
+        ],
       },
     ],
     liabilities: [

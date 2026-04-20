@@ -28,18 +28,29 @@ export const seedExecutiveHighBurn: DemoSeedFn = async ({ db, today }) => {
         // Executive favours income over capital growth — City of London,
         // Bankers, Murray International pay quarterly dividends with long
         // unbroken track records.
+        holdingsTheme: "dividend",
       },
       {
         name: "GIA",
         type: "STOCK",
         startValue: 5000000,
         endValue: 60000000,
+        holdings: [
+          { ticker: "CTY.L", weight: 0.4 },
+          { ticker: "BNKR.L", weight: 0.3 },
+          { ticker: "CSP1.L", weight: 0.3 },
+        ],
       },
       {
         name: "SIPP",
         type: "PENSION",
         startValue: 12000000,
         endValue: 95000000,
+        holdings: [
+          { ticker: "BNKR.L", weight: 0.5 },
+          { ticker: "MYI.L", weight: 0.3 },
+          { ticker: "CSP1.L", weight: 0.2 },
+        ],
       },
       {
         name: "Primary Residence",

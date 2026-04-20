@@ -28,24 +28,34 @@ export const seedCoupleTwoKids: DemoSeedFn = async ({ db, today }) => {
         // Balanced: broad index tracker + a growth trust for a bit of
         // upside, skewed conservative because the kids' ISAs / future
         // house-move money are in scope.
+        holdings: [
+          { ticker: "CSP1.L", weight: 0.6 },
+          { ticker: "SMT.L", weight: 0.4 },
+        ],
       },
       {
         name: "ISA — B",
         type: "STOCK",
         startValue: 0,
         endValue: 3900000,
+        holdings: [
+          { ticker: "CSP1.L", weight: 0.5 },
+          { ticker: "BNKR.L", weight: 0.5 },
+        ],
       },
       {
         name: "Workplace Pension — A",
         type: "PENSION",
         startValue: 1200000,
         endValue: 9800000,
+        holdingsTheme: "broad",
       },
       {
         name: "Workplace Pension — B",
         type: "PENSION",
         startValue: 800000,
         endValue: 7200000,
+        holdingsTheme: "broad",
       },
       {
         name: "Family Home",

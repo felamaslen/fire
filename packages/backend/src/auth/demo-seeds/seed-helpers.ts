@@ -2,6 +2,11 @@ import { addMonths, startOfMonth } from "date-fns";
 
 import type { DB } from "@/db";
 import {
+  InvestmentPrices,
+  Investments,
+  InvestmentTransactions,
+} from "@/db/schema/investments";
+import {
   NetWorthCategoryAssets,
   NetWorthCategoryLiabilities,
   NetWorthEntries,
@@ -16,6 +21,13 @@ import {
   PlanningYears,
   PlanningYearUKTaxRates,
 } from "@/db/schema/planning";
+
+import {
+  dailyPrices,
+  demoStock,
+  latestPrice,
+  type StockTheme,
+} from "./stock-history";
 
 /** Deterministic seeded PRNG (Mulberry32). Seeded from the flavour name so two demo logins on the same flavour get identical data, which makes screenshots / tests stable across reseeds. */
 export function prng(seed: number): () => number {
@@ -57,6 +69,12 @@ export type AssetSpec = {
   endValue: Pence;
   /** Treat this asset as a planning account (CASH only). Earnings / bills will fall back to this if no explicit account is given. */
   planningAccount?: boolean;
+  /**
+   * For STOCK / PENSION wrappers: how the wrapper's value is split across real LSE tickers (from `DEMO_STOCKS`). Weights are relative — they're normalised, so callers don't need them to sum to exactly 1. Falls back to an even split across one or two themed instruments (see `THEME_DEFAULTS`) if omitted.
+   */
+  holdings?: { ticker: string; weight: number }[];
+  /** Shorthand for a themed default basket (used when `holdings` is omitted). */
+  holdingsTheme?: StockTheme;
 };
 
 export type LiabilitySpec = {
@@ -116,7 +134,7 @@ function ukFinancialYear(today: Date): number {
   return today.getTime() >= apr6 ? y : y - 1;
 }
 
-/** Insert seed data for a flavour. Runs against the demo session's dedicated database (see `demo-database.ts`). */
+/** Insert seed data for a flavour. Runs inside `db`'s active schema (the demo schema). */
 export async function applyFlavour(
   db: DB,
   today: Date,
@@ -255,4 +273,153 @@ export async function applyFlavour(
       toAccountId: defaultPlanningAccountId,
     });
   }
+
+  // ── Investments (real LSE tickers, one row per ticker) ──────────────────
+  // Each STOCK / PENSION wrapper holds one or more instruments from the
+  // catalog (`stock-history.csv`, populated by `pnpm demo:fetch-prices`).
+  // The table convention is *one* `Investments` row per ticker; per-wrapper
+  // holdings are expressed as `InvestmentTransactions` rows whose `assetId`
+  // points at the wrapper — so a ticker held in both the ISA and the SIPP
+  // shares the same `Investments.id` and price series. Daily closes feed
+  // `InvestmentPrices` so the portfolio chart shows genuine market
+  // volatility; monthly buys simulate a DCA pattern on top. Yahoo is gated
+  // off for demo sessions (`tasks/yahoo.ts`) so no live network call is
+  // ever made against these tickers at request time.
+  const INVESTMENT_WRAPPER_TYPES = new Set(["STOCK", "PENSION"] as const);
+  const firstMonthForInvestments = startOfMonth(
+    addMonths(today, -(spec.historyMonths - 1)),
+  );
+
+  // Collapse every wrapper's holdings into a map keyed by ticker. Each
+  // ticker entry carries one or more `(assetId, targetEndValuePence)`
+  // positions — one per wrapper holding that ticker.
+  type Position = { assetId: string; targetEndValuePence: number };
+  const positionsByTicker = new Map<string, Position[]>();
+  for (const asset of spec.assets) {
+    if (!INVESTMENT_WRAPPER_TYPES.has(asset.type as "STOCK" | "PENSION")) {
+      continue;
+    }
+    if (asset.endValue <= 0) continue;
+    const holdings = resolveHoldings(asset);
+    const totalWeight = holdings.reduce((a, b) => a + b.weight, 0);
+    if (totalWeight <= 0) continue;
+    const assetId = assetIdByName.get(asset.name)!;
+    for (const holding of holdings) {
+      const share = holding.weight / totalWeight;
+      const targetEndValuePence = Math.round(asset.endValue * share);
+      if (targetEndValuePence <= 0) continue;
+      const list = positionsByTicker.get(holding.ticker) ?? [];
+      list.push({ assetId, targetEndValuePence });
+      positionsByTicker.set(holding.ticker, list);
+    }
+  }
+
+  for (const [ticker, positions] of positionsByTicker) {
+    const stock = demoStock(ticker);
+    if (!stock) continue;
+    const priceSeries = dailyPrices(ticker, firstMonthForInvestments);
+    if (priceSeries.length === 0) continue;
+    const endPrice = Math.max(1, latestPrice(ticker) ?? 1);
+
+    const [inv] = await db
+      .insert(Investments)
+      .values({ name: stock.name, stockCode: stock.ticker, currency: "GBP" })
+      .returning({ id: Investments.id });
+
+    // Daily price rows — shared across every wrapper that holds this
+    // ticker (they all read from the same `Investments.id`).
+    const priceRows = priceSeries.map((p) => ({
+      investmentId: inv.id,
+      date: p.date,
+      price: p.price,
+      currency: "GBP" as const,
+    }));
+
+    const firstTradingPriceOnOrAfter = (
+      target: Date,
+    ): { date: Date; price: number } | null => {
+      for (const p of priceSeries) {
+        if (p.date.getTime() >= target.getTime()) return p;
+      }
+      return null;
+    };
+    const lastTick = priceSeries[priceSeries.length - 1];
+
+    // Monthly DCA transactions per wrapper. The per-wrapper unit counts are
+    // independent (each wrapper targets its own `targetEndValuePence`) but
+    // they all reference the same `Investments.id` — which is the whole
+    // point of this refactor.
+    const txRows: (typeof InvestmentTransactions.$inferInsert)[] = [];
+    for (const pos of positions) {
+      const targetUnits = Math.max(
+        1,
+        Math.round(pos.targetEndValuePence / endPrice),
+      );
+      const unitsPerMonth = Math.max(
+        1,
+        Math.floor(targetUnits / spec.historyMonths),
+      );
+      let unitsBought = 0;
+      for (let i = 0; i < spec.historyMonths; i++) {
+        const monthStart = addMonths(firstMonthForInvestments, i);
+        const tick = firstTradingPriceOnOrAfter(monthStart);
+        if (!tick) continue;
+        if (i < spec.historyMonths - 1) {
+          txRows.push({
+            investmentId: inv.id,
+            assetId: pos.assetId,
+            units: unitsPerMonth,
+            price: tick.price,
+            currency: "GBP",
+            date: tick.date,
+          });
+          unitsBought += unitsPerMonth;
+        }
+      }
+      // Final top-up so the wrapper's position lands on `targetUnits`.
+      const remaining = targetUnits - unitsBought;
+      if (remaining > 0 && lastTick) {
+        txRows.push({
+          investmentId: inv.id,
+          assetId: pos.assetId,
+          units: remaining,
+          price: lastTick.price,
+          currency: "GBP",
+          date: lastTick.date,
+        });
+      }
+    }
+
+    // Bulk-insert daily prices in chunks; Postgres has a limit on
+    // parameter count per prepared statement (~32k) and a 10-year daily
+    // series is ~2500 rows × 4 columns = 10k params — safely under the
+    // cap, but chunk anyway so future longer histories don't trip it.
+    const CHUNK = 1000;
+    for (let i = 0; i < priceRows.length; i += CHUNK) {
+      await db.insert(InvestmentPrices).values(priceRows.slice(i, i + CHUNK));
+    }
+    if (txRows.length > 0)
+      await db.insert(InvestmentTransactions).values(txRows);
+  }
 }
+
+/** Default baskets used when an asset spec doesn't list `holdings` explicitly. Each theme names the instruments from `DEMO_STOCKS` that best represent it; weights are equal. */
+const THEME_DEFAULTS: Record<StockTheme, string[]> = {
+  growth: ["SMT.L", "ATT.L"],
+  dividend: ["CTY.L", "BNKR.L", "MYI.L"],
+  broad: ["CSP1.L", "EQQQ.L"],
+  crypto: ["BTCW.L"],
+  cannabis: ["TLRY", "CGC"],
+};
+
+function resolveHoldings(
+  asset: AssetSpec,
+): { ticker: string; weight: number }[] {
+  if (asset.holdings && asset.holdings.length > 0) return asset.holdings;
+  const theme: StockTheme = asset.holdingsTheme ?? "broad";
+  const tickers = THEME_DEFAULTS[theme];
+  return tickers.map((ticker) => ({ ticker, weight: 1 }));
+}
+
+/** Re-export so flavour files can reference the catalog without another import path. */
+export { demoStocks } from "./stock-history";

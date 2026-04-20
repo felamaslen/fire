@@ -25,18 +25,34 @@ export const seedHenryMaxedAccounts: DemoSeedFn = async ({ db, today }) => {
         type: "STOCK",
         startValue: 4000000,
         endValue: 11500000,
+        // HENRY chases growth — Scottish Mortgage + Allianz Tech, with a
+        // small crypto tilt for spice.
+        holdings: [
+          { ticker: "SMT.L", weight: 0.5 },
+          { ticker: "ATT.L", weight: 0.35 },
+          { ticker: "BTCW.L", weight: 0.15 },
+        ],
       },
       {
         name: "GIA",
         type: "STOCK",
         startValue: 200000,
         endValue: 4500000,
+        holdings: [
+          { ticker: "EQQQ.L", weight: 0.5 },
+          { ticker: "BTCW.L", weight: 0.5 },
+        ],
       },
       {
         name: "SIPP",
         type: "PENSION",
         startValue: 6000000,
         endValue: 28000000,
+        holdings: [
+          { ticker: "SMT.L", weight: 0.4 },
+          { ticker: "EQQQ.L", weight: 0.4 },
+          { ticker: "CSP1.L", weight: 0.2 },
+        ],
       },
     ],
     liabilities: [],
