@@ -351,18 +351,28 @@ export async function transactionUpdate(
         .from(PlanningBills)
         .where(eq(PlanningBills.id, parsed.id));
       assert(bill, `Bill ${parsed.id} not found`);
-      const overrideAmount = patchAmount
-        ? Math.abs(patchAmount.amount)
-        : bill.amount;
-      const overrideCurrency = (patchAmount?.currency ??
-        bill.currency) as CurrencyCode;
-      await upsertBillOverride(
-        year,
-        date,
-        parsed.id,
-        overrideAmount,
-        overrideCurrency,
-      );
+      if (patchAmount) {
+        await upsertBillOverride(
+          year,
+          date,
+          parsed.id,
+          Math.abs(patchAmount.amount),
+          patchAmount.currency as CurrencyCode,
+        );
+      }
+      // Liability is a property of the bill itself (it tags every collection,
+      // not a single month's), so patch it on `PlanningBills` directly.
+      // `name` likewise renames the bill globally.
+      if (liabilityId !== undefined || name != null) {
+        await db
+          .update(PlanningBills)
+          .set({
+            ...(liabilityId !== undefined && { liabilityId }),
+            ...(name != null && { name }),
+            updatedAt: new Date(),
+          })
+          .where(eq(PlanningBills.id, parsed.id));
+      }
       break;
     }
     case "earn": {

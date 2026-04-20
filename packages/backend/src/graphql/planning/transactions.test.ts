@@ -393,6 +393,89 @@ it("transactionUpdate on a predicted bill writes a per-month override (this mont
   `);
 });
 
+it("transactionUpdate on a predicted bill patches the bill's liability globally (not per-month)", async () => {
+  await seedYear("2025", false);
+  const main = await createAsset();
+  await assign(main);
+  await recordSnapshot(main, "2025-03-31", 1_000_000);
+
+  const liabilityData = await runGql(
+    graphql(`
+      mutation ($name: String!) {
+        netWorthCategoryCreate(
+          input: { liability: { name: $name, type: LOAN, interestRate: 5.5 } }
+        ) {
+          id
+        }
+      }
+    `),
+    { name: "Mortgage" },
+  );
+  const liabilityId = liabilityData.netWorthCategoryCreate.id;
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        billCreate(
+          start: "2025-04-01"
+          frequency: MONTHLY
+          collectionDate: ["15"]
+          amount: { amount: 1500, currency: "GBP" }
+          name: "Mortgage"
+          fromAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: main },
+  );
+  const billTxId = await aprilTxId("Mortgage");
+
+  await runGql(
+    graphql(`
+      mutation ($id: ID!, $l: ID!) {
+        transactionUpdate(monthId: "apr-2025", id: $id, liabilityId: $l) {
+          id
+        }
+      }
+    `),
+    { id: billTxId, l: liabilityId },
+  );
+
+  // The liability should surface on *every* collected month, not just April —
+  // it was stored on `PlanningBills.liabilityId`, not a per-month override.
+  const view = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            date
+            accounts {
+              transactions {
+                name
+                liability {
+                  id
+                }
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const mortgageLiabilityIds = (view.planningYear?.months ?? []).flatMap((m) =>
+    (m.accounts ?? []).flatMap((a) =>
+      (a.transactions ?? [])
+        .filter((t) => t.name === "Mortgage")
+        .map((t) => t.liability?.id ?? null),
+    ),
+  );
+  expect(mortgageLiabilityIds.length).toBeGreaterThan(1);
+  expect(new Set(mortgageLiabilityIds)).toEqual(new Set([liabilityId]));
+});
+
 it("transactionDelete on a predicted bill skips it for this month (null override)", async () => {
   await seedYear("2025", false);
   const main = await createAsset();
@@ -691,7 +774,7 @@ it("transactionUpdate on a payslip adjustment keeps every other adjustment in it
 });
 
 describe("asset investment link", () => {
-  it("transactionCreate links an outflow to a STOCK asset and exposes assetId", async () => {
+  it("transactionCreate links an outflow to a STOCK asset and exposes it via `asset`", async () => {
     await seedYear("2025", false);
     const main = await createAsset();
     await assign(main);
@@ -708,15 +791,19 @@ describe("asset investment link", () => {
             assetId: $s
           ) {
             id
-            assetId
-            liabilityId
+            asset {
+              id
+            }
+            liability {
+              id
+            }
           }
         }
       `),
       { a: main, s: stock },
     );
-    expect(created.transactionCreate.assetId).toBe(stock);
-    expect(created.transactionCreate.liabilityId).toBe(null);
+    expect(created.transactionCreate.asset?.id).toBe(stock);
+    expect(created.transactionCreate.liability).toBe(null);
   });
 
   it("transactionCreate rejects an asset whose type isn't STOCK or PENSION", async () => {
@@ -846,12 +933,14 @@ describe("asset investment link", () => {
         mutation ($id: ID!) {
           transactionUpdate(monthId: "apr-2025", id: $id, assetId: null) {
             id
-            assetId
+            asset {
+              id
+            }
           }
         }
       `),
       { id: txId },
     );
-    expect(updated.transactionUpdate.assetId).toBe(null);
+    expect(updated.transactionUpdate.asset).toBe(null);
   });
 });

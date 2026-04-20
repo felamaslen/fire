@@ -622,7 +622,7 @@ export function monthTransactionsFor(
           isProvisional: false,
           isEditable: true,
           toAccountId: null,
-          liabilityId: null,
+          liabilityId: b.liabilityId ?? null,
           assetId: null,
         }),
       );
@@ -639,7 +639,7 @@ export function monthTransactionsFor(
           isProvisional: true,
           isEditable: true,
           toAccountId: null,
-          liabilityId: null,
+          liabilityId: b.liabilityId ?? null,
           assetId: null,
         }),
       );

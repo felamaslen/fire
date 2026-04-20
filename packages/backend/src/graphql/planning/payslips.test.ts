@@ -397,7 +397,9 @@ async function aprilAdjustments(): Promise<
               name
               transactions {
                 name
-                liabilityId
+                liability {
+                  id
+                }
               }
             }
           }
@@ -412,7 +414,7 @@ async function aprilAdjustments(): Promise<
     .filter((t) => !t.name.includes("payslip"))
     .map((t) => ({
       name: t.name,
-      liabilityId: (t.liabilityId ?? null) as string | null,
+      liabilityId: t.liability?.id ?? null,
     }));
 }
 

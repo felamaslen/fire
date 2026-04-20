@@ -620,7 +620,9 @@ it("materialising an earnings deduction copies studentLoanLiabilityId onto the S
             accounts {
               transactions {
                 id
-                liabilityId
+                liability {
+                  id
+                }
                 name
               }
             }
@@ -634,7 +636,7 @@ it("materialising an earnings deduction copies studentLoanLiabilityId onto the S
   const sl = apr.accounts[0].transactions.find((t) =>
     t.name.endsWith("student loan"),
   )!;
-  expect(sl.liabilityId).toBe(liabilityId);
+  expect(sl.liability?.id).toBe(liabilityId);
 
   await runGql(
     graphql(`
@@ -659,7 +661,9 @@ it("materialising an earnings deduction copies studentLoanLiabilityId onto the S
             id
             accounts {
               transactions {
-                liabilityId
+                liability {
+                  id
+                }
                 name
               }
             }
@@ -673,7 +677,7 @@ it("materialising an earnings deduction copies studentLoanLiabilityId onto the S
   const slAdj = aprAfter.accounts[0].transactions.find((t) =>
     t.name.endsWith("student loan"),
   )!;
-  expect(slAdj.liabilityId).toBe(liabilityId);
+  expect(slAdj.liability?.id).toBe(liabilityId);
 });
 
 it("pro-rates the predicted take when an earning starts or ends mid-month", async () => {
