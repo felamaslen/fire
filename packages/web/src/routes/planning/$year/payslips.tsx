@@ -1,6 +1,15 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { FileText, Paperclip, Pencil, Plus, Upload, X } from "lucide-react";
+import {
+  FileText,
+  Loader2,
+  Paperclip,
+  Pencil,
+  Plus,
+  Sparkles,
+  Upload,
+  X,
+} from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 
@@ -139,6 +148,33 @@ const PlanningPayslipDeleteDocument = graphql(`
   mutation PlanningPayslipDelete($id: ID!) {
     payslipDelete(id: $id) {
       _
+    }
+  }
+`);
+
+const PlanningPayslipParseDocument = graphql(`
+  mutation PlanningPayslipParse($file: Upload!) {
+    payslipParse(file: $file) {
+      gross {
+        amount
+        currency
+      }
+      date
+      suggestedName
+      suggestedAccount {
+        id
+      }
+      employeeFirstName
+      adjustments {
+        name
+        amount {
+          amount
+          currency
+        }
+        liability {
+          id
+        }
+      }
     }
   }
 `);
@@ -357,12 +393,20 @@ function PlanningPayslipsDialog() {
               account.
             </p>
           ) : (
-            <AddPayslipForm
-              accounts={accounts}
-              liabilities={liabilities}
-              refetch={refetch}
-              onCreated={resetToFirstPage}
-            />
+            <>
+              <PayslipParseDropZone
+                accounts={accounts}
+                liabilities={liabilities}
+                refetch={refetch}
+                onCreated={resetToFirstPage}
+              />
+              <AddPayslipForm
+                accounts={accounts}
+                liabilities={liabilities}
+                refetch={refetch}
+                onCreated={resetToFirstPage}
+              />
+            </>
           )}
         </div>
         <div className="flex justify-end">
@@ -966,4 +1010,250 @@ function formatDate(d: string): string {
     month: "short",
     year: "numeric",
   });
+}
+
+/** Drop zone + quick-pick button that sends a payslip PDF to Gemini, then opens the review sub-dialog pre-filled with whatever the model extracted. Nothing is persisted until the user hits Save inside that dialog. */
+function PayslipParseDropZone({
+  accounts,
+  liabilities,
+  refetch,
+  onCreated,
+}: {
+  accounts: AccountOption[];
+  liabilities: LiabilityOption[];
+  refetch: RefetchEntry[];
+  onCreated?: () => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+  const [pendingFileName, setPendingFileName] = useState<string | null>(null);
+  const [review, setReview] = useState<{
+    parsed: PayslipParseResultView;
+    file: File;
+  } | null>(null);
+  const inputId = useId();
+  const [parse, { loading }] = useMutation(PlanningPayslipParseDocument);
+
+  const accept = (f: File | null | undefined): f is File => {
+    if (!f) return false;
+    if (
+      f.type !== "application/pdf" &&
+      !f.name.toLowerCase().endsWith(".pdf")
+    ) {
+      toast.error("Only PDF files are supported.");
+      return false;
+    }
+    return true;
+  };
+
+  const run = async (file: File) => {
+    setPendingFileName(file.name);
+    try {
+      const { data } = await parse({ variables: { file } });
+      const parsed = data?.payslipParse;
+      if (!parsed) {
+        toast.error("Gemini returned no data for this payslip.");
+        return;
+      }
+      setReview({ parsed, file });
+    } catch (e) {
+      // Apollo already logs; surface the message as a toast so the user can
+      // tell free-tier exhaustion apart from a malformed PDF.
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+    } finally {
+      setPendingFileName(null);
+    }
+  };
+
+  return (
+    <>
+      <div
+        onDragEnter={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const f = e.dataTransfer.files[0];
+          if (accept(f)) void run(f);
+        }}
+        className={`flex items-center gap-3 rounded-md border border-dashed p-3 text-xs ${
+          dragging ? "border-primary bg-primary/5" : "bg-muted/20"
+        }`}
+      >
+        {loading ? (
+          <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+        ) : (
+          <Sparkles className="size-4 shrink-0 text-muted-foreground" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="font-medium">Import from PDF</div>
+          <div className="text-muted-foreground">
+            Drop a payslip PDF here and Gemini Flash will pre-fill the form.
+          </div>
+          {pendingFileName && (
+            <div className="mt-1 flex items-center gap-1.5 text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+              <span>Reading {pendingFileName}…</span>
+            </div>
+          )}
+        </div>
+        <input
+          id={inputId}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          disabled={loading}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (accept(f)) void run(f);
+            e.target.value = "";
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          asChild
+          disabled={loading}
+        >
+          <label htmlFor={inputId} className="cursor-pointer">
+            {loading ? (
+              <Loader2 className="mr-1 size-3 animate-spin" />
+            ) : (
+              <Upload className="mr-1 size-3" />
+            )}
+            {loading ? "Reading…" : "Choose PDF"}
+          </label>
+        </Button>
+      </div>
+      {review && (
+        <ReviewParsedPayslipDialog
+          parsed={review.parsed}
+          file={review.file}
+          accounts={accounts}
+          liabilities={liabilities}
+          refetch={refetch}
+          onClose={() => setReview(null)}
+          onCreated={() => {
+            setReview(null);
+            onCreated?.();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+type PayslipParseResultView = NonNullable<
+  ResultOf<typeof PlanningPayslipParseDocument>["payslipParse"]
+>;
+
+/** Sub-dialog that wraps `PayslipFormFields` with values pre-populated from the `payslipParse` result. The PDF is prepopulated as the chosen file so the user doesn't have to re-attach it when saving. */
+function ReviewParsedPayslipDialog({
+  parsed,
+  file,
+  accounts,
+  liabilities,
+  refetch,
+  onClose,
+  onCreated,
+}: {
+  parsed: PayslipParseResultView;
+  file: File;
+  accounts: AccountOption[];
+  liabilities: LiabilityOption[];
+  refetch: RefetchEntry[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [values, setValues] = useState<FormValues>(() =>
+    parseToForm(parsed, accounts, file),
+  );
+  const [create, { loading }] = useMutation(PlanningPayslipCreateDocument, {
+    refetchQueries: refetch,
+  });
+  const disabled = loading || !formIsValid(values);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (disabled) return;
+    await create({
+      variables: {
+        name: values.name.trim(),
+        date: values.date,
+        amountGross: { amount: Number(values.amount), currency: CURRENCY },
+        toAccountId: values.toAccountId,
+        adjustments: adjustmentsForMutation(values.adjustments),
+        file: values.file,
+      },
+    });
+    toast.success(`Added ${values.name.trim()}`);
+    onCreated();
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Review payslip</DialogTitle>
+        </DialogHeader>
+        {parsed.suggestedAccount == null && parsed.employeeFirstName && (
+          <p className="text-xs text-muted-foreground">
+            Couldn't find a planning account matching{" "}
+            <span className="font-medium">{parsed.employeeFirstName}</span>.
+            Pick one below.
+          </p>
+        )}
+        <form onSubmit={submit} className="space-y-3">
+          <PayslipFormFields
+            values={values}
+            setValues={setValues}
+            accounts={accounts}
+            liabilities={liabilities}
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={disabled}>
+              Save payslip
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function parseToForm(
+  parsed: PayslipParseResultView,
+  accounts: AccountOption[],
+  file: File,
+): FormValues {
+  const suggested = parsed.suggestedAccount?.id;
+  const toAccountId =
+    suggested && accounts.some((a) => a.id === suggested) ? suggested : "";
+  return {
+    name: parsed.suggestedName,
+    date: parsed.date,
+    amount: String(parsed.gross.amount),
+    toAccountId,
+    adjustments: parsed.adjustments.map((a) => ({
+      id: null,
+      name: a.name,
+      amount: String(Math.abs(a.amount.amount)),
+      sign: a.amount.amount < 0 ? "-" : "+",
+      liabilityId: a.liability?.id ?? "",
+    })),
+    file,
+  };
 }
