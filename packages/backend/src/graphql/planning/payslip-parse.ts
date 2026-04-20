@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 
 import { GoogleGenAI, Type } from "@google/genai";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { eq, ilike, or, sql } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { ID } from "grats";
@@ -224,70 +225,141 @@ const MAX_ATTEMPTS = 4;
 /** Backoff schedule in ms between attempts `n` and `n+1`. Purposely short — users are watching a spinner. */
 const BACKOFF_MS = [500, 1500, 3000];
 
+const tracer = trace.getTracer("fire-backend");
+
 async function callGemini(pdf: Buffer): Promise<GeminiResult> {
   assert(env.GEMINI_API_KEY);
   const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    try {
-      const res = await ai.models.generateContent({
-        model: env.GEMINI_MODEL,
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                inlineData: {
-                  data: pdf.toString("base64"),
-                  mimeType: "application/pdf",
-                },
+  // Outer span scopes the whole `callGemini` lifecycle so the overall p50 /
+  // p95 / retry count is queryable. Each individual `generateContent` call
+  // gets its own child span below (one per attempt) so a 503-retry-then-200
+  // shows up as three distinct children with their own statuses.
+  return tracer.startActiveSpan(
+    "gemini.payslipParse",
+    {
+      attributes: {
+        "gen_ai.system": "gemini",
+        "gen_ai.request.model": env.GEMINI_MODEL,
+        "gemini.pdf.bytes": pdf.length,
+      },
+    },
+    async (outer) => {
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        try {
+          const res = await tracer.startActiveSpan(
+            "gemini.generateContent",
+            {
+              attributes: {
+                "gen_ai.system": "gemini",
+                "gen_ai.request.model": env.GEMINI_MODEL,
+                "gemini.attempt": attempt + 1,
               },
-              { text: PROMPT },
-            ],
-          },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA,
-        },
+            },
+            async (span) => {
+              try {
+                const r = await ai.models.generateContent({
+                  model: env.GEMINI_MODEL,
+                  contents: [
+                    {
+                      role: "user",
+                      parts: [
+                        {
+                          inlineData: {
+                            data: pdf.toString("base64"),
+                            mimeType: "application/pdf",
+                          },
+                        },
+                        { text: PROMPT },
+                      ],
+                    },
+                  ],
+                  config: {
+                    responseMimeType: "application/json",
+                    responseSchema: RESPONSE_SCHEMA,
+                  },
+                });
+                // `usageMetadata` is where Gemini reports prompt + response
+                // token counts, if exposed by the model. Surfacing them lets
+                // Jaeger slice by input size and estimate cost per call.
+                const usage = r.usageMetadata;
+                if (usage?.promptTokenCount != null) {
+                  span.setAttribute(
+                    "gen_ai.usage.input_tokens",
+                    usage.promptTokenCount,
+                  );
+                }
+                if (usage?.candidatesTokenCount != null) {
+                  span.setAttribute(
+                    "gen_ai.usage.output_tokens",
+                    usage.candidatesTokenCount,
+                  );
+                }
+                return r;
+              } catch (err) {
+                span.recordException(err as Error);
+                span.setStatus({
+                  code: SpanStatusCode.ERROR,
+                  message: err instanceof Error ? err.message : String(err),
+                });
+                throw err;
+              } finally {
+                span.end();
+              }
+            },
+          );
+          const text = res.text;
+          assert(text, "Gemini returned no text body");
+          outer.setAttribute("gemini.attempts", attempt + 1);
+          outer.end();
+          return JSON.parse(text) as GeminiResult;
+        } catch (cause) {
+          lastError = cause;
+          const message =
+            cause instanceof Error ? cause.message : String(cause);
+          // Quota exhaustion: no point retrying, surface immediately.
+          if (/\b429\b|quota|RESOURCE_EXHAUSTED/i.test(message)) {
+            outer.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: "quota_exhausted",
+            });
+            outer.setAttribute("gemini.attempts", attempt + 1);
+            outer.end();
+            throw new GraphQLError(
+              "Gemini quota exhausted — try again later.",
+              { extensions: { code: "GEMINI_QUOTA_EXHAUSTED" } },
+            );
+          }
+          // 503 UNAVAILABLE: Google's model pool is overloaded. Back off and
+          // retry — this is by far the most common transient failure on
+          // both free and paid tiers.
+          if (
+            /\b503\b|UNAVAILABLE|overloaded/i.test(message) &&
+            attempt < MAX_ATTEMPTS - 1
+          ) {
+            await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]));
+            continue;
+          }
+          // Anything else (or 503 that kept failing past MAX_ATTEMPTS) → give up.
+          break;
+        }
+      }
+      const message =
+        lastError instanceof Error ? lastError.message : String(lastError);
+      outer.setAttribute("gemini.attempts", MAX_ATTEMPTS);
+      outer.setStatus({ code: SpanStatusCode.ERROR, message });
+      outer.end();
+      if (/\b503\b|UNAVAILABLE|overloaded/i.test(message)) {
+        throw new GraphQLError(
+          `Gemini (${env.GEMINI_MODEL}) is currently overloaded — try again in a minute.`,
+          { extensions: { code: "GEMINI_UNAVAILABLE" } },
+        );
+      }
+      throw new GraphQLError(`Gemini call failed: ${message}`, {
+        originalError: lastError as Error,
       });
-      const text = res.text;
-      assert(text, "Gemini returned no text body");
-      return JSON.parse(text) as GeminiResult;
-    } catch (cause) {
-      lastError = cause;
-      const message = cause instanceof Error ? cause.message : String(cause);
-      // Quota exhaustion: no point retrying, surface immediately.
-      if (/\b429\b|quota|RESOURCE_EXHAUSTED/i.test(message)) {
-        throw new GraphQLError("Gemini quota exhausted — try again later.", {
-          extensions: { code: "GEMINI_QUOTA_EXHAUSTED" },
-        });
-      }
-      // 503 UNAVAILABLE: Google's model pool is overloaded. Back off and
-      // retry — this is by far the most common transient failure on both
-      // free and paid tiers.
-      if (
-        /\b503\b|UNAVAILABLE|overloaded/i.test(message) &&
-        attempt < MAX_ATTEMPTS - 1
-      ) {
-        await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]));
-        continue;
-      }
-      // Anything else (or 503 that kept failing past MAX_ATTEMPTS) → give up.
-      break;
-    }
-  }
-  const message =
-    lastError instanceof Error ? lastError.message : String(lastError);
-  if (/\b503\b|UNAVAILABLE|overloaded/i.test(message)) {
-    throw new GraphQLError(
-      `Gemini (${env.GEMINI_MODEL}) is currently overloaded — try again in a minute.`,
-      { extensions: { code: "GEMINI_UNAVAILABLE" } },
-    );
-  }
-  throw new GraphQLError(`Gemini call failed: ${message}`, {
-    originalError: lastError as Error,
-  });
+    },
+  );
 }
 
 /** Find a `NetWorthCategoryLiability` whose name looks like a student-loan row (`ilike '%student%loan%'`, so "Student Loan", "Student Loan Plan 2", etc. all match). Returns the first match, or null. */
