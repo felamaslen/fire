@@ -152,8 +152,16 @@ docker compose up -d --wait postgres
 echo '==> Running database migrations'
 docker compose run --rm app pnpm db:migrate
 
-# Now roll the rest of the stack, recreating \`app\` with the new image.
+# Bring the rest of the stack up (recreates \`app\` if the image digest
+# changed, leaves it alone otherwise).
 docker compose up -d --wait --remove-orphans
+
+# Force-recreate \`app\` even when \`up -d\` was a no-op. The app holds
+# in-process caches (module-level portfolio / yahoo-quote maps) that need
+# clearing on every deploy, not just when the image changes — so a config-
+# only deploy, a DB restore, or a cache-busting bugfix still results in a
+# fresh process. \`--no-deps\` skips Postgres so the DB isn't bounced.
+docker compose up -d --wait --force-recreate --no-deps app
 docker compose ps
 EOSH
 
