@@ -123,7 +123,7 @@ export function PortfolioChart({
           "flex items-center justify-center rounded border bg-muted/30 text-sm text-muted-foreground",
           className,
         )}
-        style={{ width, height }}
+        style={{ height }}
       >
         No data yet.
       </div>
