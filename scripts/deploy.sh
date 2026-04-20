@@ -139,8 +139,12 @@ cd '$LOCATION'
 export TAG='$TAG'
 
 # Pull the new image(s) first so the migration runs against the code that's
-# about to start serving traffic.
+# about to start serving traffic. \`docker compose pull\` only pulls the
+# tag resolved from \`image:\` (the sha, via \`\${TAG}\`), so we *also*
+# explicitly refresh \`:latest\` — otherwise any ad-hoc \`docker compose\`
+# op on the server without \`TAG\` set falls back to a stale local image.
 docker compose pull
+docker pull '$IMAGE:latest'
 
 # Bring Postgres up (and only Postgres) and wait for its healthcheck so the
 # migration has something to talk to.
