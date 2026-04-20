@@ -6,10 +6,9 @@ import type { Float, ID, Int } from "grats";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
+import { model } from "@/db/drizzle-model";
 import {
-  NetWorthCategoryAssets,
   NetWorthCategoryLiabilities,
-  NetWorthCategoryOptions,
   NetWorthCurrencyRates,
   NetWorthEntries,
   NetWorthValueAmounts,
@@ -252,13 +251,8 @@ export async function asset(
   value: NetWorthValue,
 ): Promise<NetWorthCategoryAsset | null> {
   if (!value.categoryAssetId) return null;
-  const [row] = await db
-    .select()
-    .from(NetWorthCategoryAssets)
-    .where(eq(NetWorthCategoryAssets.id, value.categoryAssetId));
-  assert(
-    row,
-    `NetWorthCategoryAsset ${value.categoryAssetId} referenced by NetWorthValue ${value.id} is missing`,
+  const row = await model("NetWorthCategoryAssets").findById(
+    value.categoryAssetId,
   );
   return NetWorthCategoryAsset.load(row);
 }
@@ -268,13 +262,8 @@ export async function liability(
   value: NetWorthValue,
 ): Promise<NetWorthCategoryLiability | null> {
   if (!value.categoryLiabilityId) return null;
-  const [row] = await db
-    .select()
-    .from(NetWorthCategoryLiabilities)
-    .where(eq(NetWorthCategoryLiabilities.id, value.categoryLiabilityId));
-  assert(
-    row,
-    `NetWorthCategoryLiability ${value.categoryLiabilityId} referenced by NetWorthValue ${value.id} is missing`,
+  const row = await model("NetWorthCategoryLiabilities").findById(
+    value.categoryLiabilityId,
   );
   return NetWorthCategoryLiability.load(row);
 }
@@ -284,13 +273,8 @@ export async function option(
   value: NetWorthValue,
 ): Promise<NetWorthCategoryOption | null> {
   if (!value.categoryOptionId) return null;
-  const [row] = await db
-    .select()
-    .from(NetWorthCategoryOptions)
-    .where(eq(NetWorthCategoryOptions.id, value.categoryOptionId));
-  assert(
-    row,
-    `NetWorthCategoryOption ${value.categoryOptionId} referenced by NetWorthValue ${value.id} is missing`,
+  const row = await model("NetWorthCategoryOptions").findById(
+    value.categoryOptionId,
   );
   return NetWorthCategoryOption.load(row);
 }

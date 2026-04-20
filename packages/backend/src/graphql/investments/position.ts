@@ -1,11 +1,9 @@
-import { strict as assert } from "node:assert";
-
 import { eq, sql } from "drizzle-orm";
 import type { Float, Int } from "grats";
 
 import { db } from "@/db";
+import { model } from "@/db/drizzle-model";
 import { InvestmentTransactions } from "@/db/schema/investments";
-import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
 import type { Context } from "../context";
 import { Money } from "../money";
@@ -125,11 +123,7 @@ export class InvestmentWrapper {
 
   /** The wrapper (a `STOCK` or `PENSION` net-worth asset) this slice belongs to. @gqlField */
   async asset(): Promise<NetWorthCategoryAsset> {
-    const [row] = await db
-      .select()
-      .from(NetWorthCategoryAssets)
-      .where(eq(NetWorthCategoryAssets.id, this.assetId));
-    assert(row, `NetWorthCategoryAsset ${this.assetId} missing`);
+    const row = await model("NetWorthCategoryAssets").findById(this.assetId);
     return NetWorthCategoryAsset.load(row);
   }
 

@@ -251,6 +251,22 @@ function insertInto<T extends PgTable>(table: T, row: T["$inferInsert"]) {
   return db.insert(table as PgTable).values(row as Record<string, unknown>);
 }
 
+const modelCache = new Map<DrizzleTableName, DrizzleModel<DrizzleTableName>>();
+
+/**
+ * Process-wide `DrizzleModel` for `tableName`, lazily constructed on first access and memoised thereafter. The backend owns every mutation on these tables, so caching rows across requests is safe; `updateById` / `deleteById` invalidate the relevant entry, and other mutation paths in this codebase should do the same when they run alongside a long-running process.
+ */
+export function model<N extends DrizzleTableName>(
+  tableName: N,
+): DrizzleModel<N> {
+  let m = modelCache.get(tableName);
+  if (!m) {
+    m = new DrizzleModel(tableName) as DrizzleModel<DrizzleTableName>;
+    modelCache.set(tableName, m);
+  }
+  return m as DrizzleModel<N>;
+}
+
 function resolvePrimaryKey(table: PgTable, tableName: string): string[] {
   const config = getTableConfig(table);
   const composite = config.primaryKeys[0];

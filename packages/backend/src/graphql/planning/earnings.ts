@@ -4,13 +4,9 @@ import { and, asc, desc, eq, lt, or } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
 import { db } from "@/db";
+import { model } from "@/db/drizzle-model";
 import { assertCountryCode } from "@/db/schema/country";
 import {
-  NetWorthCategoryAssets,
-  NetWorthCategoryLiabilities,
-} from "@/db/schema/net-worth";
-import {
-  PlanningAccounts,
   PlanningEarnings,
   PlanningEarningsUKTaxCodes,
 } from "@/db/schema/planning";
@@ -89,35 +85,22 @@ export class PlanningEarning {
   /** Liability the predicted student-loan deduction pays down. Null when `studentLoanPlan2` is false or no liability has been linked. @gqlField */
   async studentLoanLiability(): Promise<NetWorthCategoryLiability | null> {
     if (!this.studentLoanLiabilityId) return null;
-    const [row] = await db
-      .select()
-      .from(NetWorthCategoryLiabilities)
-      .where(eq(NetWorthCategoryLiabilities.id, this.studentLoanLiabilityId));
-    return row ? NetWorthCategoryLiability.load(row) : null;
+    const row = await model("NetWorthCategoryLiabilities").findById(
+      this.studentLoanLiabilityId,
+    );
+    return NetWorthCategoryLiability.load(row);
   }
 
   /** Destination planning account for the net earnings. @gqlField */
   async toAccount(): Promise<PlanningAccount> {
-    const [row] = await db
-      .select({
-        assetId: PlanningAccounts.accountId,
-        alias: PlanningAccounts.alias,
-        asset: NetWorthCategoryAssets,
-      })
-      .from(PlanningAccounts)
-      .innerJoin(
-        NetWorthCategoryAssets,
-        eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
-      )
-      .where(eq(PlanningAccounts.accountId, this.toAccountId));
-    assert(
-      row,
-      `PlanningAccount for asset ${this.toAccountId} referenced by PlanningEarning ${this.id} is missing — assign it via planningAccountAssign first.`,
+    const account = await model("PlanningAccounts").findById(this.toAccountId);
+    const asset = await model("NetWorthCategoryAssets").findById(
+      account.accountId,
     );
     return PlanningAccount.load({
-      assetId: row.assetId,
-      alias: row.alias,
-      asset: NetWorthCategoryAsset.load(row.asset),
+      assetId: account.accountId,
+      alias: account.alias,
+      asset: NetWorthCategoryAsset.load(asset),
     });
   }
 
