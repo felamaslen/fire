@@ -1,0 +1,31 @@
+{
+  "gross": {
+    "amount": 7307.69,
+    "currency": "GBP"
+  },
+  "date": "2025-07-31",
+  "adjustments": [
+    {
+      "name": "Income Tax",
+      "amount": {
+        "amount": -1094.86,
+        "currency": "GBP"
+      }
+    },
+    {
+      "name": "National Insurance",
+      "amount": {
+        "amount": -313.65,
+        "currency": "GBP"
+      }
+    },
+    {
+      "name": "Student Loan",
+      "amount": {
+        "amount": -462,
+        "currency": "GBP"
+      }
+    }
+  ],
+  "employeeFirstName": "F"
+}

@@ -1,0 +1,38 @@
+{
+  "gross": {
+    "amount": 1776.93,
+    "currency": "GBP"
+  },
+  "date": "2024-04-25",
+  "adjustments": [
+    {
+      "name": "Income Tax",
+      "amount": {
+        "amount": -145.6,
+        "currency": "GBP"
+      }
+    },
+    {
+      "name": "N.I",
+      "amount": {
+        "amount": -58.16,
+        "currency": "GBP"
+      }
+    },
+    {
+      "name": "Pension",
+      "amount": {
+        "amount": -39.98,
+        "currency": "GBP"
+      }
+    },
+    {
+      "name": "Pension",
+      "amount": {
+        "amount": -53.3,
+        "currency": "GBP"
+      }
+    }
+  ],
+  "employeeFirstName": "Y"
+}

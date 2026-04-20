@@ -46,6 +46,10 @@ services:
       # Traces go to the Jaeger OTLP/HTTP receiver on the docker network.
       OTEL_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      # Forwarded from the host's shell / `packages/backend/.env` — only set
+      # if present so compose doesn't require it to exist. Leaving it unset
+      # disables the `payslipParse` mutation.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     command: pnpm dev
     ports:
       - "4000:4000"

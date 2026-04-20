@@ -25,6 +25,7 @@ import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResol
 import { transactionAssetsFrequent as queryTransactionAssetsFrequentResolver, transactionLiabilitiesFrequent as queryTransactionLiabilitiesFrequentResolver, transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
+import { payslipParse as mutationPayslipParseResolver } from "./../graphql/planning/payslip-parse";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
     if (awaited == null)
@@ -2818,6 +2819,67 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "Upload",
         ...config.scalars.Upload
     });
+    const PayslipParseAdjustmentType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PayslipParseAdjustment",
+        description: "One extracted deduction line from a payslip PDF (tax, NIC, student loan, pension, ...).",
+        fields() {
+            return {
+                amount: {
+                    description: "Signed amount \u2014 negative for deductions (the common case), positive for e.g. refunds. Currency matches the payslip.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                liability: {
+                    description: "Liability we believe this deduction services, matched by line name against existing liability categories. Only populated when we're confident (e.g. a \"Student loan\" line on the payslip and a `Student Loan` liability in the net-worth config). Null for everything else \u2014 the user wires it up on review.",
+                    name: "liability",
+                    type: NetWorthCategoryLiabilityType
+                },
+                name: {
+                    description: "Human-readable label exactly as it appears on the payslip (e.g. `Income tax`, `NIC`, `Student loan plan 2`).",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const PayslipParseResultType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PayslipParseResult",
+        description: "The result of pushing a payslip PDF through Gemini \u2014 every field is the model's best guess and is intended to pre-populate the regular add-payslip form for the user to review before saving.",
+        fields() {
+            return {
+                adjustments: {
+                    description: "Every non-gross deduction line from the payslip.",
+                    name: "adjustments",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PayslipParseAdjustmentType)))
+                },
+                date: {
+                    description: "Pay date.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                employeeFirstName: {
+                    description: "Employee first name extracted from the PDF, if any \u2014 surfaced mostly so the UI can explain why an account was (or wasn't) matched.",
+                    name: "employeeFirstName",
+                    type: GraphQLString
+                },
+                gross: {
+                    description: "Gross pay.",
+                    name: "gross",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                suggestedAccount: {
+                    description: "Planning account we believe this payslip lands in, matched on the extracted first name against planning-account / underlying-asset names. Null when no reasonable match was found \u2014 the UI falls back to asking the user.",
+                    name: "suggestedAccount",
+                    type: PlanningAccountType
+                },
+                suggestedName: {
+                    description: "Suggested display name for the payslip, already formatted as `Salary (<first name>)`. The user can override on review.",
+                    name: "suggestedName",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
     const PlanningYearTaxRatesUKInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
         name: "PlanningYearTaxRatesUKInput",
         fields() {
@@ -3505,6 +3567,19 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationPayslipDeleteResolver(args.id);
                     }
                 },
+                payslipParse: {
+                    description: "Extract gross, pay date, and deductions from a payslip PDF using Gemini Flash, and suggest which planning account it belongs to based on the employee's first name. Does not create a payslip record \u2014 the UI shows the returned values in the regular add-payslip form for the user to review / adjust before submitting.",
+                    name: "payslipParse",
+                    type: new GraphQLNonNull(PayslipParseResultType),
+                    args: {
+                        file: {
+                            type: new GraphQLNonNull(UploadType)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationPayslipParseResolver(args.file);
+                    }
+                },
                 payslipUpdate: {
                     description: "Partially update an existing payslip. Only fields passed in are changed. Passing `adjustments` replaces the full set of line items (rows not listed are deleted; entries with an `id` are upserted).",
                     name: "payslipUpdate",
@@ -3708,6 +3783,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
     });
 }

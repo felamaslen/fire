@@ -877,6 +877,10 @@ type Mutation {
   """Delete a payslip. Adjustments are removed via cascade."""
   payslipDelete(id: ID!): Void!
   """
+  Extract gross, pay date, and deductions from a payslip PDF using Gemini Flash, and suggest which planning account it belongs to based on the employee's first name. Does not create a payslip record — the UI shows the returned values in the regular add-payslip form for the user to review / adjust before submitting.
+  """
+  payslipParse(file: Upload!): PayslipParseResult!
+  """
   Partially update an existing payslip. Only fields passed in are changed. Passing `adjustments` replaces the full set of line items (rows not listed are deleted; entries with an `id` are upserted).
   """
   payslipUpdate(
@@ -1266,6 +1270,48 @@ type PageInfo {
   hasNextPage: Boolean!
   hasPreviousPage: Boolean!
   startCursor: ID
+}
+
+"""
+One extracted deduction line from a payslip PDF (tax, NIC, student loan, pension, ...).
+"""
+type PayslipParseAdjustment {
+  """
+  Signed amount — negative for deductions (the common case), positive for e.g. refunds. Currency matches the payslip.
+  """
+  amount: Money!
+  """
+  Liability we believe this deduction services, matched by line name against existing liability categories. Only populated when we're confident (e.g. a "Student loan" line on the payslip and a `Student Loan` liability in the net-worth config). Null for everything else — the user wires it up on review.
+  """
+  liability: NetWorthCategoryLiability
+  """
+  Human-readable label exactly as it appears on the payslip (e.g. `Income tax`, `NIC`, `Student loan plan 2`).
+  """
+  name: String!
+}
+
+"""
+The result of pushing a payslip PDF through Gemini — every field is the model's best guess and is intended to pre-populate the regular add-payslip form for the user to review before saving.
+"""
+type PayslipParseResult {
+  """Every non-gross deduction line from the payslip."""
+  adjustments: [PayslipParseAdjustment!]!
+  """Pay date."""
+  date: Date!
+  """
+  Employee first name extracted from the PDF, if any — surfaced mostly so the UI can explain why an account was (or wasn't) matched.
+  """
+  employeeFirstName: String
+  """Gross pay."""
+  gross: Money!
+  """
+  Planning account we believe this payslip lands in, matched on the extracted first name against planning-account / underlying-asset names. Null when no reasonable match was found — the UI falls back to asking the user.
+  """
+  suggestedAccount: PlanningAccount
+  """
+  Suggested display name for the payslip, already formatted as `Salary (<first name>)`. The user can override on review.
+  """
+  suggestedName: String!
 }
 
 """

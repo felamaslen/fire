@@ -15,6 +15,10 @@ const schema = z.object({
   OTEL_ENABLED: z.stringbool().default(process.env.NODE_ENV === "development"),
   /** Base URL of the OTLP/HTTP collector (no trailing path — `/v1/traces` is appended per signal). Matches the Jaeger all-in-one service defined in `docker-compose.yml`. */
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().default("http://localhost:4318"),
+  /** Google AI Studio API key used by `payslipParse` to read a payslip PDF with Gemini Flash. Leave unset to disable the feature. Use an AI Studio key bound to a project that does not have billing enabled so requests past the free-tier quota hard-fail with HTTP 429 instead of accruing cost. */
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  /** Which Gemini model to call from `payslipParse`. Defaults to `gemini-2.5-flash-lite` because it's significantly cheaper and — crucially — sits in a less congested serving pool than flagship Flash, which frequently returns 503 UNAVAILABLE on free + paid tiers alike. Override if you need the bigger model for a harder PDF. */
+  GEMINI_MODEL: z.string().min(1).default("gemini-2.5-flash-lite"),
 });
 
 export const env = schema.parse(process.env);
