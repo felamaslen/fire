@@ -234,6 +234,7 @@ const CURRENCY = "GBP";
 
 const FILES_ORIGIN = new URL(
   import.meta.env.VITE_GRAPHQL_URL ?? "http://localhost:4000/graphql",
+  window.location.origin,
 ).origin;
 
 function resolveFileUrl(fileUrl: string): string {
