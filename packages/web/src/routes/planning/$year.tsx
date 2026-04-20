@@ -270,10 +270,23 @@ export const Route = createFileRoute("/planning/$year")({
 });
 
 function PlanningYearRoute() {
+  const { year } = Route.useParams();
   return (
-    <Suspense fallback={<Spinner />}>
-      <PlanningYearPage />
-    </Suspense>
+    <main className="flex min-h-svh flex-col">
+      <Suspense
+        fallback={
+          <div className="flex flex-1 items-center justify-center">
+            <Spinner />
+          </div>
+        }
+      >
+        <PlanningYearPage year={year} />
+      </Suspense>
+      <YearFooter current={year} />
+      <Suspense fallback={null}>
+        <Outlet />
+      </Suspense>
+    </main>
   );
 }
 
@@ -281,21 +294,20 @@ type PlanningYearData = NonNullable<
   ResultOf<typeof PlanningYearViewDocument>["planningYear"]
 >;
 
-function PlanningYearPage() {
-  const { year } = Route.useParams();
+function PlanningYearPage({ year }: { year: string }) {
   const { data } = useSuspenseQuery(PlanningYearViewDocument, {
     variables: { id: year },
   });
   if (!data.planningYear) {
     return (
-      <main className="mx-auto max-w-3xl space-y-2 p-8">
+      <div className="mx-auto max-w-3xl space-y-2 p-8">
         <h1 className="text-2xl font-semibold tracking-tight">
           No year {year}
         </h1>
         <p className="text-muted-foreground">
           This planning year hasn't been configured.
         </p>
-      </main>
+      </div>
     );
   }
   const hasTaxRates = data.planningYear.taxRates != null;
@@ -315,21 +327,15 @@ function PlanningYearPage() {
         (n.assetType === "STOCK" || n.assetType === "PENSION"),
     );
   return (
-    <main className="flex min-h-svh flex-col">
-      <div className="space-y-6 p-8 pb-24">
-        <Header year={year} hasTaxRates={hasTaxRates} />
-        <PlanningTable
-          data={data.planningYear}
-          year={year}
-          liabilities={liabilities}
-          investableAssets={investableAssets}
-        />
-      </div>
-      <YearFooter current={year} />
-      <Suspense fallback={null}>
-        <Outlet />
-      </Suspense>
-    </main>
+    <div className="flex-1 space-y-6 p-8 pb-24">
+      <Header year={year} hasTaxRates={hasTaxRates} />
+      <PlanningTable
+        data={data.planningYear}
+        year={year}
+        liabilities={liabilities}
+        investableAssets={investableAssets}
+      />
+    </div>
   );
 }
 
