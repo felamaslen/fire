@@ -96,7 +96,7 @@ export class PlanningBill {
       row,
       `PlanningAccount for asset ${this.fromAccountId} referenced by PlanningBill ${this.id} is missing — assign it via planningAccountAssign first.`,
     );
-    return new PlanningAccount({
+    return PlanningAccount.load({
       assetId: row.assetId,
       alias: row.alias,
       asset: NetWorthCategoryAsset.load(row.asset),

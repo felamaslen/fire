@@ -133,7 +133,7 @@ async function recordBill(
 async function queryCashPosition(): Promise<{
   amount: number;
   currency: string;
-}> {
+} | null> {
   const doc = graphql(`
     query {
       cashPosition {

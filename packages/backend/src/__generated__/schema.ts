@@ -22,9 +22,9 @@ import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCrea
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
 import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResolver } from "./../graphql/investments/portfolio";
+import { transactionAssetsFrequent as queryTransactionAssetsFrequentResolver, transactionLiabilitiesFrequent as queryTransactionLiabilitiesFrequentResolver, transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
-import { transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 async function assertNonNull<T>(value: T | Promise<T>): Promise<T> {
     const awaited = await value;
     if (awaited == null)
@@ -1521,10 +1521,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "amount",
                     type: new GraphQLNonNull(MoneyType)
                 },
-                assetId: {
-                    description: "`NetWorthCategoryAsset.id` if this transaction invests into an asset (stock or pension). Null on every other kind of transaction.",
-                    name: "assetId",
-                    type: GraphQLID
+                asset: {
+                    description: "Asset this transaction invests into (stock or pension). Null on every other kind of transaction.",
+                    name: "asset",
+                    type: NetWorthCategoryAssetType
                 },
                 id: {
                     name: "id",
@@ -1540,14 +1540,19 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "isProvisional",
                     type: new GraphQLNonNull(GraphQLBoolean)
                 },
-                liabilityId: {
-                    description: "`NetWorthCategoryLiability.id` if this row is a payslip adjustment linked to a liability (e.g. a student-loan deduction). Null on every other kind of transaction.",
-                    name: "liabilityId",
-                    type: GraphQLID
+                liability: {
+                    description: "Liability this row services (e.g. a payslip adjustment tagged with a student-loan liability, a credit-card payment). Null on every other kind of transaction.",
+                    name: "liability",
+                    type: NetWorthCategoryLiabilityType
                 },
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                toAccount: {
+                    description: "Destination planning account for the from-side of a manual transfer. Null on every other kind of transaction (the to-side, predictions, payslips, ...).",
+                    name: "toAccount",
+                    type: PlanningAccountType
                 }
             };
         }
@@ -2299,6 +2304,34 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryPortfoliosResolver(args.filterAssetIdIn, args.currency, args.first, args.after));
+                    }
+                },
+                transactionAssetsFrequent: {
+                    description: "Asset categories (`STOCK` / `PENSION`) most commonly referenced by existing planning transactions paid out of `accountId`, ordered by descending use count. Intended as a \"frequently used\" shortlist for the investment-transaction form.",
+                    name: "transactionAssetsFrequent",
+                    type: new GraphQLList(new GraphQLNonNull(NetWorthCategoryAssetType)),
+                    args: {
+                        accountId: {
+                            description: "Planning account (`PlanningAccount.id`) to scope the frequency count to \u2014 only transactions debited from this account are counted.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryTransactionAssetsFrequentResolver(args.accountId));
+                    }
+                },
+                transactionLiabilitiesFrequent: {
+                    description: "Liability categories most commonly serviced from `accountId`, ordered by descending use count. Counts both manual planning transactions debited from this account and recurring bills paid from this account (e.g. a mortgage bill tagged with its LOAN liability), so loan / mortgage liabilities that are only ever touched via the bills flow still surface here. Intended as a \"frequently used\" shortlist for the credit-card / bill-payment transaction form.",
+                    name: "transactionLiabilitiesFrequent",
+                    type: new GraphQLList(new GraphQLNonNull(NetWorthCategoryLiabilityType)),
+                    args: {
+                        accountId: {
+                            description: "Planning account (`PlanningAccount.id`) to scope the frequency count to \u2014 only rows debited from this account are counted.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryTransactionLiabilitiesFrequentResolver(args.accountId));
                     }
                 }
             };

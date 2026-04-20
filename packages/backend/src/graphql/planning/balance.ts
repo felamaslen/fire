@@ -1,7 +1,6 @@
 import { strict as assert } from "node:assert";
 
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
-import type { ID } from "grats";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
@@ -28,7 +27,7 @@ import { ewma } from "@/forecast/growth";
 
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
-import type { PlanningTransaction } from "./index";
+import { PlanningTransaction } from "./index";
 import {
   addMonthsUTC,
   earningMonthCoverage,
@@ -379,26 +378,32 @@ export function monthTransactionsFor(
     if (tx.date.getTime() < monthStart.getTime()) continue;
     if (tx.date.getTime() >= monthEnd.getTime()) continue;
     if (tx.accountId === assetId) {
-      out.push({
-        id: encodePlanningTransactionId({ kind: "tx", id: tx.id }),
-        name: tx.name,
-        amount: Money.fromMinorDenomination(tx.amount, tx.currency),
-        isProvisional: false,
-        isEditable: true,
-        liabilityId: (tx.liabilityId ?? null) as ID | null,
-        assetId: (tx.assetId ?? null) as ID | null,
-      });
+      out.push(
+        new PlanningTransaction({
+          id: encodePlanningTransactionId({ kind: "tx", id: tx.id }),
+          name: tx.name,
+          amount: Money.fromMinorDenomination(tx.amount, tx.currency),
+          isProvisional: false,
+          isEditable: true,
+          toAccountId: tx.toAccountId ?? null,
+          liabilityId: tx.liabilityId ?? null,
+          assetId: tx.assetId ?? null,
+        }),
+      );
     }
     if (tx.toAccountId === assetId) {
-      out.push({
-        id: encodePlanningTransactionId({ kind: "to", id: tx.id }),
-        name: tx.name,
-        amount: Money.fromMinorDenomination(-tx.amount, tx.currency),
-        isProvisional: false,
-        isEditable: false,
-        liabilityId: null,
-        assetId: null,
-      });
+      out.push(
+        new PlanningTransaction({
+          id: encodePlanningTransactionId({ kind: "to", id: tx.id }),
+          name: tx.name,
+          amount: Money.fromMinorDenomination(-tx.amount, tx.currency),
+          isProvisional: false,
+          isEditable: false,
+          toAccountId: null,
+          liabilityId: null,
+          assetId: null,
+        }),
+      );
     }
   }
 
@@ -410,25 +415,31 @@ export function monthTransactionsFor(
       p.date.getTime() < monthEnd.getTime(),
   );
   for (const { payslip: p, adjustments } of payslipsThisMonth) {
-    out.push({
-      id: encodePlanningTransactionId({ kind: "pay", id: p.id }),
-      name: p.name,
-      amount: Money.fromMinorDenomination(p.amountGross, p.currency),
-      isProvisional: false,
-      isEditable: true,
-      liabilityId: null,
-      assetId: null,
-    });
-    for (const a of adjustments) {
-      out.push({
-        id: encodePlanningTransactionId({ kind: "adj", id: a.id }),
-        name: a.name,
-        amount: Money.fromMinorDenomination(a.amount, p.currency),
+    out.push(
+      new PlanningTransaction({
+        id: encodePlanningTransactionId({ kind: "pay", id: p.id }),
+        name: p.name,
+        amount: Money.fromMinorDenomination(p.amountGross, p.currency),
         isProvisional: false,
         isEditable: true,
-        liabilityId: (a.liabilityId ?? null) as ID | null,
+        toAccountId: null,
+        liabilityId: null,
         assetId: null,
-      });
+      }),
+    );
+    for (const a of adjustments) {
+      out.push(
+        new PlanningTransaction({
+          id: encodePlanningTransactionId({ kind: "adj", id: a.id }),
+          name: a.name,
+          amount: Money.fromMinorDenomination(a.amount, p.currency),
+          isProvisional: false,
+          isEditable: true,
+          toAccountId: null,
+          liabilityId: a.liabilityId ?? null,
+          assetId: null,
+        }),
+      );
     }
   }
   const hasPayslip = payslipsThisMonth.length > 0;
@@ -455,73 +466,88 @@ export function monthTransactionsFor(
       // part of the month (start or end falls mid-month).
       const perMonth = (n: number) => Math.round((n / 12) * coverage);
       const monthKey = monthId(monthStart);
-      out.push({
-        id: encodePlanningTransactionId({
-          kind: "earn",
-          part: "gross",
-          id: e.id,
-          monthId: monthKey,
-        }),
-        name: `${e.name} — ${monthYearLabel(monthStart)}`,
-        amount: Money.fromMinorDenomination(perMonth(take.gross), e.currency),
-        isProvisional: true,
-        isEditable: true,
-        liabilityId: null,
-        assetId: null,
-      });
-      if (take.incomeTax > 0) {
-        out.push({
+      out.push(
+        new PlanningTransaction({
           id: encodePlanningTransactionId({
             kind: "earn",
-            part: "tax",
+            part: "gross",
             id: e.id,
             monthId: monthKey,
           }),
-          name: `${e.name} — income tax`,
-          amount: Money.fromMinorDenomination(
-            -perMonth(take.incomeTax),
-            e.currency,
-          ),
+          name: `${e.name} — ${monthYearLabel(monthStart)}`,
+          amount: Money.fromMinorDenomination(perMonth(take.gross), e.currency),
           isProvisional: true,
           isEditable: true,
+          toAccountId: null,
           liabilityId: null,
           assetId: null,
-        });
+        }),
+      );
+      if (take.incomeTax > 0) {
+        out.push(
+          new PlanningTransaction({
+            id: encodePlanningTransactionId({
+              kind: "earn",
+              part: "tax",
+              id: e.id,
+              monthId: monthKey,
+            }),
+            name: `${e.name} — income tax`,
+            amount: Money.fromMinorDenomination(
+              -perMonth(take.incomeTax),
+              e.currency,
+            ),
+            isProvisional: true,
+            isEditable: true,
+            toAccountId: null,
+            liabilityId: null,
+            assetId: null,
+          }),
+        );
       }
       if (take.nic > 0) {
-        out.push({
-          id: encodePlanningTransactionId({
-            kind: "earn",
-            part: "nic",
-            id: e.id,
-            monthId: monthKey,
+        out.push(
+          new PlanningTransaction({
+            id: encodePlanningTransactionId({
+              kind: "earn",
+              part: "nic",
+              id: e.id,
+              monthId: monthKey,
+            }),
+            name: `${e.name} — NIC`,
+            amount: Money.fromMinorDenomination(
+              -perMonth(take.nic),
+              e.currency,
+            ),
+            isProvisional: true,
+            isEditable: true,
+            toAccountId: null,
+            liabilityId: null,
+            assetId: null,
           }),
-          name: `${e.name} — NIC`,
-          amount: Money.fromMinorDenomination(-perMonth(take.nic), e.currency),
-          isProvisional: true,
-          isEditable: true,
-          liabilityId: null,
-          assetId: null,
-        });
+        );
       }
       if (take.studentLoan > 0) {
-        out.push({
-          id: encodePlanningTransactionId({
-            kind: "earn",
-            part: "sl",
-            id: e.id,
-            monthId: monthKey,
+        out.push(
+          new PlanningTransaction({
+            id: encodePlanningTransactionId({
+              kind: "earn",
+              part: "sl",
+              id: e.id,
+              monthId: monthKey,
+            }),
+            name: `${e.name} — student loan`,
+            amount: Money.fromMinorDenomination(
+              -perMonth(take.studentLoan),
+              e.currency,
+            ),
+            isProvisional: true,
+            isEditable: true,
+            toAccountId: null,
+            liabilityId: e.studentLoanLiabilityId ?? null,
+            assetId: null,
           }),
-          name: `${e.name} — student loan`,
-          amount: Money.fromMinorDenomination(
-            -perMonth(take.studentLoan),
-            e.currency,
-          ),
-          isProvisional: true,
-          isEditable: true,
-          liabilityId: (e.studentLoanLiabilityId ?? null) as ID | null,
-          assetId: null,
-        });
+        );
       }
     }
   }
@@ -539,22 +565,25 @@ export function monthTransactionsFor(
         t.date.getTime() < monthEnd.getTime(),
     );
     if (suppressed) continue;
-    out.push({
-      id: encodePlanningTransactionId({
-        kind: "liab",
-        id: cc.liabilityId,
-        monthId: monthId(monthStart),
+    out.push(
+      new PlanningTransaction({
+        id: encodePlanningTransactionId({
+          kind: "liab",
+          id: cc.liabilityId,
+          monthId: monthId(monthStart),
+        }),
+        name: cc.name,
+        amount: Money.fromMinorDenomination(
+          -Math.abs(cc.ewmaMinor),
+          REPORTING_CURRENCY,
+        ),
+        isProvisional: true,
+        isEditable: true,
+        toAccountId: null,
+        liabilityId: cc.liabilityId,
+        assetId: null,
       }),
-      name: cc.name,
-      amount: Money.fromMinorDenomination(
-        -Math.abs(cc.ewmaMinor),
-        REPORTING_CURRENCY,
-      ),
-      isProvisional: true,
-      isEditable: true,
-      liabilityId: cc.liabilityId as ID,
-      assetId: null,
-    });
+    );
   }
 
   // 5) Bills with per-month overrides
@@ -578,36 +607,42 @@ export function monthTransactionsFor(
     const override = overridesByMonthStartIso.get(monthStart.toISOString());
     if (override) {
       if (override.amount == null || override.currency == null) continue;
-      out.push({
-        id: encodePlanningTransactionId({
-          kind: "bill",
-          id: b.id,
-          monthId: monthId(monthStart),
+      out.push(
+        new PlanningTransaction({
+          id: encodePlanningTransactionId({
+            kind: "bill",
+            id: b.id,
+            monthId: monthId(monthStart),
+          }),
+          name: b.name,
+          amount: Money.fromMinorDenomination(
+            -override.amount,
+            override.currency,
+          ),
+          isProvisional: false,
+          isEditable: true,
+          toAccountId: null,
+          liabilityId: null,
+          assetId: null,
         }),
-        name: b.name,
-        amount: Money.fromMinorDenomination(
-          -override.amount,
-          override.currency,
-        ),
-        isProvisional: false,
-        isEditable: true,
-        liabilityId: null,
-        assetId: null,
-      });
+      );
     } else {
-      out.push({
-        id: encodePlanningTransactionId({
-          kind: "bill",
-          id: b.id,
-          monthId: monthId(monthStart),
+      out.push(
+        new PlanningTransaction({
+          id: encodePlanningTransactionId({
+            kind: "bill",
+            id: b.id,
+            monthId: monthId(monthStart),
+          }),
+          name: b.name,
+          amount: Money.fromMinorDenomination(-b.amount, b.currency),
+          isProvisional: true,
+          isEditable: true,
+          toAccountId: null,
+          liabilityId: null,
+          assetId: null,
         }),
-        name: b.name,
-        amount: Money.fromMinorDenomination(-b.amount, b.currency),
-        isProvisional: true,
-        isEditable: true,
-        liabilityId: null,
-        assetId: null,
-      });
+      );
     }
   }
 

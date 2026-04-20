@@ -26,7 +26,12 @@ export async function cashPosition(): Promise<Money | null> {
   const monthStart = startOfMonthUTC(today);
 
   const planningAccounts = await loadPlanningAccountInfos();
-  const cashAccounts = planningAccounts.filter((a) => a.asset.type === "CASH");
+  const accountTypes = await Promise.all(
+    planningAccounts.map((a) => a.asset.type()),
+  );
+  const cashAccounts = planningAccounts.filter(
+    (_, i) => accountTypes[i] === "CASH",
+  );
   if (cashAccounts.length === 0) {
     return Money.fromMinorDenomination(0, HOME_CURRENCY);
   }

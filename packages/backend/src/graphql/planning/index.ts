@@ -14,7 +14,10 @@ import {
 
 import type { Date as CalendarDate } from "../date";
 import { Money } from "../money";
-import { NetWorthCategoryAsset } from "../net-worth/categories";
+import {
+  NetWorthCategoryAsset,
+  NetWorthCategoryLiability,
+} from "../net-worth/categories";
 import {
   buildConnection,
   type Connection,
@@ -86,13 +89,12 @@ export class PlanningYear {
 
   /** All assigned planning accounts (not year-scoped — returned here for convenience). @gqlField */
   accounts(): PlanningAccount[] {
-    return this.data.accounts.map(
-      (info) =>
-        new PlanningAccount({
-          assetId: info.assetId,
-          alias: info.alias,
-          asset: info.asset,
-        }),
+    return this.data.accounts.map((info) =>
+      PlanningAccount.load({
+        assetId: info.assetId,
+        alias: info.alias,
+        asset: info.asset,
+      }),
     );
   }
 }
@@ -191,8 +193,8 @@ export class PlanningMonthAccount {
   }
 
   /** Display name — alias if set, otherwise the underlying asset's name. @gqlField */
-  get name(): string {
-    return this.alias ?? this.asset.name;
+  async name(): Promise<string> {
+    return this.alias ?? (await this.asset.name());
   }
 
   /** Transactions (actual + predicted) affecting this account in this month. @gqlField */
@@ -228,44 +230,132 @@ export class PlanningMonthAccount {
 }
 
 /** A single row in a PlanningMonthAccount — mix of actual and predicted sources. @gqlType */
-export type PlanningTransaction = {
+export class PlanningTransaction {
   /** @gqlField */
-  id: ID;
+  readonly id: ID;
   /** @gqlField */
-  name: string;
+  readonly name: string;
   /** Signed amount — negative for outflows (bills, taxes, transfers out). @gqlField */
-  amount: Money;
+  readonly amount: Money;
   /** True when the transaction is a prediction (e.g. forthcoming bill, predicted salary). @gqlField */
-  isProvisional: boolean;
+  readonly isProvisional: boolean;
   /** True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable. @gqlField */
-  isEditable: boolean;
-  /** `NetWorthCategoryLiability.id` if this row is a payslip adjustment linked to a liability (e.g. a student-loan deduction). Null on every other kind of transaction. @gqlField */
-  liabilityId: ID | null;
-  /** `NetWorthCategoryAsset.id` if this transaction invests into an asset (stock or pension). Null on every other kind of transaction. @gqlField */
-  assetId: ID | null;
+  readonly isEditable: boolean;
+  // The link FKs are stored opaque; we only materialise the full
+  // `PlanningAccount` / `NetWorthCategoryLiability` / `NetWorthCategoryAsset`
+  // instances lazily via their `fromId` factories so selecting just `{ id }`
+  // doesn't hit the DB. Each lazy instance caches its row once loaded.
+  private readonly toAccountId: string | null;
+  private readonly liabilityId: string | null;
+  private readonly assetId: string | null;
+
+  constructor(data: {
+    id: ID;
+    name: string;
+    amount: Money;
+    isProvisional: boolean;
+    isEditable: boolean;
+    toAccountId: string | null;
+    liabilityId: string | null;
+    assetId: string | null;
+  }) {
+    this.id = data.id;
+    this.name = data.name;
+    this.amount = data.amount;
+    this.isProvisional = data.isProvisional;
+    this.isEditable = data.isEditable;
+    this.toAccountId = data.toAccountId;
+    this.liabilityId = data.liabilityId;
+    this.assetId = data.assetId;
+  }
+
+  /** Destination planning account for the from-side of a manual transfer. Null on every other kind of transaction (the to-side, predictions, payslips, ...). @gqlField */
+  toAccount(): PlanningAccount | null {
+    return this.toAccountId == null
+      ? null
+      : PlanningAccount.fromId(this.toAccountId);
+  }
+
+  /** Liability this row services (e.g. a payslip adjustment tagged with a student-loan liability, a credit-card payment). Null on every other kind of transaction. @gqlField */
+  liability(): NetWorthCategoryLiability | null {
+    return this.liabilityId == null
+      ? null
+      : NetWorthCategoryLiability.fromId(this.liabilityId);
+  }
+
+  /** Asset this transaction invests into (stock or pension). Null on every other kind of transaction. @gqlField */
+  asset(): NetWorthCategoryAsset | null {
+    return this.assetId == null
+      ? null
+      : NetWorthCategoryAsset.fromId(this.assetId);
+  }
+}
+
+type PlanningAccountData = {
+  assetId: string;
+  alias: string | null;
+  asset: NetWorthCategoryAsset;
 };
 
 /** A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias. @gqlType */
 export class PlanningAccount {
-  /** @gqlField */
-  id!: ID;
-  alias!: string | null;
-  /** @gqlField */
-  asset!: NetWorthCategoryAsset;
+  private dataCache: PlanningAccountData | null = null;
+  private dataPromise: Promise<PlanningAccountData> | null = null;
 
-  constructor(data: {
-    assetId: string;
-    alias: string | null;
-    asset: NetWorthCategoryAsset;
-  }) {
-    this.id = data.assetId as ID;
-    this.alias = data.alias;
-    this.asset = data.asset;
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** A thunk that returns the full account data. Only invoked on the first
+     * access of a non-`id` field so `{ id }` selections don't trigger any DB
+     * work. */
+    private readonly dataLoader: () => Promise<PlanningAccountData>,
+  ) {}
+
+  static load(data: PlanningAccountData): PlanningAccount {
+    const inst = new PlanningAccount(data.assetId as ID, () =>
+      Promise.resolve(data),
+    );
+    inst.dataCache = data;
+    return inst;
+  }
+
+  static fromId(id: string): PlanningAccount {
+    return new PlanningAccount(id as ID, async () => {
+      const [row] = await db
+        .select({
+          account: PlanningAccounts,
+          asset: NetWorthCategoryAssets,
+        })
+        .from(PlanningAccounts)
+        .innerJoin(
+          NetWorthCategoryAssets,
+          eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
+        )
+        .where(eq(PlanningAccounts.accountId, id));
+      assert(row, `PlanningAccount ${id} not found`);
+      return {
+        assetId: row.account.accountId,
+        alias: row.account.alias,
+        asset: NetWorthCategoryAsset.load(row.asset),
+      };
+    });
+  }
+
+  private async data(): Promise<PlanningAccountData> {
+    if (this.dataCache) return this.dataCache;
+    this.dataPromise ??= this.dataLoader().then((d) => (this.dataCache = d));
+    return this.dataPromise;
+  }
+
+  /** @gqlField */
+  async asset(): Promise<NetWorthCategoryAsset> {
+    return (await this.data()).asset;
   }
 
   /** Display name — the alias if one was set, otherwise the underlying asset's name. @gqlField */
-  get name(): string {
-    return this.alias ?? this.asset.name;
+  async name(): Promise<string> {
+    const d = await this.data();
+    return d.alias ?? (await d.asset.name());
   }
 }
 
@@ -455,7 +545,7 @@ export async function planningAccountAssign(
     })
     .returning();
 
-  return new PlanningAccount({
+  return PlanningAccount.load({
     assetId: row.accountId,
     alias: row.alias,
     asset: NetWorthCategoryAsset.load(asset),

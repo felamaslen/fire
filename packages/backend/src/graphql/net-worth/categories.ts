@@ -12,7 +12,6 @@ import {
   NetWorthCategoryOptions,
   NetWorthValues,
 } from "@/db/schema/net-worth";
-import { PlanningAccounts } from "@/db/schema/planning";
 
 import { buildConnection, type Connection } from "../pagination";
 import { PlanningAccount } from "../planning/index";
@@ -36,35 +35,66 @@ export interface NetWorthCategory {
   /** @gqlField */
   id: ID;
   /** @gqlField */
-  name: string;
+  name(): Promise<string>;
 }
+
+type AssetRow = typeof NetWorthCategoryAssets.$inferSelect;
+type LiabilityRow = typeof NetWorthCategoryLiabilities.$inferSelect;
 
 /** A reusable bucket for assets (current account, pension pot, property, ...). @gqlType */
 export class NetWorthCategoryAsset implements NetWorthCategory {
   readonly __typename = "NetWorthCategoryAsset" as const;
 
+  private rowCache: AssetRow | null = null;
+  private rowPromise: Promise<AssetRow> | null = null;
+
   constructor(
     /** @gqlField */
     public readonly id: ID,
-    /** @gqlField */
-    public readonly name: string,
-    /** @gqlField */
-    public readonly type: NetWorthAssetType,
-    /** Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation. @gqlField */
-    public readonly growthRate: Float | null,
-    private readonly createdAt: Date,
+    /** A thunk that returns the full DB row. Only invoked on the first access
+     * of a non-`id` field so `{ id }` selections don't trigger any DB work. */
+    private readonly rowLoader: () => Promise<AssetRow>,
   ) {}
 
-  static load(
-    row: typeof NetWorthCategoryAssets.$inferSelect,
-  ): NetWorthCategoryAsset {
-    return new NetWorthCategoryAsset(
-      row.id as ID,
-      row.name,
-      row.type,
-      row.growthRate === null ? null : (Number(row.growthRate) as Float),
-      row.createdAt,
+  static load(row: AssetRow): NetWorthCategoryAsset {
+    const inst = new NetWorthCategoryAsset(row.id as ID, () =>
+      Promise.resolve(row),
     );
+    inst.rowCache = row;
+    return inst;
+  }
+
+  static fromId(id: string): NetWorthCategoryAsset {
+    return new NetWorthCategoryAsset(id as ID, async () => {
+      const [row] = await db
+        .select()
+        .from(NetWorthCategoryAssets)
+        .where(eq(NetWorthCategoryAssets.id, id));
+      assert(row, `NetWorthCategoryAsset ${id} not found`);
+      return row;
+    });
+  }
+
+  private async row(): Promise<AssetRow> {
+    if (this.rowCache) return this.rowCache;
+    this.rowPromise ??= this.rowLoader().then((r) => (this.rowCache = r));
+    return this.rowPromise;
+  }
+
+  /** @gqlField */
+  async name(): Promise<string> {
+    return (await this.row()).name;
+  }
+
+  /** @gqlField */
+  async type(): Promise<NetWorthAssetType> {
+    return (await this.row()).type;
+  }
+
+  /** Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation. @gqlField */
+  async growthRate(): Promise<Float | null> {
+    const g = (await this.row()).growthRate;
+    return g === null ? null : (Number(g) as Float);
   }
 }
 
@@ -72,74 +102,73 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
 export class NetWorthCategoryLiability implements NetWorthCategory {
   readonly __typename = "NetWorthCategoryLiability" as const;
 
+  private rowCache: LiabilityRow | null = null;
+  private rowPromise: Promise<LiabilityRow> | null = null;
+
   constructor(
     /** @gqlField */
     public readonly id: ID,
-    /** @gqlField */
-    public readonly name: string,
-    /** @gqlField */
-    public readonly type: NetWorthLiabilityType,
-    /** Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Present iff type is LOAN. @gqlField */
-    public readonly interestRate: Float | null,
-    /** When true, the liability is hidden from aggregate totals. @gqlField */
-    public readonly skip: boolean,
-    private readonly assetId: string | null,
-    private readonly billedFromAccountId: string | null,
-    private readonly createdAt: Date,
+    /** A thunk that returns the full DB row. Only invoked on the first access
+     * of a non-`id` field so `{ id }` selections don't trigger any DB work. */
+    private readonly rowLoader: () => Promise<LiabilityRow>,
   ) {}
 
-  static load(
-    row: typeof NetWorthCategoryLiabilities.$inferSelect,
-  ): NetWorthCategoryLiability {
-    return new NetWorthCategoryLiability(
-      row.id as ID,
-      row.name,
-      row.type,
-      row.interestRate === null ? null : (Number(row.interestRate) as Float),
-      row.skip,
-      row.categoryAssetId,
-      row.billedFromAccountId,
-      row.createdAt,
+  static load(row: LiabilityRow): NetWorthCategoryLiability {
+    const inst = new NetWorthCategoryLiability(row.id as ID, () =>
+      Promise.resolve(row),
     );
+    inst.rowCache = row;
+    return inst;
+  }
+
+  static fromId(id: string): NetWorthCategoryLiability {
+    return new NetWorthCategoryLiability(id as ID, async () => {
+      const [row] = await db
+        .select()
+        .from(NetWorthCategoryLiabilities)
+        .where(eq(NetWorthCategoryLiabilities.id, id));
+      assert(row, `NetWorthCategoryLiability ${id} not found`);
+      return row;
+    });
+  }
+
+  private async row(): Promise<LiabilityRow> {
+    if (this.rowCache) return this.rowCache;
+    this.rowPromise ??= this.rowLoader().then((r) => (this.rowCache = r));
+    return this.rowPromise;
+  }
+
+  /** @gqlField */
+  async name(): Promise<string> {
+    return (await this.row()).name;
+  }
+
+  /** @gqlField */
+  async type(): Promise<NetWorthLiabilityType> {
+    return (await this.row()).type;
+  }
+
+  /** Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Present iff type is LOAN. @gqlField */
+  async interestRate(): Promise<Float | null> {
+    const i = (await this.row()).interestRate;
+    return i === null ? null : (Number(i) as Float);
+  }
+
+  /** When true, the liability is hidden from aggregate totals. @gqlField */
+  async skip(): Promise<boolean> {
+    return (await this.row()).skip;
   }
 
   /** The asset this liability is funding (for LTV calcs), if any. @gqlField */
   async asset(): Promise<NetWorthCategoryAsset | null> {
-    if (!this.assetId) return null;
-    const [row] = await db
-      .select()
-      .from(NetWorthCategoryAssets)
-      .where(eq(NetWorthCategoryAssets.id, this.assetId));
-    assert(
-      row,
-      `NetWorthCategoryAsset ${this.assetId} referenced by NetWorthCategoryLiability ${this.id} is missing`,
-    );
-    return NetWorthCategoryAsset.load(row);
+    const assetId = (await this.row()).categoryAssetId;
+    return assetId == null ? null : NetWorthCategoryAsset.fromId(assetId);
   }
 
   /** Planning account this liability is billed from (credit cards only). When set, the planner emits predicted monthly payment transactions on that account. @gqlField */
   async billedFromAccount(): Promise<PlanningAccount | null> {
-    if (!this.billedFromAccountId) return null;
-    const [row] = await db
-      .select({
-        account: PlanningAccounts,
-        asset: NetWorthCategoryAssets,
-      })
-      .from(PlanningAccounts)
-      .innerJoin(
-        NetWorthCategoryAssets,
-        eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
-      )
-      .where(eq(PlanningAccounts.accountId, this.billedFromAccountId));
-    assert(
-      row,
-      `PlanningAccount ${this.billedFromAccountId} referenced by NetWorthCategoryLiability ${this.id} is missing`,
-    );
-    return new PlanningAccount({
-      assetId: row.account.accountId,
-      alias: row.account.alias,
-      asset: NetWorthCategoryAsset.load(row.asset),
-    });
+    const accountId = (await this.row()).billedFromAccountId;
+    return accountId == null ? null : PlanningAccount.fromId(accountId);
   }
 }
 
@@ -150,8 +179,7 @@ export class NetWorthCategoryOption implements NetWorthCategory {
   constructor(
     /** @gqlField */
     public readonly id: ID,
-    /** @gqlField */
-    public readonly name: string,
+    private readonly nameValue: string,
     private readonly createdAt: Date,
   ) {}
 
@@ -159,6 +187,11 @@ export class NetWorthCategoryOption implements NetWorthCategory {
     row: typeof NetWorthCategoryOptions.$inferSelect,
   ): NetWorthCategoryOption {
     return new NetWorthCategoryOption(row.id as ID, row.name, row.createdAt);
+  }
+
+  /** @gqlField */
+  async name(): Promise<string> {
+    return this.nameValue;
   }
 }
 

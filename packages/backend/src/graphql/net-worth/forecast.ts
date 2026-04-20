@@ -192,10 +192,8 @@ export async function netWorthForecast(
       Money.fromMinorDenomination(w.projectedBalance[i], HOME_CURRENCY),
     );
     if (loaded instanceof NetWorthCategoryAsset) {
-      if (
-        (loaded.type === "PROPERTY" || loaded.type === "VEHICLE") &&
-        w.growthRate != null
-      ) {
+      const type = await loaded.type();
+      if ((type === "PROPERTY" || type === "VEHICLE") && w.growthRate != null) {
         projectedCategories.push(
           new NetWorthForecastGrowthAsset(
             loaded,
@@ -204,10 +202,7 @@ export async function netWorthForecast(
             projectedBalance,
           ),
         );
-      } else if (
-        (loaded.type === "STOCK" || loaded.type === "PENSION") &&
-        w.xirr != null
-      ) {
+      } else if ((type === "STOCK" || type === "PENSION") && w.xirr != null) {
         projectedCategories.push(
           new NetWorthForecastPortfolio(
             loaded,
@@ -227,7 +222,8 @@ export async function netWorthForecast(
         );
       }
     } else if (loaded instanceof NetWorthCategoryLiability) {
-      if (loaded.type === "LOAN" && w.interestRate != null) {
+      const type = await loaded.type();
+      if (type === "LOAN" && w.interestRate != null) {
         projectedCategories.push(
           new NetWorthForecastLoan(
             loaded,

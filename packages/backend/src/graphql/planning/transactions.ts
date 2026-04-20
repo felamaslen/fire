@@ -1,6 +1,17 @@
 import { strict as assert } from "node:assert";
 
-import { and, eq, gte, isNull, lte, or } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  or,
+} from "drizzle-orm";
 import type { ID } from "grats";
 import { z } from "zod";
 
@@ -27,8 +38,12 @@ import {
   Money,
   type MoneyInput,
 } from "../money";
+import {
+  NetWorthCategoryAsset,
+  NetWorthCategoryLiability,
+} from "../net-worth/categories";
 import { VOID, type Void } from "../void";
-import { ensurePlanningMonth, type PlanningTransaction } from "./index";
+import { ensurePlanningMonth, PlanningTransaction } from "./index";
 import {
   earningMonthCoverage,
   monthYearLabel,
@@ -90,6 +105,88 @@ export function decodePlanningTransactionId(
 }
 
 /**
+ * Asset categories (`STOCK` / `PENSION`) most commonly referenced by existing planning transactions paid out of `accountId`, ordered by descending use count. Intended as a "frequently used" shortlist for the investment-transaction form.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function transactionAssetsFrequent(
+  /** Planning account (`PlanningAccount.id`) to scope the frequency count to — only transactions debited from this account are counted. */
+  accountId: ID,
+): Promise<NetWorthCategoryAsset[] | null> {
+  const rows = await db
+    .select({
+      asset: NetWorthCategoryAssets,
+      c: count(PlanningTransactions.id).as("c"),
+    })
+    .from(PlanningTransactions)
+    .innerJoin(
+      NetWorthCategoryAssets,
+      eq(NetWorthCategoryAssets.id, PlanningTransactions.assetId),
+    )
+    .where(eq(PlanningTransactions.accountId, accountId))
+    .groupBy(NetWorthCategoryAssets.id)
+    .orderBy(desc(count(PlanningTransactions.id)));
+  return rows.map((r) => NetWorthCategoryAsset.load(r.asset));
+}
+
+/**
+ * Liability categories most commonly serviced from `accountId`, ordered by descending use count. Counts both manual planning transactions debited from this account and recurring bills paid from this account (e.g. a mortgage bill tagged with its LOAN liability), so loan / mortgage liabilities that are only ever touched via the bills flow still surface here. Intended as a "frequently used" shortlist for the credit-card / bill-payment transaction form.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function transactionLiabilitiesFrequent(
+  /** Planning account (`PlanningAccount.id`) to scope the frequency count to — only rows debited from this account are counted. */
+  accountId: ID,
+): Promise<NetWorthCategoryLiability[] | null> {
+  // Pull liabilityIds from both sources (manual tx + bills) and aggregate in
+  // memory. A single SQL UNION would also work but the bill count is
+  // naturally small for a personal finance app, so this stays readable.
+  const [txRows, billRows] = await Promise.all([
+    db
+      .select({
+        liabilityId: PlanningTransactions.liabilityId,
+        c: count(PlanningTransactions.id).as("c"),
+      })
+      .from(PlanningTransactions)
+      .where(
+        and(
+          eq(PlanningTransactions.accountId, accountId),
+          isNotNull(PlanningTransactions.liabilityId),
+        ),
+      )
+      .groupBy(PlanningTransactions.liabilityId),
+    db
+      .select({
+        liabilityId: PlanningBills.liabilityId,
+        c: count(PlanningBills.id).as("c"),
+      })
+      .from(PlanningBills)
+      .where(
+        and(
+          eq(PlanningBills.fromAccountId, accountId),
+          isNotNull(PlanningBills.liabilityId),
+        ),
+      )
+      .groupBy(PlanningBills.liabilityId),
+  ]);
+  const totals = new Map<string, number>();
+  for (const r of [...txRows, ...billRows]) {
+    if (r.liabilityId == null) continue;
+    totals.set(r.liabilityId, (totals.get(r.liabilityId) ?? 0) + r.c);
+  }
+  if (totals.size === 0) return [];
+  const rows = await db
+    .select()
+    .from(NetWorthCategoryLiabilities)
+    .where(inArray(NetWorthCategoryLiabilities.id, Array.from(totals.keys())));
+  return rows
+    .sort((a, b) => (totals.get(b.id) ?? 0) - (totals.get(a.id) ?? 0))
+    .map((r) => NetWorthCategoryLiability.load(r));
+}
+
+/**
  * Record a manual transaction on a planning month. `amount` is signed — negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId`, `liabilityId`, and `assetId` to be null. An outflow may either pay down a liability OR invest into a stock/pension asset, but not both.
  *
  * @gqlMutationField
@@ -137,15 +234,16 @@ export async function transactionCreate(
       assetId: assetId ?? null,
     })
     .returning();
-  return {
+  return new PlanningTransaction({
     id: encodePlanningTransactionId({ kind: "tx", id: row.id }),
     name: row.name,
     amount: Money.fromMinorDenomination(row.amount, row.currency),
     isProvisional: false,
     isEditable: true,
-    liabilityId: (row.liabilityId ?? null) as ID | null,
-    assetId: (row.assetId ?? null) as ID | null,
-  };
+    toAccountId: row.toAccountId ?? null,
+    liabilityId: row.liabilityId ?? null,
+    assetId: row.assetId ?? null,
+  });
 }
 
 /** Verify an asset exists and is of a type (`STOCK` / `PENSION`) that can receive investment transactions. */
@@ -301,15 +399,16 @@ async function reloadTransaction(
       const fromSide = parsed.kind === "tx";
       // The "to" side of a transfer is the mirror image: flip the stored sign.
       const signedMinor = fromSide ? row.amount : -row.amount;
-      return {
+      return new PlanningTransaction({
         id: encodePlanningTransactionId(parsed),
         name: row.name,
         amount: Money.fromMinorDenomination(signedMinor, row.currency),
         isProvisional: false,
         isEditable: fromSide,
-        liabilityId: (row.liabilityId ?? null) as ID | null,
-        assetId: (row.assetId ?? null) as ID | null,
-      };
+        toAccountId: fromSide ? (row.toAccountId ?? null) : null,
+        liabilityId: fromSide ? (row.liabilityId ?? null) : null,
+        assetId: fromSide ? (row.assetId ?? null) : null,
+      });
     }
     case "pay": {
       const [row] = await db
@@ -317,15 +416,16 @@ async function reloadTransaction(
         .from(PlanningPayslips)
         .where(eq(PlanningPayslips.id, parsed.id));
       assert(row, `Payslip ${parsed.id} not found`);
-      return {
+      return new PlanningTransaction({
         id: encodePlanningTransactionId(parsed),
         name: row.name,
         amount: Money.fromMinorDenomination(row.amountGross, row.currency),
         isProvisional: false,
         isEditable: true,
+        toAccountId: null,
         liabilityId: null,
         assetId: null,
-      };
+      });
     }
     case "adj": {
       const [row] = await db
@@ -340,7 +440,7 @@ async function reloadTransaction(
         )
         .where(eq(PlanningPayslipAdjustments.id, parsed.id));
       assert(row, `Adjustment ${parsed.id} not found`);
-      return {
+      return new PlanningTransaction({
         id: encodePlanningTransactionId(parsed),
         name: row.adjustment.name,
         amount: Money.fromMinorDenomination(
@@ -349,9 +449,10 @@ async function reloadTransaction(
         ),
         isProvisional: false,
         isEditable: true,
-        liabilityId: (row.adjustment.liabilityId ?? null) as ID | null,
+        toAccountId: null,
+        liabilityId: row.adjustment.liabilityId ?? null,
         assetId: null,
-      };
+      });
     }
     case "bill":
     case "earn":
@@ -362,15 +463,16 @@ async function reloadTransaction(
       // cached derived entry — clients should refetch the month view to pick
       // up the fresh concrete row. The stub is flagged `isEditable: false`
       // to discourage UIs from treating it as a real transaction.
-      return {
+      return new PlanningTransaction({
         id: encodePlanningTransactionId(parsed),
         name: "",
         amount: Money.fromMinorDenomination(0, "GBP"),
         isProvisional: true,
         isEditable: false,
+        toAccountId: null,
         liabilityId: null,
         assetId: null,
-      };
+      });
     }
   }
 }
