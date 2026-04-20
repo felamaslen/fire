@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  useNavigate,
+} from "@tanstack/react-router";
 import { isSameMonth } from "date-fns/isSameMonth";
 import {
   AlertTriangle,
@@ -21,7 +26,14 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Suspense, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { toast } from "sonner";
 
 import { Figure, FigureDocument } from "@/components/figure";
@@ -295,14 +307,22 @@ type PlanningYearData = NonNullable<
 >;
 
 function PlanningYearPage({ year }: { year: string }) {
+  // Defer the query variable so re-rendering the grid for a new year happens
+  // at low priority. Without this, Apollo treats the variable change as an
+  // urgent update and React commits the full table re-render synchronously
+  // (~700ms in dev for a cache-to-cache switch). With `useDeferredValue` the
+  // old grid keeps rendering instantly, and the new one is built concurrently
+  // across frames — keeping the main thread responsive.
+  const deferredYear = useDeferredValue(year);
   const { data } = useSuspenseQuery(PlanningYearViewDocument, {
-    variables: { id: year },
+    variables: { id: deferredYear },
   });
+  const isStale = deferredYear !== year;
   if (!data.planningYear) {
     return (
       <div className="mx-auto max-w-3xl space-y-2 p-8">
         <h1 className="text-2xl font-semibold tracking-tight">
-          No year {year}
+          No year {deferredYear}
         </h1>
         <p className="text-muted-foreground">
           This planning year hasn't been configured.
@@ -327,11 +347,16 @@ function PlanningYearPage({ year }: { year: string }) {
         (n.assetType === "STOCK" || n.assetType === "PENSION"),
     );
   return (
-    <div className="flex-1 space-y-6 p-8 pb-24">
-      <Header year={year} hasTaxRates={hasTaxRates} />
+    <div
+      className={cn(
+        "flex-1 space-y-6 p-8 pb-24 transition-opacity",
+        isStale && "pointer-events-none opacity-50",
+      )}
+    >
+      <Header year={deferredYear} hasTaxRates={hasTaxRates} />
       <PlanningTable
         data={data.planningYear}
-        year={year}
+        year={deferredYear}
         liabilities={liabilities}
         investableAssets={investableAssets}
       />
@@ -495,12 +520,22 @@ function YearFooter({ current }: { current: string }) {
   const onNewer = () => {
     setCursorStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
   };
+  // Navigate inside a React transition so the previous year's grid stays
+  // mounted while Apollo fetches the new one — `useSuspenseQuery` won't show
+  // the suspense fallback during a transition, avoiding a blank-page flash.
+  const navigate = useNavigate();
+  const [isPending, startTransition] = useTransition();
+  const onPickYear = (y: string) => {
+    startTransition(() => {
+      void navigate({ to: "/planning/$year", params: { year: y } });
+    });
+  };
   return (
     <nav className="sticky bottom-0 z-40 border-t bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <ul
         className={cn(
           "flex flex-wrap items-center gap-1 transition-opacity",
-          loading && "opacity-50",
+          (loading || isPending) && "opacity-50",
         )}
       >
         {hasOlder && (
@@ -525,14 +560,14 @@ function YearFooter({ current }: { current: string }) {
           return (
             <li key={y}>
               <Button
-                asChild
                 size="sm"
                 variant={isCurrent ? "default" : "outline"}
                 aria-current={isCurrent ? "page" : undefined}
+                onClick={() => {
+                  if (!isCurrent) onPickYear(y);
+                }}
               >
-                <Link to="/planning/$year" params={{ year: y }}>
-                  {fyLabelShort(y)}
-                </Link>
+                {fyLabelShort(y)}
               </Button>
             </li>
           );
@@ -608,9 +643,9 @@ function PlanningTable({
                 cellBorder,
               )}
             />
-            {accounts.map((a) => (
+            {accounts.map((a, j) => (
               <TableHead
-                key={a.id}
+                key={j}
                 className={cn(
                   "sticky top-12 z-20 min-w-56 bg-muted",
                   cellBorder,
@@ -627,7 +662,11 @@ function PlanningTable({
           {data.months.map((month, i) => {
             const isCurrent = isSameMonth(new Date(month.date), today);
             return (
-              <TableRow key={month.id} className="align-top">
+              // Keying by slot index (not `month.id`) lets React reuse the row
+              // and cell instances when the planning year changes — the grid
+              // always has the same 12 month rows × N account columns, so
+              // year-swap becomes a prop update instead of unmount + remount.
+              <TableRow key={i} className="align-top">
                 <TableHead
                   scope="row"
                   className={cn(
@@ -671,7 +710,7 @@ function PlanningTable({
                     )
                   : month.accounts.map((cell, j) => (
                       <TableCell
-                        key={cell.id}
+                        key={j}
                         className={cn(
                           // `h-px` is a CSS trick: `height: 1px` on a <td>
                           // doesn't actually shrink the cell (the row still
@@ -743,9 +782,14 @@ function MonthAccountCell({
         {cell.transactions.length === 0 && (
           <li className="px-2 py-1 text-[10px] text-muted-foreground">—</li>
         )}
-        {cell.transactions.map((tx) => (
+        {cell.transactions.map((tx, i) => (
           <TransactionRow
-            key={tx.id}
+            // Keying by slot index lets React reuse row instances across year
+            // switches — each cell typically holds a similar number of rows,
+            // so most prop swaps avoid mount / unmount entirely. The row
+            // resets its local edit / delete state when `tx.id` changes (see
+            // the effect in `TransactionRow`).
+            key={i}
             data={tx}
             monoRight={monoRight}
             monthId={monthId}
@@ -860,7 +904,21 @@ function TransactionRow({
 }) {
   const tx = readFragment(PlanningTransactionRowDocument, data);
   const [editOpen, setEditOpen] = useState(false);
+  // Lazy-mount the edit `Popover` — each cell can have many transactions, and
+  // eagerly mounting one `Popover` (+ its context providers) per row inflates
+  // grid re-render cost. Render a bare icon button until the user first opens
+  // the editor.
+  const [everOpened, setEverOpened] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
+  // Rows are keyed by slot index so React can reuse instances across year
+  // switches — reset any in-flight per-row UI state when the underlying
+  // transaction identity changes, or the user would see an open editor /
+  // pending delete for a different row.
+  useEffect(() => {
+    setEditOpen(false);
+    setEverOpened(false);
+    setDeletePending(false);
+  }, [tx.id]);
   const [update] = useMutation(TransactionUpdateDocument, {
     // `"active"` refetches every currently-watched query. A derived-earnings
     // edit can materialise a payslip, so any open `/planning/$year/payslips`
@@ -931,7 +989,18 @@ function TransactionRow({
               : "opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
           )}
         >
-          {!deletePending && (
+          {!deletePending && !everOpened && (
+            <IconButton
+              aria-label={`Edit ${tx.name}`}
+              onClick={() => {
+                setEverOpened(true);
+                setEditOpen(true);
+              }}
+            >
+              <Pencil className="size-3" />
+            </IconButton>
+          )}
+          {!deletePending && everOpened && (
             <Popover open={editOpen} onOpenChange={setEditOpen}>
               <PopoverTrigger asChild>
                 <IconButton aria-label={`Edit ${tx.name}`}>
@@ -1105,6 +1174,12 @@ function CreateTransactionTrigger({
   investableAssets: AssetOption[];
 }) {
   const [open, setOpen] = useState(false);
+  // Lazy-mount the Radix `Popover` — rendering a bare `IconButton` until the
+  // user first opens the trigger. With 4 create-triggers per cell and ~72
+  // cells, eagerly mounting `Popover` (plus its `PopperProvider` /
+  // `TooltipProvider` context chain) adds hundreds of components to every
+  // grid re-render; deferring keeps year-switch re-renders snappy.
+  const [everOpened, setEverOpened] = useState(false);
   const [create] = useMutation(TransactionCreateDocument, {
     // `"active"` refetches every currently-watched query. A derived-earnings
     // edit can materialise a payslip, so any open `/planning/$year/payslips`
@@ -1166,6 +1241,20 @@ function CreateTransactionTrigger({
   };
 
   const meta = CREATE_KIND_META[kind];
+
+  if (!everOpened) {
+    return (
+      <IconButton
+        aria-label={meta.label}
+        onClick={() => {
+          setEverOpened(true);
+          setOpen(true);
+        }}
+      >
+        {meta.icon}
+      </IconButton>
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
