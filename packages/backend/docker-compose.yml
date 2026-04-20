@@ -57,6 +57,12 @@ services:
       - ./:/app/packages/backend
       - /app/node_modules
       - /app/packages/backend/node_modules
+      # Persist uploaded payslips outside the source tree so they survive
+      # `git clean`, aren't bind-mounted from the host (which would leak
+      # machine-specific paths into the repo), and keep existing when the
+      # backend container is recreated.
+      - uploads-data:/app/packages/backend/uploads
 
 volumes:
   postgres-data:
+  uploads-data:
