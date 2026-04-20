@@ -120,7 +120,7 @@ Return a single JSON object with these fields:
 - gross: { amount, currency } — the total gross pay for this period (before any deductions).
 - date: YYYY-MM-DD — the pay date (the date the employee is paid), not the pay-period start/end.
 - employeeFirstName: the employee's given/first name (or null if it's not on the document).
-- adjustments: every individual deduction or post-gross adjustment line. Amounts are signed — deductions are negative. Do not include the gross line itself.
+- adjustments: every individual deduction or post-gross adjustment line. Amounts are signed — deductions are negative. Do not include the gross line itself. If the payslip has a dedicated "Deductions" section (or equivalent heading — "Taxes & Deductions", "Statutory Deductions", etc.), read every line from that section and nothing else; ignore running totals like "Totals", "Total Deductions", "Net Pay", or summary / year-to-date columns.
 Pension-specific rules:
 - A pension line labelled "ERS" (or "Employer") is the employer's contribution — DO NOT include it in adjustments. It isn't deducted from the employee's gross.
 - A pension line labelled "AE" (auto-enrolment) or any variant containing "auto-enrolment" is the employee's AE contribution — rename it to "Pension" in the output.
