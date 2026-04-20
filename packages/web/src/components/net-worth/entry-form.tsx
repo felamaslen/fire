@@ -165,6 +165,18 @@ type CategoryNode = NonNullable<
   ResultOf<typeof NetWorthEntryFormCategoriesDocument>["netWorthCategories"]
 >["edges"][number]["node"];
 
+/** All concrete `NetWorthAssetType` values, derived from the `assetType` selection on the `NetWorthCategoryAsset` variant so a new enum value on the server forces a compile error here until the labels / order get updated. */
+type AssetType = Extract<
+  CategoryNode,
+  { __typename: "NetWorthCategoryAsset" }
+>["assetType"];
+
+/** All concrete `NetWorthLiabilityType` values, derived the same way as `AssetType`. */
+type LiabilityType = Extract<
+  CategoryNode,
+  { __typename: "NetWorthCategoryLiability" }
+>["liabilityType"];
+
 /** Derived from the oneOf variants of `NetWorthValueInput` — each variant's single key (`asset` / `liability` / `option`) is the "kind". */
 type NetWorthValueInput = VariablesOf<
   typeof NetWorthCreateDocument
@@ -209,29 +221,25 @@ export function categoryOptions(nodes: CategoryNode[]): CategoryOption[] {
   return out;
 }
 
-const ASSET_SUBTYPE_LABELS: Record<string, string> = {
+const ASSET_SUBTYPE_LABELS = {
   CASH: "Cash",
   STOCK: "Stocks",
   OPTION: "Options",
   PENSION: "Pensions",
   PROPERTY: "Property",
+  VEHICLE: "Vehicles",
   MISC: "Other",
-};
-const ASSET_SUBTYPE_ORDER = [
-  "CASH",
-  "STOCK",
-  "OPTION",
-  "PENSION",
-  "PROPERTY",
-  "MISC",
-];
+} as const satisfies Record<AssetType, string>;
+const ASSET_SUBTYPE_ORDER = Object.keys(ASSET_SUBTYPE_LABELS) as AssetType[];
 
-const LIABILITY_SUBTYPE_LABELS: Record<string, string> = {
+const LIABILITY_SUBTYPE_LABELS = {
   CREDIT_CARD: "Credit cards",
   LOAN: "Loans",
   MISC: "Other",
-};
-const LIABILITY_SUBTYPE_ORDER = ["CREDIT_CARD", "LOAN", "MISC"];
+} as const satisfies Record<LiabilityType, string>;
+const LIABILITY_SUBTYPE_ORDER = Object.keys(
+  LIABILITY_SUBTYPE_LABELS,
+) as LiabilityType[];
 
 function subtypeOrderFor(kind: CategoryKind): string[] | null {
   if (kind === "asset") return ASSET_SUBTYPE_ORDER;
@@ -240,8 +248,12 @@ function subtypeOrderFor(kind: CategoryKind): string[] | null {
 }
 
 function subtypeLabelFor(kind: CategoryKind, subtype: string): string {
-  if (kind === "asset") return ASSET_SUBTYPE_LABELS[subtype] ?? subtype;
-  if (kind === "liability") return LIABILITY_SUBTYPE_LABELS[subtype] ?? subtype;
+  if (kind === "asset" && subtype in ASSET_SUBTYPE_LABELS) {
+    return ASSET_SUBTYPE_LABELS[subtype as AssetType];
+  }
+  if (kind === "liability" && subtype in LIABILITY_SUBTYPE_LABELS) {
+    return LIABILITY_SUBTYPE_LABELS[subtype as LiabilityType];
+  }
   return subtype;
 }
 
