@@ -14,11 +14,11 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Figure, FigureDocument } from "@/components/figure";
-import { NavHeaderActions } from "@/components/nav-header";
+import { NavHeaderActions, NavHeaderTitle } from "@/components/nav-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -271,9 +271,27 @@ type AssetOption = Extract<
 >;
 
 function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const [pageTitleVisible, setPageTitleVisible] = useState(true);
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => setPageTitleVisible(entry.isIntersecting),
+      // Shrink the intersection root from the top by the `NavHeader`'s height
+      // so the title is treated as "hidden" once it slips behind the sticky
+      // app header, not only when it leaves the viewport entirely.
+      { rootMargin: "-48px 0px 0px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   return (
     <>
-      <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+      <h1
+        ref={titleRef}
+        className="flex items-center gap-2 text-2xl font-semibold tracking-tight"
+      >
         Planning · {fyLabel(year)}
         {!hasTaxRates && (
           <Tooltip>
@@ -294,6 +312,13 @@ function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
           </Tooltip>
         )}
       </h1>
+      {!pageTitleVisible && (
+        <NavHeaderTitle>
+          <span className="text-sm font-semibold tracking-tight">
+            Planning · {fyLabel(year)}
+          </span>
+        </NavHeaderTitle>
+      )}
       <NavHeaderActions>
         <ManageIconLink
           to="/planning/$year/accounts"
