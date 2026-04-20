@@ -152,16 +152,19 @@ docker compose up -d --wait postgres
 echo '==> Running database migrations'
 docker compose run --rm app pnpm db:migrate
 
-# Bring the rest of the stack up (recreates \`app\` if the image digest
-# changed, leaves it alone otherwise).
-docker compose up -d --wait --remove-orphans
+# Bring \`backup\` (and anything else) up / prune orphans. Does NOT touch
+# \`app\` — we handle that explicitly below because \`--force-recreate\`
+# on an \`up\` invocation has proven unreliable in this setup (sometimes
+# the container is merely restarted rather than replaced, which loses new
+# mounts / env added to the compose file).
+docker compose up -d --wait --remove-orphans --no-deps backup
 
-# Force-recreate \`app\` even when \`up -d\` was a no-op. The app holds
-# in-process caches (module-level portfolio / yahoo-quote maps) that need
-# clearing on every deploy, not just when the image changes — so a config-
-# only deploy, a DB restore, or a cache-busting bugfix still results in a
-# fresh process. \`--no-deps\` skips Postgres so the DB isn't bounced.
-docker compose up -d --wait --force-recreate --no-deps app
+# Explicit rm + up for \`app\`. Guarantees a new container so:
+#   - fresh Node process → module-level caches cleared on every deploy
+#   - any compose-file changes (new volumes, env vars, image digest) land
+# \`--no-deps\` so Postgres isn't touched; \`rm -sf\` stops + removes in one go.
+docker compose rm -sf app
+docker compose up -d --wait --no-deps app
 docker compose ps
 EOSH
 
