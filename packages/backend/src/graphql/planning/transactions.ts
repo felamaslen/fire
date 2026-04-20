@@ -485,6 +485,7 @@ async function reloadTransaction(
  * - `adj:…` — deletes the single adjustment.
  * - `bill:…` — writes a per-month bill override with null amount, which skips the bill for this month only.
  * - `earn:…` — inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.
+ * - `liab:…` — materialises a zero-amount manual transaction tagged with the liability, which suppresses the credit-card spend prediction for this month while leaving the liability visible in the grid.
  *
  * @gqlMutationField
  */
@@ -534,10 +535,17 @@ export async function transactionDelete(
       break;
     }
     case "liab":
-      // Deleting a still-predicted credit-card row is a no-op: there's no
-      // materialised row to remove. The prediction will reappear on the next
-      // load because no manual tx with this `liabilityId` exists. Users who
-      // want to suppress the prediction should edit it to zero instead.
+      // The predicted row doesn't exist in the DB, so there's nothing to
+      // literally delete. Materialise a zero-amount manual transaction
+      // tagged with the liability instead — its `liabilityId` presence
+      // suppresses the prediction for this month (see
+      // `monthTransactionsFor`), while the zero amount means the user's
+      // "delete" reads as "I'm not paying this off this month".
+      await materialiseCreditCardPrediction(year, date, parsed.id, {
+        patchAmount: 0,
+        patchCurrency: null,
+        patchName: null,
+      });
       break;
   }
   return VOID;

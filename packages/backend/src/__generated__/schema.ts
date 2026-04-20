@@ -3606,7 +3606,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 transactionDelete: {
-                    description: "Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:\n\n- `tx:\u2026` / `to:\u2026` \u2014 deletes the `PlanningTransactions` row.\n- `pay:\u2026` \u2014 deletes the payslip (and its adjustments, via cascade).\n- `adj:\u2026` \u2014 deletes the single adjustment.\n- `bill:\u2026` \u2014 writes a per-month bill override with null amount, which skips the bill for this month only.\n- `earn:\u2026` \u2014 inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.",
+                    description: "Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:\n\n- `tx:\u2026` / `to:\u2026` \u2014 deletes the `PlanningTransactions` row.\n- `pay:\u2026` \u2014 deletes the payslip (and its adjustments, via cascade).\n- `adj:\u2026` \u2014 deletes the single adjustment.\n- `bill:\u2026` \u2014 writes a per-month bill override with null amount, which skips the bill for this month only.\n- `earn:\u2026` \u2014 inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.\n- `liab:\u2026` \u2014 materialises a zero-amount manual transaction tagged with the liability, which suppresses the credit-card spend prediction for this month while leaving the liability visible in the grid.",
                     name: "transactionDelete",
                     type: new GraphQLNonNull(VoidType),
                     args: {
