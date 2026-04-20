@@ -1680,7 +1680,7 @@ type Portfolio {
   """
   totalGain: Money
   """
-  Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down.
+  Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
   """
   totalValue: Money
   """

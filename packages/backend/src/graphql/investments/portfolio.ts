@@ -657,11 +657,10 @@ export class Portfolio {
     return Investment.load(row);
   }
 
-  /** Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. @gqlField */
+  /** Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline. @gqlField */
   async totalValue(): Promise<Money | null> {
     return this.aggregate((h) => {
-      if (h.unitsHeld === 0) return 0;
-      if (h.priceLatest === null) return null;
+      if (h.unitsHeld === 0 || h.priceLatest === null) return 0;
       return h.unitsHeld * h.priceLatest;
     });
   }

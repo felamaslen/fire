@@ -1949,7 +1949,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: MoneyType
                 },
                 totalValue: {
-                    description: "Current market value of the filtered portfolio \u2014 the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down.",
+                    description: "Current market value of the filtered portfolio \u2014 the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate \u2014 matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.",
                     name: "totalValue",
                     type: MoneyType
                 },
