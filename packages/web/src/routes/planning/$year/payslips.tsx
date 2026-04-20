@@ -10,7 +10,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useId, useState } from "react";
+import { Suspense, useId, useState } from "react";
 import { toast } from "sonner";
 
 import { DeleteButton } from "@/components/delete-button";
@@ -36,9 +36,32 @@ import {
 import { graphql, type ResultOf } from "../../../graphql";
 import { PlanningYearViewDocument } from "../$year";
 
-const PlanningPayslipsDialogDocument = graphql(
+const PlanningPayslipsDialogDocument = graphql(`
+  query PlanningPayslipsDialog($year: ID!) {
+    planningYear(id: $year) {
+      id
+      accounts {
+        id
+        name
+      }
+    }
+    netWorthCategories(first: 100) {
+      edges {
+        node {
+          __typename
+          ... on NetWorthCategoryLiability {
+            id
+            name
+          }
+        }
+      }
+    }
+  }
+`);
+
+const PlanningPayslipsListDocument = graphql(
   `
-    query PlanningPayslipsDialog($year: ID!, $first: Int!, $after: ID) {
+    query PlanningPayslipsList($first: Int!, $after: ID) {
       payslips(first: $first, after: $after) {
         edges {
           node {
@@ -73,24 +96,6 @@ const PlanningPayslipsDialogDocument = graphql(
           hasNextPage
           hasPreviousPage
           endCursor
-        }
-      }
-      planningYear(id: $year) {
-        id
-        accounts {
-          id
-          name
-        }
-      }
-      netWorthCategories(first: 100) {
-        edges {
-          node {
-            __typename
-            ... on NetWorthCategoryLiability {
-              id
-              name
-            }
-          }
         }
       }
     }
@@ -184,8 +189,9 @@ export const Route = createFileRoute("/planning/$year/payslips")({
 });
 
 type PlanningPayslipsData = ResultOf<typeof PlanningPayslipsDialogDocument>;
+type PlanningPayslipsListData = ResultOf<typeof PlanningPayslipsListDocument>;
 type Payslip = NonNullable<
-  PlanningPayslipsData["payslips"]
+  PlanningPayslipsListData["payslips"]
 >["edges"][number]["node"];
 type AccountOption = NonNullable<
   PlanningPayslipsData["planningYear"]
@@ -199,8 +205,8 @@ type LiabilityOption = Extract<
 
 type RefetchEntry =
   | {
-      query: typeof PlanningPayslipsDialogDocument;
-      variables: { year: string; first: number; after: string | null };
+      query: typeof PlanningPayslipsListDocument;
+      variables: { first: number; after: string | null };
     }
   | { query: typeof PlanningYearViewDocument; variables: { id: string } };
 
@@ -303,19 +309,9 @@ function PlanningPayslipsDialog() {
   // page 2 is stack[0], etc — pushing appends the end-cursor of the current
   // page when paging forward; popping takes us back.
   const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
-  const after = cursorStack[cursorStack.length - 1];
-  const variables = { year, first: PAGE_SIZE, after };
   const { data } = useSuspenseQuery(PlanningPayslipsDialogDocument, {
-    variables,
+    variables: { year },
   });
-
-  const refetch: RefetchEntry[] = [
-    { query: PlanningPayslipsDialogDocument, variables },
-    { query: PlanningYearViewDocument, variables: { id: year } },
-  ];
-
-  const payslips: Payslip[] = data.payslips?.edges.map((e) => e.node) ?? [];
-  const pageInfo = data.payslips?.pageInfo;
   const accounts: AccountOption[] = data.planningYear?.accounts ?? [];
   const liabilities: LiabilityOption[] = (data.netWorthCategories?.edges ?? [])
     .map((e) => e.node)
@@ -323,18 +319,18 @@ function PlanningPayslipsDialog() {
       (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",
     );
 
+  const after = cursorStack[cursorStack.length - 1];
+  const refetch: RefetchEntry[] = [
+    {
+      query: PlanningPayslipsListDocument,
+      variables: { first: PAGE_SIZE, after },
+    },
+    { query: PlanningYearViewDocument, variables: { id: year } },
+  ];
+
   const close = () =>
     void navigate({ to: "/planning/$year", params: { year } });
-  const onNext = () => {
-    if (pageInfo?.hasNextPage && pageInfo.endCursor) {
-      setCursorStack((s) => [...s, pageInfo.endCursor as string]);
-    }
-  };
-  const onPrev = () => {
-    setCursorStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
-  };
   const resetToFirstPage = () => setCursorStack([null]);
-  const pageNumber = cursorStack.length;
 
   return (
     <Dialog
@@ -348,45 +344,20 @@ function PlanningPayslipsDialog() {
           <DialogTitle>Payslips</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <ul className="divide-y rounded-md border">
-            {payslips.length === 0 && (
-              <li className="px-3 py-6 text-center text-sm text-muted-foreground">
-                No payslips yet.
-              </li>
-            )}
-            {payslips.map((p) => (
-              <PayslipRow
-                key={p.id}
-                payslip={p}
-                accounts={accounts}
-                liabilities={liabilities}
-                refetch={refetch}
-              />
-            ))}
-          </ul>
-          {(pageInfo?.hasNextPage || pageInfo?.hasPreviousPage) && (
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Page {pageNumber}</span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onPrev}
-                  disabled={!pageInfo?.hasPreviousPage}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onNext}
-                  disabled={!pageInfo?.hasNextPage}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
+          {/* Inner Suspense boundary: paginating the payslips list re-runs
+              `useSuspenseQuery` with new variables, which would otherwise
+              bubble up and unmount the dialog. Scoping the fallback here
+              keeps the dialog (and the upload / add-payslip forms below)
+              mounted while only the table dims. */}
+          <Suspense fallback={<PayslipsTableFallback />}>
+            <PayslipsTable
+              year={year}
+              cursorStack={cursorStack}
+              setCursorStack={setCursorStack}
+              accounts={accounts}
+              liabilities={liabilities}
+            />
+          </Suspense>
           {accounts.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               Assign a planning account first so payslips have a landing
@@ -416,6 +387,100 @@ function PlanningPayslipsDialog() {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Placeholder shown inside the dialog while the payslips list is loading or
+ * re-suspending (e.g. during pagination). Keeps the dialog's visual height
+ * roughly stable so the controls below don't jump. */
+function PayslipsTableFallback() {
+  return (
+    <ul className="divide-y rounded-md border">
+      <li className="flex items-center justify-center px-3 py-6">
+        <Loader2 className="size-4 animate-spin text-muted-foreground" />
+      </li>
+    </ul>
+  );
+}
+
+function PayslipsTable({
+  year,
+  cursorStack,
+  setCursorStack,
+  accounts,
+  liabilities,
+}: {
+  year: string;
+  cursorStack: Array<string | null>;
+  setCursorStack: React.Dispatch<React.SetStateAction<Array<string | null>>>;
+  accounts: AccountOption[];
+  liabilities: LiabilityOption[];
+}) {
+  const after = cursorStack[cursorStack.length - 1];
+  const variables = { first: PAGE_SIZE, after };
+  const { data } = useSuspenseQuery(PlanningPayslipsListDocument, {
+    variables,
+  });
+
+  const refetch: RefetchEntry[] = [
+    { query: PlanningPayslipsListDocument, variables },
+    { query: PlanningYearViewDocument, variables: { id: year } },
+  ];
+
+  const payslips: Payslip[] = data.payslips?.edges.map((e) => e.node) ?? [];
+  const pageInfo = data.payslips?.pageInfo;
+  const pageNumber = cursorStack.length;
+  const onNext = () => {
+    if (pageInfo?.hasNextPage && pageInfo.endCursor) {
+      setCursorStack((s) => [...s, pageInfo.endCursor as string]);
+    }
+  };
+  const onPrev = () => {
+    setCursorStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  };
+
+  return (
+    <>
+      <ul className="divide-y rounded-md border">
+        {payslips.length === 0 && (
+          <li className="px-3 py-6 text-center text-sm text-muted-foreground">
+            No payslips yet.
+          </li>
+        )}
+        {payslips.map((p) => (
+          <PayslipRow
+            key={p.id}
+            payslip={p}
+            accounts={accounts}
+            liabilities={liabilities}
+            refetch={refetch}
+          />
+        ))}
+      </ul>
+      {(pageInfo?.hasNextPage || pageInfo?.hasPreviousPage) && (
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Page {pageNumber}</span>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onPrev}
+              disabled={!pageInfo?.hasPreviousPage}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onNext}
+              disabled={!pageInfo?.hasNextPage}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
