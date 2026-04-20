@@ -32,7 +32,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
+import { useIsDemo } from "../../../auth/use-is-demo";
 import { graphql, type ResultOf } from "../../../graphql";
 import { PlanningYearViewDocument } from "../$year";
 
@@ -1098,6 +1104,8 @@ function PayslipParseDropZone({
   } | null>(null);
   const inputId = useId();
   const [parse, { loading }] = useMutation(PlanningPayslipParseDocument);
+  const isDemo = useIsDemo();
+  const disabled = loading || isDemo;
 
   const accept = (f: File | null | undefined): f is File => {
     if (!f) return false;
@@ -1135,10 +1143,12 @@ function PayslipParseDropZone({
     <>
       <div
         onDragEnter={(e) => {
+          if (disabled) return;
           if (!e.dataTransfer.types.includes("Files")) return;
           setDragging(true);
         }}
         onDragOver={(e) => {
+          if (disabled) return;
           if (e.dataTransfer.types.includes("Files")) e.preventDefault();
         }}
         onDragLeave={(e) => {
@@ -1147,13 +1157,14 @@ function PayslipParseDropZone({
         }}
         onDrop={(e) => {
           e.preventDefault();
+          if (disabled) return;
           setDragging(false);
           const f = e.dataTransfer.files[0];
           if (accept(f)) void run(f);
         }}
         className={`flex items-center gap-3 rounded-md border border-dashed p-3 text-xs ${
           dragging ? "border-primary bg-primary/5" : "bg-muted/20"
-        }`}
+        } ${isDemo ? "opacity-60" : ""}`}
       >
         {loading ? (
           <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
@@ -1177,29 +1188,47 @@ function PayslipParseDropZone({
           type="file"
           accept="application/pdf"
           className="hidden"
-          disabled={loading}
+          disabled={disabled}
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (accept(f)) void run(f);
             e.target.value = "";
           }}
         />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          asChild
-          disabled={loading}
-        >
-          <label htmlFor={inputId} className="cursor-pointer">
-            {loading ? (
-              <Loader2 className="mr-1 size-3 animate-spin" />
-            ) : (
-              <Upload className="mr-1 size-3" />
-            )}
-            {loading ? "Reading…" : "Choose PDF"}
-          </label>
-        </Button>
+        {isDemo ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {/* Wrapping span needed because a `disabled` button doesn't fire
+                  pointer events, which Radix Tooltip relies on to open. */}
+              <span tabIndex={0}>
+                <Button type="button" variant="outline" size="sm" disabled>
+                  <Upload className="mr-1 size-3" />
+                  Choose PDF
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              Disabled in demo mode — PDF parsing uses paid Gemini API calls.
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            asChild
+            disabled={loading}
+          >
+            <label htmlFor={inputId} className="cursor-pointer">
+              {loading ? (
+                <Loader2 className="mr-1 size-3 animate-spin" />
+              ) : (
+                <Upload className="mr-1 size-3" />
+              )}
+              {loading ? "Reading…" : "Choose PDF"}
+            </label>
+          </Button>
+        )}
       </div>
       {review && (
         <ReviewParsedPayslipDialog

@@ -1,10 +1,14 @@
-import { useMutation } from "@apollo/client/react";
+import { useMutation, useQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Delete } from "lucide-react";
+import { Delete, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { LoginDocument } from "../auth/documents";
+import {
+  DemoLoginDocument,
+  DemosDocument,
+  LoginDocument,
+} from "../auth/documents";
 import { setToken } from "../auth/token";
 import {
   Card,
@@ -26,7 +30,9 @@ function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [shake, setShake] = useState(false);
 
+  const { data: demosData } = useQuery(DemosDocument);
   const [loginMutation] = useMutation(LoginDocument);
+  const [demoLoginMutation] = useMutation(DemoLoginDocument);
 
   const submitPin = useCallback(
     async (value: string) => {
@@ -73,6 +79,24 @@ function LoginPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [busy]);
 
+  const [pendingDemo, setPendingDemo] = useState<string | null>(null);
+
+  const demoLogin = async (id: string) => {
+    setBusy(true);
+    setPendingDemo(id);
+    try {
+      const { data } = await demoLoginMutation({ variables: { id } });
+      if (!data?.demoLogin.token) throw new Error("No token returned");
+      setToken(data.demoLogin.token);
+      await navigate({ to: "/" });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Demo login failed");
+    } finally {
+      setBusy(false);
+      setPendingDemo(null);
+    }
+  };
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-12">
       <h1 className="text-2xl font-semibold tracking-tight">fire</h1>
@@ -90,6 +114,40 @@ function LoginPage() {
             onDelete={() => setPin((p) => (busy ? p : p.slice(0, -1)))}
             disabled={busy}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Or try a demo</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2 md:grid-cols-2">
+          {demosData?.demos?.map((demo) => {
+            const isPending = pendingDemo === demo.id;
+            return (
+              <button
+                key={demo.id}
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  void demoLogin(demo.id);
+                }}
+                className="flex cursor-pointer flex-col items-start gap-1 rounded-md border p-3 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className="flex w-full items-center gap-2">
+                  <span className="flex-1 text-sm font-medium">
+                    {demo.name}
+                  </span>
+                  {isPending && (
+                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                  )}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {demo.description}
+                </span>
+              </button>
+            );
+          })}
         </CardContent>
       </Card>
     </div>
