@@ -645,41 +645,41 @@ function MonthAccountCell({
             investableAssets={investableAssets}
           />
         ))}
-        <li className="flex justify-end gap-0.5 px-1 py-0.5">
-          <CreateTransactionTrigger
-            kind="adhoc"
-            monthId={monthId}
-            accountId={accountId}
-            accounts={accounts}
-            liabilities={liabilities}
-            investableAssets={investableAssets}
-          />
-          <CreateTransactionTrigger
-            kind="transfer"
-            monthId={monthId}
-            accountId={accountId}
-            accounts={accounts}
-            liabilities={liabilities}
-            investableAssets={investableAssets}
-          />
-          <CreateTransactionTrigger
-            kind="liability"
-            monthId={monthId}
-            accountId={accountId}
-            accounts={accounts}
-            liabilities={liabilities}
-            investableAssets={investableAssets}
-          />
-          <CreateTransactionTrigger
-            kind="investment"
-            monthId={monthId}
-            accountId={accountId}
-            accounts={accounts}
-            liabilities={liabilities}
-            investableAssets={investableAssets}
-          />
-        </li>
       </ul>
+      <div className="flex justify-end gap-0.5 bg-muted/20 px-1 py-0.5">
+        <CreateTransactionTrigger
+          kind="adhoc"
+          monthId={monthId}
+          accountId={accountId}
+          accounts={accounts}
+          liabilities={liabilities}
+          investableAssets={investableAssets}
+        />
+        <CreateTransactionTrigger
+          kind="transfer"
+          monthId={monthId}
+          accountId={accountId}
+          accounts={accounts}
+          liabilities={liabilities}
+          investableAssets={investableAssets}
+        />
+        <CreateTransactionTrigger
+          kind="liability"
+          monthId={monthId}
+          accountId={accountId}
+          accounts={accounts}
+          liabilities={liabilities}
+          investableAssets={investableAssets}
+        />
+        <CreateTransactionTrigger
+          kind="investment"
+          monthId={monthId}
+          accountId={accountId}
+          accounts={accounts}
+          liabilities={liabilities}
+          investableAssets={investableAssets}
+        />
+      </div>
       <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
         <ProvisionalFigure
           data={cell.valueEnd}
@@ -804,6 +804,7 @@ function TransactionRow({
         tx.isProvisional && "italic text-muted-foreground",
       )}
     >
+      <TransactionKindIcon tx={tx} />
       <span className="flex-1 truncate">{tx.name}</span>
       <Figure data={tx.amount} className={monoRight} />
       {tx.isEditable && (
@@ -859,6 +860,23 @@ function TransactionRow({
       )}
     </li>
   );
+}
+
+/** Small leading icon on a transaction row that mirrors the `CreateTransactionTrigger` icon
+ * for the corresponding kind. Rendered in a lighter tone than the triggers so
+ * it reads as metadata, not an action. Shown only when the transaction has a
+ * resolvable kind (transfer / liability payment / investment); other rows
+ * (plain outflows, payslip gross, bills) render no icon. */
+function TransactionKindIcon({
+  tx,
+}: {
+  tx: ResultOf<typeof PlanningTransactionRowDocument>;
+}) {
+  const cls = "size-3 shrink-0 text-muted-foreground/60";
+  if (tx.toAccount) return <ArrowLeftRight className={cls} />;
+  if (tx.liability) return <CreditCard className={cls} />;
+  if (tx.asset) return <LineChart className={cls} />;
+  return null;
 }
 
 /** Compact ghost-styled button sized to fit inside a dense transaction row. */
