@@ -29,8 +29,8 @@ import { PlanningYearViewDocument } from "../$year";
 
 const PlanningPayslipsDialogDocument = graphql(
   `
-    query PlanningPayslipsDialog($year: ID!) {
-      payslips(first: 100) {
+    query PlanningPayslipsDialog($year: ID!, $first: Int!, $after: ID) {
+      payslips(first: $first, after: $after) {
         edges {
           node {
             id
@@ -59,6 +59,11 @@ const PlanningPayslipsDialogDocument = graphql(
               }
             }
           }
+        }
+        pageInfo {
+          hasNextPage
+          hasPreviousPage
+          endCursor
         }
       }
       planningYear(id: $year) {
@@ -159,7 +164,7 @@ type LiabilityOption = Extract<
 type RefetchEntry =
   | {
       query: typeof PlanningPayslipsDialogDocument;
-      variables: { year: string };
+      variables: { year: string; first: number; after: string | null };
     }
   | { query: typeof PlanningYearViewDocument; variables: { id: string } };
 
@@ -253,19 +258,28 @@ function formIsValid(v: FormValues): boolean {
   );
 }
 
+const PAGE_SIZE = 10;
+
 function PlanningPayslipsDialog() {
   const { year } = Route.useParams();
   const navigate = useNavigate();
+  // Stack of `after` cursors, one per page already shown. Page 1 is `null`,
+  // page 2 is stack[0], etc — pushing appends the end-cursor of the current
+  // page when paging forward; popping takes us back.
+  const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
+  const after = cursorStack[cursorStack.length - 1];
+  const variables = { year, first: PAGE_SIZE, after };
   const { data } = useSuspenseQuery(PlanningPayslipsDialogDocument, {
-    variables: { year },
+    variables,
   });
 
   const refetch: RefetchEntry[] = [
-    { query: PlanningPayslipsDialogDocument, variables: { year } },
+    { query: PlanningPayslipsDialogDocument, variables },
     { query: PlanningYearViewDocument, variables: { id: year } },
   ];
 
   const payslips: Payslip[] = data.payslips?.edges.map((e) => e.node) ?? [];
+  const pageInfo = data.payslips?.pageInfo;
   const accounts: AccountOption[] = data.planningYear?.accounts ?? [];
   const liabilities: LiabilityOption[] = (data.netWorthCategories?.edges ?? [])
     .map((e) => e.node)
@@ -275,6 +289,16 @@ function PlanningPayslipsDialog() {
 
   const close = () =>
     void navigate({ to: "/planning/$year", params: { year } });
+  const onNext = () => {
+    if (pageInfo?.hasNextPage && pageInfo.endCursor) {
+      setCursorStack((s) => [...s, pageInfo.endCursor as string]);
+    }
+  };
+  const onPrev = () => {
+    setCursorStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  };
+  const resetToFirstPage = () => setCursorStack([null]);
+  const pageNumber = cursorStack.length;
 
   return (
     <Dialog
@@ -304,6 +328,29 @@ function PlanningPayslipsDialog() {
               />
             ))}
           </ul>
+          {(pageInfo?.hasNextPage || pageInfo?.hasPreviousPage) && (
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Page {pageNumber}</span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onPrev}
+                  disabled={!pageInfo?.hasPreviousPage}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onNext}
+                  disabled={!pageInfo?.hasNextPage}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
           {accounts.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               Assign a planning account first so payslips have a landing
@@ -314,6 +361,7 @@ function PlanningPayslipsDialog() {
               accounts={accounts}
               liabilities={liabilities}
               refetch={refetch}
+              onCreated={resetToFirstPage}
             />
           )}
         </div>
@@ -339,13 +387,34 @@ function PayslipRow({
   refetch: RefetchEntry[];
 }) {
   const [editing, setEditing] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [remove] = useMutation(PlanningPayslipDeleteDocument, {
     refetchQueries: refetch,
   });
+  const [update] = useMutation(PlanningPayslipUpdateDocument, {
+    refetchQueries: refetch,
+  });
+  const quickInputId = useId();
 
   const onDelete = async () => {
     await remove({ variables: { id: payslip.id } });
     toast.success(`Deleted ${payslip.name}`);
+  };
+
+  const uploadFile = async (file: File) => {
+    if (
+      file.type !== "application/pdf" &&
+      !file.name.toLowerCase().endsWith(".pdf")
+    ) {
+      toast.error("Only PDF files are supported.");
+      return;
+    }
+    await update({ variables: { id: payslip.id, file } });
+    toast.success(
+      payslip.fileUrl
+        ? `Replaced file for ${payslip.name}`
+        : `Uploaded file for ${payslip.name}`,
+    );
   };
 
   if (editing) {
@@ -362,8 +431,35 @@ function PayslipRow({
     );
   }
 
+  // Dragging onto a row with an existing file highlights amber to signal
+  // "this will replace", vs. primary for "this will add a file".
+  const highlight = dragging
+    ? payslip.fileUrl
+      ? "bg-amber-500/10 ring-2 ring-amber-500"
+      : "bg-primary/10 ring-2 ring-primary"
+    : "";
+
   return (
-    <li className="flex items-center gap-2 px-3 py-2">
+    <li
+      className={`flex items-center gap-2 px-3 py-2 transition-colors ${highlight}`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        // `onDragLeave` fires when the drag crosses into a child element too;
+        // only reset when it leaves the row entirely.
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setDragging(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        const f = e.dataTransfer.files[0];
+        if (f) void uploadFile(f);
+      }}
+    >
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate text-sm font-medium">{payslip.name}</span>
@@ -383,11 +479,35 @@ function PayslipRow({
           </div>
         )}
       </div>
-      {payslip.fileUrl && (
+      {payslip.fileUrl ? (
         <PdfPreviewDialog
           url={resolveFileUrl(payslip.fileUrl)}
           label={`View ${payslip.name} file`}
         />
+      ) : (
+        <>
+          <input
+            id={quickInputId}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void uploadFile(f);
+              e.target.value = "";
+            }}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            asChild
+            aria-label={`Upload file for ${payslip.name}`}
+          >
+            <label htmlFor={quickInputId} className="cursor-pointer">
+              <Upload className="size-4" />
+            </label>
+          </Button>
+        </>
       )}
       <Button
         variant="ghost"
@@ -406,10 +526,12 @@ function AddPayslipForm({
   accounts,
   liabilities,
   refetch,
+  onCreated,
 }: {
   accounts: AccountOption[];
   liabilities: LiabilityOption[];
   refetch: RefetchEntry[];
+  onCreated?: () => void;
 }) {
   const [values, setValues] = useState<FormValues>(emptyForm);
   const [create, { loading }] = useMutation(PlanningPayslipCreateDocument, {
@@ -432,6 +554,7 @@ function AddPayslipForm({
     });
     toast.success(`Added ${values.name.trim()}`);
     setValues(emptyForm);
+    onCreated?.();
   };
 
   return (
