@@ -18,21 +18,65 @@ export const PortfolioHeadlineFragment = graphql(
         amount
         ...Figure
       }
-      xirr(skipLive: $skipLive)
-      dailyGainValue(skipLive: $skipLive) {
+      xirr
+      dailyGainValue {
         amount
         ...Figure
       }
-      dailyGainPercent(skipLive: $skipLive)
+      dailyGainPercent
     }
   `,
   [FigureDocument],
 );
 
-const PortfolioHeadlineDocument = graphql(
+/**
+ * Poll document for the headline — always with `skipLive: false` so the
+ * returned Portfolio values reflect the real live-quote picture, independent
+ * of the page-level query's `skipLive: true` snapshot. Also re-fetches each
+ * non-sold holding's `position(filterAssetId)` so rows in the table (which
+ * read `Investment:id → position(filterAssetId: X)` from Apollo's normalised
+ * cache) update in-place when the poll lands — no per-row refetch needed.
+ */
+const PortfolioHeadlineLiveDocument = graphql(
   `
-    query PortfolioHeadline($skipLive: Boolean!, $filterAssetIdIn: [ID!]) {
-      portfolio(filterAssetIdIn: $filterAssetIdIn) {
+    query PortfolioHeadlineLive($filterAssetId: ID, $filterAssetIdIn: [ID!]) {
+      portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: false) {
+        ...PortfolioHeadline
+      }
+      investments(first: 1000, filterAssetId: $filterAssetId) {
+        edges {
+          node {
+            id
+            position(filterAssetId: $filterAssetId) {
+              units
+              totalValue {
+                ...Figure
+              }
+              totalGain {
+                amount
+                ...Figure
+              }
+              percentGain
+            }
+          }
+        }
+      }
+    }
+  `,
+  [PortfolioHeadlineFragment, FigureDocument],
+);
+
+/**
+ * Cache-only read of the `skipLive: true` snapshot the page-level
+ * `InvestmentsPage` query already populated. Used to render the headline
+ * synchronously on first mount — the live fetch is delayed ~1s so the user
+ * sees yesterday's close first and then the flash when today's live value
+ * lands, instead of the two arriving simultaneously.
+ */
+const PortfolioHeadlineCachedDocument = graphql(
+  `
+    query PortfolioHeadlineCached($filterAssetIdIn: [ID!]) {
+      portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: true) {
         ...PortfolioHeadline
       }
     }
@@ -40,54 +84,42 @@ const PortfolioHeadlineDocument = graphql(
   [PortfolioHeadlineFragment],
 );
 
-type FlashDirection = "up" | "down" | null;
+type FlashDirection = "up" | "down" | "same" | null;
 
 /**
  * Flash direction hook for the daily-gain cell:
  *
- * - On the **first** sample (cached-only, skipLive=true): no flash.
- * - On the **first live** sample (skipLive just flipped to false): flash based
- *   on the sign of the value itself — blue if the day is up, red if it's down.
- * - On **every later** sample (subsequent polls): flash based on the delta —
- *   blue if the number rose since the last poll, red if it fell.
+ * - When a value first becomes available (after the `skipLive: true` snapshot, which reports `null`, is replaced by the live fetch), flash based on the value's sign — blue for up, red for down, yellow for zero.
+ * - On every later poll, flash based on the delta — blue if the number rose, red if it fell, yellow if it didn't move (so the user still gets feedback that the poll landed).
  *
- * Each flash lasts ~1.2 s, then decays back to `null`.
+ * Each flash lasts ~1.2 s then decays back to `null`.
  */
-function useDailyGainFlash(
-  current: number | null | undefined,
-  skipLive: boolean,
-): FlashDirection {
+function useDailyGainFlash(current: number | null | undefined): FlashDirection {
   const prevValueRef = useRef<number | null | undefined>(undefined);
-  const hasSeenLiveRef = useRef(false);
   const [flash, setFlash] = useState<FlashDirection>(null);
 
   useEffect(() => {
     const prev = prevValueRef.current;
     prevValueRef.current = current;
 
-    if (current == null || skipLive) return;
+    if (current == null) return;
 
-    // The effect re-runs the moment `skipLive` flips — at that point the live
-    // query is still in flight and `current` is whatever the cached-only
-    // fetch returned. Only treat the first *value change* under
-    // `skipLive === false` as the actual live sample; otherwise the "first
-    // live flash" fires against the cached number.
-    if (current === prev) return;
-
-    let dir: FlashDirection = null;
-    if (!hasSeenLiveRef.current) {
-      hasSeenLiveRef.current = true;
+    let dir: FlashDirection;
+    if (prev == null) {
+      // First render with a concrete value — either the very first sample
+      // or the live fetch landing after a `null` cached snapshot. Flash
+      // based on the sign so the user sees the arrival.
       if (current > 0) dir = "up";
       else if (current < 0) dir = "down";
-    } else if (prev !== undefined && prev !== null) {
-      dir = current > prev ? "up" : "down";
-    }
+      else dir = "same";
+    } else if (current > prev) dir = "up";
+    else if (current < prev) dir = "down";
+    else dir = "same";
 
-    if (!dir) return;
     setFlash(dir);
     const t = setTimeout(() => setFlash(null), 1200);
     return () => clearTimeout(t);
-  }, [current, skipLive]);
+  }, [current]);
 
   return flash;
 }
@@ -99,27 +131,47 @@ export function PortfolioHeadline({
   filterAssetId?: string | null;
   rightSlot?: React.ReactNode;
 }) {
-  // First fetch without live pricing so the page renders quickly with
-  // DB-cached values; after a short delay, swap to live pricing so the flash
-  // fires even on a cache hit (the live quote shifts yesterday's close into
-  // `pricePrevious` and computes a new delta).
-  const [skipLive, setSkipLive] = useState(true);
+  const filterAssetIdIn = filterAssetId ? [filterAssetId] : null;
+
+  // First render: read the `skipLive: true` snapshot the page-level query
+  // already populated. Synchronous cache hit — the headline renders
+  // yesterday's close values immediately.
+  const cachedQuery = useQuery(PortfolioHeadlineCachedDocument, {
+    variables: { filterAssetIdIn },
+    fetchPolicy: "cache-only",
+  });
+
+  // Delay the first live fetch by ~1 s so the user sees yesterday's values
+  // land first, then watches the flash when today's live total arrives.
+  // Without this, both arrive in the same paint and the flash is invisible.
+  const [fetchLive, setFetchLive] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setSkipLive(false), 800);
+    const t = setTimeout(() => setFetchLive(true), 1000);
     return () => clearTimeout(t);
   }, []);
 
-  const filterAssetIdIn = filterAssetId ? [filterAssetId] : null;
-  const { data, previousData } = useQuery(PortfolioHeadlineDocument, {
-    variables: { skipLive, filterAssetIdIn },
+  // Live fetch (skipLive: false). Separate cache key from the cached doc
+  // (Apollo keys fields by arg), so this always hits the server once on
+  // first enable, then polls every 30 s. The same query also re-fetches
+  // each non-sold holding's `position(filterAssetId)` so the investments
+  // table (which reads `Investment:id → position(filterAssetId)` from
+  // Apollo's normalised cache) refreshes in place without its own poll.
+  const liveQuery = useQuery(PortfolioHeadlineLiveDocument, {
+    variables: { filterAssetId: filterAssetId ?? null, filterAssetIdIn },
     pollInterval: 30_000,
     notifyOnNetworkStatusChange: false,
+    skip: !fetchLive,
   });
-  // Keep the previous render's values mounted while the refetch (e.g. when we
-  // flip `skipLive`) is in flight — otherwise the headline briefly empties.
-  const raw = (data ?? previousData)?.portfolio;
+
+  // Prefer the live data once it lands; fall back to the cached snapshot
+  // while we're still in the pre-fetch delay or the first live response is
+  // in flight.
+  const raw =
+    liveQuery.data?.portfolio ??
+    liveQuery.previousData?.portfolio ??
+    cachedQuery.data?.portfolio;
   const portfolio = raw ? readFragment(PortfolioHeadlineFragment, raw) : null;
-  const flash = useDailyGainFlash(portfolio?.dailyGainValue?.amount, skipLive);
+  const flash = useDailyGainFlash(portfolio?.dailyGainValue?.amount);
 
   return (
     <section className="flex flex-wrap gap-x-6 gap-y-2 rounded-md border px-4 py-2 text-sm">
@@ -183,9 +235,10 @@ function Stat({
   return (
     <div
       className={cn(
-        "-mx-2 flex items-baseline gap-2 rounded px-2 py-0.5 transition-colors duration-700",
+        "-mx-2 flex items-center gap-2 rounded px-2 py-0.5 transition-colors duration-700",
         flash === "up" && "bg-sky-500/20 dark:bg-sky-500/30",
         flash === "down" && "bg-red-500/20 dark:bg-red-500/30",
+        flash === "same" && "bg-yellow-400/20 dark:bg-yellow-400/30",
       )}
     >
       <span className="text-xs text-muted-foreground">{label}</span>

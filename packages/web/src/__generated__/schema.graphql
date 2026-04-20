@@ -1648,23 +1648,13 @@ type Portfolio {
   """
   currency: String!
   """
-  Fractional change in portfolio value over the most recent pricing interval. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists, or when the previous total is zero.
+  Fractional change in portfolio value over the most recent pricing interval, computed from the same subset of currently-held, live-priced positions as `dailyGainValue` — `Σ Δ / Σ previousValue`. `null` when no qualifying position exists, when the previous total is zero, or when `skipLive` is set.
   """
-  dailyGainPercent(
-    """
-    When `true`, ignore any live quote and compare the two most recent cached closes.
-    """
-    skipLive: Boolean
-  ): Float
+  dailyGainPercent: Float
   """
-  Change in portfolio value over the most recent pricing interval. When live quotes are available they're folded into each holding's latest price so this reflects today's move against yesterday's close. Pass `skipLive: true` to compare the two most recent cached closes only. `null` until enough price history exists.
+  Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote (`pricePrevious === null`) are excluded, so a lapsed price history for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set.
   """
-  dailyGainValue(
-    """
-    When `true`, ignore any live quote and compare the two most recent cached closes.
-    """
-    skipLive: Boolean
-  ): Money
+  dailyGainValue: Money
   """
   Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key.
   """
@@ -1694,14 +1684,9 @@ type Portfolio {
   """
   totalValue: Money
   """
-  Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge.
+  Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price.
   """
-  xirr(
-    """
-    When `true`, ignore any live quote and terminate against the most recent cached close instead.
-    """
-    skipLive: Boolean
-  ): Float
+  xirr: Float
 }
 
 """
@@ -1850,6 +1835,10 @@ type Query {
     currency: String
     filterAssetIdIn: [ID!]
     filterInvestmentIdIn: [ID!]
+    """
+    When `true`, every value field on the returned `Portfolio` (`totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*`) falls back to cached closes instead of the live intraday price.
+    """
+    skipLive: Boolean
   ): Portfolio @semanticNonNull
   """
   One portfolio slice per investment held in the matching wrappers. Use this for stacked-per-investment charts: each edge's `node` is a single-investment `Portfolio`, and `node.investment` identifies which investment that slice represents.
@@ -1862,6 +1851,10 @@ type Query {
     currency: String
     filterAssetIdIn: [ID!]
     first: Int
+    """
+    When `true`, every value field on the returned `Portfolio` nodes (`totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*`) falls back to cached closes instead of the live intraday price.
+    """
+    skipLive: Boolean
   ): PortfolioConnection @semanticNonNull
   """
   Asset categories (`STOCK` / `PENSION`) most commonly referenced by existing planning transactions paid out of `accountId`, ordered by descending use count. Intended as a "frequently used" shortlist for the investment-transaction form.

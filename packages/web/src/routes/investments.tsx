@@ -148,11 +148,12 @@ const InvestmentsPageDocument = graphql(
           }
         }
       }
-      portfolio(filterAssetIdIn: $filterAssetIdIn) {
+      portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: $skipLive) {
         ...PortfolioHeadline
         ...PortfolioChartPortfolio
       }
-      portfolios(filterAssetIdIn: $filterAssetIdIn) @skip(if: $candlestick) {
+      portfolios(filterAssetIdIn: $filterAssetIdIn, skipLive: $skipLive)
+        @skip(if: $candlestick) {
         edges {
           node {
             id
