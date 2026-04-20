@@ -73,7 +73,7 @@ const txIdSchema = z.discriminatedUnion("kind", [
   /** One line from an earnings stream's predicted monthly take (gross, income-tax, NIC, or student-loan). `monthId` scopes the virtual row to a specific month — the same earning projects identical rows across every covered month, so the composite has to include the month to stay globally unique. */
   z.object({
     kind: z.literal("earn"),
-    part: z.enum(["gross", "tax", "nic", "sl"]),
+    part: z.enum(["gross", "tax", "nic", "sl", "pen"]),
     id: z.string(),
     monthId: z.string(),
   }),
@@ -642,7 +642,7 @@ async function materialiseEarningAsPayslip(
 
   let gross = perMonth(take.gross);
   const adjustments: {
-    part: "tax" | "nic" | "sl";
+    part: "tax" | "nic" | "sl" | "pen";
     name: string;
     amount: number;
     liabilityId: string | null;
@@ -669,6 +669,13 @@ async function materialiseEarningAsPayslip(
       name: `${earning.name} — student loan`,
       amount: -perMonth(take.studentLoan),
       liabilityId: earning.studentLoanLiabilityId,
+    });
+  if (take.pensionEmployee > 0)
+    adjustments.push({
+      part: "pen",
+      name: `${earning.name} — pension`,
+      amount: -perMonth(take.pensionEmployee),
+      liabilityId: null,
     });
 
   if (parsed.part === "gross") {
@@ -729,6 +736,7 @@ const adjustmentLabel = {
   tax: "income tax",
   nic: "NIC",
   sl: "student loan",
+  pen: "pension",
 } satisfies Record<
   Exclude<Extract<PlanningTransactionId, { part: string }>["part"], "gross">,
   string

@@ -38,6 +38,7 @@ it("returns zeros at or below the personal allowance", () => {
       "incomeTax": 0,
       "net": 1200000,
       "nic": 0,
+      "pensionEmployee": 0,
       "studentLoan": 0,
     }
   `);
@@ -57,6 +58,7 @@ it("applies basic-rate tax and NIC for a typical basic-rate earner", () => {
       "incomeTax": 348600,
       "net": 2487615,
       "nic": 139440,
+      "pensionEmployee": 0,
       "studentLoan": 24345,
     }
   `);
@@ -76,6 +78,7 @@ it("crosses the higher-rate band for a £80k earner", () => {
       "incomeTax": 1943200,
       "net": 5221395,
       "nic": 361060,
+      "pensionEmployee": 0,
       "studentLoan": 474345,
     }
   `);
@@ -131,6 +134,7 @@ it("salary sacrifice reduces tax, NI and student-loan bases", () => {
         "incomeTax": 1943200,
         "net": 5221395,
         "nic": 361060,
+        "pensionEmployee": 0,
         "studentLoan": 474345,
       },
       "withSacrifice": {
@@ -138,6 +142,7 @@ it("salary sacrifice reduces tax, NI and student-loan bases", () => {
         "incomeTax": 1623200,
         "net": 4829395,
         "nic": 345060,
+        "pensionEmployee": 0,
         "studentLoan": 402345,
       },
     }
@@ -164,6 +169,7 @@ it("net-pay pension reduces income-tax + SL bases but not NIC", () => {
         "incomeTax": 748600,
         "net": 3747615,
         "nic": 299440,
+        "pensionEmployee": 0,
         "studentLoan": 204345,
       },
       "withNetPay": {
@@ -171,6 +177,7 @@ it("net-pay pension reduces income-tax + SL bases but not NIC", () => {
         "incomeTax": 648600,
         "net": 3892615,
         "nic": 299440,
+        "pensionEmployee": 500000,
         "studentLoan": 159345,
       },
     }
@@ -197,6 +204,7 @@ it("relief-at-source pension is ignored at PAYE time", () => {
         "incomeTax": 748600,
         "net": 3747615,
         "nic": 299440,
+        "pensionEmployee": 0,
         "studentLoan": 204345,
       },
       "withRelief": {
@@ -204,6 +212,7 @@ it("relief-at-source pension is ignored at PAYE time", () => {
         "incomeTax": 748600,
         "net": 3747615,
         "nic": 299440,
+        "pensionEmployee": 500000,
         "studentLoan": 204345,
       },
     }
@@ -224,6 +233,7 @@ it("no student loan contribution below the plan 2 threshold", () => {
       "incomeTax": 248600,
       "net": 2151960,
       "nic": 99440,
+      "pensionEmployee": 0,
       "studentLoan": 0,
     }
   `);
@@ -249,6 +259,7 @@ it("studentLoanPlan2=false zeros the student-loan deduction regardless of income
         "incomeTax": 1943200,
         "net": 5221395,
         "nic": 361060,
+        "pensionEmployee": 0,
         "studentLoan": 474345,
       },
       "withoutPlan2": {
@@ -256,6 +267,7 @@ it("studentLoanPlan2=false zeros the student-loan deduction regardless of income
         "incomeTax": 1943200,
         "net": 5695740,
         "nic": 361060,
+        "pensionEmployee": 0,
         "studentLoan": 0,
       },
     }

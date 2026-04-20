@@ -680,6 +680,119 @@ it("materialising an earnings deduction copies studentLoanLiabilityId onto the S
   expect(slAdj.liability?.id).toBe(liabilityId);
 });
 
+it("emits a predicted Pension deduction for earnings with net-pay / relief-at-source pension configured, and carries it through materialisation", async () => {
+  await seedYear();
+  const main = await createAsset();
+  await assign(main);
+  await recordSnapshot(main, "2025-03-31", 1_000_000);
+
+  // 5% net-pay + 3% relief-at-source on an annual £60k gross. Employee-side
+  // pension = 8% × £60k = £4,800 / year = £400 / month (40000 pence).
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 60000, currency: "GBP" }
+          countryCode: "GB"
+          pensionNetPay: 0.05
+          pensionReliefAtSource: 0.03
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: main },
+  );
+
+  // Predicted flow: there should be a `Day job — pension` line at -£400 for
+  // April, alongside the existing tax / NIC lines.
+  const predicted = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                id
+                name
+                amount {
+                  amount
+                }
+                isProvisional
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const apr = predicted.planningYear!.months.find((m) => m.id === "apr-2025")!;
+  const pension = apr.accounts[0].transactions.find(
+    (t) => t.name === "Day job — pension",
+  );
+  expect(pension).toBeDefined();
+  expect(pension!.amount.amount).toBeCloseTo(-400, 2);
+  expect(pension!.isProvisional).toBe(true);
+
+  // Materialise the month by editing the gross line — the pension row should
+  // come across onto the real payslip as an adjustment with the same label.
+  const gross = apr.accounts[0].transactions.find(
+    (t) => t.name === "Day job — 04/2025",
+  )!;
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        transactionUpdate(
+          monthId: "apr-2025"
+          id: $id
+          amount: { amount: 5100, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `),
+    { id: gross.id },
+  );
+
+  const after = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                name
+                amount {
+                  amount
+                }
+                isProvisional
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const aprAfter = after.planningYear!.months.find((m) => m.id === "apr-2025")!;
+  const names = aprAfter.accounts[0].transactions.map((t) => t.name);
+  const pensionAfter = aprAfter.accounts[0].transactions.find(
+    (t) => t.name === "Day job — pension",
+  );
+  expect(pensionAfter).toBeDefined();
+  expect(pensionAfter!.isProvisional).toBe(false);
+  expect(pensionAfter!.amount.amount).toBeCloseTo(-400, 2);
+  // Sanity: after materialisation we should see a real payslip row, not the
+  // provisional gross line with the date-suffixed name.
+  expect(names).toContain("Day job — 04/2025");
+});
+
 it("pro-rates the predicted take when an earning starts or ends mid-month", async () => {
   await seedYear();
   const accountIdTo = await createAsset();

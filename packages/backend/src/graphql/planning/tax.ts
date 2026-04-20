@@ -131,6 +131,8 @@ export type UKTake = {
   studentLoan: number;
   /** Annual take-home: `gross - incomeTax - nic - studentLoan`, in pence. Does not account for net-pay or relief-at-source pension bookkeeping — those flow through separately on the payslip. */
   net: number;
+  /** Annual employee-side pension contribution that's deducted from payroll after `gross` (i.e. `netPay + reliefAtSource`), in pence. Salary sacrifice is intentionally excluded — it's already baked out of `gross`. Exists so the planner can surface a "Pension" deduction line alongside tax / NIC / student-loan. */
+  pensionEmployee: number;
 };
 
 /**
@@ -152,6 +154,7 @@ export function computeUKTake({
   const postSacrifice = gross - sac;
 
   const netPay = Math.round(postSacrifice * pension.netPay);
+  const reliefAtSource = Math.round(postSacrifice * pension.relief);
   const incomeTaxBase = postSacrifice - netPay;
   const studentLoanBase = postSacrifice - netPay;
 
@@ -191,7 +194,14 @@ export function computeUKTake({
     : 0;
 
   const net = postSacrifice - incomeTax - nic - studentLoan;
-  return { gross: postSacrifice, incomeTax, nic, studentLoan, net };
+  return {
+    gross: postSacrifice,
+    incomeTax,
+    nic,
+    studentLoan,
+    net,
+    pensionEmployee: netPay + reliefAtSource,
+  };
 }
 
 /**

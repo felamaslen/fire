@@ -552,6 +552,28 @@ export function monthTransactionsFor(
           }),
         );
       }
+      if (take.pensionEmployee > 0) {
+        out.push(
+          new PlanningTransaction({
+            id: encodePlanningTransactionId({
+              kind: "earn",
+              part: "pen",
+              id: e.id,
+              monthId: monthKey,
+            }),
+            name: `${e.name} — pension`,
+            amount: Money.fromMinorDenomination(
+              -perMonth(take.pensionEmployee),
+              e.currency,
+            ),
+            isProvisional: true,
+            isEditable: true,
+            toAccountId: null,
+            liabilityId: null,
+            assetId: null,
+          }),
+        );
+      }
     }
   }
 
