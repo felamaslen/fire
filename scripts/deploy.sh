@@ -111,7 +111,7 @@ docker buildx build "${BUILD_ARGS[@]}" -f Dockerfile .
 
 # --- remote setup -----------------------------------------------------------
 echo "==> Preparing $HOST:$LOCATION"
-ssh "$HOST" "mkdir -p '$LOCATION/var/db' '$LOCATION/var/uploads' '$LOCATION/var/backups'"
+ssh "$HOST" "mkdir -p '$LOCATION/var/db' '$LOCATION/var/uploads' '$LOCATION/var/backups' '$LOCATION/var/cache'"
 
 # Generate a Postgres password on first deploy. Subsequent deploys read the
 # existing `.env` — the password is the key to the persisted DB volume, so

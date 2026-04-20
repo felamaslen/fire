@@ -12,6 +12,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://fire:${POSTGRES_PASSWORD}@postgres:5432/fire
       UPLOADS_DIR: /data/uploads
+      YAHOO_CACHE_PATH: /data/cache/yahoo.json
       PORT: 4000
       OTEL_ENABLED: "false"
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -19,6 +20,7 @@ services:
       - "127.0.0.1:${APP_PORT:-4000}:4000"
     volumes:
       - ./var/uploads:/data/uploads
+      - ./var/cache:/data/cache
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:4000/"]
       interval: 10s

@@ -30,11 +30,12 @@ const cache = new LRUCache<string, Quote>({
 
 const inflight = new Map<string, Promise<Quote | null>>();
 
-// In dev, persist the LRU between HMR reloads so we don't hammer Yahoo every
-// time a file changes. Disabled in prod/test — prod gets its warm cache from
-// the daily cron, and tests start from a clean slate.
-const PERSIST_ENABLED = env.NODE_ENV === "development";
-const PERSIST_PATH = resolve(process.cwd(), ".yahoo-cache.json");
+// Persist the LRU to disk everywhere except tests (which need a clean slate).
+// In dev it survives HMR reloads; in prod it survives container restarts
+// provided `YAHOO_CACHE_PATH` points at a file inside a mounted volume.
+const PERSIST_ENABLED = env.NODE_ENV !== "test";
+const PERSIST_PATH =
+  env.YAHOO_CACHE_PATH ?? resolve(process.cwd(), ".yahoo-cache.json");
 
 type PersistedEntry = {
   key: string;
