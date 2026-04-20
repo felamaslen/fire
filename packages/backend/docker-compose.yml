@@ -50,7 +50,10 @@ services:
       # if present so compose doesn't require it to exist. Leaving it unset
       # disables the `payslipParse` mutation.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-    command: pnpm dev
+    # `pnpm install` first so newly-added workspace deps land in the
+    # anonymous `/app/node_modules` volume on container start — the volume
+    # otherwise survives image rebuilds and shadows the fresh install layer.
+    command: sh -c "pnpm install && pnpm dev"
     ports:
       - "4000:4000"
     volumes:

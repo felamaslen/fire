@@ -1,6 +1,7 @@
 import { and, inArray, sql } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
+import { currentSession } from "@/auth/session-als";
 import { CURRENCIES, HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import { model } from "@/db/drizzle-model";
@@ -143,7 +144,15 @@ function portfolioCacheKey(
   filterAssetIdIn: string[] | null,
 ): string {
   const assets = filterAssetIdIn ? [...filterAssetIdIn].sort().join(",") : "*";
-  return `${currency}|${assets}`;
+  // Include the session's database so demo sessions and the real user don't
+  // share cache entries — without this, whichever session fills the cache
+  // first "wins" and subsequent sessions read stale cross-session data (e.g.
+  // a demo user seeing `totalValue = 0` because the cache was populated by
+  // the real user's GBP-only holdings before their seed inserts landed).
+  const session = currentSession();
+  const scope =
+    session?.kind === "demo" ? session.database : (session?.kind ?? "anon");
+  return `${scope}|${currency}|${assets}`;
 }
 
 type HeldCore = {

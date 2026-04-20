@@ -1,11 +1,14 @@
 import { ApolloServer } from "@apollo/server";
 import { fastifyApolloHandler } from "@as-integrations/fastify";
+import { context as otelContext } from "@opentelemetry/api";
+import { suppressTracing } from "@opentelemetry/core";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { GraphQLError } from "graphql";
 
 import { runWithSession } from "@/auth/session-als";
 import { runWithDb } from "@/db";
 import { defaultDb } from "@/db/client";
+import { getDemoDb } from "@/db/demo-db";
 import { log } from "@/log";
 import { router } from "@/router";
 
@@ -102,16 +105,28 @@ if (!globalThis.__apolloRouted) {
         const current = state.current;
         if (!current) throw new Error("Apollo server not initialised");
         const ctx = createContext({ request });
-        const apolloHandler = fastifyApolloHandler(current, {
-          context: async () => ctx,
-        }) as (req: FastifyRequest, rep: FastifyReply) => Promise<unknown>;
-        // Stash the session in an ALS and wrap the handler in `runWithDb` so
-        // non-resolver code (future demo-session machinery, cache helpers,
-        // background fetches) can branch on the session or reach the active
-        // db without every call site threading `ctx` through.
-        return runWithSession(ctx.session, () =>
-          runWithDb(defaultDb, () => apolloHandler(request, reply)),
-        );
+        // Demo sessions route their queries to a dedicated Postgres schema and
+        // must not emit OTel traces (keeps the real trace stream clean). Real
+        // + anon sessions use the default db and traces flow normally.
+        const scopedDb =
+          ctx.session.kind === "demo"
+            ? getDemoDb(ctx.session.database)
+            : defaultDb;
+        const handle = () => {
+          const apolloHandler = fastifyApolloHandler(current, {
+            context: async () => ctx,
+          }) as (req: FastifyRequest, rep: FastifyReply) => Promise<unknown>;
+          return runWithSession(ctx.session, () =>
+            runWithDb(scopedDb, () => apolloHandler(request, reply)),
+          );
+        };
+        if (ctx.session.kind === "demo") {
+          return otelContext.with(
+            suppressTracing(otelContext.active()),
+            handle,
+          );
+        }
+        return handle();
       },
     });
   };

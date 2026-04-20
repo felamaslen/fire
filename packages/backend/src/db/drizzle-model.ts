@@ -4,6 +4,8 @@ import DataLoader from "dataloader";
 import { and, eq, or, type SQL } from "drizzle-orm";
 import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 
+import { currentScope } from "@/auth/session-als";
+
 import { db } from "./client";
 import { type Schema, schema } from "./schema";
 
@@ -265,7 +267,14 @@ function insertInto<T extends PgTable>(table: T, row: T["$inferInsert"]) {
   return db.insert(table as PgTable).values(row as Record<string, unknown>);
 }
 
-const modelCache = new Map<DrizzleTableName, DrizzleModel<DrizzleTableName>>();
+/**
+ * `DrizzleModel` cache keyed by `"<scope>|<tableName>"` so each session's data scope (main fire DB vs. per-session demo DB) gets its own model instance + DataLoader — otherwise a demo session would see rows cached from the real user's DB (and vice versa) because DataLoader caches by id across requests.
+ */
+const modelCache = new Map<string, DrizzleModel<DrizzleTableName>>();
+
+function modelCacheKey(scope: string, tableName: DrizzleTableName): string {
+  return `${scope}|${tableName}`;
+}
 
 /** Discard every `DrizzleModel` instance and their DataLoader caches. Tests only — production mutations invalidate entries via `updateById` / `deleteById` / `clearCache`. */
 export function TEST__clearModelCaches(): void {
@@ -274,15 +283,16 @@ export function TEST__clearModelCaches(): void {
 }
 
 /**
- * Process-wide `DrizzleModel` for `tableName`, lazily constructed on first access and memoised thereafter. The backend owns every mutation on these tables, so caching rows across requests is safe; `updateById` / `deleteById` invalidate the relevant entry, and other mutation paths in this codebase should do the same when they run alongside a long-running process.
+ * Process-wide `DrizzleModel` for `tableName`, lazily constructed on first access and memoised thereafter. The backend owns every mutation on these tables, so caching rows across requests is safe; `updateById` / `deleteById` invalidate the relevant entry, and other mutation paths in this codebase should do the same when they run alongside a long-running process. Scoped per session data-scope — see `modelCache`.
  */
 export function model<N extends DrizzleTableName>(
   tableName: N,
 ): DrizzleModel<N> {
-  let m = modelCache.get(tableName);
+  const key = modelCacheKey(currentScope(), tableName);
+  let m = modelCache.get(key);
   if (!m) {
     m = new DrizzleModel(tableName) as DrizzleModel<DrizzleTableName>;
-    modelCache.set(tableName, m);
+    modelCache.set(key, m);
   }
   return m as DrizzleModel<N>;
 }

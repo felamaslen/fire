@@ -77,6 +77,15 @@ CREATE TYPE "public"."planningBillsFrequency" AS ENUM (
   'QUARTERLY',
   'YEARLY'
 );
+CREATE TABLE "DemoSessions" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "schema" text NOT NULL,
+  "flavour" text NOT NULL,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "expiresAt" TIMESTAMP WITH TIME ZONE NOT NULL,
+  CONSTRAINT "DemoSessions_schema_unique" UNIQUE ("schema")
+);
+
 CREATE TABLE "InvestmentAllocations" (
   "assetId" uuid NOT NULL,
   "investmentId" uuid NOT NULL,

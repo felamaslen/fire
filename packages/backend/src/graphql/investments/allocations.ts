@@ -3,6 +3,7 @@ import { eq, inArray, ne, sql, sum } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { Float, ID } from "grats";
 
+import { currentScope } from "@/auth/session-als";
 import { db } from "@/db";
 import { model } from "@/db/drizzle-model";
 import {
@@ -171,10 +172,18 @@ async function loadCashAllocation(): Promise<Money | null> {
 }
 
 /**
- * Batches `InvestmentAllocations` lookups across wrappers so a page of N wrappers fires one `WHERE assetId IN (...)` instead of N separate queries.
+ * Batches `InvestmentAllocations` lookups across wrappers so a page of N wrappers fires one `WHERE assetId IN (...)` instead of N separate queries. One DataLoader per session data-scope so demo and real sessions don't share cached rows.
  */
-const allocationsByAssetLoader = new DataLoader<string, InvestmentAllocation[]>(
-  async (assetIds) => {
+const allocationsByAssetLoaders = new Map<
+  string,
+  DataLoader<string, InvestmentAllocation[]>
+>();
+
+function allocationsLoader(): DataLoader<string, InvestmentAllocation[]> {
+  const scope = currentScope();
+  let loader = allocationsByAssetLoaders.get(scope);
+  if (loader) return loader;
+  loader = new DataLoader<string, InvestmentAllocation[]>(async (assetIds) => {
     const rows = await db
       .select()
       .from(InvestmentAllocations)
@@ -186,16 +195,19 @@ const allocationsByAssetLoader = new DataLoader<string, InvestmentAllocation[]>(
       byAsset.set(row.assetId, list);
     }
     return assetIds.map((id) => byAsset.get(id) ?? []);
-  },
-);
+  });
+  allocationsByAssetLoaders.set(scope, loader);
+  return loader;
+}
 
 function invalidateAllocationsForAsset(assetId: string): void {
-  allocationsByAssetLoader.clear(assetId);
+  allocationsLoader().clear(assetId);
 }
 
 /** Tests only. */
 export function TEST__clearAllocationCaches(): void {
-  allocationsByAssetLoader.clearAll();
+  for (const l of allocationsByAssetLoaders.values()) l.clearAll();
+  allocationsByAssetLoaders.clear();
 }
 
 /** Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.
@@ -212,7 +224,7 @@ async function loadAllocationsForAsset(
   assetId: string,
 ): Promise<InvestmentAllocationsResult> {
   const [allocations, cash] = await Promise.all([
-    allocationsByAssetLoader.load(assetId),
+    allocationsLoader().load(assetId),
     loadCashAllocation(),
   ]);
   return new InvestmentAllocationsResult(allocations, cash);

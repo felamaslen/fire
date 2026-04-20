@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
@@ -30,6 +30,14 @@ export async function storeUpload(upload: FileUpload): Promise<string> {
   const dest = path.join(dir, key);
   await pipeline(createReadStream(), createWriteStream(dest));
   return key;
+}
+
+/** Wipe every file a demo session produced. Called from `dropDemoSession` so a demo user's uploaded files don't outlive their database. Keys for demo sessions are namespaced `demo/<database>/…` (see upcoming signing refactor); this strips the whole subtree in one shot. */
+export async function removeSessionUploads(database: string): Promise<void> {
+  if (!/^demo_[A-Za-z0-9_]+$/u.test(database)) return;
+  const dir = await ensureBucket();
+  const target = path.join(dir, "demo", database);
+  await rm(target, { recursive: true, force: true });
 }
 
 /** Absolute path for a stored key. Resolves strictly inside the bucket — throws on `..` traversal. */

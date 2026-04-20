@@ -363,11 +363,15 @@ input PlanningYearTaxRatesUKInput {
 }
 
 """
-Result of a successful `login` / shape of `me` for a valid token. The client just needs to know "am I logged in?" — `token` doubles as both credential and success signal.
+Result of a successful `login` / `demoLogin`, and the shape of `me` for a valid token. The client just needs to know "am I logged in?" — `token` doubles as both credential and success signal. Session kind / flavour live inside the signed token itself and are re-derived server-side from the `Authorization` header on every request, so there's nothing for the client to track beyond this string.
 """
 type AuthResult {
   """
-  Signed token. Real tokens live 30 days. Store in `localStorage` and attach as `Authorization: Bearer <token>`.
+  `true` when the session is a demo (synthetic data in a per-session database). Lets the UI hide or disable features that shouldn't run in demo mode — e.g. `payslipParse` which burns Gemini tokens.
+  """
+  isDemo: Boolean!
+  """
+  Signed token. Real tokens live 30 days; demo tokens live 6 hours. Store in `localStorage` and attach as `Authorization: Bearer <token>`.
   """
   token: String!
 }
@@ -377,6 +381,18 @@ type Currency {
   """ISO-4217 three-letter code (e.g. `"USD"`)."""
   code: String!
   """Human-readable currency name (e.g. `"United States dollar"`)."""
+  name: String!
+}
+
+"""
+A synthetic data flavour the user can pick to try the app without a real PIN. Returned by the `demos` query; passed back into `demoLogin` by `id` to provision a session seeded with that flavour's data.
+"""
+type Demo {
+  """One-line blurb describing the financial profile the demo represents."""
+  description: String!
+  """Stable identifier used as input to `demoLogin`."""
+  id: ID!
+  """Human-readable short name shown on the login screen."""
   name: String!
 }
 
@@ -682,6 +698,10 @@ type Mutation {
     start: Date
   ): PlanningBill!
   """
+  Provision a fresh demo session: creates a dedicated Postgres schema, replays the schema + seeds it from the demo identified by `id`, and returns a 6-hour token bound to the new schema. Each call returns a new isolated session — logging out and calling again yields a clean, freshly-seeded environment.
+  """
+  demoLogin(id: ID!): AuthResult! @noAuth
+  """
   Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `toAccountId` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
   """
   earningsCreate(
@@ -838,7 +858,7 @@ type Mutation {
   """
   login(pin: Int!): AuthResult! @noAuth
   """
-  Invalidate the current session. Real sessions are stateless — tokens are stateless; the client just discards it. The server-side no-op keeps the mutation shape consistent so future session kinds can do real work here.
+  Invalidate the current session. For real sessions this is a no-op on the server (tokens are stateless — the client just discards it). For demo sessions this drops the per-session schema and its `DemoSessions` row, so a reconnect with the same token would fail.
   """
   logout: Boolean! @noAuth
   """Create a new category (asset, liability, or option)."""
@@ -1782,6 +1802,8 @@ type Query {
   ISO-4217 code of the server's configured home currency (e.g. `"GBP"`). Used by clients as the default currency when the user has not configured any currency rates on an entry.
   """
   currencyDefault: String @semanticNonNull
+  """List available demo flavours for the login screen."""
+  demos: [Demo!] @noAuth
   """
   Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
   """

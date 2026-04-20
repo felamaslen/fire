@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { LRUCache } from "lru-cache";
 import YahooFinance from "yahoo-finance2";
 
+import { isDemoSession } from "@/auth/session-als";
 import { env } from "@/env";
 import { log } from "@/log";
 
@@ -115,6 +116,13 @@ function isStale(quote: Quote | null | undefined): boolean {
  * Concurrent calls for the same symbol share a single in-flight fetch.
  */
 export async function fetchQuote(symbol: string): Promise<Quote | null> {
+  // Demo sessions must never hit Yahoo *or* see real-user cache entries —
+  // even if the warm LRU has a quote for the same ticker, surfacing it in a
+  // demo portfolio would overlay a real market price on the synthetic seeded
+  // history and create visible discontinuities. Return `null`; the portfolio
+  // / stats UI degrades gracefully to the most recent `InvestmentPrices` row.
+  if (isDemoSession()) return null;
+
   const cached = cache.get(symbol);
   if (cached && !isStale(cached)) return cached;
 
@@ -168,8 +176,9 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
   return promise;
 }
 
-/** Serve the cached quote (may be stale); in the background, kick off a refresh if it's missing or older than 5 minutes. */
+/** Serve the cached quote (may be stale); in the background, kick off a refresh if it's missing or older than 5 minutes. In a demo session, returns whatever is cached without scheduling a background fetch — see `fetchQuote` for the rationale. */
 export function readOrRefresh(symbol: string): Quote | null {
+  if (isDemoSession()) return null;
   const cached = cache.get(symbol);
   if (isStale(cached)) {
     void fetchQuote(symbol);

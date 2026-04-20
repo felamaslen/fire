@@ -2,6 +2,7 @@ import DataLoader from "dataloader";
 import { inArray } from "drizzle-orm";
 import type { Float, Int } from "grats";
 
+import { currentScope } from "@/auth/session-als";
 import { db } from "@/db";
 import { model } from "@/db/drizzle-model";
 import { InvestmentTransactions } from "@/db/schema/investments";
@@ -136,32 +137,47 @@ export class InvestmentWrapper {
 }
 
 /**
- * Batches `InvestmentWrapper` lookups across investments: a page of N investments fires one `GROUP BY (investmentId, assetId)` instead of N separate queries. Caches results across requests since the backend owns every `InvestmentTransactions` write.
+ * Batches `InvestmentWrapper` lookups across investments: a page of N investments fires one `GROUP BY (investmentId, assetId)` instead of N separate queries. Caches results across requests since the backend owns every `InvestmentTransactions` write. One DataLoader per session data-scope so demo and real sessions don't share cached rows.
  */
-const wrappersByInvestmentLoader = new DataLoader<string, InvestmentWrapper[]>(
-  async (investmentIds) => {
-    const rows = await db
-      .select({
-        investmentId: InvestmentTransactions.investmentId,
-        assetId: InvestmentTransactions.assetId,
-      })
-      .from(InvestmentTransactions)
-      .where(
-        inArray(InvestmentTransactions.investmentId, investmentIds as string[]),
-      )
-      .groupBy(
-        InvestmentTransactions.investmentId,
-        InvestmentTransactions.assetId,
-      );
-    const byInvestment = new Map<string, InvestmentWrapper[]>();
-    for (const row of rows) {
-      const list = byInvestment.get(row.investmentId) ?? [];
-      list.push(new InvestmentWrapper(row.investmentId, row.assetId));
-      byInvestment.set(row.investmentId, list);
-    }
-    return investmentIds.map((id) => byInvestment.get(id) ?? []);
-  },
-);
+const wrappersByInvestmentLoaders = new Map<
+  string,
+  DataLoader<string, InvestmentWrapper[]>
+>();
+
+function wrappersLoader(): DataLoader<string, InvestmentWrapper[]> {
+  const scope = currentScope();
+  let loader = wrappersByInvestmentLoaders.get(scope);
+  if (loader) return loader;
+  loader = new DataLoader<string, InvestmentWrapper[]>(
+    async (investmentIds) => {
+      const rows = await db
+        .select({
+          investmentId: InvestmentTransactions.investmentId,
+          assetId: InvestmentTransactions.assetId,
+        })
+        .from(InvestmentTransactions)
+        .where(
+          inArray(
+            InvestmentTransactions.investmentId,
+            investmentIds as string[],
+          ),
+        )
+        .groupBy(
+          InvestmentTransactions.investmentId,
+          InvestmentTransactions.assetId,
+        );
+      const byInvestment = new Map<string, InvestmentWrapper[]>();
+      for (const row of rows) {
+        const list = byInvestment.get(row.investmentId) ?? [];
+        list.push(new InvestmentWrapper(row.investmentId, row.assetId));
+        byInvestment.set(row.investmentId, list);
+      }
+      return investmentIds.map((id) => byInvestment.get(id) ?? []);
+    },
+  );
+  wrappersByInvestmentLoaders.set(scope, loader);
+  return loader;
+}
 
 /**
  * Load every wrapper in which an investment has any recorded transactions (including ones where units have net-zero after sells, so callers can see historically-held positions).
@@ -169,14 +185,15 @@ const wrappersByInvestmentLoader = new DataLoader<string, InvestmentWrapper[]>(
 export async function loadInvestmentWrappers(
   investmentId: string,
 ): Promise<InvestmentWrapper[]> {
-  return wrappersByInvestmentLoader.load(investmentId);
+  return wrappersLoader().load(investmentId);
 }
 
 export function invalidateInvestmentWrappers(investmentId: string): void {
-  wrappersByInvestmentLoader.clear(investmentId);
+  wrappersLoader().clear(investmentId);
 }
 
 /** Tests only. */
 export function TEST__clearWrapperCache(): void {
-  wrappersByInvestmentLoader.clearAll();
+  for (const l of wrappersByInvestmentLoaders.values()) l.clearAll();
+  wrappersByInvestmentLoaders.clear();
 }

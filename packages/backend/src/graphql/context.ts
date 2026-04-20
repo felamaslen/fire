@@ -3,7 +3,10 @@ import type { FastifyRequest } from "fastify";
 import { type TokenPayload, verifyToken } from "@/auth/token";
 
 /** Resolved session attached to a request's `Context`. Anonymous requests only see unauth'd fields (those carrying `@noAuth`); every other field throws `UNAUTHENTICATED`. */
-export type Session = { kind: "anon" } | { kind: "real" };
+export type Session =
+  | { kind: "anon" }
+  | { kind: "real" }
+  | { kind: "demo"; database: string; flavour: string };
 
 /**
  * Per-request GraphQL context. Carries the resolved `session` for the auth plugin + any resolver that needs to branch on it (e.g. `logout` to know which demo schema to drop); its identity also acts as the hook that request-scoped caches (e.g. per-entry totals) key off via WeakMap.
@@ -27,8 +30,13 @@ export function createContext({
 }
 
 function sessionFromPayload(payload: TokenPayload | null): Session {
-  if (payload?.kind === "real") return { kind: "real" };
-  return { kind: "anon" };
+  if (!payload) return { kind: "anon" };
+  if (payload.kind === "real") return { kind: "real" };
+  return {
+    kind: "demo",
+    database: payload.database,
+    flavour: payload.flavour,
+  };
 }
 
 /**
