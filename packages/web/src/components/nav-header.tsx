@@ -4,6 +4,8 @@ import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/cn";
 
+import { ThemeToggle } from "./theme-toggle";
+
 const ACTIONS_SLOT_ID = "nav-header-actions";
 const TITLE_SLOT_ID = "nav-header-title";
 
@@ -66,6 +68,7 @@ export function NavHeader() {
             {l.label}
           </Link>
         ))}
+        <ThemeToggle />
       </nav>
     </header>
   );
