@@ -1,0 +1,65 @@
+services:
+  # Monolithic app container: the Fastify backend serves the GraphQL API on
+  # `/graphql` and the prebuilt SPA for everything else. Bound to loopback so
+  # the host's nginx is the only public entrypoint.
+  app:
+    image: felamaslen/fire:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://fire:${POSTGRES_PASSWORD}@postgres:5432/fire
+      UPLOADS_DIR: /data/uploads
+      PORT: 4000
+      OTEL_ENABLED: "false"
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "127.0.0.1:${APP_PORT:-4000}:4000"
+    volumes:
+      - ./var/uploads:/data/uploads
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:4000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    command: postgres -c client_min_messages=warning
+    environment:
+      POSTGRES_DB: fire
+      POSTGRES_USER: fire
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./var/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fire -d fire"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Daily `pg_dump` with built-in rotation. `BACKUP_KEEP_DAYS=7` keeps a
+  # rolling 7-day window of daily dumps in `./var/backups/daily`, and
+  # `BACKUP_KEEP_MONTHS=12` keeps one dump per month for a year in
+  # `./var/backups/monthly`.
+  backup:
+    image: prodrigestivill/postgres-backup-local:18-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: fire
+      POSTGRES_USER: fire
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 0
+      BACKUP_KEEP_MONTHS: 12
+      SCHEDULE: "@daily"
+    volumes:
+      - ./var/backups:/backups

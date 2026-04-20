@@ -37,7 +37,11 @@
 # Docker itself.
 **/Dockerfile
 **/docker-compose.yml
+**/docker-compose.*.yml
 **/.dockerignore
+
+# Deploy tooling — not needed inside the runtime image.
+scripts/deploy.sh
 
 # Local uploads directory — bind-mounted at runtime instead.
 packages/backend/uploads
