@@ -1489,9 +1489,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(DateType)
                 },
                 fileUrl: {
-                    description: "Path to the uploaded payslip file (PDF / image), relative to the server. Null if none was uploaded.",
+                    description: "Signed, short-lived URL to the uploaded payslip file (PDF / image), or `null` if none was uploaded or the current session isn't allowed to read it. The URL's signature covers the storage key + expiry so the `/files/*` endpoint can serve it without the browser attaching an `Authorization` header.",
                     name: "fileUrl",
-                    type: GraphQLString
+                    type: GraphQLString,
+                    resolve(source, _args, context) {
+                        return source.fileUrl(context);
+                    }
                 },
                 id: {
                     name: "id",
@@ -3652,7 +3655,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(DateType)
                         },
                         file: {
-                            description: "Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket; the resolved URL is persisted on the payslip row.",
+                            description: "Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket, scoped to the caller's session; the resolved key is persisted on the payslip row.",
                             type: UploadType
                         },
                         name: {
@@ -3663,8 +3666,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLID)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationPayslipCreateResolver(args.date, args.amountGross, args.name, args.toAccountId, args.adjustments, args.file);
+                    resolve(_source, args, context) {
+                        return mutationPayslipCreateResolver(args.date, args.amountGross, args.name, args.toAccountId, args.adjustments, args.file, context);
                     }
                 },
                 payslipDelete: {
@@ -3681,7 +3684,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 payslipParse: {
-                    description: "Extract gross, pay date, and deductions from a payslip PDF using Gemini Flash, and suggest which planning account it belongs to based on the employee's first name. Does not create a payslip record \u2014 the UI shows the returned values in the regular add-payslip form for the user to review / adjust before submitting.",
+                    description: "Extract gross, pay date, and deductions from a payslip PDF using Gemini Flash, and suggest which planning account it belongs to based on the employee's first name. Does not create a payslip record \u2014 the UI shows the returned values in the regular add-payslip form for the user to review / adjust before submitting.\n\nGated to `real` sessions: demo sessions would otherwise burn Gemini tokens on synthetic data with no upside.",
                     name: "payslipParse",
                     type: new GraphQLNonNull(PayslipParseResultType),
                     args: {
@@ -3689,8 +3692,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(UploadType)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationPayslipParseResolver(args.file);
+                    resolve(_source, args, context) {
+                        return mutationPayslipParseResolver(args.file, context);
                     }
                 },
                 payslipUpdate: {
@@ -3722,8 +3725,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: GraphQLID
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationPayslipUpdateResolver(args.id, args.date, args.amountGross, args.name, args.toAccountId, args.adjustments, args.file);
+                    resolve(_source, args, context) {
+                        return mutationPayslipUpdateResolver(args.id, args.date, args.amountGross, args.name, args.toAccountId, args.adjustments, args.file, context);
                     }
                 },
                 planningAccountAssign: {

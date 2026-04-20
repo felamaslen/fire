@@ -3,6 +3,7 @@ import { strict as assert } from "node:assert";
 import { and, desc, eq, lt, notInArray, or } from "drizzle-orm";
 import type { ID, Int } from "grats";
 
+import { sessionMayReadKey, signFileUrl } from "@/auth/file-url";
 import { db } from "@/db";
 import {
   NetWorthCategoryAssets,
@@ -15,6 +16,7 @@ import {
 } from "@/db/schema/planning";
 import { storeUpload } from "@/uploads";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { Money } from "../money";
 import { getMoneyInputFractionalAmount, type MoneyInput } from "../money";
@@ -32,6 +34,11 @@ import type { Upload } from "../upload";
 import { VOID, type Void } from "../void";
 import { PlanningAccount } from "./index";
 
+/** Legacy rows stored `/files/<key>`; strip the prefix so downstream code sees a bare storage key. */
+function storageKeyFromColumn(value: string): string {
+  return value.startsWith("/files/") ? value.slice("/files/".length) : value;
+}
+
 /** A recorded pay-period snapshot: the gross amount plus zero or more adjustments (tax, NIC, student loan, …). Payslips suppress earnings projections for the same month+account. @gqlType */
 export class PlanningPayslip {
   constructor(
@@ -43,8 +50,8 @@ export class PlanningPayslip {
     public readonly amountGross: Money,
     /** @gqlField */
     public readonly name: string,
-    /** Path to the uploaded payslip file (PDF / image), relative to the server. Null if none was uploaded. @gqlField */
-    public readonly fileUrl: string | null,
+    /** Bare storage key for the uploaded payslip file, or `null` if none. The `fileUrl` GraphQL field wraps this in a short-lived signed URL per request. */
+    private readonly fileKey: string | null,
     public readonly toAccountId: string,
     private readonly currency: string,
   ) {}
@@ -55,10 +62,17 @@ export class PlanningPayslip {
       row.date,
       Money.fromMinorDenomination(row.amountGross, row.currency),
       row.name,
-      row.fileUrl,
+      row.fileUrl ? storageKeyFromColumn(row.fileUrl) : null,
       row.toAccountId,
       row.currency,
     );
+  }
+
+  /** Signed, short-lived URL to the uploaded payslip file (PDF / image), or `null` if none was uploaded or the current session isn't allowed to read it. The URL's signature covers the storage key + expiry so the `/files/*` endpoint can serve it without the browser attaching an `Authorization` header. @gqlField */
+  fileUrl(ctx: Context): string | null {
+    if (!this.fileKey) return null;
+    if (!sessionMayReadKey(ctx.session, this.fileKey)) return null;
+    return signFileUrl(this.fileKey);
   }
 
   /** Planning account the net pay lands in. @gqlField */
@@ -199,12 +213,13 @@ export async function payslipCreate(
   name: string,
   /** Planning account (`PlanningAccount.id`) the net pay lands in. The asset must already have a planning account assigned via `planningAccountAssign`. */
   toAccountId: ID,
-  adjustments?: PayslipAdjustmentInput[] | null,
-  /** Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket; the resolved URL is persisted on the payslip row. */
-  file?: Upload | null,
+  adjustments: PayslipAdjustmentInput[] | null | undefined,
+  /** Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket, scoped to the caller's session; the resolved key is persisted on the payslip row. */
+  file: Upload | null | undefined,
+  ctx: Context,
 ): Promise<PlanningPayslip> {
   const { currency, amount } = getMoneyInputFractionalAmount(amountGross);
-  const fileUrl = file ? `/files/${await storeUpload(await file)}` : null;
+  const fileUrl = file ? await storeUpload(await file, ctx.session) : null;
   const row = await db.transaction(async (tx) => {
     const [inserted] = await tx
       .insert(PlanningPayslips)
@@ -232,14 +247,15 @@ export async function payslipCreate(
  */
 export async function payslipUpdate(
   id: ID,
-  date?: CalendarDate | null,
-  amountGross?: MoneyInput | null,
-  name?: string | null,
+  date: CalendarDate | null | undefined,
+  amountGross: MoneyInput | null | undefined,
+  name: string | null | undefined,
   /** New destination planning account (`PlanningAccount.id`) the net pay lands in. */
-  toAccountId?: ID | null,
-  adjustments?: PayslipAdjustmentInput[] | null,
+  toAccountId: ID | null | undefined,
+  adjustments: PayslipAdjustmentInput[] | null | undefined,
   /** Replacement file upload. Pass `null` explicitly to clear the existing fileUrl; omit to leave it unchanged. */
-  file?: Upload | null,
+  file: Upload | null | undefined,
+  ctx: Context,
 ): Promise<PlanningPayslip> {
   const [existing] = await db
     .select()
@@ -254,7 +270,7 @@ export async function payslipUpdate(
   let fileUrlPatch: { fileUrl: string | null } | null = null;
   if (file !== undefined) {
     fileUrlPatch = {
-      fileUrl: file ? `/files/${await storeUpload(await file)}` : null,
+      fileUrl: file ? await storeUpload(await file, ctx.session) : null,
     };
   }
 

@@ -17,6 +17,7 @@ import {
 import { PlanningAccounts } from "@/db/schema/planning";
 import { env } from "@/env";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { Money } from "../money";
 import { NetWorthCategoryLiability } from "../net-worth/categories";
@@ -131,9 +132,19 @@ Ignore year-to-date figures. If a deduction is explicitly zero for this period, 
 /**
  * Extract gross, pay date, and deductions from a payslip PDF using Gemini Flash, and suggest which planning account it belongs to based on the employee's first name. Does not create a payslip record — the UI shows the returned values in the regular add-payslip form for the user to review / adjust before submitting.
  *
+ * Gated to `real` sessions: demo sessions would otherwise burn Gemini tokens on synthetic data with no upside.
+ *
  * @gqlMutationField
  */
-export async function payslipParse(file: Upload): Promise<PayslipParseResult> {
+export async function payslipParse(
+  file: Upload,
+  ctx: Context,
+): Promise<PayslipParseResult> {
+  if (ctx.session.kind !== "real") {
+    throw new GraphQLError("Payslip parsing is disabled in demo mode.", {
+      extensions: { code: "FORBIDDEN" },
+    });
+  }
   if (!env.GEMINI_API_KEY) {
     throw new Error(
       "Payslip parsing is disabled — set GEMINI_API_KEY on the server.",
