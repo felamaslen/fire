@@ -1,10 +1,15 @@
-import { Link } from "@tanstack/react-router";
+import { useApolloClient, useMutation } from "@apollo/client/react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/cn";
 
+import { LogoutDocument } from "../auth/documents";
+import { clearToken, getToken } from "../auth/token";
 import { ThemeToggle } from "./theme-toggle";
+import { Button } from "./ui/button";
 
 const ACTIONS_SLOT_ID = "nav-header-actions";
 const TITLE_SLOT_ID = "nav-header-title";
@@ -69,7 +74,30 @@ export function NavHeader() {
           </Link>
         ))}
         <ThemeToggle />
+        <LogoutButton />
       </nav>
     </header>
+  );
+}
+
+function LogoutButton() {
+  const navigate = useNavigate();
+  const apollo = useApolloClient();
+  const [logoutMutation] = useMutation(LogoutDocument);
+  if (typeof window !== "undefined" && !getToken()) return null;
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label="Log out"
+      onClick={async () => {
+        await logoutMutation().catch(() => {});
+        clearToken();
+        await apollo.clearStore();
+        await navigate({ to: "/login" });
+      }}
+    >
+      <LogOut />
+    </Button>
   );
 }

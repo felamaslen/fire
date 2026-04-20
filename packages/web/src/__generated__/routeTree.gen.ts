@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './../routes/__root'
 import { Route as NetWorthRouteImport } from './../routes/net-worth'
+import { Route as LoginRouteImport } from './../routes/login'
 import { Route as InvestmentsRouteImport } from './../routes/investments'
 import { Route as IndexRouteImport } from './../routes/index'
 import { Route as PlanningIndexRouteImport } from './../routes/planning/index'
@@ -28,6 +29,11 @@ import { Route as NetWorthEntriesIdEditRouteImport } from './../routes/net-worth
 const NetWorthRoute = NetWorthRouteImport.update({
   id: '/net-worth',
   path: '/net-worth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InvestmentsRoute = InvestmentsRouteImport.update({
@@ -104,6 +110,7 @@ const NetWorthEntriesIdEditRoute = NetWorthEntriesIdEditRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/investments': typeof InvestmentsRouteWithChildren
+  '/login': typeof LoginRoute
   '/net-worth': typeof NetWorthRouteWithChildren
   '/investments/$id': typeof InvestmentsIdRoute
   '/net-worth/categories': typeof NetWorthCategoriesRoute
@@ -121,6 +128,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/investments': typeof InvestmentsRouteWithChildren
+  '/login': typeof LoginRoute
   '/net-worth': typeof NetWorthRouteWithChildren
   '/investments/$id': typeof InvestmentsIdRoute
   '/net-worth/categories': typeof NetWorthCategoriesRoute
@@ -139,6 +147,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/investments': typeof InvestmentsRouteWithChildren
+  '/login': typeof LoginRoute
   '/net-worth': typeof NetWorthRouteWithChildren
   '/investments/$id': typeof InvestmentsIdRoute
   '/net-worth/categories': typeof NetWorthCategoriesRoute
@@ -158,6 +167,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/investments'
+    | '/login'
     | '/net-worth'
     | '/investments/$id'
     | '/net-worth/categories'
@@ -175,6 +185,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/investments'
+    | '/login'
     | '/net-worth'
     | '/investments/$id'
     | '/net-worth/categories'
@@ -192,6 +203,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/investments'
+    | '/login'
     | '/net-worth'
     | '/investments/$id'
     | '/net-worth/categories'
@@ -210,6 +222,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   InvestmentsRoute: typeof InvestmentsRouteWithChildren
+  LoginRoute: typeof LoginRoute
   NetWorthRoute: typeof NetWorthRouteWithChildren
   PlanningYearRoute: typeof PlanningYearRouteWithChildren
   PlanningIndexRoute: typeof PlanningIndexRoute
@@ -222,6 +235,13 @@ declare module '@tanstack/react-router' {
       path: '/net-worth'
       fullPath: '/net-worth'
       preLoaderRoute: typeof NetWorthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/investments': {
@@ -388,6 +408,7 @@ const PlanningYearRouteWithChildren = PlanningYearRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   InvestmentsRoute: InvestmentsRouteWithChildren,
+  LoginRoute: LoginRoute,
   NetWorthRoute: NetWorthRouteWithChildren,
   PlanningYearRoute: PlanningYearRouteWithChildren,
   PlanningIndexRoute: PlanningIndexRoute,

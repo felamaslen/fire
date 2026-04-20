@@ -16,6 +16,11 @@ directive @constraint(
 ) on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
 
 """
+Mark a root query / mutation field as callable without authentication. Every other root field requires a valid `real` or `demo` token — selecting an auth-required root field on an anonymous request throws `UNAUTHENTICATED` before any resolver runs. Only meaningful on `Query` / `Mutation` fields; nested fields inherit the root's decision.
+"""
+directive @noAuth on FIELD_DEFINITION
+
+"""
 Mark a field as semantically non-null — schema-level nullable (per the Query-field-nullability convention) but the resolver must never actually return null. Returning null throws a `UNEXPECTED_NULL` GraphQLError at resolve time.
 """
 directive @semanticNonNull on FIELD_DEFINITION
@@ -357,11 +362,37 @@ input PlanningYearTaxRatesUKInput {
   thresholdStudentLoanPlan2: Float!
 }
 
+"""
+Result of a successful `login` / `demoLogin`, and the shape of `me` for a valid token. The client just needs to know "am I logged in?" — `token` doubles as both credential and success signal. Session kind / flavour live inside the signed token itself and are re-derived server-side from the `Authorization` header on every request, so there's nothing for the client to track beyond this string.
+"""
+type AuthResult {
+  """
+  `true` when the session is a demo (synthetic data in a per-session database). Lets the UI hide or disable features that shouldn't run in demo mode — e.g. `payslipParse` which burns Gemini tokens.
+  """
+  isDemo: Boolean!
+  """
+  Signed token. Real tokens live 30 days; demo tokens live 6 hours. Store in `localStorage` and attach as `Authorization: Bearer <token>`.
+  """
+  token: String!
+}
+
 """Metadata for a currency supported by the server."""
 type Currency {
   """ISO-4217 three-letter code (e.g. `"USD"`)."""
   code: String!
   """Human-readable currency name (e.g. `"United States dollar"`)."""
+  name: String!
+}
+
+"""
+A synthetic data flavour the user can pick to try the app without a real PIN. Returned by the `demos` query; passed back into `demoLogin` by `id` to provision a session seeded with that flavour's data.
+"""
+type Demo {
+  """One-line blurb describing the financial profile the demo represents."""
+  description: String!
+  """Stable identifier used as input to `demoLogin`."""
+  id: ID!
+  """Human-readable short name shown on the login screen."""
   name: String!
 }
 
@@ -667,6 +698,10 @@ type Mutation {
     start: Date
   ): PlanningBill!
   """
+  Provision a fresh demo session: creates a dedicated Postgres schema, replays the schema + seeds it from the demo identified by `id`, and returns a 6-hour token bound to the new schema. Each call returns a new isolated session — logging out and calling again yields a clean, freshly-seeded environment.
+  """
+  demoLogin(id: ID!): AuthResult! @noAuth
+  """
   Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `toAccountId` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
   """
   earningsCreate(
@@ -818,6 +853,14 @@ type Mutation {
     id: ID!
     name: String
   ): Investment!
+  """
+  Exchange the 4-digit PIN (from the `AUTH_PIN` env var) for a 30-day real-session token. Rejects with `Invalid PIN` on mismatch; the comparison is constant-time.
+  """
+  login(pin: Int!): AuthResult! @noAuth
+  """
+  Invalidate the current session. For real sessions this is a no-op on the server (tokens are stateless — the client just discards it). For demo sessions this drops the per-session schema and its `DemoSessions` row, so a reconnect with the same token would fail.
+  """
+  logout: Boolean! @noAuth
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """
@@ -865,7 +908,7 @@ type Mutation {
     amountGross: MoneyInput!
     date: Date!
     """
-    Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket; the resolved URL is persisted on the payslip row.
+    Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket, scoped to the caller's session; the resolved key is persisted on the payslip row.
     """
     file: Upload
     name: String!
@@ -878,6 +921,8 @@ type Mutation {
   payslipDelete(id: ID!): Void!
   """
   Extract gross, pay date, and deductions from a payslip PDF using Gemini Flash, and suggest which planning account it belongs to based on the employee's first name. Does not create a payslip record — the UI shows the returned values in the regular add-payslip form for the user to review / adjust before submitting.
+  
+  Gated to `real` sessions: demo sessions would otherwise burn Gemini tokens on synthetic data with no upside.
   """
   payslipParse(file: Upload!): PayslipParseResult!
   """
@@ -1491,7 +1536,7 @@ type PlanningPayslip {
   """Pay date."""
   date: Date!
   """
-  Path to the uploaded payslip file (PDF / image), relative to the server. Null if none was uploaded.
+  Signed, short-lived URL to the uploaded payslip file (PDF / image), or `null` if none was uploaded or the current session isn't allowed to read it. The URL's signature covers the storage key + expiry so the `/files/*` endpoint can serve it without the browser attaching an `Authorization` header.
   """
   fileUrl: String
   id: ID!
@@ -1656,7 +1701,7 @@ type Portfolio {
   """
   dailyGainValue: Money
   """
-  Synthetic, stable identifier derived from the filters + currency. Used for client-side cache normalisation; not meaningful as an external key.
+  Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities — otherwise Apollo would merge them and the first response's values would be clobbered by the second.
   """
   id: ID!
   """
@@ -1680,7 +1725,7 @@ type Portfolio {
   """
   totalGain: Money
   """
-  Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down.
+  Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
   """
   totalValue: Money
   """
@@ -1759,6 +1804,8 @@ type Query {
   ISO-4217 code of the server's configured home currency (e.g. `"GBP"`). Used by clients as the default currency when the user has not configured any currency rates on an entry.
   """
   currencyDefault: String @semanticNonNull
+  """List available demo flavours for the login screen."""
+  demos: [Demo!] @noAuth
   """
   Every registered earnings stream, paginated and sorted by `start` descending (most-recently-starting first, `id` tiebreak).
   """
@@ -1784,6 +1831,10 @@ type Query {
     first: Int
     sort: InvestmentSort
   ): InvestmentConnection @semanticNonNull
+  """
+  Return the current session's auth info, or `null` if the request is anonymous. Used by the web app on boot to decide whether to send the user to the login screen or straight to the dashboard.
+  """
+  me: AuthResult @noAuth
   """Paginated list of net-worth entries, newest first."""
   netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """

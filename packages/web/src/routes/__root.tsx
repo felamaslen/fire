@@ -1,8 +1,19 @@
-import { ApolloProvider } from "@apollo/client/react";
-import { createRootRoute, Outlet } from "@tanstack/react-router";
-import { Suspense } from "react";
+import {
+  ApolloProvider,
+  useApolloClient,
+  useQuery,
+} from "@apollo/client/react";
+import {
+  createRootRoute,
+  Outlet,
+  useLocation,
+  useNavigate,
+} from "@tanstack/react-router";
+import { Suspense, useEffect } from "react";
 
 import { createApolloClient } from "../apollo";
+import { MeDocument } from "../auth/documents";
+import { clearToken, getToken } from "../auth/token";
 import { NavHeader } from "../components/nav-header";
 import { Spinner } from "../components/spinner";
 import { Toaster } from "../components/ui/sonner";
@@ -18,12 +29,53 @@ function RootComponent() {
   return (
     <ApolloProvider client={apolloClient}>
       <TooltipProvider delayDuration={200}>
-        <NavHeader />
-        <Suspense fallback={<Spinner />}>
-          <Outlet />
-        </Suspense>
+        <AuthGate>
+          <NavHeader />
+          <Suspense fallback={<Spinner />}>
+            <Outlet />
+          </Suspense>
+        </AuthGate>
       </TooltipProvider>
       <Toaster richColors position="bottom-right" />
     </ApolloProvider>
   );
+}
+
+/**
+ * Redirect to `/login` whenever there's no local token, and verify the stored
+ * token on mount by calling `me`. A failed / null `me` drops the token and
+ * bounces the user to `/login`; the Apollo error link catches expired tokens
+ * on subsequent requests the same way.
+ *
+ * The `/login` route itself renders without the gate so users can always
+ * reach it — we short-circuit by path.
+ */
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const apollo = useApolloClient();
+  const isLoginRoute = location.pathname === "/login";
+  const hasToken = typeof window !== "undefined" && getToken() != null;
+
+  const { data, loading, error } = useQuery(MeDocument, {
+    skip: isLoginRoute || !hasToken,
+    fetchPolicy: "network-only",
+  });
+
+  useEffect(() => {
+    if (isLoginRoute) return;
+    if (!hasToken) {
+      void navigate({ to: "/login" });
+      return;
+    }
+    if (!loading && (error || data?.me === null)) {
+      clearToken();
+      void apollo.clearStore();
+      void navigate({ to: "/login" });
+    }
+  }, [isLoginRoute, hasToken, loading, error, data, navigate, apollo]);
+
+  if (isLoginRoute) return <>{children}</>;
+  if (!hasToken || loading || !data?.me) return <Spinner />;
+  return <>{children}</>;
 }
