@@ -1,12 +1,34 @@
+import type { FastifyRequest } from "fastify";
+
+import { type TokenPayload, verifyToken } from "@/auth/token";
+
+/** Resolved session attached to a request's `Context`. Anonymous requests only see unauth'd fields (those carrying `@noAuth`); every other field throws `UNAUTHENTICATED`. */
+export type Session = { kind: "anon" } | { kind: "real" };
+
 /**
- * Per-request GraphQL context. Carries no data of its own; its identity is the hook that request-scoped caches (e.g. per-entry totals) key off via WeakMap.
+ * Per-request GraphQL context. Carries the resolved `session` for the auth plugin + any resolver that needs to branch on it (e.g. `logout` to know which demo schema to drop); its identity also acts as the hook that request-scoped caches (e.g. per-entry totals) key off via WeakMap.
  *
  * @gqlContext
  */
-export class Context {}
+export class Context {
+  constructor(public readonly session: Session) {}
+}
 
-export async function createContext(): Promise<Context> {
-  return new Context();
+/** Build a `Context` from a Fastify request. Reads `Authorization: Bearer <token>`; unverifiable / expired tokens resolve to an `anon` session (the auth plugin then rejects the operation unless every selected field is `@noAuth`). */
+export function createContext({
+  request,
+}: {
+  request: FastifyRequest;
+}): Context {
+  const header = request.headers.authorization;
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = token ? verifyToken(token) : null;
+  return new Context(sessionFromPayload(payload));
+}
+
+function sessionFromPayload(payload: TokenPayload | null): Session {
+  if (payload?.kind === "real") return { kind: "real" };
+  return { kind: "anon" };
 }
 
 /**

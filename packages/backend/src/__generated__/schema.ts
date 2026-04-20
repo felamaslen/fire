@@ -14,6 +14,7 @@ import { cashPosition as queryCashPositionResolver } from "./../graphql/investme
 import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
 import { investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
+import { me as queryMeResolver, login as mutationLoginResolver, logout as mutationLogoutResolver } from "./../graphql/auth";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { netWorthForecast as queryNetWorthForecastResolver } from "./../graphql/net-worth/forecast";
@@ -946,6 +947,19 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         },
         isOneOf: true
+    });
+    const AuthResultType: GraphQLObjectType = new GraphQLObjectType({
+        name: "AuthResult",
+        description: "Result of a successful `login` / shape of `me` for a valid token. The client just needs to know \"am I logged in?\" \u2014 `token` doubles as both credential and success signal.",
+        fields() {
+            return {
+                token: {
+                    description: "Signed token. Real tokens live 30 days. Store in `localStorage` and attach as `Authorization: Bearer <token>`.",
+                    name: "token",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
     });
     const NetWorthCurrencyRateType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthCurrencyRate",
@@ -2088,6 +2102,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args, context) {
                         return assertNonNull(queryInvestmentsResolver(context, args.first, args.after, args.sort, args.filterAssetId));
+                    }
+                },
+                me: {
+                    description: "Return the current session's auth info, or `null` if the request is anonymous. Used by the web app on boot to decide whether to send the user to the login screen or straight to the dashboard.",
+                    name: "me",
+                    type: AuthResultType,
+                    extensions: {
+                        grats: {
+                            directives: [{
+                                    name: "noAuth",
+                                    args: {}
+                                }]
+                        }
+                    },
+                    resolve(_source, _args, context) {
+                        return queryMeResolver(context);
                     }
                 },
                 netWorth: {
@@ -3404,6 +3434,43 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationInvestmentUpdateResolver(args.id, args.name, args.asset);
                     }
                 },
+                login: {
+                    description: "Exchange the 4-digit PIN (from the `AUTH_PIN` env var) for a 30-day real-session token. Rejects with `Invalid PIN` on mismatch; the comparison is constant-time.",
+                    name: "login",
+                    type: new GraphQLNonNull(AuthResultType),
+                    args: {
+                        pin: {
+                            type: new GraphQLNonNull(GraphQLInt)
+                        }
+                    },
+                    extensions: {
+                        grats: {
+                            directives: [{
+                                    name: "noAuth",
+                                    args: {}
+                                }]
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationLoginResolver(args.pin);
+                    }
+                },
+                logout: {
+                    description: "Invalidate the current session. Real sessions are stateless \u2014 tokens are stateless; the client just discards it. The server-side no-op keeps the mutation shape consistent so future session kinds can do real work here.",
+                    name: "logout",
+                    type: new GraphQLNonNull(GraphQLBoolean),
+                    extensions: {
+                        grats: {
+                            directives: [{
+                                    name: "noAuth",
+                                    args: {}
+                                }]
+                        }
+                    },
+                    resolve() {
+                        return mutationLogoutResolver();
+                    }
+                },
                 netWorthCategoryCreate: {
                     description: "Create a new category (asset, liability, or option).",
                     name: "netWorthCategoryCreate",
@@ -3758,12 +3825,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 }
             }), new GraphQLDirective({
+                name: "noAuth",
+                locations: [DirectiveLocation.FIELD_DEFINITION],
+                description: "Mark a root query / mutation field as callable without authentication. Every other root field requires a valid `real` or `demo` token \u2014 selecting an auth-required root field on an anonymous request throws `UNAUTHENTICATED` before any resolver runs. Only meaningful on `Query` / `Mutation` fields; nested fields inherit the root's decision."
+            }), new GraphQLDirective({
                 name: "semanticNonNull",
                 locations: [DirectiveLocation.FIELD_DEFINITION],
                 description: "Mark a field as semantically non-null \u2014 schema-level nullable (per the Query-field-nullability convention) but the resolver must never actually return null. Returning null throws a `UNEXPECTED_NULL` GraphQLError at resolve time."
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
     });
 }

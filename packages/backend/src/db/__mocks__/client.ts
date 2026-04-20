@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
@@ -11,5 +13,19 @@ function testDbName(): string {
 
 const url = `postgres://fire:fire@localhost:5433/${testDbName()}`;
 
-export const db = drizzle(postgres(url), { schema });
-export type DB = typeof db;
+const defaultDb = drizzle(postgres(url), { schema });
+export type DB = typeof defaultDb;
+
+const als = new AsyncLocalStorage<DB>();
+
+export function runWithDb<T>(scopedDb: DB, fn: () => Promise<T>): Promise<T> {
+  return als.run(scopedDb, fn);
+}
+
+export const db: DB = new Proxy(defaultDb, {
+  get(_target, prop) {
+    const active = als.getStore() ?? defaultDb;
+    const value = Reflect.get(active, prop, active);
+    return typeof value === "function" ? value.bind(active) : value;
+  },
+}) as DB;

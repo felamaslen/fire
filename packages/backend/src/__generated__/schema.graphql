@@ -16,6 +16,11 @@ directive @constraint(
 ) on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
 
 """
+Mark a root query / mutation field as callable without authentication. Every other root field requires a valid `real` or `demo` token — selecting an auth-required root field on an anonymous request throws `UNAUTHENTICATED` before any resolver runs. Only meaningful on `Query` / `Mutation` fields; nested fields inherit the root's decision.
+"""
+directive @noAuth on FIELD_DEFINITION
+
+"""
 Mark a field as semantically non-null — schema-level nullable (per the Query-field-nullability convention) but the resolver must never actually return null. Returning null throws a `UNEXPECTED_NULL` GraphQLError at resolve time.
 """
 directive @semanticNonNull on FIELD_DEFINITION
@@ -355,6 +360,16 @@ input PlanningYearTaxRatesUKInput {
   thresholdPersonalAllowanceTaper: Float!
   """Student-loan plan 2 threshold, in fractional units of GBP."""
   thresholdStudentLoanPlan2: Float!
+}
+
+"""
+Result of a successful `login` / shape of `me` for a valid token. The client just needs to know "am I logged in?" — `token` doubles as both credential and success signal.
+"""
+type AuthResult {
+  """
+  Signed token. Real tokens live 30 days. Store in `localStorage` and attach as `Authorization: Bearer <token>`.
+  """
+  token: String!
 }
 
 """Metadata for a currency supported by the server."""
@@ -818,6 +833,14 @@ type Mutation {
     id: ID!
     name: String
   ): Investment!
+  """
+  Exchange the 4-digit PIN (from the `AUTH_PIN` env var) for a 30-day real-session token. Rejects with `Invalid PIN` on mismatch; the comparison is constant-time.
+  """
+  login(pin: Int!): AuthResult! @noAuth
+  """
+  Invalidate the current session. Real sessions are stateless — tokens are stateless; the client just discards it. The server-side no-op keeps the mutation shape consistent so future session kinds can do real work here.
+  """
+  logout: Boolean! @noAuth
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """
@@ -1784,6 +1807,10 @@ type Query {
     first: Int
     sort: InvestmentSort
   ): InvestmentConnection @semanticNonNull
+  """
+  Return the current session's auth info, or `null` if the request is anonymous. Used by the web app on boot to decide whether to send the user to the login screen or straight to the dashboard.
+  """
+  me: AuthResult @noAuth
   """Paginated list of net-worth entries, newest first."""
   netWorth(after: ID, before: ID, first: Int, last: Int): NetWorthEntryConnection @semanticNonNull
   """

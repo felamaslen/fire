@@ -3,10 +3,14 @@ import { fastifyApolloHandler } from "@as-integrations/fastify";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { GraphQLError } from "graphql";
 
+import { runWithSession } from "@/auth/session-als";
+import { runWithDb } from "@/db";
+import { defaultDb } from "@/db/client";
 import { log } from "@/log";
 import { router } from "@/router";
 
 import { getSchema } from "../__generated__/schema";
+import { authPlugin, collectNoAuthFields } from "./auth-plugin";
 import { constraintPlugin } from "./constraint";
 import { type Context, createContext } from "./context";
 import { dateScalar } from "./date";
@@ -33,6 +37,7 @@ declare global {
 
 async function buildApollo(): Promise<ApolloServer<Context>> {
   const schema = applySemanticNonNull(getSchema({ scalars }));
+  const noAuthFields = collectNoAuthFields(schema);
   const apollo = new ApolloServer<Context>({
     schema,
     includeStacktraceInErrorResponses: false,
@@ -41,14 +46,32 @@ async function buildApollo(): Promise<ApolloServer<Context>> {
     // which would then take the whole Fastify server down with it (503s on
     // every subsequent request). Shutdown is handled in `index.ts` by closing
     // the router directly, so draining from Apollo is not needed.
-    plugins: [constraintPlugin(schema)],
+    plugins: [constraintPlugin(schema), authPlugin(schema, noAuthFields)],
     formatError(formatted, rawError) {
       const original =
         rawError instanceof GraphQLError ? rawError.originalError : undefined;
+      const err = (original ?? rawError) as Error | unknown;
       log.error("GraphQL error", {
         message: formatted.message,
         path: formatted.path,
-        err: original ?? rawError,
+        err:
+          err instanceof Error
+            ? {
+                name: err.name,
+                message: err.message,
+                stack: err.stack,
+                // Drizzle wraps the underlying pg error as `cause`; surface it so
+                // constraint violations don't stay hidden behind "Failed query: …".
+                cause:
+                  err.cause instanceof Error
+                    ? {
+                        name: err.cause.name,
+                        message: err.cause.message,
+                        stack: err.cause.stack,
+                      }
+                    : err.cause,
+              }
+            : err,
       });
       const { extensions, ...rest } = formatted;
       const safeExtensions = extensions
@@ -78,16 +101,17 @@ if (!globalThis.__apolloRouted) {
       async handler(request, reply) {
         const current = state.current;
         if (!current) throw new Error("Apollo server not initialised");
-        // `fastifyApolloHandler` returns a handler typed against its own
-        // narrow `RouteInterface`; widen back to the generic Fastify handler
-        // shape so our route's request/reply types flow through.
+        const ctx = createContext({ request });
         const apolloHandler = fastifyApolloHandler(current, {
-          context: createContext,
-        }) as unknown as (
-          req: FastifyRequest,
-          rep: FastifyReply,
-        ) => Promise<unknown>;
-        return apolloHandler(request, reply);
+          context: async () => ctx,
+        }) as (req: FastifyRequest, rep: FastifyReply) => Promise<unknown>;
+        // Stash the session in an ALS and wrap the handler in `runWithDb` so
+        // non-resolver code (future demo-session machinery, cache helpers,
+        // background fetches) can branch on the session or reach the active
+        // db without every call site threading `ctx` through.
+        return runWithSession(ctx.session, () =>
+          runWithDb(defaultDb, () => apolloHandler(request, reply)),
+        );
       },
     });
   };
