@@ -8,6 +8,8 @@ import {
   Briefcase,
   ChartCandlestick,
   Check,
+  ChevronLeft,
+  ChevronRight,
   CreditCard,
   HandCoins,
   Landmark,
@@ -19,11 +21,12 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Figure, FigureDocument } from "@/components/figure";
 import { NavHeaderActions, NavHeaderTitle } from "@/components/nav-header";
+import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -169,6 +172,27 @@ export const PlanningYearViewDocument = graphql(
   [PlanningMonthAccountCellDocument],
 );
 
+/** Windowed list of planning years for the bottom navigation footer. The
+ * main `PlanningYearView` suspense query selects the first window (`last: 9`)
+ * with the same args, so first-render is a cache hit; left / right clicks
+ * then re-read via this non-suspense query with a different `before` cursor
+ * so pagination doesn't re-suspend the whole page. */
+const PlanningYearsFooterDocument = graphql(`
+  query PlanningYearsFooter($last: Int!, $before: ID) {
+    planningYears(last: $last, before: $before) {
+      edges {
+        node {
+          id
+        }
+      }
+      pageInfo {
+        hasPreviousPage
+        startCursor
+      }
+    }
+  }
+`);
+
 /** Frequently-used liability and asset categories for a given planning
  * account — used to surface a "Frequently used" section on top of the plain
  * alphabetical dropdown in the create-transaction popover. Fetched lazily
@@ -242,8 +266,16 @@ const TransactionDeleteDocument = graphql(`
 `);
 
 export const Route = createFileRoute("/planning/$year")({
-  component: PlanningYearPage,
+  component: PlanningYearRoute,
 });
+
+function PlanningYearRoute() {
+  return (
+    <Suspense fallback={<Spinner />}>
+      <PlanningYearPage />
+    </Suspense>
+  );
+}
 
 type PlanningYearData = NonNullable<
   ResultOf<typeof PlanningYearViewDocument>["planningYear"]
@@ -266,7 +298,6 @@ function PlanningYearPage() {
       </main>
     );
   }
-  const allYears = data.planningYears?.edges.map((e) => e.node.id) ?? [];
   const hasTaxRates = data.planningYear.taxRates != null;
   const liabilities: LiabilityOption[] = (data.netWorthCategories?.edges ?? [])
     .map((e) => e.node)
@@ -294,8 +325,10 @@ function PlanningYearPage() {
           investableAssets={investableAssets}
         />
       </div>
-      <YearFooter current={year} years={allYears} />
-      <Outlet />
+      <YearFooter current={year} />
+      <Suspense fallback={null}>
+        <Outlet />
+      </Suspense>
     </main>
   );
 }
@@ -431,10 +464,56 @@ function ManageIconLink({
   );
 }
 
-function YearFooter({ current, years }: { current: string; years: string[] }) {
+const YEARS_PAGE_SIZE = 9;
+
+function YearFooter({ current }: { current: string }) {
+  // Stack of `before` cursors, one per page already shown. `[null]` is the
+  // newest window; pushing prepends the current window's start cursor to page
+  // backwards in time; popping returns to a newer window.
+  const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
+  const before = cursorStack[cursorStack.length - 1];
+  const { data, loading } = useQuery(PlanningYearsFooterDocument, {
+    variables: { last: YEARS_PAGE_SIZE, before },
+    // Match the main suspense query's args on first render so we read the
+    // already-warm cache instead of hitting the network.
+    fetchPolicy: "cache-first",
+  });
+  const years = data?.planningYears?.edges.map((e) => e.node.id) ?? [];
+  const hasOlder = data?.planningYears?.pageInfo.hasPreviousPage ?? false;
+  const startCursor = data?.planningYears?.pageInfo.startCursor ?? null;
+  const canGoNewer = cursorStack.length > 1;
+  const onOlder = () => {
+    if (!startCursor) return;
+    setCursorStack((s) => [...s, startCursor]);
+  };
+  const onNewer = () => {
+    setCursorStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  };
   return (
     <nav className="sticky bottom-0 z-40 border-t bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-      <ul className="flex flex-wrap items-center gap-1">
+      <ul
+        className={cn(
+          "flex flex-wrap items-center gap-1 transition-opacity",
+          loading && "opacity-50",
+        )}
+      >
+        {hasOlder && (
+          <li>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Show older years"
+                  onClick={onOlder}
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Show older years</TooltipContent>
+            </Tooltip>
+          </li>
+        )}
         {years.map((y) => {
           const isCurrent = y === current;
           return (
@@ -452,6 +531,23 @@ function YearFooter({ current, years }: { current: string; years: string[] }) {
             </li>
           );
         })}
+        {canGoNewer && (
+          <li>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Show newer years"
+                  onClick={onNewer}
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Show newer years</TooltipContent>
+            </Tooltip>
+          </li>
+        )}
       </ul>
     </nav>
   );
