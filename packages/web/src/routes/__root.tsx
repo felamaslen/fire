@@ -6,6 +6,7 @@ import {
 import {
   createRootRoute,
   Outlet,
+  redirect,
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
@@ -22,6 +23,17 @@ import { TooltipProvider } from "../components/ui/tooltip";
 const apolloClient = createApolloClient();
 
 export const Route = createRootRoute({
+  // Gate every route except `/login` on the presence of a local token before
+  // any child component mounts. Without this, the index route's `Home`
+  // component (and its `useSuspenseQuery`) can mount after login faster than
+  // the in-render `AuthGate` can gate it, firing logged in queries against
+  // a session that hasn't yet been recognised as authenticated.
+  beforeLoad: ({ location }) => {
+    if (location.pathname === "/login") return;
+    if (getToken() == null) {
+      throw redirect({ to: "/login" });
+    }
+  },
   component: RootComponent,
 });
 
