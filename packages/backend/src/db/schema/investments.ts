@@ -169,6 +169,8 @@ export const InvestmentPrices = pgTable(
     price: doublePrecision("price").notNull(),
     /** Split-adjusted unit price, in fractional units of `currency`. Equal to `price * product(ratio for every later split)`. Maintained by trigger — do not write directly; any value supplied on INSERT / UPDATE is overwritten. */
     priceAdjusted: doublePrecision("priceAdjusted").notNull().default(0),
+    /** `true` on the row with the greatest `date` per `investmentId`, `null` on every other row (nullable-`true` pattern so the partial unique index enforces "at most one latest per investment" without needing to store `false` on the other rows). Maintained by trigger — do not write directly. Lets the hot "what's the latest close for these N investments?" query hit the partial index directly instead of window-sorting the full history. */
+    isLatest: boolean("isLatest"),
     currency: currencyCode("currency").notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
@@ -180,10 +182,17 @@ export const InvestmentPrices = pgTable(
   (t) => [
     check("InvestmentPrices_price_ck", sql`${t.price} >= 0`),
     check("InvestmentPrices_priceAdjusted_ck", sql`${t.priceAdjusted} >= 0`),
+    check(
+      "InvestmentPrices_isLatest_ck",
+      sql`${t.isLatest} IS NULL OR ${t.isLatest} = true`,
+    ),
     uniqueIndex("InvestmentPrices_investmentId_date_uq").on(
       t.investmentId,
       t.date,
     ),
+    uniqueIndex("InvestmentPrices_investmentId_isLatest_uq")
+      .on(t.investmentId, t.isLatest)
+      .where(sql`${t.isLatest} IS NOT NULL`),
   ],
 );
 

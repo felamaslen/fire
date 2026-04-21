@@ -169,6 +169,13 @@
       "when": 1776605150435,
       "tag": "0023_create_demo_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1776787342103,
+      "tag": "0024_add_is_latest_to_investment_prices",
+      "breakpoints": true
     }
   ]
 }
