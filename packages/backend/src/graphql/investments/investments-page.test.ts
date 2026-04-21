@@ -101,6 +101,20 @@ async function setPrices(
   }
 }
 
+async function setSplit(
+  investmentId: string,
+  date: string,
+  ratio: number,
+): Promise<void> {
+  const { db } = await import("@/db");
+  const { InvestmentStockSplits } = await import("@/db/schema/investments");
+  await db.insert(InvestmentStockSplits).values({
+    investmentId,
+    date: new Date(date),
+    ratio: String(ratio),
+  });
+}
+
 it("covers the InvestmentsPage surface across shared / fully-sold wrappers", async () => {
   // Wrappers.
   const isa = await createAsset("ISA");
@@ -117,9 +131,12 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
   const msft = await createStock("Microsoft", "MSFT");
   const tsla = await createStock("Tesla", "TSLA");
 
-  // AAPL — held in ISA + SIPP.
+  // AAPL — held in ISA + SIPP, 2-for-1 split between the buys and today's
+  // prices. Pre-split units are doubled for value / units-held aggregation;
+  // `unitsPriceSum` is the cash the user actually paid and stays unchanged.
   await tx(aapl, isa, "2025-01-10", 10, 100);
   await tx(aapl, sipp, "2025-01-10", 5, 100);
+  await setSplit(aapl, "2025-06-01", 2);
 
   // AMZN — ISA only, fully sold.
   await tx(amzn, isa, "2025-02-01", 10, 50);
@@ -303,44 +320,44 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
           "initialDate": "2026-04-14",
           "points": [
             {
-              "from": 7350,
-              "hi": 7625,
-              "lo": 7350,
-              "to": 7625,
+              "from": 9300,
+              "hi": 9650,
+              "lo": 9300,
+              "to": 9650,
               "x": 0,
             },
             {
-              "from": 7625,
-              "hi": 8250,
-              "lo": 7625,
-              "to": 8250,
+              "from": 9650,
+              "hi": 10500,
+              "lo": 9650,
+              "to": 10500,
               "x": 2,
             },
           ],
         },
-        "percentGain": 1.323943661971831,
+        "percentGain": 1.9577464788732395,
         "timeseries": {
           "initialDate": "2026-04-14",
           "points": [
             {
               "x": 0,
-              "y": 7350,
+              "y": 9300,
             },
             {
               "x": 1,
-              "y": 7625,
+              "y": 9650,
             },
             {
               "x": 2,
-              "y": 7800,
+              "y": 9900,
             },
             {
               "x": 3,
-              "y": 7975,
+              "y": 10150,
             },
             {
               "x": 4,
-              "y": 8250,
+              "y": 10500,
             },
           ],
         },
@@ -348,10 +365,10 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
           "amount": 3550,
         },
         "totalGain": {
-          "amount": 4700,
+          "amount": 6950,
         },
         "totalValue": {
-          "amount": 8250,
+          "amount": 10500,
           "currency": "GBP",
         },
       },
@@ -363,10 +380,10 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
                 "name": "Apple",
               },
               "totalGain": {
-                "amount": 750,
+                "amount": 3000,
               },
               "totalValue": {
-                "amount": 2250,
+                "amount": 4500,
               },
             },
           },
@@ -477,10 +494,10 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
       },
       "isa": {
         "totalGain": {
-          "amount": 1050,
+          "amount": 2550,
         },
         "totalValue": {
-          "amount": 1500,
+          "amount": 3000,
         },
       },
       "isaPerInvestment": {
@@ -491,10 +508,10 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
                 "name": "Apple",
               },
               "totalGain": {
-                "amount": 500,
+                "amount": 2000,
               },
               "totalValue": {
-                "amount": 1500,
+                "amount": 3000,
               },
             },
           },
@@ -528,10 +545,10 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
       },
       "sipp": {
         "totalGain": {
-          "amount": 2050,
+          "amount": 2800,
         },
         "totalValue": {
-          "amount": 3750,
+          "amount": 4500,
         },
       },
       "sippPerInvestment": {
@@ -542,10 +559,10 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
                 "name": "Apple",
               },
               "totalGain": {
-                "amount": 250,
+                "amount": 1000,
               },
               "totalValue": {
-                "amount": 750,
+                "amount": 1500,
               },
             },
           },
