@@ -11,9 +11,15 @@ import {
 import { print } from "graphql";
 
 import type { introspection } from "@/__generated__/graphql-env";
+import { signToken } from "@/auth/token";
 import { router } from "@/router";
 
 import { TestUpload } from "./upload";
+
+// Real-session token signed once per worker with the test `AUTH_SECRET`. The
+// auth plugin gates every non-`@noAuth` root field, so without this every
+// `runGql` would fail with `UNAUTHENTICATED`.
+const AUTH_HEADER = `Bearer ${signToken({ kind: "real" })}`;
 
 export const graphql = initGraphQLTada<{
   introspection: introspection;
@@ -52,6 +58,7 @@ async function runJsonOperation<Q extends TadaDocumentNode<any, any>>(
     method: "POST",
     url: "/graphql",
     payload: { query: print(doc), variables },
+    headers: { authorization: AUTH_HEADER },
   });
   return unwrap<Q>(JSON.parse(res.body));
 }
@@ -102,6 +109,7 @@ async function runMultipartOperation<Q extends TadaDocumentNode<any, any>>(
       "content-length": String(body.length),
       // Apollo's CSRF-prevention requires an opt-in header for multipart requests.
       "apollo-require-preflight": "true",
+      authorization: AUTH_HEADER,
     },
   });
   return unwrap<Q>(JSON.parse(res.body));
