@@ -45,13 +45,15 @@ function sessionFromPayload(payload: TokenPayload | null): Session {
  * The WeakMap is keyed by `Context`, so the cache is inherently request-scoped — once the context is garbage-collected after the request ends, the entry drops.
  *
  * `args` are forwarded to `fn` on the first call and ignored on cache hits, so typical usage has `fn` return a container (e.g. a `Map`) that callers then index into per-row (`(await loader(ctx)).get(id)`). For loaders where `fn` takes no extra parameters, call it as `loader(ctx)`.
+ *
+ * The wrapper is intentionally synchronous: when `fn` returns a `Promise<T>`, the wrapper passes the same promise through (so `await loader(ctx)` still works), but when `fn` returns a bare value (e.g. a `DataLoader` instance), callers can use it immediately — without an `await` — in the same microtask. That matters for batching-sensitive consumers like `DataLoader.load`, which coalesces calls made in a single execution frame: an intervening `await` drops the subsequent `.load(...)` into the next microtask and splits the batch.
  */
 export function contextAwareDataLoader<T, Args extends unknown[]>(
   /** Function that produces the per-request value. Receives `ctx` plus any forwarded `args` */
-  fn: (ctx: Context, ...args: Args) => T | Promise<T>,
+  fn: (ctx: Context, ...args: Args) => T,
 ) {
-  const cache = new WeakMap<Context, Map<string, T | Promise<T>>>();
-  return async (ctx: Context, ...args: Args) => {
+  const cache = new WeakMap<Context, Map<string, T>>();
+  return (ctx: Context, ...args: Args): T => {
     if (!cache.has(ctx)) cache.set(ctx, new Map());
     const key = args.length ? JSON.stringify(args) : "";
     let v = cache.get(ctx)!.get(key);

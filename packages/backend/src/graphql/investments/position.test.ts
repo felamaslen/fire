@@ -171,10 +171,12 @@ describe("Investment aggregates and wrappers", () => {
       totalCost: { amount: 50 },
       totalValue: { amount: 60 },
       totalGain: { amount: 10 },
-      dailyGainValue: { amount: 10 },
     });
     expect(inv?.position?.percentGain).toBeCloseTo(0.2);
-    expect(inv?.position?.dailyGainPercent).toBeCloseTo(0.2);
+    // Daily gain sources `previousClose` exclusively from the live Yahoo
+    // quote — no quote mocked here, so both fields null.
+    expect(inv?.position?.dailyGainValue).toBeNull();
+    expect(inv?.position?.dailyGainPercent).toBeNull();
     expect(inv?.wrappers).toHaveLength(1);
     expect(inv?.wrappers?.[0]).toMatchObject({
       asset: { name: "ISA" },

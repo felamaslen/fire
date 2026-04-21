@@ -151,17 +151,17 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: MoneyType
                 },
                 dailyGainPercent: {
-                    description: "Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it.",
+                    description: "Fractional change in market value over the most recent pricing interval. Same sourcing + null conditions as `dailyGainValue`.",
                     name: "dailyGainPercent",
                     type: GraphQLFloat
                 },
                 dailyGainValue: {
-                    description: "Change in market value of the held position over the most recent pricing interval. When a live quote is available, compares it against yesterday's close; otherwise compares the two most recent cached closes. `null` until enough price history exists to compute it.",
+                    description: "Change in market value of the held position over the most recent pricing interval, sourced exclusively from the live Yahoo quote's `previousClose`. `null` when no live quote is available, when the position is fully sold, or when the caller asked to skip live prices.",
                     name: "dailyGainValue",
                     type: MoneyType
                 },
                 percentGain: {
-                    description: "Unrealised gain as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.",
+                    description: "Total return as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.",
                     name: "percentGain",
                     type: GraphQLFloat
                 },
@@ -171,17 +171,17 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(InvestmentReinvestedType)
                 },
                 totalCost: {
-                    description: "Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it.",
+                    description: "Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it. For a fully-sold position this is gross buy cost.",
                     name: "totalCost",
                     type: new GraphQLNonNull(MoneyType)
                 },
                 totalGain: {
-                    description: "Unrealised gain on the held position \u2014 `totalValue - totalCost`. `null` until at least one price is known.",
+                    description: "Total return (realised + unrealised) on the position \u2014 `totalValue - totalCost`. `null` until at least one price is known.",
                     name: "totalGain",
                     type: MoneyType
                 },
                 totalValue: {
-                    description: "Current market value of units held. `null` until at least one price is known for the investment.",
+                    description: "Current market value of units held \u2014 or, for a fully-sold position, the realised sell proceeds. `null` until at least one price is known for the investment.",
                     name: "totalValue",
                     type: MoneyType
                 },
@@ -1945,12 +1945,18 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 dailyGainPercent: {
                     description: "Fractional change in portfolio value over the most recent pricing interval, computed from the same subset of currently-held, live-priced positions as `dailyGainValue` \u2014 `\u03A3 \u0394 / \u03A3 previousValue`. `null` when no qualifying position exists, when the previous total is zero, or when `skipLive` is set.",
                     name: "dailyGainPercent",
-                    type: GraphQLFloat
+                    type: GraphQLFloat,
+                    resolve(source, _args, context) {
+                        return source.dailyGainPercent(context);
+                    }
                 },
                 dailyGainValue: {
-                    description: "Change in portfolio value over the most recent pricing interval \u2014 `\u03A3 (live_price \u2212 previousClose) \u00D7 unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote (`pricePrevious === null`) are excluded, so a lapsed price history for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set.",
+                    description: "Change in portfolio value over the most recent pricing interval \u2014 `\u03A3 (live_price \u2212 previousClose) \u00D7 unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote are excluded, so a lapsed live quote for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set.",
                     name: "dailyGainValue",
-                    type: MoneyType
+                    type: MoneyType,
+                    resolve(source, _args, context) {
+                        return source.dailyGainValue(context);
+                    }
                 },
                 id: {
                     description: "Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities \u2014 otherwise Apollo would merge them and the first response's values would be clobbered by the second.",
@@ -1965,7 +1971,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 percentGain: {
                     description: "Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero.",
                     name: "percentGain",
-                    type: GraphQLFloat
+                    type: GraphQLFloat,
+                    resolve(source, _args, context) {
+                        return source.percentGain(context);
+                    }
                 },
                 timeseries: {
                     description: "Daily-sampled line series of portfolio total over the requested period.",
@@ -1986,17 +1995,26 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 totalCost: {
                     description: "Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes.",
                     name: "totalCost",
-                    type: new GraphQLNonNull(MoneyType)
+                    type: new GraphQLNonNull(MoneyType),
+                    resolve(source, _args, context) {
+                        return source.totalCost(context);
+                    }
                 },
                 totalGain: {
                     description: "Total return (realised + unrealised) on the filtered portfolio \u2014 `totalValue - totalCost`.",
                     name: "totalGain",
-                    type: MoneyType
+                    type: MoneyType,
+                    resolve(source, _args, context) {
+                        return source.totalGain(context);
+                    }
                 },
                 totalValue: {
                     description: "Current market value of the filtered portfolio \u2014 the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate \u2014 matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.",
                     name: "totalValue",
-                    type: MoneyType
+                    type: MoneyType,
+                    resolve(source, _args, context) {
+                        return source.totalValue(context);
+                    }
                 },
                 xirr: {
                     description: "Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` \u2014 with `skipLive`, the terminal flow uses the most recent cached close instead of the live price.",

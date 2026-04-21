@@ -14,14 +14,13 @@ import {
   costBasis,
   costBasisWithFees,
   dailyGainPercent,
-  dailyGainValue,
   InvestmentStats,
   loadInvestmentStats,
-  percentGain,
+  percentGainPosition,
   reinvestedValue,
-  totalCost,
-  totalGain,
-  totalValue,
+  totalCostPosition,
+  totalGainPosition,
+  totalValuePosition,
 } from "./stats";
 
 /** Summary of DRIP (dividend-reinvestment) activity for one `InvestmentPosition`. @gqlType */
@@ -60,6 +59,14 @@ function maybeMoney(minor: number | null, currency: string): Money | null {
 export class InvestmentPosition {
   constructor(private readonly s: InvestmentStats) {}
 
+  /** `currency` is known to be non-null here — this resolver is only ever constructed from a single-investment stats slice. */
+  private get currency(): string {
+    if (this.s.currency === null) {
+      throw new Error("InvestmentPosition built from a multi-investment slice");
+    }
+    return this.s.currency;
+  }
+
   /** Net units held. @gqlField */
   get units(): Int {
     return this.s.unitsHeld as Int;
@@ -67,40 +74,43 @@ export class InvestmentPosition {
 
   /** Average price paid per share currently held, excluding fees and taxes. `null` when no units are held. @gqlField */
   costBasis(): Money | null {
-    return maybeMoney(costBasis(this.s), this.s.currency);
+    return maybeMoney(costBasis(this.s), this.currency);
   }
 
   /** Average price paid per share currently held, including fees and taxes. `null` when no units are held. @gqlField */
   costBasisWithFees(): Money | null {
-    return maybeMoney(costBasisWithFees(this.s), this.s.currency);
+    return maybeMoney(costBasisWithFees(this.s), this.currency);
   }
 
-  /** Current market value of units held. `null` until at least one price is known for the investment. @gqlField */
+  /** Current market value of units held — or, for a fully-sold position, the realised sell proceeds. `null` until at least one price is known for the investment. @gqlField */
   totalValue(): Money | null {
-    return maybeMoney(totalValue(this.s), this.s.currency);
+    return maybeMoney(totalValuePosition(this.s), this.currency);
   }
 
-  /** Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it. @gqlField */
+  /** Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it. For a fully-sold position this is gross buy cost. @gqlField */
   totalCost(): Money {
-    return Money.fromMinorDenomination(totalCost(this.s), this.s.currency);
+    return Money.fromMinorDenomination(
+      totalCostPosition(this.s),
+      this.currency,
+    );
   }
 
-  /** Unrealised gain on the held position — `totalValue - totalCost`. `null` until at least one price is known. @gqlField */
+  /** Total return (realised + unrealised) on the position — `totalValue - totalCost`. `null` until at least one price is known. @gqlField */
   totalGain(): Money | null {
-    return maybeMoney(totalGain(this.s), this.s.currency);
+    return maybeMoney(totalGainPosition(this.s), this.currency);
   }
 
-  /** Unrealised gain as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero. @gqlField */
+  /** Total return as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero. @gqlField */
   percentGain(): Float | null {
-    return percentGain(this.s) as Float | null;
+    return percentGainPosition(this.s) as Float | null;
   }
 
-  /** Change in market value of the held position over the most recent pricing interval. When a live quote is available, compares it against yesterday's close; otherwise compares the two most recent cached closes. `null` until enough price history exists to compute it. @gqlField */
+  /** Change in market value of the held position over the most recent pricing interval, sourced exclusively from the live Yahoo quote's `previousClose`. `null` when no live quote is available, when the position is fully sold, or when the caller asked to skip live prices. @gqlField */
   dailyGainValue(): Money | null {
-    return maybeMoney(dailyGainValue(this.s), this.s.currency);
+    return maybeMoney(this.s.dailyGainValueMinor, this.currency);
   }
 
-  /** Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it. @gqlField */
+  /** Fractional change in market value over the most recent pricing interval. Same sourcing + null conditions as `dailyGainValue`. @gqlField */
   dailyGainPercent(): Float | null {
     return dailyGainPercent(this.s) as Float | null;
   }
@@ -111,7 +121,7 @@ export class InvestmentPosition {
       this.s.reinvestedUnits as Int,
       this.s.reinvestedCostSum,
       reinvestedValue(this.s),
-      this.s.currency,
+      this.currency,
     );
   }
 }
@@ -131,7 +141,10 @@ export class InvestmentWrapper {
 
   /** Holdings, cost basis, and gain/loss filtered to this wrapper. @gqlField */
   async position(ctx: Context): Promise<InvestmentPosition> {
-    const s = await loadInvestmentStats(ctx, this.investmentId, this.assetId);
+    const s = await loadInvestmentStats(ctx, {
+      investmentId: this.investmentId,
+      assetId: this.assetId,
+    });
     return new InvestmentPosition(s);
   }
 }

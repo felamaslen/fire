@@ -14,6 +14,7 @@ import {
 import { solveXirr } from "@/forecast/growth";
 import { readCachedQuote, readOrRefresh } from "@/tasks/yahoo";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { assertCurrencyCode, Money } from "../money";
 import {
@@ -23,6 +24,11 @@ import {
   encodeCursor,
 } from "../pagination";
 import { Investment } from "./index";
+import {
+  type InvestmentStats,
+  type InvestmentStatsFilter,
+  loadInvestmentStats,
+} from "./stats";
 
 /** Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
 export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD" | "ALL";
@@ -667,24 +673,31 @@ export class Portfolio {
   }
 
   /** Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline. @gqlField */
-  async totalValue(): Promise<Money | null> {
-    return this.aggregate((h) => {
-      if (h.unitsHeld === 0 || h.priceLatest === null) return 0;
-      return h.unitsHeld * h.priceLatest;
-    });
+  async totalValue(ctx: Context): Promise<Money | null> {
+    const slices = await this.loadStats(ctx);
+    let total = 0;
+    for (const s of slices) {
+      // `totalValueMinor` is `null` when any contributing held investment is
+      // missing a price. Preserve that graceful degradation by treating it
+      // as a zero contribution rather than nulling the whole aggregate.
+      if (s.totalValueMinor !== null) total += s.totalValueMinor;
+    }
+    return Money.fromMinorDenomination(total, this.currency);
   }
 
   /** Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes. @gqlField */
-  async totalCost(): Promise<Money> {
-    const v = await this.aggregate((h) => h.buyCostSum - h.sellValueSum);
-    return v ?? Money.fromMinorDenomination(0, this.currency);
+  async totalCost(ctx: Context): Promise<Money> {
+    const slices = await this.loadStats(ctx);
+    let total = 0;
+    for (const s of slices) total += s.unitsPriceSum;
+    return Money.fromMinorDenomination(total, this.currency);
   }
 
   /** Total return (realised + unrealised) on the filtered portfolio — `totalValue - totalCost`. @gqlField */
-  async totalGain(): Promise<Money | null> {
-    const value = await this.totalValue();
+  async totalGain(ctx: Context): Promise<Money | null> {
+    const value = await this.totalValue(ctx);
     if (value === null) return null;
-    const cost = await this.totalCost();
+    const cost = await this.totalCost(ctx);
     const diffMajor = value.amount - cost.amount;
     return Money.fromMinorDenomination(
       Math.round(diffMajor * 10 ** this.scale),
@@ -693,10 +706,10 @@ export class Portfolio {
   }
 
   /** Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero. @gqlField */
-  async percentGain(): Promise<Float | null> {
-    const value = await this.totalValue();
+  async percentGain(ctx: Context): Promise<Float | null> {
+    const value = await this.totalValue(ctx);
     if (value === null) return null;
-    const cost = await this.totalCost();
+    const cost = await this.totalCost(ctx);
     if (cost.amount === 0) return null;
     return ((value.amount - cost.amount) / cost.amount) as Float;
   }
@@ -707,53 +720,74 @@ export class Portfolio {
     return computePortfolioXirr(held, this.filters);
   }
 
-  /** Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote (`pricePrevious === null`) are excluded, so a lapsed price history for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set. @gqlField */
-  async dailyGainValue(): Promise<Money | null> {
-    const totalMinor = await this.sumDailyGainMinor();
-    if (totalMinor === null) return null;
-    return Money.fromMinorDenomination(totalMinor, this.currency);
+  /** Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote are excluded, so a lapsed live quote for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set. @gqlField */
+  async dailyGainValue(ctx: Context): Promise<Money | null> {
+    if (this.skipLive) return null;
+    const slices = await this.loadStats(ctx);
+    let total: number | null = null;
+    for (const s of slices) {
+      if (s.dailyGainValueMinor === null) continue;
+      total = (total ?? 0) + s.dailyGainValueMinor;
+    }
+    return total === null
+      ? null
+      : Money.fromMinorDenomination(total, this.currency);
   }
 
   /** Fractional change in portfolio value over the most recent pricing interval, computed from the same subset of currently-held, live-priced positions as `dailyGainValue` — `Σ Δ / Σ previousValue`. `null` when no qualifying position exists, when the previous total is zero, or when `skipLive` is set. @gqlField */
-  async dailyGainPercent(): Promise<Float | null> {
+  async dailyGainPercent(ctx: Context): Promise<Float | null> {
     if (this.skipLive) return null;
-    const held = await this.loadHeld();
+    const slices = await this.loadStats(ctx);
     let gain = 0;
     let prev = 0;
     let any = false;
-    for (const h of held) {
+    for (const s of slices) {
       if (
-        h.unitsHeld === 0 ||
-        h.priceLatest === null ||
-        h.pricePrevious === null
+        s.dailyGainValueMinor === null ||
+        s.dailyGainPrevValueMinor === null
       ) {
         continue;
       }
+      gain += s.dailyGainValueMinor;
+      prev += s.dailyGainPrevValueMinor;
       any = true;
-      gain += (h.priceLatest - h.pricePrevious) * h.unitsHeld;
-      prev += h.pricePrevious * h.unitsHeld;
     }
     if (!any || prev === 0) return null;
     return (gain / prev) as Float;
   }
 
-  private async sumDailyGainMinor(): Promise<number | null> {
-    if (this.skipLive) return null;
-    const held = await this.loadHeld();
-    let total = 0;
-    let any = false;
-    for (const h of held) {
-      if (
-        h.unitsHeld === 0 ||
-        h.priceLatest === null ||
-        h.pricePrevious === null
-      ) {
-        continue;
+  /**
+   * Expand the `Portfolio`'s filters into one stats-loader key per slice and
+   * load them all. Keys share a `Context`-level `DataLoader`, so the whole
+   * page's expansion — every `Portfolio` × every `filterAssetIdIn` × every
+   * `filterInvestmentIdIn` — coalesces into one SQL regardless of how many
+   * stats fields are selected or how many `Portfolio` instances the
+   * request touches.
+   */
+  private async loadStats(ctx: Context): Promise<InvestmentStats[]> {
+    const assets = this.filterAssetIdIn;
+    const investments = this.filterInvestmentIdIn;
+    const base = {
+      currency: this.currency,
+      skipLive: this.skipLive,
+    } satisfies InvestmentStatsFilter;
+    const keys: InvestmentStatsFilter[] = [];
+    if (assets && investments) {
+      for (const assetId of assets) {
+        for (const investmentId of investments) {
+          keys.push({ ...base, assetId, investmentId });
+        }
       }
-      any = true;
-      total += (h.priceLatest - h.pricePrevious) * h.unitsHeld;
+    } else if (assets) {
+      for (const assetId of assets) keys.push({ ...base, assetId });
+    } else if (investments) {
+      for (const investmentId of investments) {
+        keys.push({ ...base, investmentId });
+      }
+    } else {
+      keys.push(base);
     }
-    return any ? total : null;
+    return Promise.all(keys.map((k) => loadInvestmentStats(ctx, k)));
   }
 
   /** Daily-sampled line series of portfolio total over the requested period. @gqlField */

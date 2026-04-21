@@ -505,29 +505,29 @@ type InvestmentPosition {
   """
   costBasisWithFees: Money
   """
-  Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it.
+  Fractional change in market value over the most recent pricing interval. Same sourcing + null conditions as `dailyGainValue`.
   """
   dailyGainPercent: Float
   """
-  Change in market value of the held position over the most recent pricing interval. When a live quote is available, compares it against yesterday's close; otherwise compares the two most recent cached closes. `null` until enough price history exists to compute it.
+  Change in market value of the held position over the most recent pricing interval, sourced exclusively from the live Yahoo quote's `previousClose`. `null` when no live quote is available, when the position is fully sold, or when the caller asked to skip live prices.
   """
   dailyGainValue: Money
   """
-  Unrealised gain as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.
+  Total return as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.
   """
   percentGain: Float
   """DRIP (dividend-reinvestment) activity on this position."""
   reinvested: InvestmentReinvested!
   """
-  Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it.
+  Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it. For a fully-sold position this is gross buy cost.
   """
   totalCost: Money!
   """
-  Unrealised gain on the held position — `totalValue - totalCost`. `null` until at least one price is known.
+  Total return (realised + unrealised) on the position — `totalValue - totalCost`. `null` until at least one price is known.
   """
   totalGain: Money
   """
-  Current market value of units held. `null` until at least one price is known for the investment.
+  Current market value of units held — or, for a fully-sold position, the realised sell proceeds. `null` until at least one price is known for the investment.
   """
   totalValue: Money
   """Net units held."""
@@ -1697,7 +1697,7 @@ type Portfolio {
   """
   dailyGainPercent: Float
   """
-  Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote (`pricePrevious === null`) are excluded, so a lapsed price history for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set.
+  Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote are excluded, so a lapsed live quote for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set.
   """
   dailyGainValue: Money
   """

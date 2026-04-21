@@ -129,8 +129,8 @@ export class Investment {
 
   /** Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet. @gqlField */
   async unitPriceCached(ctx: Context): Promise<Money | null> {
-    const s = await loadInvestmentStats(ctx, this.id);
-    if (s.priceLatest === null) return null;
+    const s = await loadInvestmentStats(ctx, { investmentId: this.id });
+    if (s.priceLatest === null || s.currency === null) return null;
     return Money.fromMinorDenomination(s.priceLatest, s.currency);
   }
 
@@ -151,11 +151,10 @@ export class Investment {
     /** When set, the position is scoped to this wrapper. */
     filterAssetId?: ID | null,
   ): Promise<InvestmentPosition> {
-    const s = await loadInvestmentStats(
-      ctx,
-      this.id,
-      filterAssetId ?? undefined,
-    );
+    const s = await loadInvestmentStats(ctx, {
+      investmentId: this.id,
+      assetId: filterAssetId ?? undefined,
+    });
     return new InvestmentPosition(s);
   }
 
@@ -312,13 +311,11 @@ export async function investments(
         }))
       : await Promise.all(
           rows.map(async (row) => {
-            const s = await loadInvestmentStats(
-              ctx,
-              row.id,
-              filterAssetId ?? undefined,
-            );
-            const totalValue =
-              s.priceLatest === null ? null : s.unitsHeld * s.priceLatest;
+            const s = await loadInvestmentStats(ctx, {
+              investmentId: row.id,
+              assetId: filterAssetId ?? undefined,
+            });
+            const totalValue = s.totalValueMinor;
             const totalGain =
               totalValue === null ? null : totalValue - s.unitsPriceSum;
             const percentGain =
