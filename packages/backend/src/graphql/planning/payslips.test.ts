@@ -3,6 +3,7 @@ import "@/index";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { signFileUrl } from "@/auth/file-url";
 import { db } from "@/db";
 import { PlanningPayslips } from "@/db/schema/planning";
 import { env } from "@/env";
@@ -634,7 +635,7 @@ it("stores the attached PDF fixture in the local bucket and serves it via GET /f
 
   const served = await router.inject({
     method: "GET",
-    url: `/files/${files[0]}`,
+    url: signFileUrl(files[0]),
   });
   expect(served.statusCode).toBe(200);
   expect(Buffer.from(served.rawPayload).equals(expected)).toBe(true);
