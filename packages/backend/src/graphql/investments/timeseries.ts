@@ -133,26 +133,32 @@ export const loadTimeseries = contextAwareDataLoader(
         // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
         const currency = HOME_CURRENCY;
 
+        // Earliest transaction in the filter scope — anchors the series at
+        // the first-cached-price boundary for all periods. For `ALL`, this is
+        // the series start. For `YEAR` / `MONTH` / `YTD`, we clamp the period
+        // window to this so we never generate sample dates before any data
+        // exists (they'd produce empty rows via the inner join and surface as
+        // a series that starts later than the caller's `initialDate`).
+        const firstTxDate = db
+          .select({ minDate: min(InvestmentTransactions.date) })
+          .from(InvestmentTransactions)
+          .where(
+            and(
+              eq(InvestmentTransactions.currency, currency),
+              whereAssetId,
+              whereInvestmentId(InvestmentTransactions),
+            ),
+          );
         const startDate = (() => {
           switch (keys[0].period) {
-            case "ALL": {
-              return db
-                .select({ minDate: min(InvestmentTransactions.date) })
-                .from(InvestmentTransactions)
-                .where(
-                  and(
-                    eq(InvestmentTransactions.currency, currency),
-                    whereAssetId,
-                    whereInvestmentId(InvestmentTransactions),
-                  ),
-                );
-            }
+            case "ALL":
+              return firstTxDate;
             case "YEAR":
-              return sql`select (now() - interval '${sql.raw(keys[0].length.toString())} year')::date`;
+              return sql`select greatest((now() - interval '${sql.raw(keys[0].length.toString())} year')::date, (${firstTxDate}))`;
             case "MONTH":
-              return sql`select (now() - interval '${sql.raw(keys[0].length.toString())} month')::date`;
+              return sql`select greatest((now() - interval '${sql.raw(keys[0].length.toString())} month')::date, (${firstTxDate}))`;
             case "YTD":
-              return sql`select date_trunc('year', now())::date`;
+              return sql`select greatest(date_trunc('year', now())::date, (${firstTxDate}))`;
             default:
               throw new UnreachableCaseError(keys[0].period);
           }
@@ -316,7 +322,7 @@ export const loadTimeseries = contextAwareDataLoader(
         while (++cursorPrices < pricesAdjRows.length) {
           const priceRow = pricesAdjRows[cursorPrices];
           while (
-            cursorUnits < unitsAdjDeltaRows.length - 1 &&
+            cursorUnits < unitsAdjDeltaRows.length &&
             unitsAdjDeltaRows[cursorUnits].date <= priceRow.date
           ) {
             const { assetId, investmentId, units } =
