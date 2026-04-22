@@ -447,9 +447,10 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     const doc = graphql(`
       query {
         portfolio {
-          candlestick(period: YEAR, length: 5) {
+          candlestick(unit: WEEK, length: 5) {
             points {
-              x
+              x0
+              x1
               from
               to
               lo
@@ -461,7 +462,7 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     `);
     const data = await runGql(doc, {});
     const points = data.portfolio?.candlestick?.points ?? [];
-    expect(points[0]).toMatchObject({ x: 0, from: 50 });
+    expect(points[0]).toMatchObject({ x0: 0, x1: 35, from: 50 });
     // Series forward-fills at £60 once the last cached price is consumed.
     expect(points[points.length - 1]).toMatchObject({ to: 60, hi: 60 });
   });

@@ -207,10 +207,11 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
             y
           }
         }
-        candlestick(period: ALL) {
+        candlestick(unit: WEEK, length: 1) {
           initialDate
           points {
-            x
+            x0
+            x1
             from
             to
             lo
@@ -317,46 +318,48 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
     {
       "aggregate": {
         "candlestick": {
-          "initialDate": "2026-04-14",
+          "initialDate": "2026-04-07",
           "points": [
             {
-              "from": 9300,
-              "hi": 9650,
-              "lo": 9300,
-              "to": 9650,
-              "x": 0,
+              "from": 6700,
+              "hi": 6950,
+              "lo": 6700,
+              "to": 6950,
+              "x0": 0,
+              "x1": 7,
             },
             {
-              "from": 9650,
-              "hi": 10500,
-              "lo": 9650,
-              "to": 10500,
-              "x": 2,
+              "from": 6950,
+              "hi": 7500,
+              "lo": 6950,
+              "to": 7500,
+              "x0": 7,
+              "x1": 14,
             },
           ],
         },
         "percentGain": 1.9577464788732395,
         "timeseries": {
-          "initialDate": "2026-04-14",
+          "initialDate": "2026-04-15",
           "points": [
             {
               "x": 0,
-              "y": 9300,
-            },
-            {
-              "x": 1,
               "y": 9650,
             },
             {
               "x": 2,
-              "y": 9900,
-            },
-            {
-              "x": 3,
               "y": 10150,
             },
             {
               "x": 4,
+              "y": 10500,
+            },
+            {
+              "x": 6,
+              "y": 10500,
+            },
+            {
+              "x": 7,
               "y": 10500,
             },
           ],
