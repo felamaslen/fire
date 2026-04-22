@@ -61,8 +61,15 @@ enum PlanningBillsFrequency {
   YEARLY
 }
 
+"""Candle width unit for `Portfolio.candlestick`."""
+enum PortfolioCandleUnit {
+  DAY
+  MONTH
+  WEEK
+}
+
 """
-Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.
+Anchoring period for `Portfolio.timeseries`. `YTD` spans the start of the current calendar year through today and ignores `length`.
 """
 enum PortfolioTimePeriod {
   ALL
@@ -1687,7 +1694,7 @@ Aggregated view of the portfolio, optionally filtered by wrappers and/or investm
 """
 type Portfolio {
   """Candlestick buckets of portfolio total over the requested period."""
-  candlestick(length: Int, period: PortfolioTimePeriod!): PortfolioCandlestick!
+  candlestick(length: Int! = 1, unit: PortfolioCandleUnit!): PortfolioCandlestick!
   """
   ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
   """
@@ -1747,11 +1754,30 @@ type PortfolioCandlestick {
 One OHLC candlestick bucket. `from` / `to` are the portfolio total at the bucket's start / end; `lo` / `hi` are the minimum / maximum across the bucket. All values are in major units of `currency`.
 """
 type PortfolioCandlestickPoint {
+  """
+  Starting Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
+  """
   from: Int!
+  """
+  Highest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
+  """
   hi: Int!
+  """
+  Lowest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
+  """
   lo: Int!
+  """
+  Ending Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
+  """
   to: Int!
-  x: Int!
+  """
+  Number of days (at start of candle) since `initialDate` on the parent `PortfolioCandlestick`
+  """
+  x0: Int!
+  """
+  Number of days (at end of candle) since `initialDate` on the parent `PortfolioCandlestick`
+  """
+  x1: Int!
 }
 
 """

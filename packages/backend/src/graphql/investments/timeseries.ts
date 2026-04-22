@@ -15,14 +15,17 @@ import {
 } from "@/db/schema/investments";
 import { UnreachableCaseError } from "@/errors";
 
-import { contextAwareDataLoader } from "../context";
+import { Context, contextAwareDataLoader } from "../context";
 import { PortfolioTimePeriod, PortfolioTimeseries } from "./portfolio";
 
-type TimeseriesKey = {
+export interface LoadInvestmentsByKeyFilter {
   /** When set, filters the result by the given portfolio (net worth asset ID) */
   assetId?: string;
   /** When set, filters the result by the given stock/fund (investment ID) */
   investmentId?: string;
+}
+
+type TimeseriesKey = LoadInvestmentsByKeyFilter & {
   period: PortfolioTimePeriod;
   length: number;
 };
@@ -32,30 +35,81 @@ const cacheKeyFn = (key: TimeseriesKey): string =>
 
 const MAX_POINTS = 300;
 
+export const loadInvestmentsByKeyConditions = (
+  keys: readonly LoadInvestmentsByKeyFilter[],
+) => {
+  // Filter conditions on the entire query: when providing assetId or investmentId filters, do not return any rows which we won't ever need to construct the result set for each key
+  const whereAssetId = keys.every((k) => k.assetId !== undefined)
+    ? inArray(
+        InvestmentTransactions.assetId,
+        keys.map((k) => k.assetId!),
+      )
+    : undefined;
+  const whereInvestmentId = (
+    tbl: typeof InvestmentPrices | typeof InvestmentTransactions,
+  ) =>
+    keys.every((k) => k.investmentId !== undefined)
+      ? inArray(
+          tbl.investmentId,
+          keys.map((k) => k.investmentId!),
+        )
+      : undefined;
+
+  return { whereAssetId, whereInvestmentId };
+};
+
+/**
+ * Retrieves unit-delta chain for each investment in the given set (or all, if no filters given). This can be used to compute historical holding values.
+ */
+const loadAdjustedUnits = contextAwareDataLoader(
+  async (_ctx: Context, keys: readonly LoadInvestmentsByKeyFilter[]) => {
+    const { whereAssetId, whereInvestmentId } =
+      loadInvestmentsByKeyConditions(keys);
+    // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
+    const currency = HOME_CURRENCY;
+
+    return await db
+      .select({
+        date: InvestmentTransactions.date,
+        investmentId: InvestmentTransactions.investmentId,
+        assetId: InvestmentTransactions.assetId,
+        units: sql<number>`(${InvestmentTransactions.units} * coalesce(exp(ln(
+              (${db
+                .select({ ratio: sum(InvestmentStockSplits.ratio) })
+                .from(InvestmentStockSplits)
+                .where(
+                  and(
+                    eq(
+                      InvestmentStockSplits.investmentId,
+                      InvestmentTransactions.investmentId,
+                    ),
+                    sql`${InvestmentStockSplits.date} > ${InvestmentTransactions.date}`,
+                  ),
+                )})
+            )), 1))::int`.as("unitsAdjusted"),
+      })
+      .from(InvestmentTransactions)
+      .where(
+        and(
+          eq(InvestmentTransactions.currency, currency),
+          whereAssetId,
+          whereInvestmentId(InvestmentTransactions),
+        ),
+      )
+      .orderBy(asc(InvestmentTransactions.date));
+  },
+);
+
 /**
  * Retrieves a time-series of total value, optionally filtering by portfolio (net worth asset ID) and/or stock (investment ID).
  * Takes stock splits into account to compute historical values, according to the units acquired as defined by the list of transactions.
  */
 export const loadTimeseries = contextAwareDataLoader(
-  () =>
+  (ctx) =>
     new DataLoader<TimeseriesKey, PortfolioTimeseries, string>(
       async (keys) => {
-        // Filter conditions on the entire query: when providing assetId or investmentId filters, do not return any rows which we won't ever need to construct the result set for each key
-        const whereAssetId = keys.every((k) => k.assetId !== undefined)
-          ? inArray(
-              InvestmentTransactions.assetId,
-              keys.map((k) => k.assetId!),
-            )
-          : undefined;
-        const whereInvestmentId = (
-          tbl: typeof InvestmentPrices | typeof InvestmentTransactions,
-        ) =>
-          keys.every((k) => k.investmentId !== undefined)
-            ? inArray(
-                tbl.investmentId,
-                keys.map((k) => k.investmentId!),
-              )
-            : undefined;
+        const { whereAssetId, whereInvestmentId } =
+          loadInvestmentsByKeyConditions(keys);
 
         // If batching requests with multiple different filter criteria, we explicitly fetch a date range covering the entire set. For example, if the batched request covers two separate targeted stocks, both of which were bought and sold at different periods of time, we fetch a dataset starting from the date of the first buy.
         //
@@ -197,40 +251,9 @@ export const loadTimeseries = contextAwareDataLoader(
           )
           .orderBy((a) => asc(a.date));
 
-        const unitsAdjDeltaQuery = db
-          .select({
-            date: InvestmentTransactions.date,
-            investmentId: InvestmentTransactions.investmentId,
-            assetId: InvestmentTransactions.assetId,
-            units:
-              sql<number>`(${InvestmentTransactions.units} * coalesce(exp(ln(
-              (${db
-                .select({ ratio: sum(InvestmentStockSplits.ratio) })
-                .from(InvestmentStockSplits)
-                .where(
-                  and(
-                    eq(
-                      InvestmentStockSplits.investmentId,
-                      InvestmentTransactions.investmentId,
-                    ),
-                    sql`${InvestmentStockSplits.date} > ${InvestmentTransactions.date}`,
-                  ),
-                )})
-            )), 1))::int`.as("unitsAdjusted"),
-          })
-          .from(InvestmentTransactions)
-          .where(
-            and(
-              eq(InvestmentTransactions.currency, currency),
-              whereAssetId,
-              whereInvestmentId(InvestmentTransactions),
-            ),
-          )
-          .orderBy(asc(InvestmentTransactions.date));
-
         const [pricesAdjRows, unitsAdjDeltaRows] = await Promise.all([
           pricesAdjQuery,
-          unitsAdjDeltaQuery,
+          loadAdjustedUnits(ctx, keys),
         ]);
 
         const x: Date[] = [];

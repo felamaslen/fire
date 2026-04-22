@@ -1820,23 +1820,33 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 from: {
+                    description: "Starting Y value in major currency units of the parent `PortfolioCandlestick` `currency` field",
                     name: "from",
                     type: new GraphQLNonNull(GraphQLInt)
                 },
                 hi: {
+                    description: "Highest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field",
                     name: "hi",
                     type: new GraphQLNonNull(GraphQLInt)
                 },
                 lo: {
+                    description: "Lowest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field",
                     name: "lo",
                     type: new GraphQLNonNull(GraphQLInt)
                 },
                 to: {
+                    description: "Ending Y value in major currency units of the parent `PortfolioCandlestick` `currency` field",
                     name: "to",
                     type: new GraphQLNonNull(GraphQLInt)
                 },
-                x: {
-                    name: "x",
+                x0: {
+                    description: "Number of days (at start of candle) since `initialDate` on the parent `PortfolioCandlestick`",
+                    name: "x0",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                x1: {
+                    description: "Number of days (at end of candle) since `initialDate` on the parent `PortfolioCandlestick`",
+                    name: "x1",
                     type: new GraphQLNonNull(GraphQLInt)
                 }
             };
@@ -1862,21 +1872,18 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
-    const PortfolioTimePeriodType: GraphQLEnumType = new GraphQLEnumType({
-        description: "Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.",
-        name: "PortfolioTimePeriod",
+    const PortfolioCandleUnitType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Candle width unit for `Portfolio.candlestick`.",
+        name: "PortfolioCandleUnit",
         values: {
-            ALL: {
-                value: "ALL"
+            DAY: {
+                value: "DAY"
             },
             MONTH: {
                 value: "MONTH"
             },
-            YEAR: {
-                value: "YEAR"
-            },
-            YTD: {
-                value: "YTD"
+            WEEK: {
+                value: "WEEK"
             }
         }
     });
@@ -1916,6 +1923,24 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PortfolioTimePeriodType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Anchoring period for `Portfolio.timeseries`. `YTD` spans the start of the current calendar year through today and ignores `length`.",
+        name: "PortfolioTimePeriod",
+        values: {
+            ALL: {
+                value: "ALL"
+            },
+            MONTH: {
+                value: "MONTH"
+            },
+            YEAR: {
+                value: "YEAR"
+            },
+            YTD: {
+                value: "YTD"
+            }
+        }
+    });
     const PortfolioType: GraphQLObjectType = new GraphQLObjectType({
         name: "Portfolio",
         description: "Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded.",
@@ -1927,14 +1952,15 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(PortfolioCandlestickType),
                     args: {
                         length: {
-                            type: GraphQLInt
+                            type: new GraphQLNonNull(GraphQLInt),
+                            defaultValue: 1
                         },
-                        period: {
-                            type: new GraphQLNonNull(PortfolioTimePeriodType)
+                        unit: {
+                            type: new GraphQLNonNull(PortfolioCandleUnitType)
                         }
                     },
-                    resolve(source, args) {
-                        return source.candlestick(args.period, args.length);
+                    resolve(source, args, context) {
+                        return source.candlestick(context, args.unit, args.length);
                     }
                 },
                 currency: {
@@ -2019,7 +2045,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 xirr: {
                     description: "Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` \u2014 with `skipLive`, the terminal flow uses the most recent cached close instead of the live price.",
                     name: "xirr",
-                    type: GraphQLFloat
+                    type: GraphQLFloat,
+                    resolve(source, _args, context) {
+                        return source.xirr(context);
+                    }
                 }
             };
         }
@@ -3921,6 +3950,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, DemoType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, DemoType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
     });
 }
