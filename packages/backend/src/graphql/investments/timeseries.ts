@@ -277,24 +277,34 @@ export const loadTimeseries = contextAwareDataLoader(
 
         const unitsByInvestmentAsset = new Map<string, number>();
 
+        // Push one entry per flush into every `yBy*` map the caller may read.
+        // Investments (and assets) whose first `InvestmentPrices.date` comes
+        // after an early `d.date` won't produce a lateral row on those early
+        // dates, so their `valueBy*` is empty on those flushes. Without this
+        // helper, their `yBy*` array would fall behind `x.length` and indexing
+        // later yields `undefined` → `Math.round(undefined)` = `NaN`.
+        //
+        // Back-fill missing keys on first appearance with leading zeros
+        // (pre-first-trade value = 0) and forward-fill missing keys in this
+        // flush with `0` (no activity on this bucket).
+        const flushMap = (
+          src: Map<string, number>,
+          dst: Map<string, number[]>,
+          flushIndex: number,
+        ) => {
+          for (const id of src.keys()) {
+            if (!dst.has(id)) dst.set(id, new Array(flushIndex).fill(0));
+          }
+          for (const [id, arr] of dst) arr.push(src.get(id) ?? 0);
+          src.clear();
+        };
+
         const bufferPrices = (cursor: number) => {
           const priceRow = pricesAdjRows[cursor];
-          for (const [assetId, y] of valueByAsset) {
-            if (!yByAsset.has(assetId)) yByAsset.set(assetId, []);
-            yByAsset.get(assetId)!.push(y);
-          }
-          valueByAsset.clear();
-          for (const [investmentId, y] of valueByInvestment) {
-            if (!yByInvestment.has(investmentId))
-              yByInvestment.set(investmentId, []);
-            yByInvestment.get(investmentId)!.push(y);
-          }
-          valueByInvestment.clear();
-          for (const [key, y] of valueByBoth) {
-            if (!yByBoth.has(key)) yByBoth.set(key, []);
-            yByBoth.get(key)!.push(y);
-          }
-          valueByBoth.clear();
+          const flushIndex = x.length;
+          flushMap(valueByAsset, yByAsset, flushIndex);
+          flushMap(valueByInvestment, yByInvestment, flushIndex);
+          flushMap(valueByBoth, yByBoth, flushIndex);
 
           yByNone.push(valueByNone);
           valueByNone = 0;
