@@ -220,38 +220,39 @@ export const loadTimeseries = contextAwareDataLoader(
           >,
         );
 
+        // Latest close price at-or-before `d.date` for each (d, investment)
+        // pair, via a LATERAL subquery. Rewritten from the previous
+        // `pb.id = (select id ... limit 1)` pattern that double-scanned
+        // `InvestmentPrices` (once as a subplan to get the id, once as the
+        // outer join target) — the lateral hits the `(investmentId, date)`
+        // index exactly once per pair.
+        const latestPrice = db
+          .select({
+            priceAdjusted: InvestmentPrices.priceAdjusted,
+          })
+          .from(InvestmentPrices)
+          .where(
+            and(
+              eq(InvestmentPrices.investmentId, Investments.id),
+              lte(InvestmentPrices.date, sql`d.date`),
+              whereInvestmentId(InvestmentPrices),
+            ),
+          )
+          .orderBy(desc(InvestmentPrices.date))
+          .limit(1)
+          .as("pb");
+
         const pricesAdjQuery = db
           .with(dates)
           .select({
             date: sql`d.date`.mapWith((v) => new Date(v)).as("date"),
             investmentId: Investments.id,
-            priceAdjusted: InvestmentPrices.priceAdjusted,
+            priceAdjusted: latestPrice.priceAdjusted,
           })
           .from(dates)
           .crossJoin(Investments)
-          .innerJoin(
-            InvestmentPrices,
-            eq(
-              InvestmentPrices.id,
-              db
-                .select({ id: InvestmentPrices.id })
-                .from(InvestmentPrices)
-                .where(
-                  and(
-                    eq(InvestmentPrices.investmentId, Investments.id),
-                    lte(InvestmentPrices.date, sql`d.date`),
-                  ),
-                )
-                .orderBy(desc(InvestmentPrices.date))
-                .limit(1),
-            ),
-          )
-          .where(
-            and(
-              eq(Investments.currency, currency),
-              whereInvestmentId(InvestmentPrices),
-            ),
-          )
+          .innerJoinLateral(latestPrice, sql`true`)
+          .where(eq(Investments.currency, currency))
           .orderBy((a) => asc(a.date));
 
         const [pricesAdjRows, unitsAdjDeltaRows] = await Promise.all([
