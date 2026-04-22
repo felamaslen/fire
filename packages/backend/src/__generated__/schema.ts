@@ -1988,8 +1988,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(PortfolioTimePeriodType)
                         }
                     },
-                    resolve(source, args) {
-                        return source.timeseries(args.period, args.length);
+                    resolve(source, args, context) {
+                        return source.timeseries(context, args.period, args.length);
                     }
                 },
                 totalCost: {

@@ -29,11 +29,11 @@ import {
   type InvestmentStatsFilter,
   loadInvestmentStats,
 } from "./stats";
+import { loadTimeseries } from "./timeseries";
 
 /** Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
 export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD" | "ALL";
 
-const MAX_LINE_POINTS = 300;
 const MAX_CANDLE_BUCKETS = 100;
 const MIN_CANDLE_BUCKET_DAYS = 3;
 
@@ -623,6 +623,7 @@ export class Portfolio {
     private readonly filterInvestmentIdIn: string[] | null,
     /** When `true`, every live-quote-sensitive field on this instance — `totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*` — falls back to the most recent cached close instead of the live intraday price. One portfolio-wide switch so the client can pin "end-of-last-trading-day" numbers across the whole dashboard without toggling each field. */
     private readonly skipLive: boolean = false,
+    /** @deprecated */
     private readonly preload?: PortfolioPreload,
   ) {
     if (preload) this.heldCache = Promise.resolve(preload.held);
@@ -792,19 +793,11 @@ export class Portfolio {
 
   /** Daily-sampled line series of portfolio total over the requested period. @gqlField */
   async timeseries(
+    ctx: Context,
     period: PortfolioTimePeriod,
     length?: Int | null,
   ): Promise<PortfolioTimeseries> {
-    const { days, totals } = await this.buildDaily(period, length ?? 0);
-    const picked = downsample(days, MAX_LINE_POINTS);
-    return {
-      currency: this.currency,
-      initialDate: days[0] ?? new Date(),
-      points: picked.map((d) => ({
-        x: daysBetween(days[0], d) as Int,
-        y: Math.round((totals.get(isoDate(d)) ?? 0) / 10 ** this.scale) as Int,
-      })),
-    };
+    return loadTimeseries(ctx).load({ period, length: length ?? 1 });
   }
 
   /** Candlestick buckets of portfolio total over the requested period. @gqlField */
@@ -909,17 +902,6 @@ function isoDate(d: Date): string {
 
 function daysBetween(a: Date, b: Date): number {
   return Math.round((b.getTime() - a.getTime()) / (86400 * 1000));
-}
-
-function downsample<T>(xs: T[], max: number): T[] {
-  if (xs.length <= max) return xs;
-  const out: T[] = [];
-  for (let i = 0; i < max - 1; i++) {
-    const idx = Math.floor((i * (xs.length - 1)) / (max - 1));
-    out.push(xs[idx]);
-  }
-  out.push(xs[xs.length - 1]);
-  return out;
 }
 
 function bucketIndices(
