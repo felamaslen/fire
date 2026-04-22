@@ -5,13 +5,14 @@ import { sql } from "drizzle-orm";
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 
-import { contextAwareDataLoader } from "../context";
+import { Context, contextAwareDataLoader } from "../context";
 import { Money } from "../money";
 import {
   PortfolioCandlestick,
   PortfolioCandlestickPoint,
   PortfolioCandleUnit,
 } from "./portfolio";
+import { loadInvestmentStats } from "./stats";
 
 type CandlestickKey = {
   /** When set, filters the result by a single portfolio (net worth asset ID). */
@@ -19,10 +20,12 @@ type CandlestickKey = {
   /** Each candle spans `length` of `unit`s. The number of candles is limited by `MAX_CANDLE_BUCKETS`. */
   unit: PortfolioCandleUnit;
   length: number;
+  /** When `false`, the last bucket's `valueEnd` / `valueMax` / `valueMin` are overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB result is returned. Does not affect the SQL — only the overlay. */
+  skipLive: boolean;
 };
 
 const cacheKeyFn = (key: CandlestickKey): string =>
-  `${key.unit}|${key.length}|${key.assetId ?? ""}`;
+  `${key.unit}|${key.length}|${key.assetId ?? ""}|${key.skipLive ? "1" : "0"}`;
 
 const MAX_CANDLE_BUCKETS = 100;
 
@@ -32,9 +35,9 @@ const MAX_CANDLE_BUCKETS = 100;
  * Per-date portfolio totals are computed *before* min/max, so `lo` / `hi` reflect the true drawdown / peak of the held position across the bucket — not the sum of per-stock extremes on possibly different days.
  */
 export const loadCandlestick = contextAwareDataLoader(
-  (_ctx) =>
+  (ctx) =>
     new DataLoader<CandlestickKey, PortfolioCandlestick | null, string>(
-      (keys) => Promise.all(keys.map(loadOne)),
+      (keys) => Promise.all(keys.map((k) => loadOne(ctx, k))),
       { cacheKeyFn },
     ),
 );
@@ -49,6 +52,7 @@ type Row = {
 };
 
 const loadOne = async (
+  ctx: Context,
   key: CandlestickKey,
 ): Promise<PortfolioCandlestick | null> => {
   const currency = HOME_CURRENCY;
@@ -141,6 +145,26 @@ const loadOne = async (
     valueMin: row.valueMin,
     valueMax: row.valueMax,
   }));
+
+  // Overlay the last bucket with today's live portfolio total so the tail of
+  // the chart tracks intraday movement. `valueEnd` jumps to the live total;
+  // `valueMin` / `valueMax` expand only when live breaches the bucket's
+  // historical range. `valueStart` is the bucket's first-date value and stays
+  // untouched.
+  if (!key.skipLive) {
+    const stats = await loadInvestmentStats(ctx, {
+      currency,
+      assetId: key.assetId,
+      skipLive: false,
+    });
+    if (stats.totalValueMinor !== null) {
+      const last = points[points.length - 1];
+      last.valueEnd = stats.totalValueMinor;
+      last.valueMax = Math.max(last.valueMax, stats.totalValueMinor);
+      last.valueMin = Math.min(last.valueMin, stats.totalValueMinor);
+    }
+  }
+
   const initialDate = points[0].start;
   return {
     currency,

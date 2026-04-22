@@ -303,7 +303,11 @@ export class Portfolio {
     length?: Int | null,
   ): Promise<PortfolioTimeseries> {
     const loader = loadTimeseries(ctx);
-    const options = { period, length: length ?? 1 };
+    const options = {
+      period,
+      length: length ?? 1,
+      skipLive: this.skipLive,
+    };
     const combineSeries = (series: (PortfolioTimeseries | Error)[]) => {
       assertNoErrors(series);
       assert(series.length, "No results");
@@ -372,6 +376,7 @@ export class Portfolio {
       unit,
       length,
       assetId: this.filterAssetIdIn?.[0],
+      skipLive: this.skipLive,
     });
     assert(candlestick, "No data");
     return candlestick;

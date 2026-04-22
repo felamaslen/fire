@@ -17,6 +17,7 @@ import { UnreachableCaseError } from "@/errors";
 
 import { Context, contextAwareDataLoader } from "../context";
 import { PortfolioTimePeriod, PortfolioTimeseries } from "./portfolio";
+import { loadInvestmentStats } from "./stats";
 
 export interface LoadInvestmentsByKeyFilter {
   /** When set, filters the result by the given portfolio (net worth asset ID) */
@@ -28,10 +29,12 @@ export interface LoadInvestmentsByKeyFilter {
 type TimeseriesKey = LoadInvestmentsByKeyFilter & {
   period: PortfolioTimePeriod;
   length: number;
+  /** When `false`, the last point's `y` is overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB value is returned. Does not affect the SQL — only the overlay. */
+  skipLive: boolean;
 };
 
 const cacheKeyFn = (key: TimeseriesKey): string =>
-  `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}`;
+  `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}`;
 
 const MAX_POINTS = 300;
 
@@ -339,7 +342,23 @@ export const loadTimeseries = contextAwareDataLoader(
         }
         bufferPrices(cursorPrices - 1);
 
-        return keys.map<PortfolioTimeseries>((key) => {
+        // Fetch today's live-overlaid portfolio total per non-skipLive key.
+        // The last x is `now()::date` by construction (union in the `dates`
+        // CTE), so we just substitute that point's y rather than appending.
+        const liveByKeyIndex = await Promise.all(
+          keys.map((key) =>
+            key.skipLive
+              ? Promise.resolve(null)
+              : loadInvestmentStats(ctx, {
+                  currency,
+                  assetId: key.assetId,
+                  investmentId: key.investmentId,
+                  skipLive: false,
+                }).then((s) => s.totalValueMinor),
+          ),
+        );
+
+        return keys.map<PortfolioTimeseries>((key, keyIndex) => {
           const data = (() => {
             const { assetId, investmentId } = key;
             if (assetId) {
@@ -354,12 +373,16 @@ export const loadTimeseries = contextAwareDataLoader(
             return { x, y: yByNone };
           })();
           assert(data.y, `Could not resolve Y values for key ${key}`);
+          const lastIdx = data.x.length - 1;
+          const liveTotal = liveByKeyIndex[keyIndex];
           return {
             currency,
             initialDate: data.x[0],
             points: data.x.map((date, i) => ({
               x: differenceInDays(date, data.x[0]),
-              y: Math.round(data.y![i]),
+              y: Math.round(
+                i === lastIdx && liveTotal !== null ? liveTotal : data.y![i],
+              ),
             })),
           };
         });
