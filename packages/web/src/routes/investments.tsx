@@ -2,6 +2,7 @@ import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
 import {
   createFileRoute,
   Outlet,
+  redirect,
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
@@ -133,7 +134,10 @@ const InvestmentsPageDocument = graphql(
       $sort: InvestmentSort
       $period: PortfolioTimePeriod!
       $length: Int
+      $candleUnit: PortfolioCandleUnit!
+      $candleLength: Int!
       $candlestick: Boolean!
+      $stack: Boolean!
       $skipLive: Boolean!
       $filterAssetId: ID
       $filterAssetIdIn: [ID!]
@@ -153,7 +157,7 @@ const InvestmentsPageDocument = graphql(
         ...PortfolioChartPortfolio
       }
       portfolios(filterAssetIdIn: $filterAssetIdIn, skipLive: $skipLive)
-        @skip(if: $candlestick) {
+        @include(if: $stack) {
         edges {
           node {
             id
@@ -272,8 +276,12 @@ type SortState = { kind: SortKind; dir: SortDirection };
 const RANGES = ["all", "5y", "3y", "1y", "ytd", "3m"] as const;
 type Range = (typeof RANGES)[number];
 
+const CANDLE_SLUGS = ["1d", "3d", "1w", "2w", "1m", "3m"] as const;
+type CandleSlug = (typeof CANDLE_SLUGS)[number];
+
 const investmentsSearchSchema = z.object({
   range: z.enum(RANGES).optional().catch(undefined),
+  candle: z.enum(CANDLE_SLUGS).optional().catch(undefined),
   mode: z.enum(["line", "candle"]).optional().catch(undefined),
   stack: z.coerce.boolean().optional().catch(undefined),
   sort: z.enum(["value", "gainAbs", "gainPercent"]).optional().catch(undefined),
@@ -288,6 +296,18 @@ const SEARCH_STORAGE_KEY = "fire.investments.search";
 export const Route = createFileRoute("/investments")({
   component: InvestmentsDialogLayout,
   validateSearch: investmentsSearchSchema,
+  // Hydrate persisted UI state from localStorage into the URL *before* the
+  // component mounts. Doing this in `beforeLoad` (not a post-mount effect)
+  // means the very first render already sees the final `search`, so
+  // `useSuspenseQuery` fires once per page load instead of firing, then
+  // re-firing after the post-mount `navigate()` re-renders the tree.
+  beforeLoad: ({ location, search }) => {
+    if (location.pathname !== "/investments") return;
+    if (hasAnySearch(search)) return;
+    const persisted = loadPersistedSearch();
+    if (!hasAnySearch(persisted)) return;
+    throw redirect({ to: "/investments", search: persisted, replace: true });
+  },
 });
 
 export const investmentsRefetch = ["InvestmentsList"];
@@ -324,8 +344,10 @@ function rangeToPeriod(r: Range): {
 
 function searchToChart(s: InvestmentsSearch): PortfolioChartSettings {
   const range = s.range ?? "5y";
+  const candle = s.candle ?? "1w";
   return {
     periodIdx: RANGES.indexOf(range),
+    candleIdx: CANDLE_SLUGS.indexOf(candle),
     mode: s.mode === "candle" ? "candlestick" : "line",
     stack: s.stack ?? false,
   };
@@ -333,13 +355,36 @@ function searchToChart(s: InvestmentsSearch): PortfolioChartSettings {
 
 function chartToSearch(
   c: PortfolioChartSettings,
-): Pick<InvestmentsSearch, "range" | "mode" | "stack"> {
+): Pick<InvestmentsSearch, "range" | "candle" | "mode" | "stack"> {
   const range = RANGES[c.periodIdx] ?? "5y";
+  const candle = CANDLE_SLUGS[c.candleIdx] ?? "1w";
   return {
     range: range === "5y" ? undefined : range,
+    candle: candle === "1w" ? undefined : candle,
     mode: c.mode === "candlestick" ? "candle" : undefined,
     stack: c.stack ? true : undefined,
   };
+}
+
+/** Width in `PortfolioCandleUnit`s per candle, e.g. `"3d"` → `{ unit: "DAY", length: 3 }`. Used to turn the URL's `candle` slug into the backend's `candlestick(unit, length)` arguments. */
+function candleSlugToUnit(slug: CandleSlug): {
+  unit: "DAY" | "WEEK" | "MONTH";
+  length: number;
+} {
+  switch (slug) {
+    case "1d":
+      return { unit: "DAY", length: 1 };
+    case "3d":
+      return { unit: "DAY", length: 3 };
+    case "1w":
+      return { unit: "WEEK", length: 1 };
+    case "2w":
+      return { unit: "WEEK", length: 2 };
+    case "1m":
+      return { unit: "MONTH", length: 1 };
+    case "3m":
+      return { unit: "MONTH", length: 3 };
+  }
 }
 
 function searchToSort(s: InvestmentsSearch): SortState {
@@ -387,38 +432,27 @@ function InvestmentsDialogLayout() {
   );
 }
 
-// All persisted UI options (chart period/mode/stack, sort) live in the URL
-// search params. On first mount, if the URL is empty, hydrate from
-// localStorage and `replace` into the URL so it reflects current state.
+// Persisted UI options (chart period/mode/stack, sort) live in the URL
+// search params; `beforeLoad` seeds them from localStorage on first visit.
 // Any URL-driven change gets mirrored back to localStorage.
 function InvestmentsPageContent() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  // Only bootstrap/persist when the router is actually on `/investments` —
-  // if a child route (`/investments/$id`) is active, navigating with the
-  // parent's search params here would redirect away from the dialog.
+  // Only persist when the router is actually on `/investments` — if a child
+  // route (`/investments/$id`) is active, its search params belong to the
+  // child, not the list view.
   const isOnListPage = useRouterState({
     select: (s) => s.location.pathname === "/investments",
   });
 
-  // Bootstrap: captured once — used to seed URL + freeze initial query vars.
-  const [bootstrap] = useState<InvestmentsSearch>(() =>
-    hasAnySearch(search) ? search : loadPersistedSearch(),
-  );
-
   useEffect(() => {
     if (!isOnListPage) return;
-    if (!hasAnySearch(search) && hasAnySearch(bootstrap)) {
-      void navigate({ search: bootstrap, replace: true });
-      return;
-    }
     window.localStorage.setItem(SEARCH_STORAGE_KEY, JSON.stringify(search));
-  }, [search, bootstrap, navigate, isOnListPage]);
+  }, [search, isOnListPage]);
 
-  const effective = hasAnySearch(search) ? search : bootstrap;
-  const chart = searchToChart(effective);
-  const sort = searchToSort(effective);
-  const filterAssetId = effective["filter-wrapper-id"] ?? null;
+  const chart = searchToChart(search);
+  const sort = searchToSort(search);
+  const filterAssetId = search["filter-wrapper-id"] ?? null;
 
   const setChart = (next: PortfolioChartSettings) => {
     const patch = chartToSearch(next);
@@ -447,18 +481,27 @@ function InvestmentsPageContent() {
   };
 
   // Freeze the initial suspense-query variables so later set* calls don't
-  // re-suspend the page — children refetch via their own `useQuery`.
+  // re-suspend the page — children refetch via their own `useQuery`. The
+  // `search` captured here is already the hydrated copy thanks to the route's
+  // `beforeLoad`, so the first render has the final variables and no
+  // post-mount `navigate()` re-runs the suspense query.
   const [initialVars] = useState(() => {
-    const c = searchToChart(bootstrap);
-    const s = searchToSort(bootstrap);
+    const c = searchToChart(search);
+    const s = searchToSort(search);
     const { period, length } = rangeToPeriod(RANGES[c.periodIdx] ?? "5y");
-    const fid = bootstrap["filter-wrapper-id"] ?? null;
+    const { unit: candleUnit, length: candleLength } = candleSlugToUnit(
+      CANDLE_SLUGS[c.candleIdx] ?? "1w",
+    );
+    const fid = search["filter-wrapper-id"] ?? null;
     return {
       first: 100,
       sort: toSortInput(s.kind, s.dir),
       period,
       length,
+      candleUnit,
+      candleLength,
       candlestick: c.mode === "candlestick",
+      stack: c.stack,
       skipLive: true,
       filterAssetId: fid,
       filterAssetIdIn: fid ? [fid] : null,

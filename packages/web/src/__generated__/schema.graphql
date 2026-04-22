@@ -61,8 +61,15 @@ enum PlanningBillsFrequency {
   YEARLY
 }
 
+"""Candle width unit for `Portfolio.candlestick`."""
+enum PortfolioCandleUnit {
+  DAY
+  MONTH
+  WEEK
+}
+
 """
-Anchoring period for `Portfolio.timeseries` / `Portfolio.candlestick`. `YTD` spans the start of the current calendar year through today and ignores `length`.
+Anchoring period for `Portfolio.timeseries`. `YTD` spans the start of the current calendar year through today and ignores `length`.
 """
 enum PortfolioTimePeriod {
   ALL
@@ -505,29 +512,29 @@ type InvestmentPosition {
   """
   costBasisWithFees: Money
   """
-  Fractional change in unit price over the most recent pricing interval. `null` until enough price history exists to compute it.
+  Fractional change in market value over the most recent pricing interval. Same sourcing + null conditions as `dailyGainValue`.
   """
   dailyGainPercent: Float
   """
-  Change in market value of the held position over the most recent pricing interval. When a live quote is available, compares it against yesterday's close; otherwise compares the two most recent cached closes. `null` until enough price history exists to compute it.
+  Change in market value of the held position over the most recent pricing interval, sourced exclusively from the live Yahoo quote's `previousClose`. `null` when no live quote is available, when the position is fully sold, or when the caller asked to skip live prices.
   """
   dailyGainValue: Money
   """
-  Unrealised gain as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.
+  Total return as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.
   """
   percentGain: Float
   """DRIP (dividend-reinvestment) activity on this position."""
   reinvested: InvestmentReinvested!
   """
-  Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it.
+  Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it. For a fully-sold position this is gross buy cost.
   """
   totalCost: Money!
   """
-  Unrealised gain on the held position — `totalValue - totalCost`. `null` until at least one price is known.
+  Total return (realised + unrealised) on the position — `totalValue - totalCost`. `null` until at least one price is known.
   """
   totalGain: Money
   """
-  Current market value of units held. `null` until at least one price is known for the investment.
+  Current market value of units held — or, for a fully-sold position, the realised sell proceeds. `null` until at least one price is known for the investment.
   """
   totalValue: Money
   """Net units held."""
@@ -908,7 +915,7 @@ type Mutation {
     amountGross: MoneyInput!
     date: Date!
     """
-    Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket; the resolved URL is persisted on the payslip row.
+    Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket, scoped to the caller's session; the resolved key is persisted on the payslip row.
     """
     file: Upload
     name: String!
@@ -921,6 +928,8 @@ type Mutation {
   payslipDelete(id: ID!): Void!
   """
   Extract gross, pay date, and deductions from a payslip PDF using Gemini Flash, and suggest which planning account it belongs to based on the employee's first name. Does not create a payslip record — the UI shows the returned values in the regular add-payslip form for the user to review / adjust before submitting.
+  
+  Gated to `real` sessions: demo sessions would otherwise burn Gemini tokens on synthetic data with no upside.
   """
   payslipParse(file: Upload!): PayslipParseResult!
   """
@@ -1534,7 +1543,7 @@ type PlanningPayslip {
   """Pay date."""
   date: Date!
   """
-  Path to the uploaded payslip file (PDF / image), relative to the server. Null if none was uploaded.
+  Signed, short-lived URL to the uploaded payslip file (PDF / image), or `null` if none was uploaded or the current session isn't allowed to read it. The URL's signature covers the storage key + expiry so the `/files/*` endpoint can serve it without the browser attaching an `Authorization` header.
   """
   fileUrl: String
   id: ID!
@@ -1685,7 +1694,7 @@ Aggregated view of the portfolio, optionally filtered by wrappers and/or investm
 """
 type Portfolio {
   """Candlestick buckets of portfolio total over the requested period."""
-  candlestick(length: Int, period: PortfolioTimePeriod!): PortfolioCandlestick!
+  candlestick(length: Int! = 1, unit: PortfolioCandleUnit!): PortfolioCandlestick!
   """
   ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
   """
@@ -1695,7 +1704,7 @@ type Portfolio {
   """
   dailyGainPercent: Float
   """
-  Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote (`pricePrevious === null`) are excluded, so a lapsed price history for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set.
+  Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote are excluded, so a lapsed live quote for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set.
   """
   dailyGainValue: Money
   """
@@ -1745,11 +1754,30 @@ type PortfolioCandlestick {
 One OHLC candlestick bucket. `from` / `to` are the portfolio total at the bucket's start / end; `lo` / `hi` are the minimum / maximum across the bucket. All values are in major units of `currency`.
 """
 type PortfolioCandlestickPoint {
+  """
+  Starting Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
+  """
   from: Int!
+  """
+  Highest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
+  """
   hi: Int!
+  """
+  Lowest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
+  """
   lo: Int!
+  """
+  Ending Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
+  """
   to: Int!
-  x: Int!
+  """
+  Number of days (at start of candle) since `initialDate` on the parent `PortfolioCandlestick`
+  """
+  x0: Int!
+  """
+  Number of days (at end of candle) since `initialDate` on the parent `PortfolioCandlestick`
+  """
+  x1: Int!
 }
 
 """

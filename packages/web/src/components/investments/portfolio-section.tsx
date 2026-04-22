@@ -1,5 +1,5 @@
 import { useSuspenseQuery } from "@apollo/client/react";
-import { useDeferredValue } from "react";
+import { Suspense, useDeferredValue } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -29,11 +29,13 @@ export const PortfolioChartPortfolioFragment = graphql(`
         y
       }
     }
-    candlestick(period: $period, length: $length) @include(if: $candlestick) {
+    candlestick(unit: $candleUnit, length: $candleLength)
+      @include(if: $candlestick) {
       currency
       initialDate
       points {
-        x
+        x0
+        x1
         from
         to
         lo
@@ -48,14 +50,17 @@ const PortfolioChartDocument = graphql(
     query PortfolioChart(
       $period: PortfolioTimePeriod!
       $length: Int
+      $candleUnit: PortfolioCandleUnit!
+      $candleLength: Int!
       $candlestick: Boolean!
+      $stack: Boolean!
       $filterAssetIdIn: [ID!]
       $filterAssetId: ID
     ) {
       portfolio(filterAssetIdIn: $filterAssetIdIn) {
         ...PortfolioChartPortfolio
       }
-      portfolios(filterAssetIdIn: $filterAssetIdIn) @skip(if: $candlestick) {
+      portfolios(filterAssetIdIn: $filterAssetIdIn) @include(if: $stack) {
         edges {
           node {
             id
@@ -103,8 +108,19 @@ export const PORTFOLIO_PERIODS: Period[] = [
   { period: "MONTH", length: 3, label: "3m" },
 ];
 
+/** Candle widths, ordered from narrowest to widest. `section` groups adjacent buttons with the same base unit so the button group can be rendered with visual separators between days / weeks / months. */
+export const PORTFOLIO_CANDLES = [
+  { unit: "DAY", length: 1, label: "1D", section: "day" },
+  { unit: "DAY", length: 3, label: "3D", section: "day" },
+  { unit: "WEEK", length: 1, label: "1W", section: "week" },
+  { unit: "WEEK", length: 2, label: "2W", section: "week" },
+  { unit: "MONTH", length: 1, label: "1M", section: "month" },
+  { unit: "MONTH", length: 3, label: "3M", section: "month" },
+] as const;
+
 export type PortfolioChartSettings = {
   periodIdx: number;
+  candleIdx: number;
   mode: "line" | "candlestick";
   stack: boolean;
 };
@@ -120,27 +136,45 @@ export function PortfolioSection({
   bottomSlot?: React.ReactNode;
   filterAssetId?: string | null;
 }) {
-  const { periodIdx, mode, stack } = settings;
+  const { periodIdx, candleIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
     onChange({ ...settings, ...patch });
 
   const p = PORTFOLIO_PERIODS[periodIdx];
+  const candle = PORTFOLIO_CANDLES[candleIdx] ?? PORTFOLIO_CANDLES[2];
 
   return (
     <section className="relative space-y-3 rounded-lg border p-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Portfolio</h2>
         <div className="flex flex-wrap gap-1 text-xs">
-          {PORTFOLIO_PERIODS.map((per, i) => (
-            <Button
-              key={per.label}
-              size="sm"
-              variant={i === periodIdx ? "default" : "outline"}
-              onClick={() => update({ periodIdx: i })}
-            >
-              {per.label}
-            </Button>
-          ))}
+          {mode === "candlestick"
+            ? PORTFOLIO_CANDLES.map((c, i) => {
+                const prev = i > 0 ? PORTFOLIO_CANDLES[i - 1] : null;
+                const sectionBreak = prev && prev.section !== c.section;
+                return (
+                  <span key={c.label} className="flex gap-1">
+                    {sectionBreak && <span className="mx-1" />}
+                    <Button
+                      size="sm"
+                      variant={i === candleIdx ? "default" : "outline"}
+                      onClick={() => update({ candleIdx: i })}
+                    >
+                      {c.label}
+                    </Button>
+                  </span>
+                );
+              })
+            : PORTFOLIO_PERIODS.map((per, i) => (
+                <Button
+                  key={per.label}
+                  size="sm"
+                  variant={i === periodIdx ? "default" : "outline"}
+                  onClick={() => update({ periodIdx: i })}
+                >
+                  {per.label}
+                </Button>
+              ))}
           <span className="mx-2" />
           <Button
             size="sm"
@@ -166,13 +200,17 @@ export function PortfolioSection({
           </Button>
         </div>
       </header>
-      <PortfolioChartLoader
-        period={p.period}
-        length={"length" in p ? p.length : null}
-        candlestick={mode === "candlestick"}
-        stack={stack}
-        filterAssetId={filterAssetId ?? null}
-      />
+      <Suspense fallback={null}>
+        <PortfolioChartLoader
+          period={p.period}
+          length={"length" in p ? p.length : null}
+          candleUnit={candle.unit}
+          candleLength={candle.length}
+          candlestick={mode === "candlestick"}
+          stack={stack}
+          filterAssetId={filterAssetId ?? null}
+        />
+      </Suspense>
       {bottomSlot}
     </section>
   );
@@ -181,12 +219,16 @@ export function PortfolioSection({
 function PortfolioChartLoader({
   period,
   length,
+  candleUnit,
+  candleLength,
   candlestick,
   stack,
   filterAssetId,
 }: {
   period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
+  candleUnit: "DAY" | "WEEK" | "MONTH";
+  candleLength: number;
   candlestick: boolean;
   stack: boolean;
   filterAssetId: string | null;
@@ -204,11 +246,15 @@ function PortfolioChartLoader({
   // render mounted while the suspense resolves.
   const deferredPeriod = useDeferredValue(period);
   const deferredLength = useDeferredValue(length);
+  const deferredCandleUnit = useDeferredValue(candleUnit);
+  const deferredCandleLength = useDeferredValue(candleLength);
   const deferredCandlestick = useDeferredValue(candlestick);
   const deferredStack = useDeferredValue(stack);
   const pending =
     deferredPeriod !== period ||
     deferredLength !== length ||
+    deferredCandleUnit !== candleUnit ||
+    deferredCandleLength !== candleLength ||
     deferredCandlestick !== candlestick ||
     deferredStack !== stack;
 
@@ -217,7 +263,10 @@ function PortfolioChartLoader({
     variables: {
       period: deferredPeriod,
       length: deferredLength,
+      candleUnit: deferredCandleUnit,
+      candleLength: deferredCandleLength,
       candlestick: deferredCandlestick,
+      stack: deferredStack,
       filterAssetIdIn: deferredFilterAssetId ? [deferredFilterAssetId] : null,
       filterAssetId: deferredFilterAssetId ?? null,
     },
@@ -275,8 +324,20 @@ function PortfolioChartLoader({
         stackInitialDate: portfolio?.timeseries?.initialDate ?? null,
       };
 
+  // Map backend's (x0, x1) bucket coordinates to the chart's single `x`
+  // anchor. Using the bucket start keeps tooltip dates intuitive ("this is
+  // the week starting X") — the chart lays out candle widths itself based
+  // on the number of points and the plot width.
   const candles = portfolio?.candlestick
-    ? { points: portfolio.candlestick.points }
+    ? {
+        points: portfolio.candlestick.points.map((p) => ({
+          x: p.x0,
+          from: p.from,
+          to: p.to,
+          lo: p.lo,
+          hi: p.hi,
+        })),
+      }
     : null;
 
   const initialDateStr =

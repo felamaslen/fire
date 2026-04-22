@@ -205,14 +205,20 @@ export function PortfolioChart({
         const isHovered = hoveredCandle === i;
         return (
           <g key={i}>
-            {/* wick */}
-            <g className="text-foreground">
+            {/* wick — explicit `stroke-foreground` (not `currentColor` via a
+                parent `text-foreground`) because SVG's `stroke="currentColor"`
+                resolves against the nearest ancestor that actually sets the
+                CSS `color` property, and the class on the wrapping `<g>`
+                doesn't always inherit into SVG children in every browser /
+                Tailwind setup — wicks went invisible in dark mode. Using the
+                stroke class sets `stroke: var(--foreground)` directly. */}
+            <g>
               <line
                 x1={x}
                 x2={x}
                 y1={yScale(p.hi)}
                 y2={yScale(p.lo)}
-                stroke="currentColor"
+                className="stroke-foreground"
                 strokeWidth={1}
               />
               <line
@@ -220,7 +226,7 @@ export function PortfolioChart({
                 x2={x + capWidth / 2}
                 y1={yScale(p.hi)}
                 y2={yScale(p.hi)}
-                stroke="currentColor"
+                className="stroke-foreground"
                 strokeWidth={1}
               />
               <line
@@ -228,7 +234,7 @@ export function PortfolioChart({
                 x2={x + capWidth / 2}
                 y1={yScale(p.lo)}
                 y2={yScale(p.lo)}
-                stroke="currentColor"
+                className="stroke-foreground"
                 strokeWidth={1}
               />
             </g>
