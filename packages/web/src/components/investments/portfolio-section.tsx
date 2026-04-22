@@ -1,5 +1,5 @@
 import { useSuspenseQuery } from "@apollo/client/react";
-import { Suspense, useDeferredValue } from "react";
+import { useDeferredValue } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -200,17 +200,15 @@ export function PortfolioSection({
           </Button>
         </div>
       </header>
-      <Suspense fallback={null}>
-        <PortfolioChartLoader
-          period={p.period}
-          length={"length" in p ? p.length : null}
-          candleUnit={candle.unit}
-          candleLength={candle.length}
-          candlestick={mode === "candlestick"}
-          stack={stack}
-          filterAssetId={filterAssetId ?? null}
-        />
-      </Suspense>
+      <PortfolioChartLoader
+        period={p.period}
+        length={"length" in p ? p.length : null}
+        candleUnit={candle.unit}
+        candleLength={candle.length}
+        candlestick={mode === "candlestick"}
+        stack={stack}
+        filterAssetId={filterAssetId ?? null}
+      />
       {bottomSlot}
     </section>
   );
