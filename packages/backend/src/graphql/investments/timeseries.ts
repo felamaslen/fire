@@ -16,6 +16,7 @@ import {
 import { UnreachableCaseError } from "@/errors";
 
 import { Context, contextAwareDataLoader } from "../context";
+import { Money } from "../money";
 import { PortfolioTimePeriod, PortfolioTimeseries } from "./portfolio";
 import { loadInvestmentStats } from "./stats";
 
@@ -392,7 +393,10 @@ export const loadTimeseries = contextAwareDataLoader(
             points: data.x.map((date, i) => ({
               x: differenceInDays(date, data.x[0]),
               y: Math.round(
-                i === lastIdx && liveTotal !== null ? liveTotal : data.y![i],
+                Money.fromMinorDenomination(
+                  i === lastIdx && liveTotal !== null ? liveTotal : data.y![i],
+                  currency,
+                ).amount,
               ),
             })),
           };
