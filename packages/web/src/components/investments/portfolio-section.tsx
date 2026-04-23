@@ -110,7 +110,6 @@ export const PORTFOLIO_PERIODS: Period[] = [
 
 /** Candle widths, ordered from narrowest to widest. `section` groups adjacent buttons with the same base unit so the button group can be rendered with visual separators between days / weeks / months. */
 export const PORTFOLIO_CANDLES = [
-  { unit: "DAY", length: 1, label: "1D", section: "day" },
   { unit: "DAY", length: 3, label: "3D", section: "day" },
   { unit: "WEEK", length: 1, label: "1W", section: "week" },
   { unit: "WEEK", length: 2, label: "2W", section: "week" },

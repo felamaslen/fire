@@ -268,7 +268,7 @@ type SortState = { kind: SortKind; dir: SortDirection };
 const RANGES = ["all", "5y", "3y", "1y", "ytd", "3m"] as const;
 type Range = (typeof RANGES)[number];
 
-const CANDLE_SLUGS = ["1d", "3d", "1w", "2w", "1m", "3m"] as const;
+const CANDLE_SLUGS = ["3d", "1w", "2w", "1m", "3m"] as const;
 type CandleSlug = (typeof CANDLE_SLUGS)[number];
 
 const investmentsSearchSchema = z.object({
@@ -364,8 +364,6 @@ function candleSlugToUnit(slug: CandleSlug): {
   length: number;
 } {
   switch (slug) {
-    case "1d":
-      return { unit: "DAY", length: 1 };
     case "3d":
       return { unit: "DAY", length: 3 };
     case "1w":

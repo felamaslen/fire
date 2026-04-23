@@ -1694,7 +1694,15 @@ Aggregated view of the portfolio, optionally filtered by wrappers and/or investm
 """
 type Portfolio {
   """Candlestick buckets of portfolio total over the requested period."""
-  candlestick(length: Int! = 1, unit: PortfolioCandleUnit!): PortfolioCandlestick!
+  candlestick(
+    length: Int! = 1
+    """
+    Maximum number of candle buckets to return. The series ends today and
+    extends backwards by `max × length` `unit`s.
+    """
+    max: Int! = 50 @constraint(max: 100, min: 1)
+    unit: PortfolioCandleUnit!
+  ): PortfolioCandlestick!
   """
   ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
   """

@@ -17,17 +17,16 @@ import { loadInvestmentStats } from "./stats";
 type CandlestickKey = {
   /** When set, filters the result by a single portfolio (net worth asset ID). */
   assetId?: string;
-  /** Each candle spans `length` of `unit`s. The number of candles is limited by `MAX_CANDLE_BUCKETS`. */
+  /** Each candle spans `length` of `unit`s; the series contains at most `max` candles. */
   unit: PortfolioCandleUnit;
   length: number;
+  max: number;
   /** When `false`, the last bucket's `valueEnd` / `valueMax` / `valueMin` are overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB result is returned. Does not affect the SQL — only the overlay. */
   skipLive: boolean;
 };
 
 const cacheKeyFn = (key: CandlestickKey): string =>
-  `${key.unit}|${key.length}|${key.assetId ?? ""}|${key.skipLive ? "1" : "0"}`;
-
-const MAX_CANDLE_BUCKETS = 100;
+  `${key.unit}|${key.length}|${key.max}|${key.assetId ?? ""}|${key.skipLive ? "1" : "0"}`;
 
 /**
  * Retrieves a candlestick series of portfolio total value, optionally filtered to a single net-worth asset.
@@ -57,7 +56,7 @@ const loadOne = async (
 ): Promise<PortfolioCandlestick | null> => {
   const currency = HOME_CURRENCY;
   const unit = sql.raw(key.unit.toLowerCase());
-  const windowLen = sql.raw(String(key.length * MAX_CANDLE_BUCKETS));
+  const windowLen = sql.raw(String(key.length * key.max));
   const step = sql.raw(String(key.length));
   const assetFilter = key.assetId
     ? sql`and t."assetId" = ${key.assetId}`

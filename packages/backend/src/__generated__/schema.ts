@@ -1955,12 +1955,28 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLInt),
                             defaultValue: 1
                         },
+                        max: {
+                            description: "Maximum number of candle buckets to return. The series ends today and\nextends backwards by `max \u00D7 length` `unit`s.",
+                            type: new GraphQLNonNull(GraphQLInt),
+                            defaultValue: 50,
+                            extensions: {
+                                grats: {
+                                    directives: [{
+                                            name: "constraint",
+                                            args: {
+                                                max: 100,
+                                                min: 1
+                                            }
+                                        }]
+                                }
+                            }
+                        },
                         unit: {
                             type: new GraphQLNonNull(PortfolioCandleUnitType)
                         }
                     },
                     resolve(source, args, context) {
-                        return source.candlestick(context, args.unit, args.length);
+                        return source.candlestick(context, args.unit, args.length, args.max);
                     }
                 },
                 currency: {

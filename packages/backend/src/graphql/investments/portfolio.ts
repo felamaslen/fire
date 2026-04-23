@@ -363,6 +363,12 @@ export class Portfolio {
     ctx: Context,
     unit: PortfolioCandleUnit,
     length: Int = 1,
+    /**
+     * Maximum number of candle buckets to return. The series ends today and
+     * extends backwards by `max × length` `unit`s.
+     * @gqlAnnotate constraint(min: 1, max: 100)
+     */
+    max: Int = 50,
   ): Promise<PortfolioCandlestick> {
     assert(
       !this.filterInvestmentIdIn,
@@ -375,6 +381,7 @@ export class Portfolio {
     const candlestick = await loadCandlestick(ctx).load({
       unit,
       length,
+      max,
       assetId: this.filterAssetIdIn?.[0],
       skipLive: this.skipLive,
     });
