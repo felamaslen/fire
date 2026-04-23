@@ -1,6 +1,11 @@
 import { useApolloClient, useMutation } from "@apollo/client/react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { LogOut } from "lucide-react";
+import {
+  CalendarRange,
+  Home as HomeIcon,
+  LogOut,
+  TrendingUp,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -44,35 +49,44 @@ function Portal({
 const LINKS: {
   to: "/" | "/planning" | "/investments";
   label: string;
+  icon: React.ComponentType<{ className?: string }>;
   exact?: boolean;
 }[] = [
-  { to: "/", label: "Overview", exact: true },
-  { to: "/planning", label: "Planning" },
-  { to: "/investments", label: "Investments" },
+  { to: "/", label: "Overview", icon: HomeIcon, exact: true },
+  { to: "/planning", label: "Planning", icon: CalendarRange },
+  { to: "/investments", label: "Investments", icon: TrendingUp },
 ];
 
 export function NavHeader() {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
-      <nav className="mx-auto flex max-w-6xl items-center gap-1 px-6 py-3">
-        <Link to="/" className="mr-4 text-sm font-semibold tracking-tight">
+      <nav className="mx-auto flex h-8 max-w-6xl items-center gap-0.5 px-3 sm:h-10 sm:gap-1 sm:px-6">
+        <Link
+          to="/"
+          className="mr-2 text-sm font-semibold tracking-tight sm:mr-4"
+        >
           fire
         </Link>
         <div id={TITLE_SLOT_ID} className="flex items-center" />
         <div id={ACTIONS_SLOT_ID} className="ml-auto flex items-center gap-1" />
-        {LINKS.map((l) => (
-          <Link
-            key={l.to}
-            to={l.to}
-            activeOptions={{ exact: l.exact ?? false }}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground",
-            )}
-            activeProps={{ className: "bg-accent text-foreground" }}
-          >
-            {l.label}
-          </Link>
-        ))}
+        {LINKS.map((l) => {
+          const Icon = l.icon;
+          return (
+            <Link
+              key={l.to}
+              to={l.to}
+              activeOptions={{ exact: l.exact ?? false }}
+              aria-label={l.label}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:px-3 sm:py-1.5",
+              )}
+              activeProps={{ className: "bg-accent text-foreground" }}
+            >
+              <Icon className="h-4 w-4 sm:hidden" />
+              <span className="hidden sm:inline">{l.label}</span>
+            </Link>
+          );
+        })}
         <ThemeToggle />
         <LogoutButton />
       </nav>
@@ -89,6 +103,7 @@ function LogoutButton() {
     <Button
       variant="ghost"
       size="icon"
+      className="h-7 w-7 sm:h-9 sm:w-9"
       aria-label="Log out"
       onClick={async () => {
         await logoutMutation().catch(() => {});
