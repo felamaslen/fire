@@ -14,7 +14,16 @@ export type LineSeries = {
 };
 
 export type CandleSeries = {
-  points: { x: number; from: number; to: number; lo: number; hi: number }[];
+  points: {
+    /** Start of the bucket, in days since the series' initial date. */
+    x0: number;
+    /** End of the bucket, in days since the series' initial date. */
+    x1: number;
+    from: number;
+    to: number;
+    lo: number;
+    hi: number;
+  }[];
 };
 
 type Props = {
@@ -81,7 +90,7 @@ export function PortfolioChart({
     }
     if (candles) {
       for (const p of candles.points) {
-        allXs.push(p.x);
+        allXs.push(p.x0, p.x1);
         allYs.push(p.lo, p.hi);
       }
     }
@@ -190,16 +199,16 @@ export function PortfolioChart({
       />
 
       {candles?.points.map((p, i) => {
-        const x = xScale(p.x);
+        const xStart = xScale(p.x0);
+        const xEnd = xScale(p.x1);
+        const x = (xStart + xEnd) / 2;
         const bodyY = yScale(Math.max(p.from, p.to));
         const bodyHeight = Math.abs(yScale(p.from) - yScale(p.to)) || 1;
         const isUp = p.to >= p.from;
-        const bucketWidth = Math.max(
-          2,
-          (width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT) /
-            Math.max(candles.points.length, 1) -
-            2,
-        );
+        // Leave a 15% gap between adjacent candles so the bucket boundaries
+        // are legible; wicks still centre on the bucket midpoint.
+        const bucketSpan = Math.max(2, xEnd - xStart);
+        const bucketWidth = Math.max(2, bucketSpan * 0.85);
         const capWidth = Math.max(3, bucketWidth * 0.45);
         const isHovered = hoveredCandle === i;
         return (
@@ -274,7 +283,7 @@ export function PortfolioChart({
         candles.points[hoveredCandle] &&
         (() => {
           const p = candles.points[hoveredCandle];
-          const cx = xScale(p.x);
+          const cx = (xScale(p.x0) + xScale(p.x1)) / 2;
           const plotRight = width - AXIS_PAD_RIGHT;
           const boxW = 148;
           const boxH = 82;
@@ -285,7 +294,7 @@ export function PortfolioChart({
             : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
           const boxY = Math.max(AXIS_PAD_TOP, yScale(p.hi) - boxH / 2);
           const d = initialDate
-            ? new Date(initialDate.getTime() + Math.round(p.x) * 86400 * 1000)
+            ? new Date(initialDate.getTime() + Math.round(p.x0) * 86400 * 1000)
             : null;
           const isUp = p.to >= p.from;
           return (

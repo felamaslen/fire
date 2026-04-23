@@ -337,14 +337,14 @@ function PortfolioChartLoader({
         stackInitialDate: portfolio?.timeseries?.initialDate ?? null,
       };
 
-  // Map backend's (x0, x1) bucket coordinates to the chart's single `x`
-  // anchor. Using the bucket start keeps tooltip dates intuitive ("this is
-  // the week starting X") — the chart lays out candle widths itself based
-  // on the number of points and the plot width.
+  // Pass the full (x0, x1) bucket span through so the chart can place each
+  // candle along the shared time axis instead of evenly distributing them
+  // across the plot width.
   const candles = portfolio?.candlestick
     ? {
         points: portfolio.candlestick.points.map((p) => ({
-          x: p.x0,
+          x0: p.x0,
+          x1: p.x1,
           from: p.from,
           to: p.to,
           lo: p.lo,
