@@ -43,9 +43,11 @@ function RootComponent() {
       <TooltipProvider delayDuration={200}>
         <AuthGate>
           <NavHeader />
-          <Suspense fallback={<Spinner />}>
-            <Outlet />
-          </Suspense>
+          <div className="pt-8 sm:pt-10">
+            <Suspense fallback={<Spinner />}>
+              <Outlet />
+            </Suspense>
+          </div>
         </AuthGate>
       </TooltipProvider>
       <Toaster richColors position="bottom-right" />

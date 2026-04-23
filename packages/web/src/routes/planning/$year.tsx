@@ -6,25 +6,24 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { isSameMonth } from "date-fns/isSameMonth";
+import { startOfMonth } from "date-fns/startOfMonth";
 import {
   AlertTriangle,
   ArrowDownLeft,
   ArrowUpRight,
   Briefcase,
   ChartCandlestick,
-  Check,
   ChevronLeft,
   ChevronRight,
   CreditCard,
   HandCoins,
   Landmark,
-  Pencil,
+  Menu,
   PiggyBank,
   Plus,
   Scale,
   ScrollText,
   Trash2,
-  X,
 } from "lucide-react";
 import {
   Suspense,
@@ -40,6 +39,14 @@ import { Figure, FigureDocument } from "@/components/figure";
 import { NavHeaderActions, NavHeaderTitle } from "@/components/nav-header";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -283,17 +290,24 @@ export const Route = createFileRoute("/planning/$year")({
 
 function PlanningYearRoute() {
   const { year } = Route.useParams();
+  // Fill the viewport below the fixed `NavHeader` with a flex column whose
+  // middle pane is the only horizontally-scrollable region. Without this,
+  // the (wider-than-viewport) table lives in the main body scroll on
+  // mobile — which expands the body past the viewport and drags the fixed
+  // `NavHeader` along with it.
   return (
-    <main className="flex min-h-svh flex-col">
-      <Suspense
-        fallback={
-          <div className="flex flex-1 items-center justify-center">
-            <Spinner />
-          </div>
-        }
-      >
-        <PlanningYearPage year={year} />
-      </Suspense>
+    <main className="flex h-[calc(100svh-2rem)] flex-col sm:h-[calc(100svh-2.5rem)]">
+      <div id="planning-scroll" className="min-h-0 flex-1 overflow-auto">
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center">
+              <Spinner />
+            </div>
+          }
+        >
+          <PlanningYearPage year={year} />
+        </Suspense>
+      </div>
       <YearFooter current={year} />
       <Suspense fallback={null}>
         <Outlet />
@@ -349,7 +363,7 @@ function PlanningYearPage({ year }: { year: string }) {
   return (
     <div
       className={cn(
-        "flex-1 space-y-6 p-8 pb-24 transition-opacity",
+        "space-y-3 p-2 transition-opacity sm:space-y-6 sm:p-8",
         isStale && "pointer-events-none opacity-50",
       )}
     >
@@ -386,10 +400,10 @@ function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
     if (!el) return;
     const io = new IntersectionObserver(
       ([entry]) => setPageTitleVisible(entry.isIntersecting),
-      // Shrink the intersection root from the top by the `NavHeader`'s height
-      // so the title is treated as "hidden" once it slips behind the sticky
-      // app header, not only when it leaves the viewport entirely.
-      { rootMargin: "-48px 0px 0px 0px" },
+      // Scroll happens inside the planning pane, not the viewport — watch
+      // relative to that element so the title is treated as "hidden" when
+      // it scrolls off the top of the pane.
+      { root: document.getElementById("planning-scroll") },
     );
     io.observe(el);
     return () => io.disconnect();
@@ -398,7 +412,7 @@ function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
     <>
       <h1
         ref={titleRef}
-        className="flex items-center gap-2 text-2xl font-semibold tracking-tight"
+        className="sticky left-0 flex w-fit items-center gap-2 px-1 text-lg font-semibold tracking-tight sm:px-0 sm:text-2xl"
       >
         Planning · {fyLabel(year)}
         {!hasTaxRates && (
@@ -423,41 +437,44 @@ function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
       {!pageTitleVisible && (
         <NavHeaderTitle>
           <span className="text-sm font-semibold tracking-tight">
-            Planning · {fyLabel(year)}
+            Planning · {fyLabelShort(year)}
           </span>
         </NavHeaderTitle>
       )}
       <NavHeaderActions>
-        <ManageIconLink
-          to="/planning/$year/accounts"
-          year={year}
-          label="Manage accounts"
-          icon={<PiggyBank className="size-6" />}
-        />
-        <ManageIconLink
-          to="/planning/$year/earnings"
-          year={year}
-          label="Manage earnings"
-          icon={<Briefcase className="size-6" />}
-        />
-        <ManageIconLink
-          to="/planning/$year/payslips"
-          year={year}
-          label="Manage payslips"
-          icon={<HandCoins className="size-6" />}
-        />
-        <ManageIconLink
-          to="/planning/$year/bills"
-          year={year}
-          label="Manage bills"
-          icon={<ScrollText className="size-6" />}
-        />
-        <ManageIconLink
-          to="/planning/$year/tax-rates"
-          year={year}
-          label="Manage tax rates"
-          icon={<Scale className="size-6" />}
-        />
+        <div className="hidden sm:contents">
+          <ManageIconLink
+            to="/planning/$year/accounts"
+            year={year}
+            label="Manage accounts"
+            icon={<PiggyBank className="size-6" />}
+          />
+          <ManageIconLink
+            to="/planning/$year/earnings"
+            year={year}
+            label="Manage earnings"
+            icon={<Briefcase className="size-6" />}
+          />
+          <ManageIconLink
+            to="/planning/$year/payslips"
+            year={year}
+            label="Manage payslips"
+            icon={<HandCoins className="size-6" />}
+          />
+          <ManageIconLink
+            to="/planning/$year/bills"
+            year={year}
+            label="Manage bills"
+            icon={<ScrollText className="size-6" />}
+          />
+          <ManageIconLink
+            to="/planning/$year/tax-rates"
+            year={year}
+            label="Manage tax rates"
+            icon={<Scale className="size-6" />}
+          />
+        </div>
+        <MobileManageMenu year={year} />
       </NavHeaderActions>
     </>
   );
@@ -492,6 +509,73 @@ function ManageIconLink({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+function MobileManageMenu({ year }: { year: string }) {
+  const [open, setOpen] = useState(false);
+  const items: { to: ManageRoute; label: string; icon: React.ReactNode }[] = [
+    {
+      to: "/planning/$year/accounts",
+      label: "Accounts",
+      icon: <PiggyBank className="size-5" />,
+    },
+    {
+      to: "/planning/$year/earnings",
+      label: "Earnings",
+      icon: <Briefcase className="size-5" />,
+    },
+    {
+      to: "/planning/$year/payslips",
+      label: "Payslips",
+      icon: <HandCoins className="size-5" />,
+    },
+    {
+      to: "/planning/$year/bills",
+      label: "Bills",
+      icon: <ScrollText className="size-5" />,
+    },
+    {
+      to: "/planning/$year/tax-rates",
+      label: "Tax rates",
+      icon: <Scale className="size-5" />,
+    },
+  ];
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Manage planning year"
+          className="h-7 w-7 sm:hidden"
+        >
+          <Menu className="size-5" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-xs">
+        <DialogHeader>
+          <DialogTitle>Manage</DialogTitle>
+        </DialogHeader>
+        <ul className="flex flex-col gap-1">
+          {items.map((it) => (
+            <li key={it.to}>
+              <Button
+                asChild
+                variant="ghost"
+                className="w-full justify-start gap-3"
+                onClick={() => setOpen(false)}
+              >
+                <Link to={it.to} params={{ year }}>
+                  {it.icon}
+                  {it.label}
+                </Link>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -531,10 +615,10 @@ function YearFooter({ current }: { current: string }) {
     });
   };
   return (
-    <nav className="sticky bottom-0 z-40 border-t bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <nav className="z-40 shrink-0 overflow-x-auto border-t bg-background/95 px-2 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-4">
       <ul
         className={cn(
-          "flex flex-wrap items-center gap-1 transition-opacity",
+          "flex flex-nowrap items-center gap-1 transition-opacity",
           (loading || isPending) && "opacity-50",
         )}
       >
@@ -639,7 +723,7 @@ function PlanningTable({
           <TableRow className="hover:bg-muted">
             <TableHead
               className={cn(
-                "sticky top-12 left-0 z-30 w-8 min-w-8 max-w-8 bg-muted",
+                "sticky top-0 left-0 z-30 w-6 min-w-6 max-w-6 bg-muted",
                 cellBorder,
               )}
             />
@@ -647,7 +731,7 @@ function PlanningTable({
               <TableHead
                 key={j}
                 className={cn(
-                  "sticky top-12 z-20 min-w-56 bg-muted",
+                  "sticky top-0 z-20 min-w-56 bg-muted",
                   cellBorder,
                 )}
               >
@@ -660,7 +744,10 @@ function PlanningTable({
         </TableHeader>
         <TableBody>
           {data.months.map((month, i) => {
-            const isCurrent = isSameMonth(new Date(month.date), today);
+            const monthDate = new Date(month.date);
+            const isCurrent = isSameMonth(monthDate, today);
+            const isPast =
+              !isCurrent && startOfMonth(monthDate) < startOfMonth(today);
             return (
               // Keying by slot index (not `month.id`) lets React reuse the row
               // and cell instances when the planning year changes — the grid
@@ -670,8 +757,12 @@ function PlanningTable({
                 <TableHead
                   scope="row"
                   className={cn(
-                    "sticky left-0 z-10 relative w-8 min-w-8 max-w-8 bg-background p-0 font-medium",
-                    isCurrent && "text-primary",
+                    "sticky left-0 z-10 w-6 min-w-6 max-w-6 p-0 font-medium",
+                    isCurrent
+                      ? "bg-yellow-200 text-yellow-950 dark:bg-yellow-800 dark:text-yellow-50"
+                      : isPast
+                        ? "bg-muted text-muted-foreground"
+                        : "bg-background",
                     cellBorder,
                   )}
                 >
@@ -904,20 +995,18 @@ function TransactionRow({
 }) {
   const tx = readFragment(PlanningTransactionRowDocument, data);
   const [editOpen, setEditOpen] = useState(false);
-  // Lazy-mount the edit `Popover` — each cell can have many transactions, and
-  // eagerly mounting one `Popover` (+ its context providers) per row inflates
-  // grid re-render cost. Render a bare icon button until the user first opens
-  // the editor.
+  // Lazy-mount the edit `Dialog` — each cell can have many transactions, and
+  // eagerly mounting one `Dialog` (+ its context providers) per row inflates
+  // grid re-render cost. Render a bare clickable row until the user first
+  // opens the editor.
   const [everOpened, setEverOpened] = useState(false);
-  const [deletePending, setDeletePending] = useState(false);
   // Rows are keyed by slot index so React can reuse instances across year
   // switches — reset any in-flight per-row UI state when the underlying
-  // transaction identity changes, or the user would see an open editor /
-  // pending delete for a different row.
+  // transaction identity changes, or the user would see an open editor for a
+  // different row.
   useEffect(() => {
     setEditOpen(false);
     setEverOpened(false);
-    setDeletePending(false);
   }, [tx.id]);
   const [update] = useMutation(TransactionUpdateDocument, {
     // `"active"` refetches every currently-watched query. A derived-earnings
@@ -964,81 +1053,197 @@ function TransactionRow({
   const onDelete = async () => {
     await remove({ variables: { monthId, id: tx.id } });
     toast.success("Deleted");
+    setEditOpen(false);
   };
 
-  return (
-    <li
-      className={cn(
-        "group/row relative flex items-center gap-1 px-2 py-1",
-        tx.isProvisional && "italic text-muted-foreground",
-      )}
-    >
+  const onSaveAmount = async (signed: number) => {
+    await update({
+      variables: {
+        monthId,
+        id: tx.id,
+        amount: { amount: signed, currency: tx.amount.currency },
+      },
+    });
+    toast.success("Saved");
+  };
+
+  const rowBody = (
+    <>
       <TransactionKindIcon tx={tx} />
       <span className="flex-1 truncate">{tx.name}</span>
-      <Figure data={tx.amount} className={monoRight} />
-      {tx.isEditable && (
-        // Absolutely-positioned overlay so the row never reserves horizontal
-        // space for the action icons — they only appear on hover (or while a
-        // delete confirmation is open). The small gradient fade on the left
-        // keeps the amount from bleeding under the buttons at dense widths.
-        <span
-          className={cn(
-            "pointer-events-none absolute inset-y-0 right-0 flex items-center gap-0.5 bg-gradient-to-l from-background via-background to-transparent pr-2 pl-6 transition-opacity",
-            deletePending
-              ? "pointer-events-auto opacity-100"
-              : "opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
-          )}
+      <AmountCell
+        tx={tx}
+        monoRight={monoRight}
+        onSave={onSaveAmount}
+        editable={tx.isEditable}
+      />
+    </>
+  );
+  const rowClass = cn(
+    "group/row flex w-full items-center gap-1 px-2 py-1 text-left cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:bg-accent/40",
+    tx.isProvisional && "italic text-muted-foreground",
+  );
+  const openDialog = () => {
+    setEverOpened(true);
+    setEditOpen(true);
+  };
+  const rowKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDialog();
+    }
+  };
+
+  if (!everOpened) {
+    return (
+      <li>
+        <div
+          role="button"
+          tabIndex={0}
+          className={rowClass}
+          onClick={openDialog}
+          onKeyDown={rowKeyDown}
         >
-          {!deletePending && !everOpened && (
-            <IconButton
-              aria-label={`Edit ${tx.name}`}
-              onClick={() => {
-                setEverOpened(true);
-                setEditOpen(true);
-              }}
-            >
-              <Pencil className="size-3" />
-            </IconButton>
-          )}
-          {!deletePending && everOpened && (
-            <Popover open={editOpen} onOpenChange={setEditOpen}>
-              <PopoverTrigger asChild>
-                <IconButton aria-label={`Edit ${tx.name}`}>
-                  <Pencil className="size-3" />
-                </IconButton>
-              </PopoverTrigger>
-              <PopoverContent className="w-80" align="end">
-                <FullTransactionForm
-                  submitLabel="Save"
-                  initial={{
-                    name: tx.name,
-                    amount: Math.abs(tx.amount.amount),
-                    direction: tx.amount.amount < 0 ? "-" : "+",
-                    toAccountId: tx.toAccount?.id ?? null,
-                    liabilityId: tx.liability?.id ?? null,
-                    assetId: tx.asset?.id ?? null,
-                  }}
-                  accounts={accounts}
-                  liabilities={liabilities}
-                  investableAssets={investableAssets}
-                  excludeAccountId={accountId}
-                  frequentLiabilityIds={frequentLiabilityIds}
-                  frequentAssetIds={frequentAssetIds}
-                  onSubmit={onSaveEdit}
-                  onCancel={() => setEditOpen(false)}
-                />
-              </PopoverContent>
-            </Popover>
-          )}
-          <InlineDeleteButton
-            pending={deletePending}
-            onPendingChange={setDeletePending}
-            onConfirm={onDelete}
-            label={`Delete ${tx.name}`}
+          {rowBody}
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li>
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogTrigger asChild>
+          <div
+            role="button"
+            tabIndex={0}
+            className={rowClass}
+            onKeyDown={rowKeyDown}
+          >
+            {rowBody}
+          </div>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Transaction</DialogTitle>
+            {!tx.isEditable && (
+              <DialogDescription>
+                This transaction is derived from earnings, payslips, or bills
+                and can't be edited here.
+              </DialogDescription>
+            )}
+          </DialogHeader>
+          <FullTransactionForm
+            submitLabel="Save"
+            initial={{
+              name: tx.name,
+              amount: Math.abs(tx.amount.amount),
+              direction: tx.amount.amount < 0 ? "-" : "+",
+              toAccountId: tx.toAccount?.id ?? null,
+              liabilityId: tx.liability?.id ?? null,
+              assetId: tx.asset?.id ?? null,
+            }}
+            accounts={accounts}
+            liabilities={liabilities}
+            investableAssets={investableAssets}
+            excludeAccountId={accountId}
+            frequentLiabilityIds={frequentLiabilityIds}
+            frequentAssetIds={frequentAssetIds}
+            disabled={!tx.isEditable}
+            onDelete={tx.isEditable ? onDelete : undefined}
+            onSubmit={onSaveEdit}
+            onCancel={() => setEditOpen(false)}
           />
-        </span>
-      )}
+        </DialogContent>
+      </Dialog>
     </li>
+  );
+}
+
+/**
+ * Amount column for a transaction row. On mobile this is a plain `Figure` —
+ * the surrounding row handles the click, opening the full edit dialog. On
+ * desktop (`sm+`) clicking the amount swaps it for a small inline input so
+ * quick number tweaks don't need the modal. The sign is preserved from the
+ * original amount; flipping sign still goes through the dialog.
+ */
+function AmountCell({
+  tx,
+  monoRight,
+  onSave,
+  editable,
+}: {
+  tx: ResultOf<typeof PlanningTransactionRowDocument>;
+  monoRight: string;
+  onSave: (signed: number) => Promise<void>;
+  editable: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+
+  if (!editable) return <Figure data={tx.amount} className={monoRight} />;
+
+  if (editing) {
+    const commit = async () => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        setEditing(false);
+        return;
+      }
+      const sign = tx.amount.amount < 0 ? -1 : 1;
+      const signed = parsed * sign;
+      setEditing(false);
+      if (signed !== tx.amount.amount) await onSave(signed);
+    };
+    return (
+      <input
+        autoFocus
+        type="number"
+        step="0.01"
+        min="0"
+        inputMode="decimal"
+        className={cn(
+          monoRight,
+          "w-24 rounded border border-input bg-background px-1 py-0 text-xs outline-none focus:ring-1 focus:ring-ring",
+        )}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => {
+          void commit();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setEditing(false);
+          }
+        }}
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  }
+
+  return (
+    <>
+      <Figure data={tx.amount} className={cn(monoRight, "sm:hidden")} />
+      <button
+        type="button"
+        className={cn(
+          monoRight,
+          "hidden cursor-text rounded px-0.5 hover:bg-accent hover:underline sm:inline",
+        )}
+        aria-label="Edit amount"
+        onClick={(e) => {
+          e.stopPropagation();
+          setValue(Math.abs(tx.amount.amount).toString());
+          setEditing(true);
+        }}
+      >
+        <Figure data={tx.amount} />
+      </button>
+    </>
   );
 }
 
@@ -1085,49 +1290,6 @@ function IconButton({ className, ...props }: React.ComponentProps<"button">) {
       )}
       {...props}
     />
-  );
-}
-
-/** Two-step inline delete: click → morphs into confirm (✓) + cancel (✕).
- * `pending` is lifted so the parent can hide the sibling edit button while
- * the user is deciding, keeping the row's button count stable. */
-function InlineDeleteButton({
-  pending,
-  onPendingChange,
-  onConfirm,
-  label,
-}: {
-  pending: boolean;
-  onPendingChange: (pending: boolean) => void;
-  onConfirm: () => void | Promise<unknown>;
-  label: string;
-}) {
-  if (!pending) {
-    return (
-      <IconButton onClick={() => onPendingChange(true)} aria-label={label}>
-        <Trash2 className="size-3" />
-      </IconButton>
-    );
-  }
-  return (
-    <>
-      <IconButton
-        onClick={() => onPendingChange(false)}
-        aria-label="Cancel delete"
-      >
-        <X className="size-3" />
-      </IconButton>
-      <IconButton
-        onClick={async () => {
-          onPendingChange(false);
-          await onConfirm();
-        }}
-        aria-label="Confirm delete"
-        className="text-destructive hover:text-destructive"
-      >
-        <Check className="size-3" />
-      </IconButton>
-    </>
   );
 }
 
@@ -1312,6 +1474,8 @@ function FullTransactionForm({
   excludeAccountId,
   frequentLiabilityIds,
   frequentAssetIds,
+  disabled: readOnly = false,
+  onDelete,
   onSubmit,
   onCancel,
 }: {
@@ -1323,6 +1487,8 @@ function FullTransactionForm({
   excludeAccountId: string;
   frequentLiabilityIds: string[];
   frequentAssetIds: string[];
+  disabled?: boolean;
+  onDelete?: () => void | Promise<void>;
   onSubmit: (v: FullFormValues) => void | Promise<void>;
   onCancel: () => void;
 }) {
@@ -1400,6 +1566,7 @@ function FullTransactionForm({
           placeholder="e.g. Rent"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          disabled={readOnly}
         />
       </div>
       <div className="space-y-1">
@@ -1408,7 +1575,7 @@ function FullTransactionForm({
           <Select
             value={effectiveDirection}
             onValueChange={(v) => setDirection(v as "+" | "-")}
-            disabled={hasTarget}
+            disabled={hasTarget || readOnly}
           >
             <SelectTrigger className="w-14 rounded-r-none border-r-0">
               <SelectValue />
@@ -1427,12 +1594,17 @@ function FullTransactionForm({
             className="flex-1 rounded-l-none"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
+            disabled={readOnly}
           />
         </div>
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Transfer to (optional)</Label>
-        <Select value={toAccountId} onValueChange={onSelectToAccount}>
+        <Select
+          value={toAccountId}
+          onValueChange={onSelectToAccount}
+          disabled={readOnly}
+        >
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -1448,7 +1620,11 @@ function FullTransactionForm({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Pays down liability (optional)</Label>
-        <Select value={liabilityId} onValueChange={onSelectLiability}>
+        <Select
+          value={liabilityId}
+          onValueChange={onSelectLiability}
+          disabled={readOnly}
+        >
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -1484,7 +1660,11 @@ function FullTransactionForm({
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Invests into asset (optional)</Label>
-        <Select value={assetId} onValueChange={onSelectAsset}>
+        <Select
+          value={assetId}
+          onValueChange={onSelectAsset}
+          disabled={readOnly}
+        >
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -1518,13 +1698,29 @@ function FullTransactionForm({
           </SelectContent>
         </Select>
       </div>
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        {onDelete && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mr-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => {
+              void onDelete();
+            }}
+          >
+            <Trash2 className="size-4" />
+            Delete
+          </Button>
+        )}
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>
-          Cancel
+          {readOnly ? "Close" : "Cancel"}
         </Button>
-        <Button type="submit" size="sm" disabled={disabled}>
-          {submitLabel}
-        </Button>
+        {!readOnly && (
+          <Button type="submit" size="sm" disabled={disabled}>
+            {submitLabel}
+          </Button>
+        )}
       </div>
     </form>
   );

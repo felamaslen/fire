@@ -59,7 +59,7 @@ const LINKS: {
 
 export function NavHeader() {
   return (
-    <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
+    <header className="fixed inset-x-0 top-0 z-40 border-b bg-background/80 backdrop-blur">
       <nav className="mx-auto flex h-8 max-w-6xl items-center gap-0.5 px-3 sm:h-10 sm:gap-1 sm:px-6">
         <Link
           to="/"
@@ -67,7 +67,10 @@ export function NavHeader() {
         >
           fire
         </Link>
-        <div id={TITLE_SLOT_ID} className="flex items-center" />
+        <div
+          id={TITLE_SLOT_ID}
+          className="flex items-center whitespace-nowrap"
+        />
         <div id={ACTIONS_SLOT_ID} className="ml-auto flex items-center gap-1" />
         {LINKS.map((l) => {
           const Icon = l.icon;
