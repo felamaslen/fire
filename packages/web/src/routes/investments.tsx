@@ -630,12 +630,37 @@ function InvestmentsList({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
+              <TableHead className="w-full">Name</TableHead>
+              <TableHead className="hidden sm:table-cell">Ticker</TableHead>
               <TableHead className="text-right">Units</TableHead>
-              <TableHead className="text-right">
+              <TableHead className="text-right sm:hidden">
                 <SortHeader
                   label="Value / Gain"
                   kind="value"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+              </TableHead>
+              <TableHead className="hidden text-right sm:table-cell">
+                <SortHeader
+                  label="Value"
+                  kind="value"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+              </TableHead>
+              <TableHead className="hidden text-right sm:table-cell">
+                <SortHeader
+                  label="Gain"
+                  kind="gainAbs"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+              </TableHead>
+              <TableHead className="hidden text-right sm:table-cell">
+                <SortHeader
+                  label="%"
+                  kind="gainPercent"
                   sort={sort}
                   onToggle={toggle}
                 />
@@ -756,14 +781,15 @@ function InvestmentRow({
 }) {
   const inv = readFragment(InvestmentRowDocument, data);
   const gainColor = gainSignColor(inv.position.totalGain?.amount);
-  const displayName =
-    inv.asset.__typename === "InvestmentStock" ? inv.asset.code : inv.name;
+  const ticker =
+    inv.asset.__typename === "InvestmentStock" ? inv.asset.code : null;
 
   return (
     <TableRow className="cursor-pointer" onClick={onOpen}>
       <TableCell className="max-w-0 align-middle font-medium">
         <span className="flex items-center gap-1.5">
-          <span className="truncate">{displayName}</span>
+          <span className="truncate sm:hidden">{ticker ?? inv.name}</span>
+          <span className="hidden truncate sm:inline">{inv.name}</span>
           {inv.asset.__typename === "InvestmentFund" && (
             <a
               href={inv.asset.url}
@@ -778,10 +804,13 @@ function InvestmentRow({
           )}
         </span>
       </TableCell>
+      <TableCell className="hidden text-xs text-muted-foreground align-middle sm:table-cell">
+        {ticker ?? ""}
+      </TableCell>
       <TableCell className="text-right align-middle tabular-nums">
         {inv.position.units}
       </TableCell>
-      <TableCell className="text-right align-middle">
+      <TableCell className="text-right align-middle sm:hidden">
         <div className="flex flex-col items-end leading-tight">
           <span className="tabular-nums">
             {inv.position.totalValue ? (
@@ -803,6 +832,35 @@ function InvestmentRow({
             )}
           </span>
         </div>
+      </TableCell>
+      <TableCell className="hidden text-right align-middle sm:table-cell">
+        {inv.position.totalValue ? (
+          <Figure data={inv.position.totalValue} compact />
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
+      <TableCell
+        className={cn(
+          "hidden text-right align-middle sm:table-cell",
+          gainColor,
+        )}
+      >
+        {inv.position.totalGain ? (
+          <Figure data={inv.position.totalGain} compact />
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
+      <TableCell
+        className={cn(
+          "hidden text-right tabular-nums align-middle sm:table-cell",
+          gainColor,
+        )}
+      >
+        {inv.position.percentGain == null
+          ? "—"
+          : `${(inv.position.percentGain * 100).toFixed(2)}%`}
       </TableCell>
     </TableRow>
   );

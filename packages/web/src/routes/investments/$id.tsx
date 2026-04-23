@@ -271,7 +271,11 @@ function InvestmentDetailPage() {
       open
       onOpenChange={(open) => {
         if (!open)
-          void navigate({ to: "/investments", search: (prev) => prev });
+          void navigate({
+            to: "/investments",
+            search: (prev) => prev,
+            resetScroll: false,
+          });
       }}
     >
       <DialogContent className="max-w-3xl">
