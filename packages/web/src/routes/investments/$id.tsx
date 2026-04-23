@@ -5,11 +5,10 @@ import {
   useNavigate,
   useSearch,
 } from "@tanstack/react-router";
-import { Pencil, Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Suspense, useState } from "react";
 import { toast } from "sonner";
 
-import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
 import {
   InvestmentForm,
@@ -34,14 +33,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Tooltip,
   TooltipContent,
@@ -562,57 +553,40 @@ function TransactionsSection({
             onMutate();
           }}
           onCancel={() => setEditing(null)}
+          onDelete={async () => {
+            await deleteTx({ variables: { id: editing.id } });
+            setEditing(null);
+            onMutate();
+          }}
         />
       )}
 
       {transactions.length === 0 ? (
         <p className="text-sm text-muted-foreground">No transactions yet.</p>
       ) : (
-        <div className="max-h-[45vh] overflow-y-auto rounded border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Wrapper</TableHead>
-                <TableHead className="text-right">Units</TableHead>
-                <TableHead className="text-right">Price</TableHead>
-                <TableHead>DRIP</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {transactions.map((t) => (
-                <TableRow key={t.id}>
-                  <TableCell className="align-middle">{t.date}</TableCell>
-                  <TableCell className="align-middle">{t.asset.name}</TableCell>
-                  <TableCell className="text-right tabular-nums align-middle">
-                    {t.units}
-                  </TableCell>
-                  <TableCell className="text-right align-middle">
-                    <Figure data={t.price} />
-                  </TableCell>
-                  <TableCell className="align-middle">
-                    {t.drip ? "Yes" : ""}
-                  </TableCell>
-                  <TableCell className="w-0 align-middle">
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => onEdit(t)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <DeleteButton
-                        onConfirm={() => deleteTx({ variables: { id: t.id } })}
-                      />
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+        <ul className="max-h-[45vh] divide-y overflow-y-auto rounded border">
+          {transactions.map((t) => (
+            <li key={t.id}>
+              <button
+                type="button"
+                onClick={() => onEdit(t)}
+                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
+              >
+                <span className="min-w-0 truncate text-sm tabular-nums">
+                  {t.date}
+                </span>
+                <span className="shrink-0 text-sm tabular-nums">
+                  {t.units}u @ <Figure data={t.price} />
+                  {t.drip && (
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      DRIP
+                    </span>
+                  )}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
 
       <div className="flex justify-between border-t pt-3">
@@ -646,6 +620,7 @@ function TransactionForm({
   lockedAssetId,
   onDone,
   onCancel,
+  onDelete,
 }: {
   investmentId: string;
   currency: string;
@@ -656,6 +631,7 @@ function TransactionForm({
   lockedAssetId: string | null;
   onDone: () => void;
   onCancel: () => void;
+  onDelete?: () => Promise<void> | void;
 }) {
   const refetch = [
     "InvestmentTransactions",
@@ -729,7 +705,7 @@ function TransactionForm({
         e.preventDefault();
         void form.handleSubmit();
       }}
-      className="grid grid-cols-2 gap-3 rounded border p-3 sm:grid-cols-4"
+      className="grid grid-cols-1 gap-3 rounded border p-3 sm:grid-cols-4"
     >
       <form.Field name="assetId">
         {(field) => {
@@ -855,7 +831,20 @@ function TransactionForm({
           </label>
         )}
       </form.Field>
-      <div className="col-span-full flex justify-end gap-2">
+      <div className="col-span-full flex items-center justify-end gap-2">
+        {onDelete && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="mr-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => {
+              void onDelete();
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </Button>
+        )}
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
@@ -943,6 +932,11 @@ function StockSplitsSection({ investmentId }: { investmentId: string }) {
             onMutate();
           }}
           onCancel={() => setEditing(null)}
+          onDelete={async () => {
+            await deleteSplit({ variables: { id: editing.id } });
+            setEditing(null);
+            onMutate();
+          }}
         />
       )}
 
@@ -951,39 +945,20 @@ function StockSplitsSection({ investmentId }: { investmentId: string }) {
           No stock splits recorded.
         </p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead className="text-right">Ratio</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {splits.map((s) => (
-              <TableRow key={s.id}>
-                <TableCell className="align-middle">{s.date}</TableCell>
-                <TableCell className="text-right tabular-nums align-middle">
-                  {s.ratio}
-                </TableCell>
-                <TableCell className="w-0 align-middle">
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => setEditing(s)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <DeleteButton
-                      onConfirm={() => deleteSplit({ variables: { id: s.id } })}
-                    />
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <ul className="divide-y rounded border">
+          {splits.map((s) => (
+            <li key={s.id}>
+              <button
+                type="button"
+                onClick={() => setEditing(s)}
+                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
+              >
+                <span className="text-sm tabular-nums">{s.date}</span>
+                <span className="text-sm tabular-nums">{s.ratio}×</span>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );
@@ -994,11 +969,13 @@ function StockSplitForm({
   existing,
   onDone,
   onCancel,
+  onDelete,
 }: {
   investmentId: string;
   existing: StockSplitRow | null;
   onDone: () => void;
   onCancel: () => void;
+  onDelete?: () => Promise<void> | void;
 }) {
   const refetchLists = [
     { query: InvestmentStockSplitsDocument },
@@ -1084,7 +1061,20 @@ function StockSplitForm({
           </div>
         )}
       </form.Field>
-      <div className="col-span-full flex justify-end gap-2">
+      <div className="col-span-full flex items-center justify-end gap-2">
+        {onDelete && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="mr-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => {
+              void onDelete();
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </Button>
+        )}
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>

@@ -35,10 +35,10 @@ type Props = {
   stacked?: boolean;
 };
 
-const AXIS_PAD_LEFT = 64;
+const AXIS_PAD_LEFT = 56;
 const AXIS_PAD_RIGHT = 16;
-const AXIS_PAD_TOP = 12;
-const AXIS_PAD_BOTTOM = 28;
+const AXIS_PAD_TOP = 20;
+const AXIS_PAD_BOTTOM = 36;
 
 function shortDate(d: Date): string {
   return d.toLocaleDateString("en-GB", {
@@ -62,7 +62,7 @@ export function PortfolioChart({
   lines,
   candles,
   width = 720,
-  height = 260,
+  height = 280,
   className,
   currency = "GBP",
   initialDate,
@@ -133,9 +133,8 @@ export function PortfolioChart({
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
-      width={width}
-      height={height}
       className={cn("overflow-visible", className)}
+      style={{ aspectRatio: `${width} / ${height}` }}
     >
       {/* Grid + Y axis labels */}
       {yTicks.map((v) => (
@@ -152,7 +151,7 @@ export function PortfolioChart({
             x={AXIS_PAD_LEFT - 6}
             y={yScale(v) + 3}
             textAnchor="end"
-            className="fill-muted-foreground text-[10px] tabular-nums"
+            className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums"
           >
             {formatAccountingMoney(currency, v, { compact: true })}
           </text>
@@ -166,7 +165,7 @@ export function PortfolioChart({
           x={xScale(t.x)}
           y={height - 8}
           textAnchor="middle"
-          className="fill-muted-foreground text-[10px]"
+          className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
         >
           {t.label}
         </text>
@@ -309,7 +308,7 @@ export function PortfolioChart({
                 className="fill-popover stroke-border"
                 strokeWidth={1}
               />
-              <g className="fill-foreground text-[10px] tabular-nums">
+              <g className="fill-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums">
                 {d && (
                   <text x={boxX + 8} y={boxY + 14} className="font-medium">
                     {fullDate(d)}
@@ -514,7 +513,7 @@ export function PortfolioChart({
                         className="fill-popover stroke-border"
                         strokeWidth={1}
                       />
-                      <g className="fill-foreground text-[10px] tabular-nums">
+                      <g className="fill-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums">
                         {d && (
                           <text
                             x={boxX + 8}

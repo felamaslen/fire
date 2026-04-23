@@ -144,21 +144,32 @@ export function PortfolioSection({
   const candle = PORTFOLIO_CANDLES[candleIdx] ?? PORTFOLIO_CANDLES[2];
 
   return (
-    <section className="relative space-y-3 rounded-lg border p-4">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Portfolio</h2>
-        <div className="flex flex-wrap gap-1 text-xs">
+    <section
+      className={cn(
+        "relative space-y-0 rounded-lg border sm:space-y-3 sm:p-4",
+        // Reserve space for the absolutely-positioned allocation bars at
+        // the bottom — taller when a wrapper is selected, because the
+        // target bar is draggable (and therefore a bigger touch target).
+        filterAssetId ? "pb-12 sm:pb-4" : "pb-8 sm:pb-4",
+      )}
+    >
+      <header className="flex flex-col gap-0.5 px-0.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2 sm:px-0">
+        <h2 className="sr-only sm:not-sr-only sm:text-sm sm:font-semibold">
+          Portfolio
+        </h2>
+        <div className="flex flex-wrap gap-0.5 text-xs sm:gap-1">
           {mode === "candlestick"
             ? PORTFOLIO_CANDLES.map((c, i) => {
                 const prev = i > 0 ? PORTFOLIO_CANDLES[i - 1] : null;
                 const sectionBreak = prev && prev.section !== c.section;
                 return (
-                  <span key={c.label} className="flex gap-1">
+                  <span key={c.label} className="flex gap-0.5 sm:gap-1">
                     {sectionBreak && <span className="mx-1" />}
                     <Button
                       size="sm"
                       variant={i === candleIdx ? "default" : "outline"}
                       onClick={() => update({ candleIdx: i })}
+                      className="h-6 px-1.5 text-[10px] sm:h-8 sm:px-3 sm:text-xs"
                     >
                       {c.label}
                     </Button>
@@ -171,15 +182,18 @@ export function PortfolioSection({
                   size="sm"
                   variant={i === periodIdx ? "default" : "outline"}
                   onClick={() => update({ periodIdx: i })}
+                  className="h-6 px-1.5 text-[10px] sm:h-8 sm:px-3 sm:text-xs"
                 >
                   {per.label}
                 </Button>
               ))}
-          <span className="mx-2" />
+        </div>
+        <div className="flex flex-wrap gap-0.5 text-xs sm:gap-1">
           <Button
             size="sm"
             variant={mode === "line" ? "default" : "outline"}
             onClick={() => update({ mode: "line" })}
+            className="h-6 px-1.5 text-[10px] sm:h-8 sm:px-3 sm:text-xs"
           >
             Line
           </Button>
@@ -187,6 +201,7 @@ export function PortfolioSection({
             size="sm"
             variant={mode === "candlestick" ? "default" : "outline"}
             onClick={() => update({ mode: "candlestick" })}
+            className="h-6 px-1.5 text-[10px] sm:h-8 sm:px-3 sm:text-xs"
           >
             Candle
           </Button>
@@ -195,6 +210,7 @@ export function PortfolioSection({
             variant={stack ? "default" : "outline"}
             disabled={mode === "candlestick"}
             onClick={() => update({ stack: !stack })}
+            className="h-6 px-1.5 text-[10px] sm:h-8 sm:px-3 sm:text-xs"
           >
             Stacked
           </Button>

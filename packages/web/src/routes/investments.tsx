@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
+import { useQuery, useSuspenseQuery } from "@apollo/client/react";
 import {
   createFileRoute,
   Outlet,
@@ -6,18 +6,17 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, ExternalLink, Pencil, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, Plus } from "lucide-react";
 import {
   Suspense,
   useCallback,
   useDeferredValue,
   useEffect,
+  useRef,
   useState,
 } from "react";
-import { toast } from "sonner";
 import { z } from "zod";
 
-import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
 import {
   AllocationsSection,
@@ -37,6 +36,7 @@ import {
   type PortfolioChartSettings,
   PortfolioSection,
 } from "@/components/investments/portfolio-section";
+import { NavHeaderTitle } from "@/components/nav-header";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
 import {
@@ -257,14 +257,6 @@ function WrapperFilterDropdown({
   );
 }
 
-const InvestmentDeleteDocument = graphql(`
-  mutation InvestmentDelete($id: ID!) {
-    investmentDelete(id: $id) {
-      _
-    }
-  }
-`);
-
 type InvestmentRowNode = NonNullable<
   ResultOf<typeof InvestmentsListDocument>["investments"]
 >["edges"][number]["node"];
@@ -419,11 +411,33 @@ function loadPersistedSearch(): InvestmentsSearch {
 }
 
 function InvestmentsDialogLayout() {
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const [titleVisible, setTitleVisible] = useState(true);
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => setTitleVisible(entry.isIntersecting),
+      { rootMargin: "-40px 0px 0px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   return (
-    <main className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Investments</h1>
-      </header>
+    <main className="mx-auto flex max-w-6xl flex-col gap-3 p-3 sm:gap-6 sm:p-6">
+      <h1
+        ref={titleRef}
+        className="text-lg font-semibold tracking-tight sm:text-2xl"
+      >
+        Investments
+      </h1>
+      {!titleVisible && (
+        <NavHeaderTitle>
+          <span className="text-sm font-semibold tracking-tight">
+            Investments
+          </span>
+        </NavHeaderTitle>
+      )}
       <Suspense fallback={<Spinner />}>
         <InvestmentsPageContent />
       </Suspense>
@@ -619,33 +633,15 @@ function InvestmentsList({
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Ticker</TableHead>
               <TableHead className="text-right">Units</TableHead>
               <TableHead className="text-right">
                 <SortHeader
-                  label="Value"
+                  label="Value / Gain"
                   kind="value"
                   sort={sort}
                   onToggle={toggle}
                 />
               </TableHead>
-              <TableHead className="text-right">
-                <SortHeader
-                  label="Gain"
-                  kind="gainAbs"
-                  sort={sort}
-                  onToggle={toggle}
-                />
-              </TableHead>
-              <TableHead className="text-right">
-                <SortHeader
-                  label="%"
-                  kind="gainPercent"
-                  sort={sort}
-                  onToggle={toggle}
-                />
-              </TableHead>
-              <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -655,11 +651,12 @@ function InvestmentsList({
                 <InvestmentRow
                   key={row.id}
                   data={row}
-                  onEdit={() =>
+                  onOpen={() =>
                     void navigate({
                       to: "/investments/$id",
                       params: { id },
                       search: (prev) => prev,
+                      resetScroll: false,
                     })
                   }
                 />
@@ -754,31 +751,28 @@ function gainSignColor(amount: number | null | undefined): string {
 
 function InvestmentRow({
   data,
-  onEdit,
+  onOpen,
 }: {
   data: FragmentOf<typeof InvestmentRowDocument>;
-  onEdit: () => void;
+  onOpen: () => void;
 }) {
   const inv = readFragment(InvestmentRowDocument, data);
-  const [remove] = useMutation(InvestmentDeleteDocument, {
-    refetchQueries: investmentsRefetch,
-    awaitRefetchQueries: true,
-    onCompleted: () => toast.success("Investment deleted"),
-    onError: (err) => toast.error(err.message),
-  });
   const gainColor = gainSignColor(inv.position.totalGain?.amount);
+  const displayName =
+    inv.asset.__typename === "InvestmentStock" ? inv.asset.code : inv.name;
 
   return (
-    <TableRow>
-      <TableCell className="font-medium align-middle">
-        <span className="inline-flex items-center gap-1.5">
-          {inv.name}
+    <TableRow className="cursor-pointer" onClick={onOpen}>
+      <TableCell className="max-w-0 align-middle font-medium">
+        <span className="flex items-center gap-1.5">
+          <span className="truncate">{displayName}</span>
           {inv.asset.__typename === "InvestmentFund" && (
             <a
               href={inv.asset.url}
               target="_blank"
               rel="noreferrer noopener"
-              className="text-muted-foreground hover:text-foreground"
+              onClick={(e) => e.stopPropagation()}
+              className="shrink-0 text-muted-foreground hover:text-foreground"
               aria-label="Open fund page"
             >
               <ExternalLink className="h-3.5 w-3.5" />
@@ -786,41 +780,30 @@ function InvestmentRow({
           )}
         </span>
       </TableCell>
-      <TableCell className="text-xs text-muted-foreground align-middle">
-        {inv.asset.__typename === "InvestmentStock" ? inv.asset.code : ""}
-      </TableCell>
-      <TableCell className="text-right tabular-nums align-middle">
+      <TableCell className="text-right align-middle tabular-nums">
         {inv.position.units}
       </TableCell>
       <TableCell className="text-right align-middle">
-        {inv.position.totalValue ? (
-          <Figure data={inv.position.totalValue} compact />
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-      <TableCell className={cn("text-right align-middle", gainColor)}>
-        {inv.position.totalGain ? (
-          <Figure data={inv.position.totalGain} compact />
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-      <TableCell
-        className={cn("text-right tabular-nums align-middle", gainColor)}
-      >
-        {inv.position.percentGain == null
-          ? "—"
-          : `${(inv.position.percentGain * 100).toFixed(2)}%`}
-      </TableCell>
-      <TableCell className="w-0 align-middle">
-        <div className="flex items-center gap-1">
-          <Button size="icon" variant="ghost" onClick={onEdit}>
-            <Pencil className="h-4 w-4" />
-          </Button>
-          <DeleteButton
-            onConfirm={() => remove({ variables: { id: inv.id } })}
-          />
+        <div className="flex flex-col items-end leading-tight">
+          <span className="tabular-nums">
+            {inv.position.totalValue ? (
+              <Figure data={inv.position.totalValue} compact />
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
+          </span>
+          <span className={cn("text-xs tabular-nums", gainColor)}>
+            {inv.position.totalGain ? (
+              <Figure data={inv.position.totalGain} compact />
+            ) : (
+              "—"
+            )}
+            {inv.position.percentGain != null && (
+              <span className="ml-1">
+                ({(inv.position.percentGain * 100).toFixed(1)}%)
+              </span>
+            )}
+          </span>
         </div>
       </TableCell>
     </TableRow>

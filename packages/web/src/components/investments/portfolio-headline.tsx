@@ -174,7 +174,7 @@ export function PortfolioHeadline({
   const flash = useDailyGainFlash(portfolio?.dailyGainValue?.amount);
 
   return (
-    <section className="flex flex-wrap gap-x-6 gap-y-2 rounded-md border px-4 py-2 text-sm">
+    <section className="flex flex-col gap-y-1 rounded-md border px-2 py-1 text-xs sm:flex-row sm:flex-wrap sm:gap-x-6 sm:gap-y-2 sm:px-4 sm:py-2 sm:text-sm">
       <Stat label="Value">
         {portfolio?.totalValue ? <Figure data={portfolio.totalValue} /> : "—"}
       </Stat>
