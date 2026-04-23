@@ -963,6 +963,15 @@ type Mutation {
   """
   planningYearSet(taxRates: PlanningYearTaxRatesInput, year: ID!): PlanningYear!
   """
+  Set (or clear) the user's planned retirement year. Pass `null` to clear — the forecast then runs without a retirement transition.
+  """
+  retirementSettingsUpdate(
+    """
+    Calendar year of planned retirement, or `null` to clear. Valid range is 1900–2200.
+    """
+    retirementYear: Int
+  ): RetirementSettings!
+  """
   Record a manual transaction on a planning month. `amount` is signed — negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId`, `liabilityId`, and `assetId` to be null. An outflow may either pay down a liability OR invest into a stock/pension asset, but not both.
   """
   transactionCreate(
@@ -1209,14 +1218,22 @@ type NetWorthForecastGrowthAsset {
 }
 
 """
-Projection for a `LOAN` liability. The balance compounds monthly at `interestRate` and drops by `monthlyRepayment`, clamped at zero.
+Projection for a `LOAN` liability. The balance compounds monthly at `interestRate` and drops by `monthlyRepayment`, clamped at zero. The repayment is split into the portion paid from direct transactions / bills (which continues after retirement) and the portion paid from payslip deductions (which stops once income goes to zero).
 """
 type NetWorthForecastLoan {
   category: NetWorthCategoryLiability!
   """Annual interest rate (percent)."""
   interestRate: Float!
   """
-  EWMA of the past ten months' actual repayments (or scheduled bill amounts when no transactions land that month).
+  EWMA of the past ten months' direct transactions / scheduled bill amounts. Continues after retirement — funded from cash.
+  """
+  monthlyBillRepayment: Money!
+  """
+  EWMA of the past twelve months' payslip deductions tagged to this loan. Stops at the retirement month since payslip income goes to zero.
+  """
+  monthlyPayslipRepayment: Money!
+  """
+  Total EWMA monthly repayment (`monthlyBillRepayment + monthlyPayslipRepayment`) applied pre-retirement.
   """
   monthlyRepayment: Money!
   """
@@ -1262,11 +1279,47 @@ type NetWorthForecastPortfolio {
 }
 
 """
+Retirement transition inside a forecast projection. Present when the user has set a retirement year and it falls inside the forecast horizon (or earlier, in which case `monthIndex` is `0`).
+"""
+type NetWorthForecastRetirement {
+  """Date at the start of the first post-retirement month."""
+  date: Date!
+  """
+  Assumed annual safe-withdrawal rate applied to the portfolio post-retirement, as a decimal.
+  """
+  drawdownRate: Float!
+  """
+  Assumed annual inflation rate applied to spending post-retirement, as a decimal.
+  """
+  inflationRate: Float!
+  """
+  Index into `points` at which post-retirement behaviour starts — the first month with no income, drawdown begins, and inflation-adjusted spending kicks in.
+  """
+  monthIndex: Int!
+  """
+  EWMA-derived monthly net income pre-retirement (drops to zero at `monthIndex`).
+  """
+  monthlyIncome: Money!
+  """
+  EWMA-derived monthly spending (credit-card EWMA + non-liability bills) in the starting month. Inflated at `inflationRate` per year after retirement.
+  """
+  monthlySpending: Money!
+  """
+  Calendar year the user plans to retire in (mirrors `RetirementSettings.retirementYear`).
+  """
+  retirementYear: Int!
+}
+
+"""
 Engine workings exposed so the client can show how the forecast was derived.
 """
 type NetWorthForecastWorkings {
   """Per-category projection. Skipped liabilities drop out entirely."""
   categories: [NetWorthForecastCategory!]!
+  """
+  Retirement transition context, or `null` when no retirement year is set or it falls outside the horizon.
+  """
+  retirement: NetWorthForecastRetirement
 }
 
 """One bucket at a single history point, grouped by asset `type`."""
@@ -1942,6 +1995,10 @@ type Query {
     skipLive: Boolean
   ): PortfolioConnection @semanticNonNull
   """
+  Current retirement-planning settings. Returns server-configured constants even when the user has not set a retirement year yet.
+  """
+  retirementSettings: RetirementSettings @semanticNonNull
+  """
   Asset categories (`STOCK` / `PENSION`) most commonly referenced by existing planning transactions paid out of `accountId`, ordered by descending use count. Intended as a "frequently used" shortlist for the investment-transaction form.
   """
   transactionAssetsFrequent(
@@ -1959,6 +2016,24 @@ type Query {
     """
     accountId: ID!
   ): [NetWorthCategoryLiability!] @semanticNonNull
+}
+
+"""
+Retirement-planning configuration. The retirement year is the single user-settable input; the drawdown and inflation rates are server-configured constants that the client can surface in its explainer.
+"""
+type RetirementSettings {
+  """
+  Server-assumed annual safe-withdrawal rate applied to the portfolio after retirement, as a decimal.
+  """
+  drawdownRate: Float!
+  """
+  Server-assumed annual inflation rate applied to post-retirement spending, as a decimal.
+  """
+  inflationRate: Float!
+  """
+  Calendar year the user plans to retire in. Null when no retirement year has been set — the forecast then runs without a retirement transition.
+  """
+  retirementYear: Int
 }
 
 """

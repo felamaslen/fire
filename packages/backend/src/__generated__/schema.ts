@@ -23,6 +23,7 @@ import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCrea
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
 import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResolver } from "./../graphql/investments/portfolio";
+import { retirementSettings as queryRetirementSettingsResolver, retirementSettingsUpdate as mutationRetirementSettingsUpdateResolver } from "./../graphql/retirement";
 import { transactionAssetsFrequent as queryTransactionAssetsFrequentResolver, transactionLiabilitiesFrequent as queryTransactionLiabilitiesFrequentResolver, transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
@@ -1320,7 +1321,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const NetWorthForecastLoanType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthForecastLoan",
-        description: "Projection for a `LOAN` liability. The balance compounds monthly at `interestRate` and drops by `monthlyRepayment`, clamped at zero.",
+        description: "Projection for a `LOAN` liability. The balance compounds monthly at `interestRate` and drops by `monthlyRepayment`, clamped at zero. The repayment is split into the portion paid from direct transactions / bills (which continues after retirement) and the portion paid from payslip deductions (which stops once income goes to zero).",
         fields() {
             return {
                 category: {
@@ -1332,8 +1333,18 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "interestRate",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
+                monthlyBillRepayment: {
+                    description: "EWMA of the past ten months' direct transactions / scheduled bill amounts. Continues after retirement \u2014 funded from cash.",
+                    name: "monthlyBillRepayment",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                monthlyPayslipRepayment: {
+                    description: "EWMA of the past twelve months' payslip deductions tagged to this loan. Stops at the retirement month since payslip income goes to zero.",
+                    name: "monthlyPayslipRepayment",
+                    type: new GraphQLNonNull(MoneyType)
+                },
                 monthlyRepayment: {
-                    description: "EWMA of the past ten months' actual repayments (or scheduled bill amounts when no transactions land that month).",
+                    description: "Total EWMA monthly repayment (`monthlyBillRepayment + monthlyPayslipRepayment`) applied pre-retirement.",
                     name: "monthlyRepayment",
                     type: new GraphQLNonNull(MoneyType)
                 },
@@ -1411,6 +1422,49 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             return [NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType];
         }
     });
+    const NetWorthForecastRetirementType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthForecastRetirement",
+        description: "Retirement transition inside a forecast projection. Present when the user has set a retirement year and it falls inside the forecast horizon (or earlier, in which case `monthIndex` is `0`).",
+        fields() {
+            return {
+                date: {
+                    description: "Date at the start of the first post-retirement month.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                drawdownRate: {
+                    description: "Assumed annual safe-withdrawal rate applied to the portfolio post-retirement, as a decimal.",
+                    name: "drawdownRate",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                inflationRate: {
+                    description: "Assumed annual inflation rate applied to spending post-retirement, as a decimal.",
+                    name: "inflationRate",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                monthIndex: {
+                    description: "Index into `points` at which post-retirement behaviour starts \u2014 the first month with no income, drawdown begins, and inflation-adjusted spending kicks in.",
+                    name: "monthIndex",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                monthlyIncome: {
+                    description: "EWMA-derived monthly net income pre-retirement (drops to zero at `monthIndex`).",
+                    name: "monthlyIncome",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                monthlySpending: {
+                    description: "EWMA-derived monthly spending (credit-card EWMA + non-liability bills) in the starting month. Inflated at `inflationRate` per year after retirement.",
+                    name: "monthlySpending",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                retirementYear: {
+                    description: "Calendar year the user plans to retire in (mirrors `RetirementSettings.retirementYear`).",
+                    name: "retirementYear",
+                    type: new GraphQLNonNull(GraphQLInt)
+                }
+            };
+        }
+    });
     const NetWorthForecastWorkingsType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthForecastWorkings",
         description: "Engine workings exposed so the client can show how the forecast was derived.",
@@ -1420,6 +1474,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Per-category projection. Skipped liabilities drop out entirely.",
                     name: "categories",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthForecastCategoryType)))
+                },
+                retirement: {
+                    description: "Retirement transition context, or `null` when no retirement year is set or it falls outside the horizon.",
+                    name: "retirement",
+                    type: NetWorthForecastRetirementType
                 }
             };
         }
@@ -2101,6 +2160,29 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const RetirementSettingsType: GraphQLObjectType = new GraphQLObjectType({
+        name: "RetirementSettings",
+        description: "Retirement-planning configuration. The retirement year is the single user-settable input; the drawdown and inflation rates are server-configured constants that the client can surface in its explainer.",
+        fields() {
+            return {
+                drawdownRate: {
+                    description: "Server-assumed annual safe-withdrawal rate applied to the portfolio after retirement, as a decimal.",
+                    name: "drawdownRate",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                inflationRate: {
+                    description: "Server-assumed annual inflation rate applied to post-retirement spending, as a decimal.",
+                    name: "inflationRate",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                retirementYear: {
+                    description: "Calendar year the user plans to retire in. Null when no retirement year has been set \u2014 the forecast then runs without a retirement transition.",
+                    name: "retirementYear",
+                    type: GraphQLInt
+                }
+            };
+        }
+    });
     const QueryType: GraphQLObjectType = new GraphQLObjectType({
         name: "Query",
         fields() {
@@ -2441,6 +2523,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryPortfoliosResolver(args.filterAssetIdIn, args.currency, args.first, args.after, args.skipLive));
+                    }
+                },
+                retirementSettings: {
+                    description: "Current retirement-planning settings. Returns server-configured constants even when the user has not set a retirement year yet.",
+                    name: "retirementSettings",
+                    type: RetirementSettingsType,
+                    resolve() {
+                        return assertNonNull(queryRetirementSettingsResolver());
                     }
                 },
                 transactionAssetsFrequent: {
@@ -3837,6 +3927,20 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationPlanningYearSetResolver(args.year, args.taxRates);
                     }
                 },
+                retirementSettingsUpdate: {
+                    description: "Set (or clear) the user's planned retirement year. Pass `null` to clear \u2014 the forecast then runs without a retirement transition.",
+                    name: "retirementSettingsUpdate",
+                    type: new GraphQLNonNull(RetirementSettingsType),
+                    args: {
+                        retirementYear: {
+                            description: "Calendar year of planned retirement, or `null` to clear. Valid range is 1900\u20132200.",
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationRetirementSettingsUpdateResolver(args.retirementYear);
+                    }
+                },
                 transactionCreate: {
                     description: "Record a manual transaction on a planning month. `amount` is signed \u2014 negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId`, `liabilityId`, and `assetId` to be null. An outflow may either pay down a liability OR invest into a stock/pension asset, but not both.",
                     name: "transactionCreate",
@@ -3966,6 +4070,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             })],
         query: QueryType,
         mutation: MutationType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, DemoType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, DemoType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, VoidType]
     });
 }

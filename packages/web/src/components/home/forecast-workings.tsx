@@ -63,6 +63,14 @@ export const ForecastWorkingsFragment = graphql(`
           amount
           currency
         }
+        monthlyBillRepayment {
+          amount
+          currency
+        }
+        monthlyPayslipRepayment {
+          amount
+          currency
+        }
       }
       ... on NetWorthForecastFlatLiability {
         category {
@@ -84,6 +92,20 @@ export const ForecastWorkingsFragment = graphql(`
           currency
         }
       }
+    }
+    retirement {
+      retirementYear
+      date
+      monthlyIncome {
+        amount
+        currency
+      }
+      monthlySpending {
+        amount
+        currency
+      }
+      inflationRate
+      drawdownRate
     }
   }
 `);
@@ -111,13 +133,60 @@ export function ForecastWorkings({
     <div className="space-y-4">
       <header>
         <p className="text-xs text-muted-foreground">
-          Cash is held flat — the forecast assumes your month-to-month balance
-          stays roughly steady (investment contributions plus loan repayments
-          already account for post-spending surplus). Each non-cash category
-          evolves independently below.
+          Cash is held flat pre-retirement — the forecast assumes your
+          month-to-month balance stays roughly steady (investment contributions
+          plus loan repayments already account for post-spending surplus). Each
+          non-cash category evolves independently below.
         </p>
       </header>
       <CategoryBreakdown categories={workings.categories} />
+      {workings.retirement && (
+        <RetirementSection retirement={workings.retirement} />
+      )}
+    </div>
+  );
+}
+
+function RetirementSection({
+  retirement,
+}: {
+  retirement: NonNullable<Workings["retirement"]>;
+}) {
+  const currency = retirement.monthlySpending.currency;
+  return (
+    <div>
+      <h3 className="text-sm font-medium">
+        Retirement ({retirement.retirementYear})
+      </h3>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        From {retirement.date} income drops to zero. Portfolios continue to grow
+        at their existing XIRR but pay out{" "}
+        {(retirement.drawdownRate * 100).toFixed(1)}% per year (a
+        safe-withdrawal rate applied monthly). Cash absorbs the drawdown minus
+        spending and any bill-funded loan repayments still outstanding. Spending
+        compounds at {(retirement.inflationRate * 100).toFixed(1)}% per year for
+        inflation. Loan repayments funded from payslip deductions stop at
+        retirement (no more income to deduct from); loans paid via bills
+        continue out of cash.
+      </p>
+      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm tabular-nums">
+        <dt className="text-muted-foreground">
+          Monthly income (pre-retirement)
+        </dt>
+        <dd className="text-right">
+          {formatAccountingMoneyRounded(
+            currency,
+            retirement.monthlyIncome.amount,
+          )}
+        </dd>
+        <dt className="text-muted-foreground">Monthly spending (today)</dt>
+        <dd className="text-right">
+          {formatAccountingMoneyRounded(
+            currency,
+            retirement.monthlySpending.amount,
+          )}
+        </dd>
+      </dl>
     </div>
   );
 }

@@ -68,7 +68,7 @@ export class NetWorthForecastFlatAsset {
   ) {}
 }
 
-/** Projection for a `LOAN` liability. The balance compounds monthly at `interestRate` and drops by `monthlyRepayment`, clamped at zero. @gqlType */
+/** Projection for a `LOAN` liability. The balance compounds monthly at `interestRate` and drops by `monthlyRepayment`, clamped at zero. The repayment is split into the portion paid from direct transactions / bills (which continues after retirement) and the portion paid from payslip deductions (which stops once income goes to zero). @gqlType */
 export class NetWorthForecastLoan {
   readonly __typename = "NetWorthForecastLoan" as const;
   constructor(
@@ -76,8 +76,12 @@ export class NetWorthForecastLoan {
     public readonly category: NetWorthCategoryLiability,
     /** Balance at the forecast's starting point (positive magnitude). @gqlField */
     public readonly startingBalance: Money,
-    /** EWMA of the past ten months' actual repayments (or scheduled bill amounts when no transactions land that month). @gqlField */
+    /** Total EWMA monthly repayment (`monthlyBillRepayment + monthlyPayslipRepayment`) applied pre-retirement. @gqlField */
     public readonly monthlyRepayment: Money,
+    /** EWMA of the past ten months' direct transactions / scheduled bill amounts. Continues after retirement — funded from cash. @gqlField */
+    public readonly monthlyBillRepayment: Money,
+    /** EWMA of the past twelve months' payslip deductions tagged to this loan. Stops at the retirement month since payslip income goes to zero. @gqlField */
+    public readonly monthlyPayslipRepayment: Money,
     /** Annual interest rate (percent). @gqlField */
     public readonly interestRate: Float,
     /** Projected balance at each returned forecast point (inclusive of the starting point). @gqlField */
@@ -120,10 +124,30 @@ export type NetWorthForecastCategory =
   | NetWorthForecastFlatLiability
   | NetWorthForecastOptionCategory;
 
+/** Retirement transition inside a forecast projection. Present when the user has set a retirement year and it falls inside the forecast horizon (or earlier, in which case `monthIndex` is `0`). @gqlType */
+export type NetWorthForecastRetirement = {
+  /** Calendar year the user plans to retire in (mirrors `RetirementSettings.retirementYear`). @gqlField */
+  retirementYear: Int;
+  /** Index into `points` at which post-retirement behaviour starts — the first month with no income, drawdown begins, and inflation-adjusted spending kicks in. @gqlField */
+  monthIndex: Int;
+  /** Date at the start of the first post-retirement month. @gqlField */
+  date: CalendarDate;
+  /** EWMA-derived monthly net income pre-retirement (drops to zero at `monthIndex`). @gqlField */
+  monthlyIncome: Money;
+  /** EWMA-derived monthly spending (credit-card EWMA + non-liability bills) in the starting month. Inflated at `inflationRate` per year after retirement. @gqlField */
+  monthlySpending: Money;
+  /** Assumed annual inflation rate applied to spending post-retirement, as a decimal. @gqlField */
+  inflationRate: Float;
+  /** Assumed annual safe-withdrawal rate applied to the portfolio post-retirement, as a decimal. @gqlField */
+  drawdownRate: Float;
+};
+
 /** Engine workings exposed so the client can show how the forecast was derived. @gqlType */
 export type NetWorthForecastWorkings = {
   /** Per-category projection. Skipped liabilities drop out entirely. @gqlField */
   categories: NetWorthForecastCategory[];
+  /** Retirement transition context, or `null` when no retirement year is set or it falls outside the horizon. @gqlField */
+  retirement: NetWorthForecastRetirement | null;
 };
 
 /** Monthly net-worth forecast over the requested horizon. `points` matches the shape of `netWorthHistory` so the two can be concatenated on the client. @gqlType */
@@ -229,6 +253,11 @@ export async function netWorthForecast(
             loaded,
             startingBalance,
             Money.fromMinorDenomination(w.monthlyRepayment, HOME_CURRENCY),
+            Money.fromMinorDenomination(w.monthlyBillRepayment, HOME_CURRENCY),
+            Money.fromMinorDenomination(
+              w.monthlyPayslipRepayment,
+              HOME_CURRENCY,
+            ),
             w.interestRate,
             projectedBalance,
           ),
@@ -254,10 +283,30 @@ export async function netWorthForecast(
     }
   }
 
+  const retirement: NetWorthForecastRetirement | null =
+    workings.retirementMonthIndex != null && inputs.retirementYear != null
+      ? {
+          retirementYear: inputs.retirementYear,
+          monthIndex: workings.retirementMonthIndex,
+          date: points[workings.retirementMonthIndex].date as CalendarDate,
+          monthlyIncome: Money.fromMinorDenomination(
+            workings.monthlyIncome,
+            HOME_CURRENCY,
+          ),
+          monthlySpending: Money.fromMinorDenomination(
+            workings.monthlySpending,
+            HOME_CURRENCY,
+          ),
+          inflationRate: workings.inflationRate,
+          drawdownRate: workings.drawdownRate,
+        }
+      : null;
+
   return {
     points: sampledPoints,
     workings: {
       categories: projectedCategories,
+      retirement,
     },
   };
 }

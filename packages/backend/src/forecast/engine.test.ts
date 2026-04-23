@@ -14,6 +14,7 @@ function baseInputs(overrides: Partial<ForecastInputs> = {}): ForecastInputs {
     startingBalance: new Map(),
     liabilityTxs: new Map(),
     loanBills: new Map(),
+    loanPayslipAdjustments: new Map(),
     portfolioContributionTxs: new Map(),
     ...overrides,
   };

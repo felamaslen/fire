@@ -1,4 +1,4 @@
-import { useSuspenseQuery } from "@apollo/client/react";
+import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
 import { Info, Settings2 } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
@@ -13,6 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { graphql } from "@/graphql";
 import { cn } from "@/lib/cn";
 import { formatAccountingMoneyRounded } from "@/lib/format";
@@ -47,6 +48,11 @@ const HomeDocument = graphql(
           amount
           currency
         }
+      }
+      retirementSettings {
+        retirementYear
+        inflationRate
+        drawdownRate
       }
       netWorthForecast(years: $years, limit: 20) {
         points {
@@ -91,6 +97,14 @@ const REMAINDER_COLOR = "#8f6b18"; // deep ochre
 const NET_LINE_COLOR = "currentColor";
 const ASSETS_COLOR = "#1a5490"; // deep blue
 const LIABILITIES_COLOR = "#8f1a1a"; // deep crimson
+
+const RetirementSettingsUpdateDocument = graphql(`
+  mutation RetirementSettingsUpdate($retirementYear: Int) {
+    retirementSettingsUpdate(retirementYear: $retirementYear) {
+      retirementYear
+    }
+  }
+`);
 
 const FORECAST_STORAGE_KEY = "fire.home.forecast";
 const LOG_SCALE_STORAGE_KEY = "fire.home.log-scale";
@@ -165,6 +179,35 @@ export function Home() {
   const { data } = useSuspenseQuery(HomeDocument, {
     variables: { years: deferredYears },
   });
+  const [saveRetirementYear] = useMutation(RetirementSettingsUpdateDocument, {
+    refetchQueries: [
+      { query: HomeDocument, variables: { years: deferredYears } },
+    ],
+    awaitRefetchQueries: true,
+  });
+  const onRetirementYearChange = (year: number | null) => {
+    void saveRetirementYear({ variables: { retirementYear: year } });
+  };
+  const serverRetirementYear = data.retirementSettings?.retirementYear ?? null;
+  // During a drag, show the draft year immediately without waiting for the
+  // mutation round-trip. Cleared when the server catches up.
+  const [draftRetirementYear, setDraftRetirementYear] = useState<number | null>(
+    null,
+  );
+  const retirementYear = draftRetirementYear ?? serverRetirementYear;
+  useEffect(() => {
+    if (draftRetirementYear === serverRetirementYear) {
+      setDraftRetirementYear(null);
+    }
+  }, [serverRetirementYear, draftRetirementYear]);
+  const onRetirementDrag = (date: Date) => {
+    setDraftRetirementYear(date.getUTCFullYear());
+  };
+  const onRetirementDragEnd = (date: Date) => {
+    const year = date.getUTCFullYear();
+    setDraftRetirementYear(year);
+    onRetirementYearChange(year);
+  };
   const history = data.netWorthHistory ?? [];
   const forecastPoints = showForecast
     ? (data.netWorthForecast?.points ?? [])
@@ -181,6 +224,28 @@ export function Home() {
     : history;
   const combined = [...historyPoints, ...forecastPoints];
   const forecastStart = showForecast ? historyPoints.length : undefined;
+
+  // Place a retirement marker at the first forecast point whose month is
+  // inside the retirement year. Interpolate between its predecessor and
+  // itself so the marker lands on Jan 1 of the retirement year even when
+  // the forecast is thinned to a handful of points.
+  const retirementStart =
+    showForecast && retirementYear != null && forecastPoints.length > 0
+      ? (() => {
+          const target = `${retirementYear}-01-01`;
+          const idx = forecastPoints.findIndex((p) => p.date >= target);
+          if (idx < 0) return undefined;
+          if (idx === 0) return historyPoints.length;
+          const prev = forecastPoints[idx - 1].date;
+          const curr = forecastPoints[idx].date;
+          const span = Date.parse(curr) - Date.parse(prev);
+          const frac =
+            span > 0 ? (Date.parse(target) - Date.parse(prev)) / span : 0;
+          return (
+            historyPoints.length + (idx - 1) + Math.max(0, Math.min(1, frac))
+          );
+        })()
+      : undefined;
 
   const dates = combined.map((h) => new Date(`${h.date}T00:00:00Z`));
   const net = combined.map((h) => h.net.amount);
@@ -288,6 +353,8 @@ export function Home() {
                 setLogScale={setLogScale}
                 draftYears={draftYears}
                 setDraftYears={setDraftYears}
+                retirementYear={retirementYear}
+                onRetirementYearChange={onRetirementYearChange}
               />
             </div>
             <ForecastSettingsDialog
@@ -297,6 +364,8 @@ export function Home() {
               setLogScale={setLogScale}
               draftYears={draftYears}
               setDraftYears={setDraftYears}
+              retirementYear={retirementYear}
+              onRetirementYearChange={onRetirementYearChange}
             />
           </div>
         </div>
@@ -373,6 +442,9 @@ export function Home() {
             currency={currency}
             className="w-full"
             forecastStart={forecastStart}
+            retirementStart={retirementStart}
+            onRetirementDrag={onRetirementDrag}
+            onRetirementDragEnd={onRetirementDragEnd}
             logY={logScale}
           />
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -469,6 +541,7 @@ export function Home() {
             currency={currency}
             className="w-full"
             forecastStart={forecastStart}
+            retirementStart={retirementStart}
             logY={logScale}
           />
         </div>
@@ -484,6 +557,8 @@ type ForecastControlsProps = {
   setLogScale: (v: boolean) => void;
   draftYears: number;
   setDraftYears: (n: number) => void;
+  retirementYear: number | null;
+  onRetirementYearChange: (year: number | null) => void;
 };
 
 function ForecastControls({
@@ -493,6 +568,8 @@ function ForecastControls({
   setLogScale,
   draftYears,
   setDraftYears,
+  retirementYear,
+  onRetirementYearChange,
 }: ForecastControlsProps) {
   return (
     <>
@@ -529,7 +606,72 @@ function ForecastControls({
         />
         <span className="tabular-nums">{draftYears}y</span>
       </label>
+      <RetirementYearField
+        value={retirementYear}
+        disabled={!showForecast}
+        onCommit={onRetirementYearChange}
+      />
     </>
+  );
+}
+
+function RetirementYearField({
+  value,
+  disabled,
+  onCommit,
+}: {
+  value: number | null;
+  disabled: boolean;
+  onCommit: (year: number | null) => void;
+}) {
+  const [draft, setDraft] = useState<string>(
+    value == null ? "" : String(value),
+  );
+  useEffect(() => {
+    setDraft(value == null ? "" : String(value));
+  }, [value]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    const parsed = trimmed === "" ? null : Number(trimmed);
+    if (
+      parsed != null &&
+      (!Number.isFinite(parsed) || parsed < 1900 || parsed > 2200)
+    ) {
+      setDraft(value == null ? "" : String(value));
+      return;
+    }
+    if (parsed === value) return;
+    onCommit(parsed);
+  };
+
+  return (
+    <label
+      className={cn(
+        "flex items-center gap-2 text-xs text-muted-foreground transition-opacity",
+        disabled && "pointer-events-none opacity-40",
+      )}
+    >
+      <span>Retire in</span>
+      <Input
+        type="number"
+        inputMode="numeric"
+        min={1900}
+        max={2200}
+        step={1}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") setDraft(value == null ? "" : String(value));
+        }}
+        placeholder="year"
+        disabled={disabled}
+        aria-label="Retirement year"
+        className="h-7 w-20 px-2 py-0 text-xs"
+      />
+    </label>
   );
 }
 

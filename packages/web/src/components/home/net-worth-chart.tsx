@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { GripVertical } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import {
@@ -59,6 +60,21 @@ type Props = {
    * boundary. Leave undefined to render the whole series as history.
    */
   forecastStart?: number;
+  /**
+   * Fractional index into `points` at which retirement begins. Drawn as
+   * a dashed vertical marker with a "Retirement" label. Fractional because
+   * the retirement date may fall between two thinned forecast points; the
+   * caller interpolates. Leave undefined to omit the marker.
+   */
+  retirementStart?: number;
+  /**
+   * Called while the user drags the retirement marker, and once on
+   * release. The `date` is interpolated from the marker's pixel position
+   * back onto the chart's date axis. When undefined the marker is not
+   * draggable.
+   */
+  onRetirementDrag?: (date: Date) => void;
+  onRetirementDragEnd?: (date: Date) => void;
   /**
    * When true, the y-axis is rendered on a log10 scale. Zero and
    * negative values are clamped to the lowest tick for display, and
@@ -149,97 +165,151 @@ export function NetWorthChart({
   points,
   series,
   currency,
-  width = 800,
-  height = 420,
+  width: widthProp,
+  height: heightProp = 420,
   className,
   forecastStart,
+  retirementStart,
+  onRetirementDrag,
+  onRetirementDragEnd,
   logY = false,
 }: Props) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // Measure the container so the viewBox matches the rendered pixel size
+  // and text stays crisp without aspect-ratio-based scaling. On mobile we
+  // fall back to a square-ish aspect; on desktop the height is constant
+  // (see the wrapping div's Tailwind classes).
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [measured, setMeasured] = useState<{ w: number; h: number }>({
+    w: widthProp ?? 800,
+    h: heightProp,
+  });
+  useEffect(() => {
+    if (widthProp != null || !containerRef.current) return;
+    const el = containerRef.current;
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w > 0 && h > 0) setMeasured({ w, h });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [widthProp]);
+  const width = widthProp ?? measured.w;
+  const height = widthProp != null ? heightProp : measured.h;
 
-  const { xScale, yScale, xTicks, yTicks, plotRight, plotBottom, zeroY } =
-    useMemo(() => {
-      const n = points.length;
+  const {
+    xScale,
+    xInverse,
+    yScale,
+    xTicks,
+    yTicks,
+    plotRight,
+    plotBottom,
+    zeroY,
+  } = useMemo(() => {
+    const n = points.length;
 
-      let dataMin = logY ? Infinity : 0;
-      let dataMax = 0;
-      for (const s of series) {
-        for (const v of s.values) {
+    let dataMin = logY ? Infinity : 0;
+    let dataMax = 0;
+    for (const s of series) {
+      for (const v of s.values) {
+        if (v < dataMin) dataMin = v;
+        if (v > dataMax) dataMax = v;
+      }
+      if (s.baseline) {
+        for (const v of s.baseline) {
           if (v < dataMin) dataMin = v;
           if (v > dataMax) dataMax = v;
         }
-        if (s.baseline) {
-          for (const v of s.baseline) {
-            if (v < dataMin) dataMin = v;
-            if (v > dataMax) dataMax = v;
-          }
-        }
       }
-      if (!Number.isFinite(dataMin)) dataMin = 0;
-      if (dataMin === dataMax) dataMax = dataMin + 1;
+    }
+    if (!Number.isFinite(dataMin)) dataMin = 0;
+    if (dataMin === dataMax) dataMax = dataMin + 1;
 
-      const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
-      const plotH = height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM;
+    const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
+    const plotH = height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM;
 
-      // X-axis is linear in calendar time so irregular gaps in the
-      // recorded history (e.g. a skipped month) and the monthly forecast
-      // tail render with a single consistent spacing — no visual jump
-      // where history hands over to forecast.
-      const tMin = points[0]?.getTime() ?? 0;
-      const tMax = points[n - 1]?.getTime() ?? tMin + 1;
-      const tRange = tMax - tMin || 1;
-      const xScale = (i: number) =>
-        AXIS_PAD_LEFT + ((points[i].getTime() - tMin) / tRange) * plotW;
+    // X-axis is linear in calendar time so irregular gaps in the
+    // recorded history (e.g. a skipped month) and the monthly forecast
+    // tail render with a single consistent spacing — no visual jump
+    // where history hands over to forecast.
+    const tMin = points[0]?.getTime() ?? 0;
+    const tMax = points[n - 1]?.getTime() ?? tMin + 1;
+    const tRange = tMax - tMin || 1;
+    // Linearly interpolate between the two surrounding dates when `i` is
+    // fractional — callers (e.g. the retirement marker) can pass a
+    // between-points index and still get a sensible pixel position.
+    const xScale = (i: number) => {
+      const lo = Math.floor(i);
+      const hi = Math.min(lo + 1, n - 1);
+      const frac = i - lo;
+      const t =
+        points[lo].getTime() +
+        frac * (points[hi].getTime() - points[lo].getTime());
+      return AXIS_PAD_LEFT + ((t - tMin) / tRange) * plotW;
+    };
+    const xInverse = (px: number): Date => {
+      const clamped = Math.max(
+        AXIS_PAD_LEFT,
+        Math.min(AXIS_PAD_LEFT + plotW, px),
+      );
+      const t = tMin + ((clamped - AXIS_PAD_LEFT) / plotW) * tRange;
+      return new Date(t);
+    };
 
-      const xTickCount = Math.min(6, Math.max(2, n));
-      const xTicks: { x: number; label: string }[] = [];
-      for (let i = 0; i < xTickCount; i++) {
-        const t = tMin + (i * tRange) / (xTickCount - 1);
-        const pxX = AXIS_PAD_LEFT + ((t - tMin) / tRange) * plotW;
-        xTicks.push({ x: pxX, label: shortDate(new Date(t)) });
-      }
+    const xTickCount = Math.min(6, Math.max(2, n));
+    const xTicks: { x: number; label: string }[] = [];
+    for (let i = 0; i < xTickCount; i++) {
+      const t = tMin + (i * tRange) / (xTickCount - 1);
+      const pxX = AXIS_PAD_LEFT + ((t - tMin) / tRange) * plotW;
+      xTicks.push({ x: pxX, label: shortDate(new Date(t)) });
+    }
 
-      if (logY) {
-        const { ticks, niceMin, niceMax } = buildLogYTicks(dataMin, dataMax);
-        const logMin = Math.log10(niceMin);
-        const logMax = Math.log10(niceMax);
-        const logRange = logMax - logMin || 1;
-        const yScale = (v: number) => {
-          const clamped = Math.max(v, niceMin);
-          return (
-            AXIS_PAD_TOP +
-            plotH -
-            ((Math.log10(clamped) - logMin) / logRange) * plotH
-          );
-        };
-        return {
-          xScale,
-          yScale,
-          xTicks,
-          yTicks: ticks,
-          plotRight: width - AXIS_PAD_RIGHT,
-          plotBottom: height - AXIS_PAD_BOTTOM,
-          // Treat £1 (= log10 0) as the zero baseline so `fill: "zero"`
-          // stacks still paint meaningfully in log space.
-          zeroY: yScale(niceMin),
-        };
-      }
-
-      const { ticks, niceMin, niceMax } = buildYTicks(dataMin, dataMax, 5);
-      const yRange = niceMax - niceMin || 1;
-      const yScale = (v: number) =>
-        AXIS_PAD_TOP + plotH - ((v - niceMin) / yRange) * plotH;
-
+    if (logY) {
+      const { ticks, niceMin, niceMax } = buildLogYTicks(dataMin, dataMax);
+      const logMin = Math.log10(niceMin);
+      const logMax = Math.log10(niceMax);
+      const logRange = logMax - logMin || 1;
+      const yScale = (v: number) => {
+        const clamped = Math.max(v, niceMin);
+        return (
+          AXIS_PAD_TOP +
+          plotH -
+          ((Math.log10(clamped) - logMin) / logRange) * plotH
+        );
+      };
       return {
         xScale,
+        xInverse,
         yScale,
         xTicks,
         yTicks: ticks,
         plotRight: width - AXIS_PAD_RIGHT,
         plotBottom: height - AXIS_PAD_BOTTOM,
-        zeroY: yScale(0),
+        // Treat £1 (= log10 0) as the zero baseline so `fill: "zero"`
+        // stacks still paint meaningfully in log space.
+        zeroY: yScale(niceMin),
       };
-    }, [points, series, width, height, logY]);
+    }
+
+    const { ticks, niceMin, niceMax } = buildYTicks(dataMin, dataMax, 5);
+    const yRange = niceMax - niceMin || 1;
+    const yScale = (v: number) =>
+      AXIS_PAD_TOP + plotH - ((v - niceMin) / yRange) * plotH;
+
+    return {
+      xScale,
+      xInverse,
+      yScale,
+      xTicks,
+      yTicks: ticks,
+      plotRight: width - AXIS_PAD_RIGHT,
+      plotBottom: height - AXIS_PAD_BOTTOM,
+      zeroY: yScale(0),
+    };
+  }, [points, series, width, height, logY]);
 
   if (points.length === 0) {
     return (
@@ -344,290 +414,412 @@ export function NetWorthChart({
   };
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className={cn("overflow-visible", className)}
-      style={{ aspectRatio: `${width} / ${height}` }}
+    <div
+      ref={containerRef}
+      className={cn(
+        "w-full",
+        // Mobile: keep the historical 800 : 420 aspect so the chart
+        // still has breathing room on narrow screens. Desktop: fixed
+        // height, width fills the container and the viewBox is sized
+        // from the measured pixel width so text doesn't stretch.
+        widthProp == null && "aspect-[800/420] sm:aspect-auto sm:h-[420px]",
+        className,
+      )}
     >
-      {yTicks.map((v) => (
-        <g key={`y${v}`}>
-          <line
-            x1={AXIS_PAD_LEFT}
-            x2={plotRight}
-            y1={yScale(v)}
-            y2={yScale(v)}
-            stroke="currentColor"
-            strokeOpacity={v === 0 ? 0.3 : 0.08}
-          />
-          <text
-            x={AXIS_PAD_LEFT - 6}
-            y={yScale(v) + 3}
-            textAnchor="end"
-            className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums"
-          >
-            {formatAccountingMoney(currency, v, { compact: true })}
-          </text>
-        </g>
-      ))}
-
-      {xTicks.map((t) => (
-        <text
-          key={`x${t.x}`}
-          x={t.x}
-          y={height - 8}
-          textAnchor="middle"
-          className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
-        >
-          {t.label}
-        </text>
-      ))}
-
-      <line
-        x1={AXIS_PAD_LEFT}
-        x2={AXIS_PAD_LEFT}
-        y1={AXIS_PAD_TOP}
-        y2={plotBottom}
-        stroke="currentColor"
-        strokeOpacity={0.25}
-      />
-
-      {series.map((s) => {
-        if (s.fill === "none") return null;
-        const opacity = s.fillOpacity ?? 0.2;
-        if (s.fill === "baseline" && s.baseline) {
-          return (
-            <path
-              key={`fill-${s.key}`}
-              d={closedAreaPath(s.values, s.baseline)}
-              fill={s.color}
-              fillOpacity={opacity}
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${width} ${height}`}
+        className="block h-full w-full overflow-visible"
+      >
+        {yTicks.map((v) => (
+          <g key={`y${v}`}>
+            <line
+              x1={AXIS_PAD_LEFT}
+              x2={plotRight}
+              y1={yScale(v)}
+              y2={yScale(v)}
+              stroke="currentColor"
+              strokeOpacity={v === 0 ? 0.3 : 0.08}
             />
-          );
-        }
-        // fill === "zero": split at the zero line so the positive and
-        // negative halves get their own colours via clip-path.
-        const hasNegative = s.negativeColor && s.values.some((v) => v < 0);
-        return (
-          <g key={`fill-${s.key}`}>
-            <defs>
-              <clipPath id={`clip-pos-${s.key}`}>
-                <rect
-                  x={AXIS_PAD_LEFT}
-                  y={AXIS_PAD_TOP}
-                  width={plotRight - AXIS_PAD_LEFT}
-                  height={Math.max(0, zeroY - AXIS_PAD_TOP)}
-                />
-              </clipPath>
-              {hasNegative && (
-                <clipPath id={`clip-neg-${s.key}`}>
+            <text
+              x={AXIS_PAD_LEFT - 6}
+              y={yScale(v) + 3}
+              textAnchor="end"
+              className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums"
+            >
+              {formatAccountingMoney(currency, v, { compact: true })}
+            </text>
+          </g>
+        ))}
+
+        {xTicks.map((t) => (
+          <text
+            key={`x${t.x}`}
+            x={t.x}
+            y={height - 8}
+            textAnchor="middle"
+            className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
+          >
+            {t.label}
+          </text>
+        ))}
+
+        <line
+          x1={AXIS_PAD_LEFT}
+          x2={AXIS_PAD_LEFT}
+          y1={AXIS_PAD_TOP}
+          y2={plotBottom}
+          stroke="currentColor"
+          strokeOpacity={0.25}
+        />
+
+        {series.map((s) => {
+          if (s.fill === "none") return null;
+          const opacity = s.fillOpacity ?? 0.2;
+          if (s.fill === "baseline" && s.baseline) {
+            return (
+              <path
+                key={`fill-${s.key}`}
+                d={closedAreaPath(s.values, s.baseline)}
+                fill={s.color}
+                fillOpacity={opacity}
+              />
+            );
+          }
+          // fill === "zero": split at the zero line so the positive and
+          // negative halves get their own colours via clip-path.
+          const hasNegative = s.negativeColor && s.values.some((v) => v < 0);
+          return (
+            <g key={`fill-${s.key}`}>
+              <defs>
+                <clipPath id={`clip-pos-${s.key}`}>
                   <rect
                     x={AXIS_PAD_LEFT}
-                    y={zeroY}
+                    y={AXIS_PAD_TOP}
                     width={plotRight - AXIS_PAD_LEFT}
-                    height={Math.max(0, plotBottom - zeroY)}
+                    height={Math.max(0, zeroY - AXIS_PAD_TOP)}
                   />
                 </clipPath>
-              )}
-            </defs>
-            <path
-              d={closedAreaPath(s.values)}
-              fill={s.color}
-              fillOpacity={opacity}
-              clipPath={`url(#clip-pos-${s.key})`}
-            />
-            {hasNegative && (
+                {hasNegative && (
+                  <clipPath id={`clip-neg-${s.key}`}>
+                    <rect
+                      x={AXIS_PAD_LEFT}
+                      y={zeroY}
+                      width={plotRight - AXIS_PAD_LEFT}
+                      height={Math.max(0, plotBottom - zeroY)}
+                    />
+                  </clipPath>
+                )}
+              </defs>
               <path
                 d={closedAreaPath(s.values)}
-                fill={s.negativeColor}
+                fill={s.color}
                 fillOpacity={opacity}
-                clipPath={`url(#clip-neg-${s.key})`}
+                clipPath={`url(#clip-pos-${s.key})`}
               />
-            )}
-          </g>
-        );
-      })}
-
-      {series.map((s) => {
-        const sw = s.strokeWidth ?? 1.5;
-        if (sw === 0) return null;
-        return (
-          <path
-            key={`line-${s.key}`}
-            d={linePath(s.values)}
-            fill="none"
-            stroke={s.color}
-            strokeWidth={sw}
-          />
-        );
-      })}
-
-      {hoverIdx !== null &&
-        (() => {
-          const date = points[hoverIdx];
-          const cx = xScale(hoverIdx);
-          // Drop series whose tooltipValues (falling back to values) are
-          // all zero across the range — a legend item the user just hid
-          // shouldn't reappear in the hover card either.
-          const tooltipSeries = series.filter((s) =>
-            (s.tooltipValues ?? s.values).some((v) => v !== 0),
-          );
-          const rowH = 30;
-          const headerH = 38;
-          const padY = 12;
-          const boxW = 340;
-          const boxH = headerH + tooltipSeries.length * rowH + padY;
-          const gap = 10;
-          const preferRight = cx + gap + boxW <= plotRight;
-          const boxX = preferRight
-            ? cx + gap
-            : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
-          const boxY = Math.max(
-            AXIS_PAD_TOP,
-            Math.min(plotBottom - boxH, AXIS_PAD_TOP + 8),
-          );
-          return (
-            <g pointerEvents="none">
-              <line
-                x1={cx}
-                x2={cx}
-                y1={AXIS_PAD_TOP}
-                y2={plotBottom}
-                stroke="currentColor"
-                strokeOpacity={0.2}
-                strokeDasharray="2 2"
-              />
-              {tooltipSeries.map((s) => {
-                const v = s.values[hoverIdx];
-                return (
-                  <circle
-                    key={`dot-${s.key}`}
-                    cx={cx}
-                    cy={yScale(v)}
-                    r={3}
-                    fill={v < 0 && s.negativeColor ? s.negativeColor : s.color}
-                    stroke="var(--background, white)"
-                    strokeWidth={1.5}
-                  />
-                );
-              })}
-              <rect
-                x={boxX}
-                y={boxY}
-                width={boxW}
-                height={boxH}
-                rx={6}
-                className="fill-popover stroke-border"
-                strokeWidth={1}
-              />
-              <g className="fill-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums">
-                <text x={boxX + 14} y={boxY + 26} className="font-medium">
-                  {fullDate(date)}
-                </text>
-                {tooltipSeries.map((s, i) => {
-                  const display = (s.tooltipValues ?? s.values)[hoverIdx];
-                  const swatch =
-                    display < 0 && s.negativeColor ? s.negativeColor : s.color;
-                  return (
-                    <g
-                      key={`row-${s.key}`}
-                      transform={`translate(0, ${boxY + headerH + i * rowH})`}
-                    >
-                      <rect
-                        x={boxX + 14}
-                        y={4}
-                        width={12}
-                        height={12}
-                        fill={swatch}
-                      />
-                      <text x={boxX + 32} y={14}>
-                        {s.label}
-                      </text>
-                      <text x={boxX + boxW - 14} y={14} textAnchor="end">
-                        {formatAccountingMoneyRounded(currency, display)}
-                      </text>
-                    </g>
-                  );
-                })}
-              </g>
-            </g>
-          );
-        })()}
-
-      {forecastStart != null &&
-        forecastStart > 0 &&
-        forecastStart < points.length &&
-        (() => {
-          const markerX = xScale(forecastStart);
-          const forecastLeft = markerX;
-          const forecastWidth = plotRight - markerX;
-          return (
-            <g pointerEvents="none">
-              {/* Translucent overlay over the forecast region so past vs
-                  projected values read as visually distinct without
-                  repainting every series twice. */}
-              {forecastWidth > 0 && (
-                <rect
-                  x={forecastLeft}
-                  y={AXIS_PAD_TOP}
-                  width={forecastWidth}
-                  height={plotBottom - AXIS_PAD_TOP}
-                  fill="currentColor"
-                  fillOpacity={0.05}
+              {hasNegative && (
+                <path
+                  d={closedAreaPath(s.values)}
+                  fill={s.negativeColor}
+                  fillOpacity={opacity}
+                  clipPath={`url(#clip-neg-${s.key})`}
                 />
               )}
-              {/* Vertical marker at the history / forecast boundary. */}
-              <line
-                x1={markerX}
-                x2={markerX}
-                y1={AXIS_PAD_TOP}
-                y2={plotBottom}
-                stroke="currentColor"
-                strokeOpacity={0.35}
-                strokeDasharray="3 3"
-              />
-              <text
-                x={markerX + 4}
-                y={AXIS_PAD_TOP + 10}
-                className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
-              >
-                Forecast →
-              </text>
             </g>
           );
-        })()}
+        })}
 
-      <rect
-        x={AXIS_PAD_LEFT}
-        y={AXIS_PAD_TOP}
-        width={width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT}
-        height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
-        fill="transparent"
-        onPointerLeave={() => setHoverIdx(null)}
-        onPointerMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          if (rect.width === 0) return;
-          const rel = (e.clientX - rect.left) / rect.width;
-          if (rel < 0 || rel > 1) {
-            setHoverIdx(null);
-            return;
-          }
-          // Points aren't uniformly spaced along the index — x is
-          // linear in calendar time — so pick the nearest point by
-          // viewBox-x distance rather than by rel-based rounding.
-          const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
-          const targetPx = AXIS_PAD_LEFT + rel * plotW;
-          let bestIdx = 0;
-          let bestDist = Infinity;
-          for (let i = 0; i < points.length; i++) {
-            const d = Math.abs(xScale(i) - targetPx);
-            if (d < bestDist) {
-              bestDist = d;
-              bestIdx = i;
+        {series.map((s) => {
+          const sw = s.strokeWidth ?? 1.5;
+          if (sw === 0) return null;
+          return (
+            <path
+              key={`line-${s.key}`}
+              d={linePath(s.values)}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={sw}
+            />
+          );
+        })}
+
+        {hoverIdx !== null &&
+          (() => {
+            const date = points[hoverIdx];
+            const cx = xScale(hoverIdx);
+            // Drop series whose tooltipValues (falling back to values) are
+            // all zero across the range — a legend item the user just hid
+            // shouldn't reappear in the hover card either.
+            const tooltipSeries = series.filter((s) =>
+              (s.tooltipValues ?? s.values).some((v) => v !== 0),
+            );
+            const rowH = 30;
+            const headerH = 38;
+            const padY = 12;
+            const boxW = 340;
+            const boxH = headerH + tooltipSeries.length * rowH + padY;
+            const gap = 10;
+            const preferRight = cx + gap + boxW <= plotRight;
+            const boxX = preferRight
+              ? cx + gap
+              : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
+            const boxY = Math.max(
+              AXIS_PAD_TOP,
+              Math.min(plotBottom - boxH, AXIS_PAD_TOP + 8),
+            );
+            return (
+              <g pointerEvents="none">
+                <line
+                  x1={cx}
+                  x2={cx}
+                  y1={AXIS_PAD_TOP}
+                  y2={plotBottom}
+                  stroke="currentColor"
+                  strokeOpacity={0.2}
+                  strokeDasharray="2 2"
+                />
+                {tooltipSeries.map((s) => {
+                  const v = s.values[hoverIdx];
+                  return (
+                    <circle
+                      key={`dot-${s.key}`}
+                      cx={cx}
+                      cy={yScale(v)}
+                      r={3}
+                      fill={
+                        v < 0 && s.negativeColor ? s.negativeColor : s.color
+                      }
+                      stroke="var(--background, white)"
+                      strokeWidth={1.5}
+                    />
+                  );
+                })}
+                <rect
+                  x={boxX}
+                  y={boxY}
+                  width={boxW}
+                  height={boxH}
+                  rx={6}
+                  className="fill-popover stroke-border"
+                  strokeWidth={1}
+                />
+                <g className="fill-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums">
+                  <text x={boxX + 14} y={boxY + 26} className="font-medium">
+                    {fullDate(date)}
+                  </text>
+                  {tooltipSeries.map((s, i) => {
+                    const display = (s.tooltipValues ?? s.values)[hoverIdx];
+                    const swatch =
+                      display < 0 && s.negativeColor
+                        ? s.negativeColor
+                        : s.color;
+                    return (
+                      <g
+                        key={`row-${s.key}`}
+                        transform={`translate(0, ${boxY + headerH + i * rowH})`}
+                      >
+                        <rect
+                          x={boxX + 14}
+                          y={4}
+                          width={12}
+                          height={12}
+                          fill={swatch}
+                        />
+                        <text x={boxX + 32} y={14}>
+                          {s.label}
+                        </text>
+                        <text x={boxX + boxW - 14} y={14} textAnchor="end">
+                          {formatAccountingMoneyRounded(currency, display)}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </g>
+              </g>
+            );
+          })()}
+
+        {forecastStart != null &&
+          forecastStart > 0 &&
+          forecastStart < points.length &&
+          (() => {
+            const markerX = xScale(forecastStart);
+            const forecastLeft = markerX;
+            const forecastWidth = plotRight - markerX;
+            return (
+              <g pointerEvents="none">
+                {/* Translucent overlay over the forecast region so past vs
+                  projected values read as visually distinct without
+                  repainting every series twice. */}
+                {forecastWidth > 0 && (
+                  <rect
+                    x={forecastLeft}
+                    y={AXIS_PAD_TOP}
+                    width={forecastWidth}
+                    height={plotBottom - AXIS_PAD_TOP}
+                    fill="currentColor"
+                    fillOpacity={0.05}
+                  />
+                )}
+                {/* Vertical marker at the history / forecast boundary. */}
+                <line
+                  x1={markerX}
+                  x2={markerX}
+                  y1={AXIS_PAD_TOP}
+                  y2={plotBottom}
+                  stroke="currentColor"
+                  strokeOpacity={0.35}
+                  strokeDasharray="3 3"
+                />
+                <text
+                  x={markerX + 4}
+                  y={AXIS_PAD_TOP + 10}
+                  className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
+                >
+                  Forecast →
+                </text>
+              </g>
+            );
+          })()}
+
+        {retirementStart != null &&
+          retirementStart > 0 &&
+          retirementStart < points.length &&
+          (() => {
+            const markerX = xScale(retirementStart);
+            return (
+              <g pointerEvents="none">
+                <line
+                  x1={markerX}
+                  x2={markerX}
+                  y1={AXIS_PAD_TOP}
+                  y2={plotBottom}
+                  stroke="currentColor"
+                  strokeOpacity={0.35}
+                  strokeDasharray="3 3"
+                />
+                <text
+                  x={markerX + 4}
+                  y={AXIS_PAD_TOP + 10}
+                  className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
+                >
+                  Retirement →
+                </text>
+              </g>
+            );
+          })()}
+
+        <rect
+          x={AXIS_PAD_LEFT}
+          y={AXIS_PAD_TOP}
+          width={width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT}
+          height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
+          fill="transparent"
+          onPointerLeave={() => setHoverIdx(null)}
+          onPointerMove={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            if (rect.width === 0) return;
+            const rel = (e.clientX - rect.left) / rect.width;
+            if (rel < 0 || rel > 1) {
+              setHoverIdx(null);
+              return;
             }
-          }
-          setHoverIdx(bestIdx);
-        }}
-      />
-    </svg>
+            // Points aren't uniformly spaced along the index — x is
+            // linear in calendar time — so pick the nearest point by
+            // viewBox-x distance rather than by rel-based rounding.
+            const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
+            const targetPx = AXIS_PAD_LEFT + rel * plotW;
+            let bestIdx = 0;
+            let bestDist = Infinity;
+            for (let i = 0; i < points.length; i++) {
+              const d = Math.abs(xScale(i) - targetPx);
+              if (d < bestDist) {
+                bestDist = d;
+                bestIdx = i;
+              }
+            }
+            setHoverIdx(bestIdx);
+          }}
+        />
+
+        {retirementStart != null &&
+          retirementStart > 0 &&
+          retirementStart < points.length &&
+          onRetirementDrag != null &&
+          (() => {
+            const markerX = xScale(retirementStart);
+            const iconSize = 18;
+            const boxSize = 24;
+            const boxX = markerX - boxSize / 2;
+            const boxY = AXIS_PAD_TOP - boxSize - 2;
+            // Map a clientX pixel into the svg's viewBox x coordinate.
+            const clientToSvgX = (clientX: number, svg: SVGSVGElement) => {
+              const rect = svg.getBoundingClientRect();
+              if (rect.width === 0) return null;
+              return ((clientX - rect.left) / rect.width) * width;
+            };
+            return (
+              <foreignObject
+                x={boxX}
+                y={boxY}
+                width={boxSize}
+                height={boxSize}
+                style={{ overflow: "visible" }}
+              >
+                <div
+                  className="flex h-full w-full cursor-ew-resize items-center justify-center rounded-md border border-border bg-background text-muted-foreground shadow-sm hover:text-foreground"
+                  style={{ touchAction: "none" }}
+                  onPointerDown={(e) => {
+                    const target = e.currentTarget;
+                    target.setPointerCapture(e.pointerId);
+                    // The chart SVG — NOT e.target.closest("svg"), which
+                    // would find the lucide icon's inner svg and yield
+                    // pixel→viewBox conversions off by orders of magnitude.
+                    const svg = svgRef.current;
+                    if (!svg) return;
+                    const startSvgX = clientToSvgX(e.clientX, svg);
+                    if (startSvgX == null) return;
+                    // Preserve the offset between the cursor and the
+                    // marker at click time, so the marker doesn't snap
+                    // under the cursor when drag begins.
+                    const offset = startSvgX - markerX;
+                    const startClientX = e.clientX;
+                    const DRAG_THRESHOLD = 3;
+                    let dragging = false;
+                    const report = (clientX: number, end: boolean) => {
+                      const svgX = clientToSvgX(clientX, svg);
+                      if (svgX == null) return;
+                      const date = xInverse(svgX - offset);
+                      (end ? onRetirementDragEnd : onRetirementDrag)?.(date);
+                    };
+                    const onMove = (ev: PointerEvent) => {
+                      if (!dragging) {
+                        if (
+                          Math.abs(ev.clientX - startClientX) < DRAG_THRESHOLD
+                        )
+                          return;
+                        dragging = true;
+                      }
+                      report(ev.clientX, false);
+                    };
+                    const onUp = (ev: PointerEvent) => {
+                      if (dragging) report(ev.clientX, true);
+                      target.releasePointerCapture(ev.pointerId);
+                      target.removeEventListener("pointermove", onMove);
+                      target.removeEventListener("pointerup", onUp);
+                      target.removeEventListener("pointercancel", onUp);
+                    };
+                    target.addEventListener("pointermove", onMove);
+                    target.addEventListener("pointerup", onUp);
+                    target.addEventListener("pointercancel", onUp);
+                  }}
+                >
+                  <GripVertical size={iconSize} />
+                </div>
+              </foreignObject>
+            );
+          })()}
+      </svg>
+    </div>
   );
 }

@@ -61,3 +61,9 @@ export const CURRENCIES = {
 
 /** ISO-4217 code of the home currency: the single currency all aggregate totals (`NetWorthEntry.totalAssets`, etc.) are expressed in, and the default used when no currency is specified on a client input. `satisfies` checks it's one of `CURRENCIES`; the `CurrencyCode` type itself is re-exported from `@/db/schema/currency` (derived from the Drizzle pgEnum). */
 export const HOME_CURRENCY = "GBP" satisfies keyof typeof CURRENCIES;
+
+/** Assumed annual inflation rate applied to spending (bills + credit-card EWMA) in the post-retirement forecast. Expressed as a decimal — `0.025` = 2.5% per year. */
+export const ANNUAL_INFLATION_RATE = 0.025;
+
+/** Assumed annual safe-withdrawal rate from the invested portfolio after retirement. Expressed as a decimal — `0.04` = 4% per year. Applied as `1 − rate/12` to the portfolio balance each month, so the drawdown self-scales with the remaining pot. */
+export const RETIREMENT_DRAWDOWN_RATE = 0.04;
