@@ -68,10 +68,10 @@ type Props = {
   logY?: boolean;
 };
 
-const AXIS_PAD_LEFT = 72;
+const AXIS_PAD_LEFT = 86;
 const AXIS_PAD_RIGHT = 16;
 const AXIS_PAD_TOP = 12;
-const AXIS_PAD_BOTTOM = 28;
+const AXIS_PAD_BOTTOM = 36;
 
 function shortDate(d: Date): string {
   return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
@@ -121,9 +121,13 @@ function buildLogYTicks(
   const hi = Math.max(lo * 10, max);
   const loExp = Math.floor(Math.log10(lo));
   const hiExp = Math.ceil(Math.log10(hi));
+  const decades = hiExp - loExp;
+  // Thin the {1, 2, 5} minor ticks as the range widens — otherwise a
+  // 4-decade span produces 12+ labels stacked on the axis.
+  const mantissas = decades <= 2 ? [1, 2, 5] : decades <= 4 ? [1, 3] : [1];
   const ticks: number[] = [];
   for (let e = loExp; e <= hiExp; e++) {
-    for (const m of [1, 2, 5]) {
+    for (const m of mantissas) {
       const v = m * Math.pow(10, e);
       if (v >= Math.pow(10, loExp) && v <= Math.pow(10, hiExp)) ticks.push(v);
     }
@@ -145,8 +149,8 @@ export function NetWorthChart({
   points,
   series,
   currency,
-  width = 880,
-  height = 280,
+  width = 800,
+  height = 420,
   className,
   forecastStart,
   logY = false,
@@ -359,7 +363,7 @@ export function NetWorthChart({
             x={AXIS_PAD_LEFT - 6}
             y={yScale(v) + 3}
             textAnchor="end"
-            className="fill-muted-foreground text-[10px] tabular-nums"
+            className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums"
           >
             {formatAccountingMoney(currency, v, { compact: true })}
           </text>
@@ -372,7 +376,7 @@ export function NetWorthChart({
           x={t.x}
           y={height - 8}
           textAnchor="middle"
-          className="fill-muted-foreground text-[10px]"
+          className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
         >
           {t.label}
         </text>
@@ -467,10 +471,10 @@ export function NetWorthChart({
           const tooltipSeries = series.filter((s) =>
             (s.tooltipValues ?? s.values).some((v) => v !== 0),
           );
-          const rowH = 16;
-          const headerH = 22;
-          const padY = 10;
-          const boxW = 220;
+          const rowH = 30;
+          const headerH = 38;
+          const padY = 12;
+          const boxW = 340;
           const boxH = headerH + tooltipSeries.length * rowH + padY;
           const gap = 10;
           const preferRight = cx + gap + boxW <= plotRight;
@@ -515,8 +519,8 @@ export function NetWorthChart({
                 className="fill-popover stroke-border"
                 strokeWidth={1}
               />
-              <g className="fill-foreground text-[10px] tabular-nums">
-                <text x={boxX + 10} y={boxY + 16} className="font-medium">
+              <g className="fill-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums">
+                <text x={boxX + 14} y={boxY + 26} className="font-medium">
                   {fullDate(date)}
                 </text>
                 {tooltipSeries.map((s, i) => {
@@ -529,16 +533,16 @@ export function NetWorthChart({
                       transform={`translate(0, ${boxY + headerH + i * rowH})`}
                     >
                       <rect
-                        x={boxX + 10}
-                        y={2}
-                        width={8}
-                        height={8}
+                        x={boxX + 14}
+                        y={4}
+                        width={12}
+                        height={12}
                         fill={swatch}
                       />
-                      <text x={boxX + 24} y={9}>
+                      <text x={boxX + 32} y={14}>
                         {s.label}
                       </text>
-                      <text x={boxX + boxW - 10} y={9} textAnchor="end">
+                      <text x={boxX + boxW - 14} y={14} textAnchor="end">
                         {formatAccountingMoneyRounded(currency, display)}
                       </text>
                     </g>
@@ -584,7 +588,7 @@ export function NetWorthChart({
               <text
                 x={markerX + 4}
                 y={AXIS_PAD_TOP + 10}
-                className="fill-muted-foreground text-[10px]"
+                className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
               >
                 Forecast →
               </text>

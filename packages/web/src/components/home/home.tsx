@@ -1,15 +1,17 @@
 import { useSuspenseQuery } from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
-import { Info } from "lucide-react";
+import { Info, Settings2 } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { graphql } from "@/graphql";
 import { cn } from "@/lib/cn";
@@ -210,24 +212,23 @@ export function Home() {
   const deltaNet = latest && prev ? latest.net.amount - prev.net.amount : null;
 
   return (
-    <main className="mx-auto flex min-h-svh max-w-6xl flex-col gap-6 p-6">
-      <header className="flex items-start justify-between gap-4">
-        <div className="space-y-2">
-          <h1 className="text-4xl font-semibold tracking-tight">Overview</h1>
-          <p className="text-muted-foreground">Personal net-worth tracker.</p>
-        </div>
-        <Button asChild variant="outline">
+    <main className="mx-auto flex min-h-svh max-w-6xl flex-col gap-3 p-3 sm:gap-6 sm:p-6">
+      <header className="flex items-center justify-between gap-4">
+        <h1 className="text-xl font-semibold tracking-tight sm:text-4xl">
+          Overview
+        </h1>
+        <Button asChild variant="outline" size="sm" className="sm:h-9">
           <Link to="/net-worth/categories">Edit net worth</Link>
         </Button>
       </header>
 
       <section
         className={cn(
-          "rounded-lg border bg-card p-5 shadow-sm transition-opacity",
+          "rounded-lg border bg-card p-3 shadow-sm transition-opacity sm:p-5",
           refetching && "opacity-60",
         )}
       >
-        <div className="flex flex-wrap items-baseline justify-between gap-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
           <div>
             <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
               <span>Net worth</span>
@@ -235,7 +236,7 @@ export function Home() {
                 <ForecastInfoButton workings={data.netWorthForecast.workings} />
               )}
             </div>
-            <div className="text-3xl font-semibold tabular-nums">
+            <div className="text-2xl font-semibold tabular-nums sm:text-3xl">
               {latest
                 ? formatAccountingMoneyRounded(
                     latest.net.currency,
@@ -265,7 +266,7 @@ export function Home() {
           </div>
           <div className="flex items-center gap-4">
             {latest && (
-              <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm tabular-nums">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm tabular-nums sm:gap-x-6">
                 <dt className="text-muted-foreground">Assets</dt>
                 <dd className="text-right">
                   {formatAccountingMoneyRounded(currency, latest.assets.amount)}
@@ -279,45 +280,28 @@ export function Home() {
                 </dd>
               </dl>
             )}
-            <div className="flex flex-col gap-1">
-              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={showForecast}
-                  onChange={(e) => setShowForecast(e.target.checked)}
-                  className="accent-foreground"
-                />
-                Forecast
-              </label>
-              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={logScale}
-                  onChange={(e) => setLogScale(e.target.checked)}
-                  className="accent-foreground"
-                />
-                Log scale
-              </label>
-              {showForecast && (
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <input
-                    type="range"
-                    min={FORECAST_YEARS_MIN}
-                    max={FORECAST_YEARS_MAX}
-                    step={1}
-                    value={draftYears}
-                    onChange={(e) => setDraftYears(Number(e.target.value))}
-                    className="w-32 accent-foreground"
-                    aria-label="Forecast horizon (years)"
-                  />
-                  <span className="tabular-nums">{draftYears}y</span>
-                </label>
-              )}
+            <div className="hidden flex-col gap-1 sm:flex">
+              <ForecastControls
+                showForecast={showForecast}
+                setShowForecast={setShowForecast}
+                logScale={logScale}
+                setLogScale={setLogScale}
+                draftYears={draftYears}
+                setDraftYears={setDraftYears}
+              />
             </div>
+            <ForecastSettingsDialog
+              showForecast={showForecast}
+              setShowForecast={setShowForecast}
+              logScale={logScale}
+              setLogScale={setLogScale}
+              draftYears={draftYears}
+              setDraftYears={setDraftYears}
+            />
           </div>
         </div>
 
-        <div className="mt-4 space-y-2">
+        <div className="mt-2 space-y-2 sm:mt-4">
           <NetWorthChart
             points={dates}
             series={[
@@ -438,7 +422,7 @@ export function Home() {
 
       <section
         className={cn(
-          "rounded-lg border bg-card p-5 shadow-sm transition-opacity",
+          "rounded-lg border bg-card p-3 shadow-sm transition-opacity sm:p-5",
           refetching && "opacity-60",
         )}
       >
@@ -463,7 +447,7 @@ export function Home() {
             </span>
           </div>
         </div>
-        <div className="mt-3">
+        <div className="mt-2 sm:mt-3">
           <NetWorthChart
             points={dates}
             series={[
@@ -490,6 +474,87 @@ export function Home() {
         </div>
       </section>
     </main>
+  );
+}
+
+type ForecastControlsProps = {
+  showForecast: boolean;
+  setShowForecast: (v: boolean) => void;
+  logScale: boolean;
+  setLogScale: (v: boolean) => void;
+  draftYears: number;
+  setDraftYears: (n: number) => void;
+};
+
+function ForecastControls({
+  showForecast,
+  setShowForecast,
+  logScale,
+  setLogScale,
+  draftYears,
+  setDraftYears,
+}: ForecastControlsProps) {
+  return (
+    <>
+      <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+        <Checkbox
+          checked={showForecast}
+          onCheckedChange={(v) => setShowForecast(v === true)}
+        />
+        Forecast
+      </label>
+      <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+        <Checkbox
+          checked={logScale}
+          onCheckedChange={(v) => setLogScale(v === true)}
+        />
+        Log scale
+      </label>
+      <label
+        className={cn(
+          "flex items-center gap-2 text-xs text-muted-foreground transition-opacity",
+          !showForecast && "pointer-events-none opacity-40",
+        )}
+      >
+        <input
+          type="range"
+          min={FORECAST_YEARS_MIN}
+          max={FORECAST_YEARS_MAX}
+          step={1}
+          value={draftYears}
+          onChange={(e) => setDraftYears(Number(e.target.value))}
+          disabled={!showForecast}
+          className="w-32 accent-primary"
+          aria-label="Forecast horizon (years)"
+        />
+        <span className="tabular-nums">{draftYears}y</span>
+      </label>
+    </>
+  );
+}
+
+function ForecastSettingsDialog(props: ForecastControlsProps) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 sm:hidden"
+          aria-label="Chart settings"
+        >
+          <Settings2 className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-xs">
+        <DialogHeader>
+          <DialogTitle>Chart settings</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 text-sm">
+          <ForecastControls {...props} />
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
