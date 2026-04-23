@@ -100,18 +100,6 @@ CREATE TABLE "InvestmentAllocations" (
     )
 );
 
-CREATE TABLE "InvestmentCashAllocation" (
-  "singleton" BOOLEAN PRIMARY KEY NOT NULL,
-  "amount" BIGINT NOT NULL,
-  "currency" "CurrencyCode" NOT NULL,
-  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  CONSTRAINT "InvestmentCashAllocation_singleton_ck"
-    CHECK ("InvestmentCashAllocation"."singleton" = TRUE),
-  CONSTRAINT "InvestmentCashAllocation_amount_ck"
-    CHECK ("InvestmentCashAllocation"."amount" >= 0)
-);
-
 CREATE TABLE "InvestmentPrices" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
@@ -519,6 +507,33 @@ CREATE TABLE "PlanningYears" (
   "year" INTEGER PRIMARY KEY NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
+CREATE TABLE "AppSettings" (
+  "singleton" BOOLEAN PRIMARY KEY NOT NULL,
+  "cashAllocationAmount" BIGINT,
+  "cashAllocationCurrency" "CurrencyCode",
+  "retirementYear" INTEGER,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  CONSTRAINT "AppSettings_singleton_ck"
+    CHECK ("AppSettings"."singleton" = TRUE),
+  CONSTRAINT "AppSettings_cashAllocationAmount_ck"
+    CHECK (
+      "AppSettings"."cashAllocationAmount" IS NULL
+      OR "AppSettings"."cashAllocationAmount" >= 0
+    ),
+  CONSTRAINT "AppSettings_cashAllocationPair_ck"
+    CHECK (
+      ("AppSettings"."cashAllocationAmount" IS NULL) = (
+        "AppSettings"."cashAllocationCurrency" IS NULL
+      )
+    ),
+  CONSTRAINT "AppSettings_retirementYear_ck"
+    CHECK (
+      "AppSettings"."retirementYear" IS NULL
+      OR "AppSettings"."retirementYear" BETWEEN 1900 AND 2200
+    )
 );
 
 ALTER TABLE "InvestmentAllocations"

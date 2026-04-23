@@ -176,6 +176,13 @@
       "when": 1776787342103,
       "tag": "0024_add_is_latest_to_investment_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1777276800000,
+      "tag": "0025_create_app_settings",
+      "breakpoints": true
     }
   ]
 }

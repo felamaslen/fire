@@ -8,9 +8,9 @@ import { db } from "@/db";
 import { model } from "@/db/drizzle-model";
 import {
   InvestmentAllocations,
-  InvestmentCashAllocation,
   InvestmentTransactions,
 } from "@/db/schema/investments";
+import { AppSettings } from "@/db/schema/settings";
 
 import {
   getMoneyInputFractionalAmount,
@@ -156,19 +156,37 @@ export async function investmentCashAllocationSet(
       `Cash target must be non-negative, got ${amount.amount}`,
     );
   }
-  await model("InvestmentCashAllocation")
-    .insert({ singleton: true, amount: amountMinor, currency })
+  await model("AppSettings")
+    .insert({
+      singleton: true,
+      cashAllocationAmount: amountMinor,
+      cashAllocationCurrency: currency,
+    })
     .onConflictDoUpdate({
-      target: InvestmentCashAllocation.singleton,
-      set: { amount: amountMinor, currency, updatedAt: new Date() },
+      target: AppSettings.singleton,
+      set: {
+        cashAllocationAmount: amountMinor,
+        cashAllocationCurrency: currency,
+        updatedAt: new Date(),
+      },
     });
-  model("InvestmentCashAllocation").clearCache(true);
+  model("AppSettings").clearCache(true);
   return Money.fromMinorDenomination(amountMinor, currency);
 }
 
 async function loadCashAllocation(): Promise<Money | null> {
-  const row = await model("InvestmentCashAllocation").findByIdOrNull(true);
-  return row ? Money.fromMinorDenomination(row.amount, row.currency) : null;
+  const row = await model("AppSettings").findByIdOrNull(true);
+  if (
+    !row ||
+    row.cashAllocationAmount == null ||
+    row.cashAllocationCurrency == null
+  ) {
+    return null;
+  }
+  return Money.fromMinorDenomination(
+    row.cashAllocationAmount,
+    row.cashAllocationCurrency,
+  );
 }
 
 /**

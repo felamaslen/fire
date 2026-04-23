@@ -1,0 +1,2603 @@
+{
+  "id": "a4b5c6d7-e8f9-4a0b-b1c2-d3e4f5a6b7c8",
+  "prevId": "2e4e7953-02da-470c-a410-472cb3f5a336",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.DemoSessions": {
+      "name": "DemoSessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "schema": {
+          "name": "schema",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "flavour": {
+          "name": "flavour",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expiresAt": {
+          "name": "expiresAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "DemoSessions_schema_unique": {
+          "name": "DemoSessions_schema_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "schema"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.InvestmentAllocations": {
+      "name": "InvestmentAllocations",
+      "schema": "",
+      "columns": {
+        "assetId": {
+          "name": "assetId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "investmentId": {
+          "name": "investmentId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "allocation": {
+          "name": "allocation",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "InvestmentAllocations_assetId_NetWorthCategoryAssets_id_fk": {
+          "name": "InvestmentAllocations_assetId_NetWorthCategoryAssets_id_fk",
+          "tableFrom": "InvestmentAllocations",
+          "tableTo": "NetWorthCategoryAssets",
+          "columnsFrom": [
+            "assetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "InvestmentAllocations_investmentId_Investments_id_fk": {
+          "name": "InvestmentAllocations_investmentId_Investments_id_fk",
+          "tableFrom": "InvestmentAllocations",
+          "tableTo": "Investments",
+          "columnsFrom": [
+            "investmentId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "InvestmentAllocations_pk": {
+          "name": "InvestmentAllocations_pk",
+          "columns": [
+            "assetId",
+            "investmentId"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "InvestmentAllocations_allocation_ck": {
+          "name": "InvestmentAllocations_allocation_ck",
+          "value": "\"InvestmentAllocations\".\"allocation\" > 0 AND \"InvestmentAllocations\".\"allocation\" <= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.AppSettings": {
+      "name": "AppSettings",
+      "schema": "",
+      "columns": {
+        "singleton": {
+          "name": "singleton",
+          "type": "boolean",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cashAllocationAmount": {
+          "name": "cashAllocationAmount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cashAllocationCurrency": {
+          "name": "cashAllocationCurrency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "retirementYear": {
+          "name": "retirementYear",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "AppSettings_singleton_ck": {
+          "name": "AppSettings_singleton_ck",
+          "value": "\"AppSettings\".\"singleton\" = true"
+        },
+        "AppSettings_cashAllocationAmount_ck": {
+          "name": "AppSettings_cashAllocationAmount_ck",
+          "value": "\"AppSettings\".\"cashAllocationAmount\" IS NULL OR \"AppSettings\".\"cashAllocationAmount\" >= 0"
+        },
+        "AppSettings_cashAllocationPair_ck": {
+          "name": "AppSettings_cashAllocationPair_ck",
+          "value": "(\"AppSettings\".\"cashAllocationAmount\" IS NULL) = (\"AppSettings\".\"cashAllocationCurrency\" IS NULL)"
+        },
+        "AppSettings_retirementYear_ck": {
+          "name": "AppSettings_retirementYear_ck",
+          "value": "\"AppSettings\".\"retirementYear\" IS NULL OR \"AppSettings\".\"retirementYear\" BETWEEN 1900 AND 2200"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.InvestmentPrices": {
+      "name": "InvestmentPrices",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "investmentId": {
+          "name": "investmentId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "price": {
+          "name": "price",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "priceAdjusted": {
+          "name": "priceAdjusted",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "isLatest": {
+          "name": "isLatest",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "InvestmentPrices_investmentId_date_uq": {
+          "name": "InvestmentPrices_investmentId_date_uq",
+          "columns": [
+            {
+              "expression": "investmentId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "InvestmentPrices_investmentId_isLatest_uq": {
+          "name": "InvestmentPrices_investmentId_isLatest_uq",
+          "columns": [
+            {
+              "expression": "investmentId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "isLatest",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"InvestmentPrices\".\"isLatest\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "InvestmentPrices_investmentId_Investments_id_fk": {
+          "name": "InvestmentPrices_investmentId_Investments_id_fk",
+          "tableFrom": "InvestmentPrices",
+          "tableTo": "Investments",
+          "columnsFrom": [
+            "investmentId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "InvestmentPrices_price_ck": {
+          "name": "InvestmentPrices_price_ck",
+          "value": "\"InvestmentPrices\".\"price\" >= 0"
+        },
+        "InvestmentPrices_priceAdjusted_ck": {
+          "name": "InvestmentPrices_priceAdjusted_ck",
+          "value": "\"InvestmentPrices\".\"priceAdjusted\" >= 0"
+        },
+        "InvestmentPrices_isLatest_ck": {
+          "name": "InvestmentPrices_isLatest_ck",
+          "value": "\"InvestmentPrices\".\"isLatest\" IS NULL OR \"InvestmentPrices\".\"isLatest\" = true"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.InvestmentStockSplits": {
+      "name": "InvestmentStockSplits",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "investmentId": {
+          "name": "investmentId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ratio": {
+          "name": "ratio",
+          "type": "numeric(20, 10)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "InvestmentStockSplits_investmentId_date_uq": {
+          "name": "InvestmentStockSplits_investmentId_date_uq",
+          "columns": [
+            {
+              "expression": "investmentId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "InvestmentStockSplits_investmentId_Investments_id_fk": {
+          "name": "InvestmentStockSplits_investmentId_Investments_id_fk",
+          "tableFrom": "InvestmentStockSplits",
+          "tableTo": "Investments",
+          "columnsFrom": [
+            "investmentId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "InvestmentStockSplits_ratio_ck": {
+          "name": "InvestmentStockSplits_ratio_ck",
+          "value": "\"InvestmentStockSplits\".\"ratio\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.InvestmentTransactions": {
+      "name": "InvestmentTransactions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "investmentId": {
+          "name": "investmentId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assetId": {
+          "name": "assetId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "units": {
+          "name": "units",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "price": {
+          "name": "price",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "taxes": {
+          "name": "taxes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "fees": {
+          "name": "fees",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "drip": {
+          "name": "drip",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "InvestmentTransactions_investmentId_idx": {
+          "name": "InvestmentTransactions_investmentId_idx",
+          "columns": [
+            {
+              "expression": "investmentId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "InvestmentTransactions_assetId_idx": {
+          "name": "InvestmentTransactions_assetId_idx",
+          "columns": [
+            {
+              "expression": "assetId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "InvestmentTransactions_investmentId_Investments_id_fk": {
+          "name": "InvestmentTransactions_investmentId_Investments_id_fk",
+          "tableFrom": "InvestmentTransactions",
+          "tableTo": "Investments",
+          "columnsFrom": [
+            "investmentId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "InvestmentTransactions_assetId_NetWorthCategoryAssets_id_fk": {
+          "name": "InvestmentTransactions_assetId_NetWorthCategoryAssets_id_fk",
+          "tableFrom": "InvestmentTransactions",
+          "tableTo": "NetWorthCategoryAssets",
+          "columnsFrom": [
+            "assetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "InvestmentTransactions_price_ck": {
+          "name": "InvestmentTransactions_price_ck",
+          "value": "\"InvestmentTransactions\".\"price\" >= 0"
+        },
+        "InvestmentTransactions_taxes_ck": {
+          "name": "InvestmentTransactions_taxes_ck",
+          "value": "\"InvestmentTransactions\".\"taxes\" >= 0"
+        },
+        "InvestmentTransactions_fees_ck": {
+          "name": "InvestmentTransactions_fees_ck",
+          "value": "\"InvestmentTransactions\".\"fees\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.Investments": {
+      "name": "Investments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stockCode": {
+          "name": "stockCode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fundLink": {
+          "name": "fundLink",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "Investments_stockCode_fundLink_ck": {
+          "name": "Investments_stockCode_fundLink_ck",
+          "value": "(\"Investments\".\"stockCode\" IS NOT NULL)::int + (\"Investments\".\"fundLink\" IS NOT NULL)::int = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.NetWorthCategoryAssets": {
+      "name": "NetWorthCategoryAssets",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "netWorthCategoryAssetType",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "growthRate": {
+          "name": "growthRate",
+          "type": "numeric(6, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "NetWorthCategoryAssets_growthRate_ck": {
+          "name": "NetWorthCategoryAssets_growthRate_ck",
+          "value": "\"NetWorthCategoryAssets\".\"growthRate\" IS NULL OR \"NetWorthCategoryAssets\".\"type\" IN ('PROPERTY', 'VEHICLE')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.NetWorthCategoryLiabilities": {
+      "name": "NetWorthCategoryLiabilities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "netWorthCategoryLiabilityType",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "categoryAssetId": {
+          "name": "categoryAssetId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "interestRate": {
+          "name": "interestRate",
+          "type": "numeric(6, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "billedFromAccountId": {
+          "name": "billedFromAccountId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "skip": {
+          "name": "skip",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk": {
+          "name": "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk",
+          "tableFrom": "NetWorthCategoryLiabilities",
+          "tableTo": "NetWorthCategoryAssets",
+          "columnsFrom": [
+            "categoryAssetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "NetWorthCategoryLiabilities_billedFromAccountId_PlanningAccounts_accountId_fk": {
+          "name": "NetWorthCategoryLiabilities_billedFromAccountId_PlanningAccounts_accountId_fk",
+          "tableFrom": "NetWorthCategoryLiabilities",
+          "tableTo": "PlanningAccounts",
+          "columnsFrom": [
+            "billedFromAccountId"
+          ],
+          "columnsTo": [
+            "accountId"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "NetWorthCategoryLiabilities_interestRate_ck": {
+          "name": "NetWorthCategoryLiabilities_interestRate_ck",
+          "value": "(\"NetWorthCategoryLiabilities\".\"type\" = 'LOAN' AND \"NetWorthCategoryLiabilities\".\"interestRate\" IS NOT NULL)\n           OR (\"NetWorthCategoryLiabilities\".\"type\" <> 'LOAN' AND \"NetWorthCategoryLiabilities\".\"interestRate\" IS NULL)"
+        },
+        "NetWorthCategoryLiabilities_billedFromAccount_ck": {
+          "name": "NetWorthCategoryLiabilities_billedFromAccount_ck",
+          "value": "\"NetWorthCategoryLiabilities\".\"billedFromAccountId\" IS NULL OR \"NetWorthCategoryLiabilities\".\"type\" = 'CREDIT_CARD'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.NetWorthCategoryOptions": {
+      "name": "NetWorthCategoryOptions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.NetWorthCurrencyRates": {
+      "name": "NetWorthCurrencyRates",
+      "schema": "",
+      "columns": {
+        "entryId": {
+          "name": "entryId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base": {
+          "name": "base",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rate": {
+          "name": "rate",
+          "type": "numeric(24, 12)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "NetWorthCurrencyRates_entryId_NetWorthEntries_id_fk": {
+          "name": "NetWorthCurrencyRates_entryId_NetWorthEntries_id_fk",
+          "tableFrom": "NetWorthCurrencyRates",
+          "tableTo": "NetWorthEntries",
+          "columnsFrom": [
+            "entryId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "NetWorthCurrencyRates_pk": {
+          "name": "NetWorthCurrencyRates_pk",
+          "columns": [
+            "entryId",
+            "currency"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "NetWorthCurrencyRates_base_currency_ck": {
+          "name": "NetWorthCurrencyRates_base_currency_ck",
+          "value": "\"NetWorthCurrencyRates\".\"base\" <> \"NetWorthCurrencyRates\".\"currency\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.NetWorthEntries": {
+      "name": "NetWorthEntries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "NetWorthEntries_month_uq": {
+          "name": "NetWorthEntries_month_uq",
+          "columns": [
+            {
+              "expression": "date_trunc('month', \"date\"::timestamp)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.NetWorthValueAmounts": {
+      "name": "NetWorthValueAmounts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "valueId": {
+          "name": "valueId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "NetWorthValueAmounts_valueId_currency_uq": {
+          "name": "NetWorthValueAmounts_valueId_currency_uq",
+          "columns": [
+            {
+              "expression": "valueId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "NetWorthValueAmounts_valueId_NetWorthValues_id_fk": {
+          "name": "NetWorthValueAmounts_valueId_NetWorthValues_id_fk",
+          "tableFrom": "NetWorthValueAmounts",
+          "tableTo": "NetWorthValues",
+          "columnsFrom": [
+            "valueId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.NetWorthValueOptions": {
+      "name": "NetWorthValueOptions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "valueId": {
+          "name": "valueId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "units": {
+          "name": "units",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "priceStrike": {
+          "name": "priceStrike",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "priceMarket": {
+          "name": "priceMarket",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vested": {
+          "name": "vested",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "NetWorthValueOptions_valueId_NetWorthValues_id_fk": {
+          "name": "NetWorthValueOptions_valueId_NetWorthValues_id_fk",
+          "tableFrom": "NetWorthValueOptions",
+          "tableTo": "NetWorthValues",
+          "columnsFrom": [
+            "valueId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "NetWorthValueOptions_valueId_unique": {
+          "name": "NetWorthValueOptions_valueId_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "valueId"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.NetWorthValues": {
+      "name": "NetWorthValues",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "entryId": {
+          "name": "entryId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "categoryAssetId": {
+          "name": "categoryAssetId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "categoryLiabilityId": {
+          "name": "categoryLiabilityId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "categoryOptionId": {
+          "name": "categoryOptionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "NetWorthValues_entryId_idx": {
+          "name": "NetWorthValues_entryId_idx",
+          "columns": [
+            {
+              "expression": "entryId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "NetWorthValues_entryId_NetWorthEntries_id_fk": {
+          "name": "NetWorthValues_entryId_NetWorthEntries_id_fk",
+          "tableFrom": "NetWorthValues",
+          "tableTo": "NetWorthEntries",
+          "columnsFrom": [
+            "entryId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "NetWorthValues_categoryAssetId_NetWorthCategoryAssets_id_fk": {
+          "name": "NetWorthValues_categoryAssetId_NetWorthCategoryAssets_id_fk",
+          "tableFrom": "NetWorthValues",
+          "tableTo": "NetWorthCategoryAssets",
+          "columnsFrom": [
+            "categoryAssetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "NetWorthValues_categoryLiabilityId_NetWorthCategoryLiabilities_id_fk": {
+          "name": "NetWorthValues_categoryLiabilityId_NetWorthCategoryLiabilities_id_fk",
+          "tableFrom": "NetWorthValues",
+          "tableTo": "NetWorthCategoryLiabilities",
+          "columnsFrom": [
+            "categoryLiabilityId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "NetWorthValues_categoryOptionId_NetWorthCategoryOptions_id_fk": {
+          "name": "NetWorthValues_categoryOptionId_NetWorthCategoryOptions_id_fk",
+          "tableFrom": "NetWorthValues",
+          "tableTo": "NetWorthCategoryOptions",
+          "columnsFrom": [
+            "categoryOptionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "NetWorthValues_exactlyOneCategory_ck": {
+          "name": "NetWorthValues_exactlyOneCategory_ck",
+          "value": "(\n        (CASE WHEN \"NetWorthValues\".\"categoryAssetId\"     IS NOT NULL THEN 1 ELSE 0 END)\n      + (CASE WHEN \"NetWorthValues\".\"categoryLiabilityId\" IS NOT NULL THEN 1 ELSE 0 END)\n      + (CASE WHEN \"NetWorthValues\".\"categoryOptionId\"    IS NOT NULL THEN 1 ELSE 0 END)\n      ) = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningAccounts": {
+      "name": "PlanningAccounts",
+      "schema": "",
+      "columns": {
+        "accountId": {
+          "name": "accountId",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "alias": {
+          "name": "alias",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningAccounts_accountId_NetWorthCategoryAssets_id_fk": {
+          "name": "PlanningAccounts_accountId_NetWorthCategoryAssets_id_fk",
+          "tableFrom": "PlanningAccounts",
+          "tableTo": "NetWorthCategoryAssets",
+          "columnsFrom": [
+            "accountId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.PlanningBills": {
+      "name": "PlanningBills",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "start": {
+          "name": "start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end": {
+          "name": "end",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "frequency": {
+          "name": "frequency",
+          "type": "planningBillsFrequency",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "collectionDate": {
+          "name": "collectionDate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fromAccountId": {
+          "name": "fromAccountId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "liabilityId": {
+          "name": "liabilityId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningBills_fromAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningBills_fromAccountId_PlanningAccounts_accountId_fk",
+          "tableFrom": "PlanningBills",
+          "tableTo": "PlanningAccounts",
+          "columnsFrom": [
+            "fromAccountId"
+          ],
+          "columnsTo": [
+            "accountId"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "PlanningBills_liabilityId_NetWorthCategoryLiabilities_id_fk": {
+          "name": "PlanningBills_liabilityId_NetWorthCategoryLiabilities_id_fk",
+          "tableFrom": "PlanningBills",
+          "tableTo": "NetWorthCategoryLiabilities",
+          "columnsFrom": [
+            "liabilityId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "PlanningBills_dateRange_ck": {
+          "name": "PlanningBills_dateRange_ck",
+          "value": "\"PlanningBills\".\"end\" IS NULL OR \"PlanningBills\".\"end\" >= \"PlanningBills\".\"start\""
+        },
+        "PlanningBills_collectionDate_ck": {
+          "name": "PlanningBills_collectionDate_ck",
+          "value": "(\"PlanningBills\".\"frequency\" = 'MONTHLY' AND \"PlanningBills\".\"collectionDate\" ~ '^[0-9]+$')\n           OR (\"PlanningBills\".\"frequency\" = 'QUARTERLY' AND \"PlanningBills\".\"collectionDate\" ~ '^[0-9]+-[0-9]+(, ?[0-9]+-[0-9]+){3}$')\n           OR (\"PlanningBills\".\"frequency\" = 'YEARLY' AND \"PlanningBills\".\"collectionDate\" ~ '^[0-9]+-[0-9]+$')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningEarnings": {
+      "name": "PlanningEarnings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start": {
+          "name": "start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end": {
+          "name": "end",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "amountGross": {
+          "name": "amountGross",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "countryCode": {
+          "name": "countryCode",
+          "type": "CountryCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pensionSalarySacrifice": {
+          "name": "pensionSalarySacrifice",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pensionReliefAtSource": {
+          "name": "pensionReliefAtSource",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pensionNetPay": {
+          "name": "pensionNetPay",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "studentLoanPlan2": {
+          "name": "studentLoanPlan2",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "studentLoanLiabilityId": {
+          "name": "studentLoanLiabilityId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "toAccountId": {
+          "name": "toAccountId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningEarnings_studentLoanLiabilityId_NetWorthCategoryLiabilities_id_fk": {
+          "name": "PlanningEarnings_studentLoanLiabilityId_NetWorthCategoryLiabilities_id_fk",
+          "tableFrom": "PlanningEarnings",
+          "tableTo": "NetWorthCategoryLiabilities",
+          "columnsFrom": [
+            "studentLoanLiabilityId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "PlanningEarnings_toAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningEarnings_toAccountId_PlanningAccounts_accountId_fk",
+          "tableFrom": "PlanningEarnings",
+          "tableTo": "PlanningAccounts",
+          "columnsFrom": [
+            "toAccountId"
+          ],
+          "columnsTo": [
+            "accountId"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "PlanningEarnings_dateRange_ck": {
+          "name": "PlanningEarnings_dateRange_ck",
+          "value": "\"PlanningEarnings\".\"end\" IS NULL OR \"PlanningEarnings\".\"end\" >= \"PlanningEarnings\".\"start\""
+        },
+        "PlanningEarnings_pensionSalarySacrifice_ck": {
+          "name": "PlanningEarnings_pensionSalarySacrifice_ck",
+          "value": "\"PlanningEarnings\".\"pensionSalarySacrifice\" IS NULL OR \"PlanningEarnings\".\"pensionSalarySacrifice\" BETWEEN 0 AND 1"
+        },
+        "PlanningEarnings_pensionReliefAtSource_ck": {
+          "name": "PlanningEarnings_pensionReliefAtSource_ck",
+          "value": "\"PlanningEarnings\".\"pensionReliefAtSource\" IS NULL OR \"PlanningEarnings\".\"pensionReliefAtSource\" BETWEEN 0 AND 1"
+        },
+        "PlanningEarnings_pensionNetPay_ck": {
+          "name": "PlanningEarnings_pensionNetPay_ck",
+          "value": "\"PlanningEarnings\".\"pensionNetPay\" IS NULL OR \"PlanningEarnings\".\"pensionNetPay\" BETWEEN 0 AND 1"
+        },
+        "PlanningEarnings_studentLoanLiability_ck": {
+          "name": "PlanningEarnings_studentLoanLiability_ck",
+          "value": "\"PlanningEarnings\".\"studentLoanLiabilityId\" IS NULL OR \"PlanningEarnings\".\"studentLoanPlan2\" = true"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningEarningsUKTaxCodes": {
+      "name": "PlanningEarningsUKTaxCodes",
+      "schema": "",
+      "columns": {
+        "earningsId": {
+          "name": "earningsId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start": {
+          "name": "start",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end": {
+          "name": "end",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "taxCode": {
+          "name": "taxCode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningEarningsUKTaxCodes_earningsId_PlanningEarnings_id_fk": {
+          "name": "PlanningEarningsUKTaxCodes_earningsId_PlanningEarnings_id_fk",
+          "tableFrom": "PlanningEarningsUKTaxCodes",
+          "tableTo": "PlanningEarnings",
+          "columnsFrom": [
+            "earningsId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "PlanningEarningsUKTaxCodes_pk": {
+          "name": "PlanningEarningsUKTaxCodes_pk",
+          "columns": [
+            "earningsId",
+            "start"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "PlanningEarningsUKTaxCodes_dateRange_ck": {
+          "name": "PlanningEarningsUKTaxCodes_dateRange_ck",
+          "value": "\"PlanningEarningsUKTaxCodes\".\"end\" IS NULL OR \"PlanningEarningsUKTaxCodes\".\"end\" >= \"PlanningEarningsUKTaxCodes\".\"start\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningMonthBills": {
+      "name": "PlanningMonthBills",
+      "schema": "",
+      "columns": {
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "billId": {
+          "name": "billId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningMonthBills_billId_PlanningBills_id_fk": {
+          "name": "PlanningMonthBills_billId_PlanningBills_id_fk",
+          "tableFrom": "PlanningMonthBills",
+          "tableTo": "PlanningBills",
+          "columnsFrom": [
+            "billId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "PlanningMonthBills_month_fk": {
+          "name": "PlanningMonthBills_month_fk",
+          "tableFrom": "PlanningMonthBills",
+          "tableTo": "PlanningMonths",
+          "columnsFrom": [
+            "year",
+            "date"
+          ],
+          "columnsTo": [
+            "year",
+            "date"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "PlanningMonthBills_pk": {
+          "name": "PlanningMonthBills_pk",
+          "columns": [
+            "year",
+            "date",
+            "billId"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "PlanningMonthBills_amountCurrency_ck": {
+          "name": "PlanningMonthBills_amountCurrency_ck",
+          "value": "(\"PlanningMonthBills\".\"amount\" IS NULL) = (\"PlanningMonthBills\".\"currency\" IS NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningMonths": {
+      "name": "PlanningMonths",
+      "schema": "",
+      "columns": {
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "PlanningMonths_year_month_uq": {
+          "name": "PlanningMonths_year_month_uq",
+          "columns": [
+            {
+              "expression": "year",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date_trunc('month', \"date\"::timestamp)",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "PlanningMonths_year_PlanningYears_year_fk": {
+          "name": "PlanningMonths_year_PlanningYears_year_fk",
+          "tableFrom": "PlanningMonths",
+          "tableTo": "PlanningYears",
+          "columnsFrom": [
+            "year"
+          ],
+          "columnsTo": [
+            "year"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "PlanningMonths_pk": {
+          "name": "PlanningMonths_pk",
+          "columns": [
+            "year",
+            "date"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.PlanningPayslipAdjustments": {
+      "name": "PlanningPayslipAdjustments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "payslipId": {
+          "name": "payslipId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "liabilityId": {
+          "name": "liabilityId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningPayslipAdjustments_payslipId_PlanningPayslips_id_fk": {
+          "name": "PlanningPayslipAdjustments_payslipId_PlanningPayslips_id_fk",
+          "tableFrom": "PlanningPayslipAdjustments",
+          "tableTo": "PlanningPayslips",
+          "columnsFrom": [
+            "payslipId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "PlanningPayslipAdjustments_liabilityId_NetWorthCategoryLiabilities_id_fk": {
+          "name": "PlanningPayslipAdjustments_liabilityId_NetWorthCategoryLiabilities_id_fk",
+          "tableFrom": "PlanningPayslipAdjustments",
+          "tableTo": "NetWorthCategoryLiabilities",
+          "columnsFrom": [
+            "liabilityId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.PlanningPayslips": {
+      "name": "PlanningPayslips",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amountGross": {
+          "name": "amountGross",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "toAccountId": {
+          "name": "toAccountId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fileUrl": {
+          "name": "fileUrl",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk",
+          "tableFrom": "PlanningPayslips",
+          "tableTo": "PlanningAccounts",
+          "columnsFrom": [
+            "toAccountId"
+          ],
+          "columnsTo": [
+            "accountId"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.PlanningTransactions": {
+      "name": "PlanningTransactions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "accountId": {
+          "name": "accountId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "toAccountId": {
+          "name": "toAccountId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "liabilityId": {
+          "name": "liabilityId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assetId": {
+          "name": "assetId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningTransactions_accountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningTransactions_accountId_PlanningAccounts_accountId_fk",
+          "tableFrom": "PlanningTransactions",
+          "tableTo": "PlanningAccounts",
+          "columnsFrom": [
+            "accountId"
+          ],
+          "columnsTo": [
+            "accountId"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "PlanningTransactions_toAccountId_PlanningAccounts_accountId_fk": {
+          "name": "PlanningTransactions_toAccountId_PlanningAccounts_accountId_fk",
+          "tableFrom": "PlanningTransactions",
+          "tableTo": "PlanningAccounts",
+          "columnsFrom": [
+            "toAccountId"
+          ],
+          "columnsTo": [
+            "accountId"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "PlanningTransactions_liabilityId_NetWorthCategoryLiabilities_id_fk": {
+          "name": "PlanningTransactions_liabilityId_NetWorthCategoryLiabilities_id_fk",
+          "tableFrom": "PlanningTransactions",
+          "tableTo": "NetWorthCategoryLiabilities",
+          "columnsFrom": [
+            "liabilityId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "PlanningTransactions_assetId_NetWorthCategoryAssets_id_fk": {
+          "name": "PlanningTransactions_assetId_NetWorthCategoryAssets_id_fk",
+          "tableFrom": "PlanningTransactions",
+          "tableTo": "NetWorthCategoryAssets",
+          "columnsFrom": [
+            "assetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "PlanningTransactions_month_fk": {
+          "name": "PlanningTransactions_month_fk",
+          "tableFrom": "PlanningTransactions",
+          "tableTo": "PlanningMonths",
+          "columnsFrom": [
+            "year",
+            "date"
+          ],
+          "columnsTo": [
+            "year",
+            "date"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "PlanningTransactions_accounts_ck": {
+          "name": "PlanningTransactions_accounts_ck",
+          "value": "\"PlanningTransactions\".\"toAccountId\" IS NULL OR \"PlanningTransactions\".\"accountId\" <> \"PlanningTransactions\".\"toAccountId\""
+        },
+        "PlanningTransactions_inflow_ck": {
+          "name": "PlanningTransactions_inflow_ck",
+          "value": "\"PlanningTransactions\".\"amount\" <= 0\n           OR (\"PlanningTransactions\".\"toAccountId\" IS NULL AND \"PlanningTransactions\".\"liabilityId\" IS NULL AND \"PlanningTransactions\".\"assetId\" IS NULL)"
+        },
+        "PlanningTransactions_liabilityAssetExclusive_ck": {
+          "name": "PlanningTransactions_liabilityAssetExclusive_ck",
+          "value": "\"PlanningTransactions\".\"liabilityId\" IS NULL OR \"PlanningTransactions\".\"assetId\" IS NULL"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningYearUKTaxRates": {
+      "name": "PlanningYearUKTaxRates",
+      "schema": "",
+      "columns": {
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "rateBasic": {
+          "name": "rateBasic",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rateHigher": {
+          "name": "rateHigher",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rateAdditional": {
+          "name": "rateAdditional",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thresholdBasic": {
+          "name": "thresholdBasic",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thresholdHigher": {
+          "name": "thresholdHigher",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thresholdAdditional": {
+          "name": "thresholdAdditional",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rateNicMain": {
+          "name": "rateNicMain",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rateNicAdditional": {
+          "name": "rateNicAdditional",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thresholdNicPrimary": {
+          "name": "thresholdNicPrimary",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thresholdNicUpperEarnings": {
+          "name": "thresholdNicUpperEarnings",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rateStudentLoanPlan2": {
+          "name": "rateStudentLoanPlan2",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thresholdStudentLoanPlan2": {
+          "name": "thresholdStudentLoanPlan2",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "thresholdPersonalAllowanceTaper": {
+          "name": "thresholdPersonalAllowanceTaper",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "PlanningYearUKTaxRates_year_PlanningYears_year_fk": {
+          "name": "PlanningYearUKTaxRates_year_PlanningYears_year_fk",
+          "tableFrom": "PlanningYearUKTaxRates",
+          "tableTo": "PlanningYears",
+          "columnsFrom": [
+            "year"
+          ],
+          "columnsTo": [
+            "year"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "PlanningYearUKTaxRates_rateBasic_ck": {
+          "name": "PlanningYearUKTaxRates_rateBasic_ck",
+          "value": "\"PlanningYearUKTaxRates\".\"rateBasic\" BETWEEN 0 AND 1"
+        },
+        "PlanningYearUKTaxRates_rateHigher_ck": {
+          "name": "PlanningYearUKTaxRates_rateHigher_ck",
+          "value": "\"PlanningYearUKTaxRates\".\"rateHigher\" BETWEEN 0 AND 1"
+        },
+        "PlanningYearUKTaxRates_rateAdditional_ck": {
+          "name": "PlanningYearUKTaxRates_rateAdditional_ck",
+          "value": "\"PlanningYearUKTaxRates\".\"rateAdditional\" BETWEEN 0 AND 1"
+        },
+        "PlanningYearUKTaxRates_rateNicMain_ck": {
+          "name": "PlanningYearUKTaxRates_rateNicMain_ck",
+          "value": "\"PlanningYearUKTaxRates\".\"rateNicMain\" BETWEEN 0 AND 1"
+        },
+        "PlanningYearUKTaxRates_rateNicAdditional_ck": {
+          "name": "PlanningYearUKTaxRates_rateNicAdditional_ck",
+          "value": "\"PlanningYearUKTaxRates\".\"rateNicAdditional\" BETWEEN 0 AND 1"
+        },
+        "PlanningYearUKTaxRates_rateStudentLoanPlan2_ck": {
+          "name": "PlanningYearUKTaxRates_rateStudentLoanPlan2_ck",
+          "value": "\"PlanningYearUKTaxRates\".\"rateStudentLoanPlan2\" BETWEEN 0 AND 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.PlanningYears": {
+      "name": "PlanningYears",
+      "schema": "",
+      "columns": {
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.CountryCode": {
+      "name": "CountryCode",
+      "schema": "public",
+      "values": [
+        "GB"
+      ]
+    },
+    "public.CurrencyCode": {
+      "name": "CurrencyCode",
+      "schema": "public",
+      "values": [
+        "AED",
+        "ARS",
+        "AUD",
+        "BDT",
+        "BHD",
+        "BRL",
+        "CAD",
+        "CHF",
+        "CLP",
+        "CNY",
+        "COP",
+        "CZK",
+        "DKK",
+        "EGP",
+        "EUR",
+        "GBP",
+        "GHS",
+        "HKD",
+        "HUF",
+        "ILS",
+        "INR",
+        "ISK",
+        "JOD",
+        "JPY",
+        "KES",
+        "KRW",
+        "KWD",
+        "LKR",
+        "MAD",
+        "MXN",
+        "MYR",
+        "NGN",
+        "NOK",
+        "NZD",
+        "OMR",
+        "PEN",
+        "PHP",
+        "PKR",
+        "PLN",
+        "QAR",
+        "RON",
+        "RSD",
+        "RUB",
+        "SAR",
+        "SCR",
+        "SEK",
+        "SGD",
+        "THB",
+        "TND",
+        "TRY",
+        "TWD",
+        "UAH",
+        "USD",
+        "UYU",
+        "VES",
+        "VND",
+        "ZAR"
+      ]
+    },
+    "public.netWorthCategoryAssetType": {
+      "name": "netWorthCategoryAssetType",
+      "schema": "public",
+      "values": [
+        "CASH",
+        "STOCK",
+        "OPTION",
+        "PENSION",
+        "PROPERTY",
+        "VEHICLE",
+        "MISC"
+      ]
+    },
+    "public.netWorthCategoryLiabilityType": {
+      "name": "netWorthCategoryLiabilityType",
+      "schema": "public",
+      "values": [
+        "CREDIT_CARD",
+        "LOAN",
+        "MISC"
+      ]
+    },
+    "public.planningBillsFrequency": {
+      "name": "planningBillsFrequency",
+      "schema": "public",
+      "values": [
+        "MONTHLY",
+        "QUARTERLY",
+        "YEARLY"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {
+    "public.InvestmentPortfolioDailyBreakdown": {
+      "columns": {
+        "currency": {
+          "name": "currency",
+          "type": "CurrencyCode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assetId": {
+          "name": "assetId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "definition": "\n    WITH\n      \"priceRange\" AS (\n        SELECT MIN(date) AS \"startDate\", MAX(date) AS \"endDate\"\n        FROM \"InvestmentPrices\"\n      ),\n      days AS (\n        SELECT generate_series(\"startDate\", \"endDate\", '1 day'::interval)::date AS date\n        FROM \"priceRange\"\n        WHERE \"startDate\" IS NOT NULL\n      ),\n      holdings AS (\n        SELECT DISTINCT \"assetId\", \"investmentId\"\n        FROM \"InvestmentTransactions\"\n      ),\n      \"unitsByDay\" AS (\n        SELECT\n          h.\"assetId\",\n          h.\"investmentId\",\n          d.date,\n          COALESCE(\n            (SELECT SUM(t.units)\n             FROM \"InvestmentTransactions\" t\n             WHERE t.\"assetId\" = h.\"assetId\"\n               AND t.\"investmentId\" = h.\"investmentId\"\n               AND t.date <= d.date),\n            0\n          ) AS units\n        FROM holdings h\n        CROSS JOIN days d\n      ),\n      \"priceByDay\" AS (\n        SELECT\n          h.\"investmentId\",\n          d.date,\n          (SELECT p.price\n           FROM \"InvestmentPrices\" p\n           WHERE p.\"investmentId\" = h.\"investmentId\" AND p.date <= d.date\n           ORDER BY p.date DESC\n           LIMIT 1) AS price\n        FROM (SELECT DISTINCT \"investmentId\" FROM holdings) h\n        CROSS JOIN days d\n      )\n    SELECT\n      i.currency,\n      u.\"assetId\",\n      u.date,\n      SUM(u.units * p.price) AS amount\n    FROM \"unitsByDay\" u\n    JOIN \"Investments\" i ON i.id = u.\"investmentId\"\n    JOIN \"priceByDay\" p ON p.\"investmentId\" = u.\"investmentId\" AND p.date = u.date\n    WHERE p.price IS NOT NULL AND u.units <> 0\n    GROUP BY i.currency, u.\"assetId\", u.date\n  ",
+      "name": "InvestmentPortfolioDailyBreakdown",
+      "schema": "public",
+      "isExisting": false,
+      "materialized": false
+    }
+  },
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

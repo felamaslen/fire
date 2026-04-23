@@ -251,28 +251,6 @@ export const investmentAllocationsRelations = relations(
   }),
 );
 
-/** Singleton row holding the portfolio-wide target cash reserve as an absolute monetary value (applied across *all* assets in aggregate, not per-wrapper). The `singleton` column is pinned to `true` by a check constraint so there can only ever be one row. */
-export const InvestmentCashAllocation = pgTable(
-  "InvestmentCashAllocation",
-  {
-    singleton: boolean("singleton").primaryKey(),
-    /** Target cash amount in the minor denomination of `currency` (e.g. pence for GBP). Non-negative. */
-    amount: bigint("amount", { mode: "number" }).notNull(),
-    /** ISO-4217 currency the target is denominated in. */
-    currency: currencyCode("currency").notNull(),
-    createdAt: timestamp("createdAt", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updatedAt", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => [
-    check("InvestmentCashAllocation_singleton_ck", sql`${t.singleton} = true`),
-    check("InvestmentCashAllocation_amount_ck", sql`${t.amount} >= 0`),
-  ],
-);
-
 /** Daily portfolio value per wrapper, per currency. One row per `(currency, assetId, date)` triple, covering every day from the earliest price-quote date through the latest. `amount` is the sum over all investments held in that wrapper of `units_held_on_day * last_known_price_on_or_before_day`, in fractional units of `currency`. Dates with no known price for an investment forward-fill from the most recent quote. */
 export const InvestmentPortfolioDailyBreakdown = pgView(
   "InvestmentPortfolioDailyBreakdown",
