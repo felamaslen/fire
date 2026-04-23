@@ -166,17 +166,20 @@ docker pull '$IMAGE:latest'
 docker compose up -d --wait postgres
 
 # Run drizzle-kit migrate in a one-off container built from the app image.
-# \`--rm\`  — don't leave a stopped container around; env (DATABASE_URL etc.)
-#            is inherited from docker-compose.yml.
-# \`-T\`   — **critical**: without this, \`docker compose run\` forwards its
-#            stdin into the container. We run the whole script via
-#            \`ssh bash -s <<EOSH\`, so stdin here *is* the heredoc, and
-#            every line after this command silently gets consumed by
-#            pnpm instead of executed by the shell (including the app
-#            recreate below). Resulting deploys looked green but left
-#            the old container running.
+# \`--rm\`      — don't leave a stopped container around; env (DATABASE_URL
+#                etc.) is inherited from docker-compose.yml.
+# \`-T\`       — disable pseudo-TTY allocation (compose would otherwise try
+#                to open one and fail under \`ssh bash -s\`).
+# \`</dev/null\` — **critical**: even with \`-T\`, \`docker compose run\` still
+#                attaches stdin and forwards it into the container. Our
+#                stdin here is the \`ssh bash -s <<EOSH\` heredoc, so
+#                without this redirect every line after this command
+#                gets consumed by pnpm inside the migration container
+#                instead of executed by the remote shell — including
+#                the app recreate below. Deploys looked green but left
+#                the old container running.
 echo '==> Running database migrations'
-docker compose run --rm -T app pnpm db:migrate
+docker compose run --rm -T app pnpm db:migrate </dev/null
 
 # Bring \`backup\` (and anything else non-app) up / prune orphans. Does NOT
 # touch \`app\` — that's handled explicitly below with stronger recreation
