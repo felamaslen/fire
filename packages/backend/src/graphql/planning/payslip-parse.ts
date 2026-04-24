@@ -7,6 +7,7 @@ import { eq, ilike, or, sql } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { ID } from "grats";
 import { LRUCache } from "lru-cache";
+import { z } from "zod";
 
 import { db } from "@/db";
 import type { CurrencyCode } from "@/db/schema/currency";
@@ -55,15 +56,47 @@ export class PayslipParseResult {
   ) {}
 }
 
-type GeminiResult = {
-  gross: { amount: number; currency: string };
-  date: string;
-  employeeFirstName: string | null;
-  adjustments: Array<{
-    name: string;
-    amount: { amount: number; currency: string };
-  }>;
-};
+const MoneyShape = z.object({
+  amount: z.number(),
+  currency: z.string(),
+});
+
+/** Gemini is instructed to return `YYYY-MM-DD` but occasionally emits `DD/MM/YYYY` (UK-style, matching the payslip). Accept both and normalise to ISO. */
+const DateShape = z.string().transform((s, ctx) => {
+  const trimmed = s.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const dmy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(trimmed);
+  if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+  ctx.addIssue({
+    code: "custom",
+    message: `Expected date in YYYY-MM-DD or DD/MM/YYYY format, got "${s}"`,
+  });
+  return z.NEVER;
+});
+
+const GeminiResultSchema = z
+  .object({
+    gross: MoneyShape,
+    date: DateShape,
+    employeeFirstName: z
+      .string()
+      .nullish()
+      .transform((v) => v ?? null),
+    adjustments: z
+      .array(
+        z
+          .object({
+            name: z.string(),
+            amount: MoneyShape,
+          })
+          .loose(),
+      )
+      .optional()
+      .transform((v) => v ?? []),
+  })
+  .loose();
+
+type GeminiResult = z.infer<typeof GeminiResultSchema>;
 
 /** Cache a given PDF's Gemini extraction for 1 hour so the UI can re-open the review dialog (or re-drop the same file) without re-hitting the model. Keyed by the file's SHA-256. */
 const parseCache = new LRUCache<string, GeminiResult>({
@@ -325,7 +358,7 @@ async function callGemini(pdf: Buffer): Promise<GeminiResult> {
           assert(text, "Gemini returned no text body");
           outer.setAttribute("gemini.attempts", attempt + 1);
           outer.end();
-          return JSON.parse(text) as GeminiResult;
+          return GeminiResultSchema.parse(JSON.parse(text));
         } catch (cause) {
           lastError = cause;
           const message =
