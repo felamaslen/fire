@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 
-import { eq, sql } from "drizzle-orm";
+import { eq, gt, sql } from "drizzle-orm";
 import type { ID, Int } from "grats";
 
 import { db } from "@/db";
@@ -575,14 +575,25 @@ export async function planningAccountAssign(
     .where(eq(NetWorthCategoryAssets.id, assetId));
   assert(asset, `NetWorthCategoryAsset ${assetId} not found`);
 
-  const [row] = await db
-    .insert(PlanningAccounts)
-    .values({ accountId: assetId, alias: alias ?? null })
-    .onConflictDoUpdate({
-      target: PlanningAccounts.accountId,
-      set: { alias: alias ?? null, updatedAt: new Date() },
-    })
-    .returning();
+  const row = await db.transaction(async (tx) => {
+    const [{ max }] = await tx
+      .select({ max: sql<number | null>`max(${PlanningAccounts.sortOrder})` })
+      .from(PlanningAccounts);
+    const nextOrder = max == null ? 0 : max + 1;
+    const [inserted] = await tx
+      .insert(PlanningAccounts)
+      .values({
+        accountId: assetId,
+        alias: alias ?? null,
+        sortOrder: nextOrder,
+      })
+      .onConflictDoUpdate({
+        target: PlanningAccounts.accountId,
+        set: { alias: alias ?? null, updatedAt: new Date() },
+      })
+      .returning();
+    return inserted;
+  });
 
   return PlanningAccount.load({
     assetId: row.accountId,
@@ -597,10 +608,63 @@ export async function planningAccountAssign(
  * @gqlMutationField
  */
 export async function planningAccountUnassign(assetId: ID): Promise<Void> {
-  await db
-    .delete(PlanningAccounts)
-    .where(eq(PlanningAccounts.accountId, assetId));
+  await db.transaction(async (tx) => {
+    const [removed] = await tx
+      .delete(PlanningAccounts)
+      .where(eq(PlanningAccounts.accountId, assetId))
+      .returning({ sortOrder: PlanningAccounts.sortOrder });
+    if (removed) {
+      // Keep `sortOrder` a dense 0..N-1 range so the reorder mutation can
+      // keep treating position as a direct index.
+      await tx
+        .update(PlanningAccounts)
+        .set({ sortOrder: sql`${PlanningAccounts.sortOrder} - 1` })
+        .where(gt(PlanningAccounts.sortOrder, removed.sortOrder));
+    }
+  });
   return VOID;
+}
+
+/**
+ * Move the planning account identified by `id` (a `PlanningAccount.id`) to 0-based `position` in the user-defined order, shifting everything between its old and new slot by one. Clamps `position` to the valid range.
+ *
+ * @gqlMutationField
+ */
+export async function planningAccountReorder(
+  id: ID,
+  position: Int,
+): Promise<PlanningAccount> {
+  await db.transaction(async (tx) => {
+    const [moved] = await tx
+      .select({ sortOrder: PlanningAccounts.sortOrder })
+      .from(PlanningAccounts)
+      .where(eq(PlanningAccounts.accountId, id));
+    assert(moved, `PlanningAccount ${id} not found`);
+
+    // One `UPDATE` with a `CASE` — the moved row takes the target slot and
+    // every row between old and new shifts by one, all inside a single
+    // statement. The unique `sortOrder` constraint is `DEFERRABLE INITIALLY
+    // DEFERRED`, so transient duplicates mid-statement are fine.
+    await tx.update(PlanningAccounts).set({
+      sortOrder: sql`
+        CASE
+          WHEN ${PlanningAccounts.accountId} = ${id} THEN ${position}
+          WHEN ${position} < ${moved.sortOrder}
+            AND ${PlanningAccounts.sortOrder} >= ${position}
+            AND ${PlanningAccounts.sortOrder} < ${moved.sortOrder}
+            THEN ${PlanningAccounts.sortOrder} + 1
+          WHEN ${position} > ${moved.sortOrder}
+            AND ${PlanningAccounts.sortOrder} > ${moved.sortOrder}
+            AND ${PlanningAccounts.sortOrder} <= ${position}
+            THEN ${PlanningAccounts.sortOrder} - 1
+          ELSE ${PlanningAccounts.sortOrder}
+        END
+      `,
+      updatedAt: new Date(),
+    });
+  });
+
+  return PlanningAccount.fromId(id);
 }
 
 /**

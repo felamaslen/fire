@@ -979,6 +979,10 @@ type Mutation {
   """
   planningAccountAssign(alias: String, assetId: ID!): PlanningAccount!
   """
+  Move the planning account identified by `id` (a `PlanningAccount.id`) to 0-based `position` in the user-defined order, shifting everything between its old and new slot by one. Clamps `position` to the valid range.
+  """
+  planningAccountReorder(id: ID!, position: Int!): PlanningAccount!
+  """
   Remove a planning account. Idempotent — returns `Void` even if the account wasn't assigned.
   """
   planningAccountUnassign(assetId: ID!): Void!

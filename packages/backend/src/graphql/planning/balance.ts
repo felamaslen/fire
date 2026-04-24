@@ -1,6 +1,17 @@
 import { strict as assert } from "node:assert";
 
-import { and, desc, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+} from "drizzle-orm";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
@@ -100,7 +111,8 @@ export async function loadPlanningAccountInfos(): Promise<
     .innerJoin(
       NetWorthCategoryAssets,
       eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
-    );
+    )
+    .orderBy(asc(PlanningAccounts.sortOrder));
   return rows.map((r) => ({
     assetId: r.assetId,
     alias: r.alias,

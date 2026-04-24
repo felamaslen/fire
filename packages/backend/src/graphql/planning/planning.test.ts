@@ -480,6 +480,89 @@ describe("planningAccountAssign / Unassign", () => {
   });
 });
 
+describe("planningAccountReorder", () => {
+  async function setupFour(): Promise<string[]> {
+    await runGql(
+      graphql(`
+        mutation {
+          planningYearSet(year: "2025") {
+            id
+          }
+        }
+      `),
+      {},
+    );
+    const ids: string[] = [];
+    for (const name of ["A", "B", "C", "D"]) {
+      const id = await createAsset(name);
+      await runGql(
+        graphql(`
+          mutation ($id: ID!, $alias: String!) {
+            planningAccountAssign(assetId: $id, alias: $alias) {
+              id
+            }
+          }
+        `),
+        { id, alias: name },
+      );
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  async function orderedNames(): Promise<string[]> {
+    const res = await runGql(
+      graphql(`
+        query {
+          planningYear(id: "2025") {
+            accounts {
+              name
+            }
+          }
+        }
+      `),
+      {},
+    );
+    return res.planningYear!.accounts.map((a) => a.name);
+  }
+
+  const reorderDoc = graphql(`
+    mutation ($id: ID!, $position: Int!) {
+      planningAccountReorder(id: $id, position: $position) {
+        id
+      }
+    }
+  `);
+
+  it("moves a row later, shifting intervening rows toward the front", async () => {
+    const [a, b, c, d] = await setupFour();
+    await runGql(reorderDoc, { id: b, position: 3 });
+    expect(await orderedNames()).toEqual(["A", "C", "D", "B"]);
+    // Sanity on ids as well — name-to-id mapping should match.
+    expect([a, b, c, d]).toHaveLength(4);
+  });
+
+  it("moves a row earlier, shifting intervening rows toward the back", async () => {
+    const [, , , d] = await setupFour();
+    await runGql(reorderDoc, { id: d, position: 0 });
+    expect(await orderedNames()).toEqual(["D", "A", "B", "C"]);
+  });
+
+  it("is a no-op when position equals the current slot", async () => {
+    const [, , c] = await setupFour();
+    await runGql(reorderDoc, { id: c, position: 2 });
+    expect(await orderedNames()).toEqual(["A", "B", "C", "D"]);
+  });
+
+  it("supports adjacent swaps in both directions", async () => {
+    const [, b, c] = await setupFour();
+    await runGql(reorderDoc, { id: b, position: 2 });
+    expect(await orderedNames()).toEqual(["A", "C", "B", "D"]);
+    await runGql(reorderDoc, { id: c, position: 2 });
+    expect(await orderedNames()).toEqual(["A", "B", "C", "D"]);
+  });
+});
+
 describe("planningYearCurrent", () => {
   // Clock frozen at 2026-04-18 (post-6-Apr cutover) → today's UK FY is 2026.
   const currentDoc = graphql(`

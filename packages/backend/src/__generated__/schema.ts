@@ -21,7 +21,7 @@ import { netWorthForecast as queryNetWorthForecastResolver } from "./../graphql/
 import { netWorthHistory as queryNetWorthHistoryResolver } from "./../graphql/net-worth/history";
 import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
-import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
+import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountReorder as mutationPlanningAccountReorderResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
 import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResolver } from "./../graphql/investments/portfolio";
 import { retirementSettings as queryRetirementSettingsResolver, retirementSettingsUpdate as mutationRetirementSettingsUpdateResolver } from "./../graphql/retirement";
 import { transactionAssetsFrequent as queryTransactionAssetsFrequentResolver, transactionLiabilitiesFrequent as queryTransactionLiabilitiesFrequentResolver, transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
@@ -3968,6 +3968,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return mutationPlanningAccountAssignResolver(args.assetId, args.alias);
+                    }
+                },
+                planningAccountReorder: {
+                    description: "Move the planning account identified by `id` (a `PlanningAccount.id`) to 0-based `position` in the user-defined order, shifting everything between its old and new slot by one. Clamps `position` to the valid range.",
+                    name: "planningAccountReorder",
+                    type: new GraphQLNonNull(PlanningAccountType),
+                    args: {
+                        id: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        position: {
+                            type: new GraphQLNonNull(GraphQLInt)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationPlanningAccountReorderResolver(args.id, args.position);
                     }
                 },
                 planningAccountUnassign: {
