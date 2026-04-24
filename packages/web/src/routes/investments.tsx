@@ -93,6 +93,12 @@ const InvestmentRowDocument = graphql(
           ...Figure
         }
         percentGain
+        reinvested {
+          value {
+            amount
+            ...Figure
+          }
+        }
       }
       ...InvestmentForm
     }
@@ -725,6 +731,9 @@ function InvestmentsList({
                   onToggle={toggle}
                 />
               </TableHead>
+              <TableHead className="hidden text-right sm:table-cell">
+                DRIP
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -891,6 +900,12 @@ function InvestmentRow({
               </span>
             )}
           </span>
+          {inv.position.reinvested.value &&
+            inv.position.reinvested.value.amount !== 0 && (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                DRIP <Figure data={inv.position.reinvested.value} compact />
+              </span>
+            )}
         </div>
       </TableCell>
       <TableCell className="hidden text-right align-middle sm:table-cell">
@@ -921,6 +936,14 @@ function InvestmentRow({
         {inv.position.percentGain == null
           ? "—"
           : `${(inv.position.percentGain * 100).toFixed(2)}%`}
+      </TableCell>
+      <TableCell className="hidden text-right tabular-nums align-middle text-muted-foreground sm:table-cell">
+        {inv.position.reinvested.value &&
+        inv.position.reinvested.value.amount !== 0 ? (
+          <Figure data={inv.position.reinvested.value} compact />
+        ) : (
+          "—"
+        )}
       </TableCell>
     </TableRow>
   );

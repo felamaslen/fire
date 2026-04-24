@@ -44,7 +44,7 @@ import { formatAccountingMoney } from "@/lib/format";
 
 const InvestmentDetailDocument = graphql(
   `
-    query InvestmentDetail {
+    query InvestmentDetail($filterAssetId: ID) {
       investment: investments {
         edges {
           node {
@@ -61,7 +61,7 @@ const InvestmentDetailDocument = graphql(
                 url
               }
             }
-            position {
+            position(filterAssetId: $filterAssetId) {
               units
               costBasis {
                 ...Figure
@@ -282,6 +282,7 @@ function InvestmentDetailPage() {
     ? rawFilter.split(",").filter((s) => s.length > 0)
     : [];
   const filterAssetId = parsed.length === 1 ? parsed[0] : null;
+  const filterAssetIds = parsed;
   return (
     <Dialog
       open
@@ -302,7 +303,11 @@ function InvestmentDetailPage() {
           </DialogDescription>
         </DialogHeader>
         <Suspense fallback={<Spinner />}>
-          <InvestmentDetail id={id} filterAssetId={filterAssetId} />
+          <InvestmentDetail
+            id={id}
+            filterAssetId={filterAssetId}
+            filterAssetIds={filterAssetIds}
+          />
         </Suspense>
       </DialogContent>
     </Dialog>
@@ -316,11 +321,15 @@ type AssetEdge = NonNullable<
 function InvestmentDetail({
   id,
   filterAssetId,
+  filterAssetIds,
 }: {
   id: string;
   filterAssetId: string | null;
+  filterAssetIds: string[];
 }) {
-  const { data } = useSuspenseQuery(InvestmentDetailDocument);
+  const { data } = useSuspenseQuery(InvestmentDetailDocument, {
+    variables: { filterAssetId },
+  });
   const investment = data.investment?.edges
     .map((e) => e.node)
     .find((n) => n.id === id);
@@ -346,7 +355,7 @@ function InvestmentDetail({
         existing={investment}
         onDone={() => {}}
         onCancel={null}
-        refetchQueries={[{ query: InvestmentDetailDocument }]}
+        refetchQueries={["InvestmentDetail"]}
       />
       <header className="space-y-1">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-5">
@@ -403,6 +412,7 @@ function InvestmentDetail({
         currency={investment.currency}
         wrappers={wrappers}
         filterAssetId={filterAssetId}
+        filterAssetIds={filterAssetIds}
       />
     </div>
   );
@@ -413,11 +423,13 @@ function DetailTabs({
   currency,
   wrappers,
   filterAssetId,
+  filterAssetIds,
 }: {
   investmentId: string;
   currency: string;
   wrappers: { id: string; name: string; type: string }[];
   filterAssetId: string | null;
+  filterAssetIds: string[];
 }) {
   const [tab, setTab] = useState<"transactions" | "splits">("transactions");
   return (
@@ -450,6 +462,7 @@ function DetailTabs({
             currency={currency}
             wrappers={wrappers}
             filterAssetId={filterAssetId}
+            filterAssetIds={filterAssetIds}
           />
         ) : (
           <StockSplitsSection investmentId={investmentId} />
@@ -498,11 +511,13 @@ function TransactionsSection({
   currency,
   wrappers,
   filterAssetId,
+  filterAssetIds,
 }: {
   investmentId: string;
   currency: string;
   wrappers: { id: string; name: string; type: string }[];
   filterAssetId: string | null;
+  filterAssetIds: string[];
 }) {
   // Keyset pagination stack: each entry is the `after` cursor that produced the
   // current page. `[null]` = first page.
@@ -540,7 +555,7 @@ function TransactionsSection({
   const [deleteTx] = useMutation(InvestmentTransactionDeleteDocument, {
     refetchQueries: [
       "InvestmentTransactions",
-      { query: InvestmentDetailDocument },
+      "InvestmentDetail",
       "InvestmentsList",
     ],
     onCompleted: () => toast.success("Transaction removed"),
@@ -565,7 +580,7 @@ function TransactionsSection({
           defaultAssetId={
             filterAssetId ?? transactions[0]?.asset.id ?? wrappers[0]?.id ?? ""
           }
-          lockedAssetId={filterAssetId}
+          allowedAssetIds={filterAssetIds}
           onDone={() => {
             setAdding(false);
             onMutate();
@@ -581,7 +596,7 @@ function TransactionsSection({
           wrappers={wrappers}
           existing={editing}
           defaultAssetId={editing.asset.id}
-          lockedAssetId={filterAssetId}
+          allowedAssetIds={filterAssetIds}
           onDone={() => {
             setEditing(null);
             onMutate();
@@ -655,7 +670,7 @@ function TransactionForm({
   wrappers,
   existing,
   defaultAssetId,
-  lockedAssetId,
+  allowedAssetIds,
   onDone,
   onCancel,
   onDelete,
@@ -665,15 +680,15 @@ function TransactionForm({
   wrappers: { id: string; name: string; type: string }[];
   existing: TransactionRow | null;
   defaultAssetId: string;
-  /** When set, the wrapper field is read-only and pinned to this id (applied when a page-level filter is active). */
-  lockedAssetId: string | null;
+  /** Page-level portfolio filter: empty = all allowed; one entry = field is locked to that id; 2+ = select is restricted to that subset. */
+  allowedAssetIds: string[];
   onDone: () => void;
   onCancel: () => void;
   onDelete?: () => Promise<void> | void;
 }) {
   const refetch = [
     "InvestmentTransactions",
-    { query: InvestmentDetailDocument },
+    "InvestmentDetail",
     "InvestmentsList",
   ];
   const [createTx] = useMutation(InvestmentTransactionCreateDocument, {
@@ -747,8 +762,9 @@ function TransactionForm({
     >
       <form.Field name="assetId">
         {(field) => {
-          if (lockedAssetId) {
-            const locked = wrappers.find((w) => w.id === lockedAssetId);
+          if (allowedAssetIds.length === 1) {
+            const lockedId = allowedAssetIds[0];
+            const locked = wrappers.find((w) => w.id === lockedId);
             return (
               <div className="space-y-1 sm:col-span-2">
                 <Label>Portfolio</Label>
@@ -769,6 +785,10 @@ function TransactionForm({
               </div>
             );
           }
+          const options =
+            allowedAssetIds.length > 1
+              ? wrappers.filter((w) => allowedAssetIds.includes(w.id))
+              : wrappers;
           return (
             <div className="space-y-1 sm:col-span-2">
               <Label>Portfolio</Label>
@@ -780,7 +800,7 @@ function TransactionForm({
                   <SelectValue placeholder="Pick portfolio" />
                 </SelectTrigger>
                 <SelectContent>
-                  {wrappers.map((w) => (
+                  {options.map((w) => (
                     <SelectItem key={w.id} value={w.id}>
                       {w.name} ({w.type})
                     </SelectItem>
@@ -926,7 +946,7 @@ function StockSplitsSection({ investmentId }: { investmentId: string }) {
 
   const refetchLists = [
     { query: InvestmentStockSplitsDocument },
-    { query: InvestmentDetailDocument },
+    "InvestmentDetail",
     "InvestmentsList",
   ];
   const [adding, setAdding] = useState(false);
@@ -1017,7 +1037,7 @@ function StockSplitForm({
 }) {
   const refetchLists = [
     { query: InvestmentStockSplitsDocument },
-    { query: InvestmentDetailDocument },
+    "InvestmentDetail",
     "InvestmentsList",
   ];
   const [createSplit] = useMutation(InvestmentStockSplitCreateDocument, {
