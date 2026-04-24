@@ -125,13 +125,17 @@ function useDailyGainFlash(current: number | null | undefined): FlashDirection {
 }
 
 export function PortfolioHeadline({
-  filterAssetId,
+  filterAssetIds,
   rightSlot,
 }: {
-  filterAssetId?: string | null;
+  filterAssetIds: string[];
   rightSlot?: React.ReactNode;
 }) {
-  const filterAssetIdIn = filterAssetId ? [filterAssetId] : null;
+  const filterAssetIdIn = filterAssetIds.length > 0 ? filterAssetIds : null;
+  // Per-row position refresh only works with a singular `filterAssetId` —
+  // when 0 or 2+ portfolios are selected, fall back to the unfiltered
+  // positions (which the investments list shows anyway).
+  const filterAssetId = filterAssetIds.length === 1 ? filterAssetIds[0] : null;
 
   // First render: read the `skipLive: true` snapshot the page-level query
   // already populated. Synchronous cache hit — the headline renders
@@ -157,7 +161,7 @@ export function PortfolioHeadline({
   // table (which reads `Investment:id → position(filterAssetId)` from
   // Apollo's normalised cache) refreshes in place without its own poll.
   const liveQuery = useQuery(PortfolioHeadlineLiveDocument, {
-    variables: { filterAssetId: filterAssetId ?? null, filterAssetIdIn },
+    variables: { filterAssetId, filterAssetIdIn },
     pollInterval: 30_000,
     notifyOnNetworkStatusChange: false,
     skip: !fetchLive,

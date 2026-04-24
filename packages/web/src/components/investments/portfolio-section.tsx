@@ -128,12 +128,15 @@ export function PortfolioSection({
   settings,
   onChange,
   bottomSlot,
-  filterAssetId,
+  filterAssetIds,
+  selectedLabel,
 }: {
   settings: PortfolioChartSettings;
   onChange: (next: PortfolioChartSettings) => void;
   bottomSlot?: React.ReactNode;
-  filterAssetId?: string | null;
+  filterAssetIds: string[];
+  /** Comma-joined names of the selected portfolios, or `null` when all are selected. Used as the line label in the hover tooltip so the user sees which portfolios they've scoped the chart to. */
+  selectedLabel: string | null;
 }) {
   const { periodIdx, candleIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
@@ -142,14 +145,15 @@ export function PortfolioSection({
   const p = PORTFOLIO_PERIODS[periodIdx];
   const candle = PORTFOLIO_CANDLES[candleIdx] ?? PORTFOLIO_CANDLES[2];
 
+  // The draggable allocation bar only renders when exactly one portfolio is
+  // selected, so only reserve the taller padding in that case.
+  const singleSelection = filterAssetIds.length === 1;
+
   return (
     <section
       className={cn(
         "relative space-y-0 rounded-lg border sm:space-y-3 sm:p-4",
-        // Reserve space for the absolutely-positioned allocation bars at
-        // the bottom — taller when a wrapper is selected, because the
-        // target bar is draggable (and therefore a bigger touch target).
-        filterAssetId ? "pb-12 sm:pb-4" : "pb-8 sm:pb-4",
+        singleSelection ? "pb-12 sm:pb-4" : "pb-8 sm:pb-4",
       )}
     >
       <header className="flex flex-col gap-0.5 px-0.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2 sm:px-0">
@@ -222,7 +226,8 @@ export function PortfolioSection({
         candleLength={candle.length}
         candlestick={mode === "candlestick"}
         stack={stack}
-        filterAssetId={filterAssetId ?? null}
+        filterAssetIds={filterAssetIds}
+        selectedLabel={selectedLabel}
       />
       {bottomSlot}
     </section>
@@ -236,7 +241,8 @@ function PortfolioChartLoader({
   candleLength,
   candlestick,
   stack,
-  filterAssetId,
+  filterAssetIds,
+  selectedLabel,
 }: {
   period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
@@ -244,7 +250,8 @@ function PortfolioChartLoader({
   candleLength: number;
   candlestick: boolean;
   stack: boolean;
-  filterAssetId: string | null;
+  filterAssetIds: string[];
+  selectedLabel: string | null;
 }) {
   // `useSuspenseQuery` bubbles its suspend up to the page-level Suspense,
   // so the whole page waits for chart data before painting — no layout
@@ -263,15 +270,24 @@ function PortfolioChartLoader({
   const deferredCandleLength = useDeferredValue(candleLength);
   const deferredCandlestick = useDeferredValue(candlestick);
   const deferredStack = useDeferredValue(stack);
+  // Defer via a stable string key so a new-but-equal `string[]` reference
+  // from the parent doesn't churn the deferred identity and re-fire the
+  // suspense query.
+  const filterKey = filterAssetIds.join(",");
+  const deferredFilterKey = useDeferredValue(filterKey);
+  const deferredFilterAssetIds = deferredFilterKey
+    ? deferredFilterKey.split(",")
+    : [];
+  const singleFilterAssetId =
+    deferredFilterAssetIds.length === 1 ? deferredFilterAssetIds[0] : null;
   const pending =
     deferredPeriod !== period ||
     deferredLength !== length ||
     deferredCandleUnit !== candleUnit ||
     deferredCandleLength !== candleLength ||
     deferredCandlestick !== candlestick ||
-    deferredStack !== stack;
-
-  const deferredFilterAssetId = useDeferredValue(filterAssetId);
+    deferredStack !== stack ||
+    deferredFilterKey !== filterKey;
   const { data } = useSuspenseQuery(PortfolioChartDocument, {
     variables: {
       period: deferredPeriod,
@@ -280,8 +296,9 @@ function PortfolioChartLoader({
       candleLength: deferredCandleLength,
       candlestick: deferredCandlestick,
       stack: deferredStack,
-      filterAssetIdIn: deferredFilterAssetId ? [deferredFilterAssetId] : null,
-      filterAssetId: deferredFilterAssetId ?? null,
+      filterAssetIdIn:
+        deferredFilterAssetIds.length > 0 ? deferredFilterAssetIds : null,
+      filterAssetId: singleFilterAssetId,
     },
   });
 
@@ -328,7 +345,7 @@ function PortfolioChartLoader({
         lines: portfolio?.timeseries
           ? [
               {
-                label: "Portfolio",
+                label: selectedLabel ?? "Portfolio",
                 color: "#6366f1",
                 points: portfolio.timeseries.points,
               },

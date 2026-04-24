@@ -6,7 +6,7 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, ExternalLink, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ExternalLink, Plus } from "lucide-react";
 import {
   Suspense,
   useCallback,
@@ -46,12 +46,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Table,
   TableBody,
@@ -188,8 +186,8 @@ const InvestmentsPageDocument = graphql(
   ],
 );
 
-const WrapperFilterOptionsDocument = graphql(`
-  query WrapperFilterOptions {
+const PortfolioFilterOptionsDocument = graphql(`
+  query PortfolioFilterOptions {
     investments(first: 1000) {
       edges {
         node {
@@ -207,52 +205,93 @@ const WrapperFilterOptionsDocument = graphql(`
   }
 `);
 
-const FILTER_WRAPPER_TYPES = new Set(["STOCK", "PENSION"]);
+const FILTER_PORTFOLIO_TYPES = new Set(["STOCK", "PENSION"]);
 
-const WRAPPER_FILTER_ALL = "__all__";
+export function usePortfolioFilterOptions(): { id: string; name: string }[] {
+  const { data } = useQuery(PortfolioFilterOptionsDocument, {
+    fetchPolicy: "cache-first",
+  });
+  const seen = new Map<string, { id: string; name: string }>();
+  for (const edge of data?.investments?.edges ?? []) {
+    for (const w of edge.node.wrappers ?? []) {
+      if (!FILTER_PORTFOLIO_TYPES.has(w.asset.type)) continue;
+      if (!seen.has(w.asset.id)) {
+        seen.set(w.asset.id, { id: w.asset.id, name: w.asset.name });
+      }
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 
-function WrapperFilterDropdown({
+function PortfolioFilterDropdown({
   value,
   onChange,
 }: {
-  value: string | null;
-  onChange: (id: string | null) => void;
+  value: string[];
+  onChange: (ids: string[]) => void;
 }) {
-  const { data } = useQuery(WrapperFilterOptionsDocument, {
-    fetchPolicy: "cache-first",
-  });
-  const options = (() => {
-    const seen = new Map<string, { id: string; name: string }>();
-    for (const edge of data?.investments?.edges ?? []) {
-      for (const w of edge.node.wrappers ?? []) {
-        if (!FILTER_WRAPPER_TYPES.has(w.asset.type)) continue;
-        if (!seen.has(w.asset.id)) {
-          seen.set(w.asset.id, { id: w.asset.id, name: w.asset.name });
-        }
-      }
-    }
-    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-  })();
+  const options = usePortfolioFilterOptions();
+  const selected = new Set(value);
+  const allSelected = value.length === 0;
+  const label = allSelected
+    ? "All"
+    : value.length === 1
+      ? (options.find((o) => o.id === value[0])?.name ?? "1 selected")
+      : `${value.length} selected`;
+
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    // Selecting every option is equivalent to "All" — collapse back to empty
+    // so the URL stays clean.
+    if (next.size === options.length) onChange([]);
+    else onChange([...next]);
+  };
 
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span>Wrapper</span>
-      <Select
-        value={value ?? WRAPPER_FILTER_ALL}
-        onValueChange={(v) => onChange(v === WRAPPER_FILTER_ALL ? null : v)}
-      >
-        <SelectTrigger className="h-8 w-40">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={WRAPPER_FILTER_ALL}>All</SelectItem>
-          {options.map((o) => (
-            <SelectItem key={o.id} value={o.id}>
-              {o.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <span>Portfolio</span>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-40 justify-between text-xs font-normal"
+          >
+            <span className="truncate">{label}</span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-56 p-1">
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            <span className="flex h-4 w-4 items-center justify-center">
+              {allSelected && <Check className="h-3.5 w-3.5" />}
+            </span>
+            All
+          </button>
+          <div className="my-1 h-px bg-border" />
+          {options.map((o) => {
+            const isSelected = !allSelected && selected.has(o.id);
+            return (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => toggle(o.id)}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+              >
+                <span className="flex h-4 w-4 items-center justify-center">
+                  {isSelected && <Check className="h-3.5 w-3.5" />}
+                </span>
+                <span className="truncate">{o.name}</span>
+              </button>
+            );
+          })}
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
@@ -278,7 +317,7 @@ const investmentsSearchSchema = z.object({
   stack: z.coerce.boolean().optional().catch(undefined),
   sort: z.enum(["value", "gainAbs", "gainPercent"]).optional().catch(undefined),
   dir: z.enum(["asc", "desc"]).optional().catch(undefined),
-  "filter-wrapper-id": z.string().min(1).optional().catch(undefined),
+  "filter-portfolio-id": z.string().min(1).optional().catch(undefined),
 });
 
 type InvestmentsSearch = z.infer<typeof investmentsSearchSchema>;
@@ -397,6 +436,11 @@ function hasAnySearch(s: InvestmentsSearch): boolean {
   return Object.values(s).some((v) => v !== undefined);
 }
 
+function parsePortfolioIds(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(",").filter((s) => s.length > 0);
+}
+
 function loadPersistedSearch(): InvestmentsSearch {
   if (typeof window === "undefined") return {};
   try {
@@ -464,7 +508,13 @@ function InvestmentsPageContent() {
 
   const chart = searchToChart(search);
   const sort = searchToSort(search);
-  const filterAssetId = search["filter-wrapper-id"] ?? null;
+  const filterAssetIds = parsePortfolioIds(search["filter-portfolio-id"]);
+  // When exactly one portfolio is selected, endpoints that only accept a
+  // singular `filterAssetId` (investments list, per-row position,
+  // transactions) can scope to it. With 0 or 2+ selected, those fall back
+  // to unfiltered — only the chart/headline aggregate over the array.
+  const singleFilterAssetId =
+    filterAssetIds.length === 1 ? filterAssetIds[0] : null;
 
   const setChart = (next: PortfolioChartSettings) => {
     const patch = chartToSearch(next);
@@ -480,17 +530,25 @@ function InvestmentsPageContent() {
       replace: true,
     });
   };
-  const setFilterAssetId = (id: string | null) => {
+  const setFilterAssetIds = (ids: string[]) => {
     void navigate({
       search: (prev) => {
         const next = { ...prev } as InvestmentsSearch;
-        if (id) next["filter-wrapper-id"] = id;
-        else delete next["filter-wrapper-id"];
+        if (ids.length > 0) next["filter-portfolio-id"] = ids.join(",");
+        else delete next["filter-portfolio-id"];
         return next;
       },
       replace: true,
     });
   };
+  const portfolioOptions = usePortfolioFilterOptions();
+  const selectedLabel =
+    filterAssetIds.length === 0
+      ? null
+      : filterAssetIds
+          .map((id) => portfolioOptions.find((o) => o.id === id)?.name ?? null)
+          .filter((n): n is string => n != null)
+          .join(", ") || null;
 
   // Freeze the initial suspense-query variables so later set* calls don't
   // re-suspend the page — children refetch via their own `useQuery`. The
@@ -504,7 +562,8 @@ function InvestmentsPageContent() {
     const { unit: candleUnit, length: candleLength } = candleSlugToUnit(
       CANDLE_SLUGS[c.candleIdx] ?? "1w",
     );
-    const fid = search["filter-wrapper-id"] ?? null;
+    const ids = parsePortfolioIds(search["filter-portfolio-id"]);
+    const singleId = ids.length === 1 ? ids[0] : null;
     return {
       first: 100,
       sort: toSortInput(s.kind, s.dir),
@@ -515,8 +574,8 @@ function InvestmentsPageContent() {
       candlestick: c.mode === "candlestick",
       stack: c.stack,
       skipLive: true,
-      filterAssetId: fid,
-      filterAssetIdIn: fid ? [fid] : null,
+      filterAssetId: singleId,
+      filterAssetIdIn: ids.length > 0 ? ids : null,
     };
   });
   useSuspenseQuery(InvestmentsPageDocument, { variables: initialVars });
@@ -524,24 +583,25 @@ function InvestmentsPageContent() {
   return (
     <>
       <PortfolioHeadline
-        filterAssetId={filterAssetId}
+        filterAssetIds={filterAssetIds}
         rightSlot={
-          <WrapperFilterDropdown
-            value={filterAssetId}
-            onChange={setFilterAssetId}
+          <PortfolioFilterDropdown
+            value={filterAssetIds}
+            onChange={setFilterAssetIds}
           />
         }
       />
       <PortfolioSection
-        filterAssetId={filterAssetId}
+        filterAssetIds={filterAssetIds}
+        selectedLabel={selectedLabel}
         settings={chart}
         onChange={setChart}
-        bottomSlot={<AllocationsSection filterAssetId={filterAssetId} />}
+        bottomSlot={<AllocationsSection filterAssetId={singleFilterAssetId} />}
       />
       <InvestmentsList
         sort={sort}
         onSortChange={setSort}
-        filterAssetId={filterAssetId}
+        filterAssetId={singleFilterAssetId}
       />
     </>
   );

@@ -558,7 +558,7 @@ function ConfirmAllocationDialog({
           <DialogDescription>
             {bucket
               ? `Changes to ${bucket.assetName}`
-              : "Changes to this wrapper"}
+              : "Changes to this portfolio"}
           </DialogDescription>
         </DialogHeader>
         {bucket && next && (

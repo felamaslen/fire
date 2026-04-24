@@ -265,7 +265,14 @@ function InvestmentDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
   const parentSearch = useSearch({ from: "/investments" });
-  const filterAssetId = parentSearch["filter-wrapper-id"] ?? null;
+  // Scope to a single portfolio only when exactly one is selected at the
+  // page level; the transactions query / position lookup accept a singular
+  // `filterAssetId`, so 0 or 2+ selected falls back to unfiltered.
+  const rawFilter = parentSearch["filter-portfolio-id"];
+  const parsed = rawFilter
+    ? rawFilter.split(",").filter((s) => s.length > 0)
+    : [];
+  const filterAssetId = parsed.length === 1 ? parsed[0] : null;
   return (
     <Dialog
       open
@@ -663,7 +670,7 @@ function TransactionForm({
     },
     onSubmit: async ({ value }) => {
       if (!value.assetId) {
-        toast.error("Pick a wrapper");
+        toast.error("Pick a portfolio");
         return;
       }
       try {
@@ -717,7 +724,7 @@ function TransactionForm({
             const locked = wrappers.find((w) => w.id === lockedAssetId);
             return (
               <div className="space-y-1 sm:col-span-2">
-                <Label>Wrapper</Label>
+                <Label>Portfolio</Label>
                 <TooltipProvider delayDuration={150}>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -728,7 +735,7 @@ function TransactionForm({
                       />
                     </TooltipTrigger>
                     <TooltipContent>
-                      Remove the page filter to change the wrapper.
+                      Remove the page filter to change the portfolio.
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -737,13 +744,13 @@ function TransactionForm({
           }
           return (
             <div className="space-y-1 sm:col-span-2">
-              <Label>Wrapper</Label>
+              <Label>Portfolio</Label>
               <Select
                 value={field.state.value}
                 onValueChange={(v) => field.handleChange(v)}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Pick wrapper" />
+                  <SelectValue placeholder="Pick portfolio" />
                 </SelectTrigger>
                 <SelectContent>
                   {wrappers.map((w) => (
