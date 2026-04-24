@@ -175,10 +175,10 @@ export async function applyFlavour(
   const planningAssetNames = spec.assets
     .filter((a) => a.planningAccount)
     .map((a) => a.name);
-  for (const name of planningAssetNames) {
+  for (const [sortOrder, name] of planningAssetNames.entries()) {
     await db
       .insert(PlanningAccounts)
-      .values({ accountId: assetIdByName.get(name)! });
+      .values({ accountId: assetIdByName.get(name)!, sortOrder });
   }
   const defaultPlanningAsset = planningAssetNames[0];
   if (!defaultPlanningAsset) {
