@@ -15,8 +15,8 @@ import {
 import { loadInvestmentStats } from "./stats";
 
 type CandlestickKey = {
-  /** When set, filters the result by a single portfolio (net worth asset ID). */
-  assetId?: string;
+  /** When set, filters the result to the combined portfolio across these net worth asset IDs. Undefined / empty = every asset. The full set is part of the cache key, so two requests with the same set coalesce to one SQL query; requests with different sets run independently. */
+  assetIds?: string[];
   /** Each candle spans `length` of `unit`s; the series contains at most `max` candles. */
   unit: PortfolioCandleUnit;
   length: number;
@@ -25,11 +25,16 @@ type CandlestickKey = {
   skipLive: boolean;
 };
 
-const cacheKeyFn = (key: CandlestickKey): string =>
-  `${key.unit}|${key.length}|${key.max}|${key.assetId ?? ""}|${key.skipLive ? "1" : "0"}`;
+const cacheKeyFn = (key: CandlestickKey): string => {
+  const assets =
+    key.assetIds && key.assetIds.length > 0
+      ? [...key.assetIds].sort().join(",")
+      : "";
+  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}`;
+};
 
 /**
- * Retrieves a candlestick series of portfolio total value, optionally filtered to a single net-worth asset.
+ * Retrieves a candlestick series of portfolio total value, optionally filtered to a set of net-worth assets (the combined position across them).
  *
  * Per-date portfolio totals are computed *before* min/max, so `lo` / `hi` reflect the true drawdown / peak of the held position across the bucket — not the sum of per-stock extremes on possibly different days.
  */
@@ -58,9 +63,13 @@ const loadOne = async (
   const unit = sql.raw(key.unit.toLowerCase());
   const windowLen = sql.raw(String(key.length * key.max));
   const step = sql.raw(String(key.length));
-  const assetFilter = key.assetId
-    ? sql`and t."assetId" = ${key.assetId}`
-    : sql``;
+  const assetFilter =
+    key.assetIds && key.assetIds.length > 0
+      ? sql`and t."assetId" in (${sql.join(
+          key.assetIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`
+      : sql``;
   const now = formatISO(new Date(), { representation: "date" });
 
   // `u_tx` / `u` are MATERIALIZED so (a) the stock-split scalar subquery runs
@@ -152,16 +161,32 @@ const loadOne = async (
   // historical range. `valueStart` is the bucket's first-date value and stays
   // untouched.
   if (!key.skipLive) {
-    const stats = await loadInvestmentStats(ctx, {
-      currency,
-      assetId: key.assetId,
-      skipLive: false,
-    });
-    if (stats.totalValueMinor !== null) {
+    // `loadInvestmentStats` keys on a single `assetId`, so for a multi-asset
+    // filter we load each slice and sum. The stats loader has its own
+    // request-level coalescing, so repeated slices across the page share one
+    // underlying SQL.
+    const assetSlices =
+      key.assetIds && key.assetIds.length > 0
+        ? key.assetIds.map((assetId) => ({ assetId }))
+        : [{}];
+    const stats = await Promise.all(
+      assetSlices.map((slice) =>
+        loadInvestmentStats(ctx, { currency, ...slice, skipLive: false }),
+      ),
+    );
+    let liveTotal: number | null = 0;
+    for (const s of stats) {
+      if (s.totalValueMinor === null) {
+        liveTotal = null;
+        break;
+      }
+      liveTotal += s.totalValueMinor;
+    }
+    if (liveTotal !== null) {
       const last = points[points.length - 1];
-      last.valueEnd = stats.totalValueMinor;
-      last.valueMax = Math.max(last.valueMax, stats.totalValueMinor);
-      last.valueMin = Math.min(last.valueMin, stats.totalValueMinor);
+      last.valueEnd = liveTotal;
+      last.valueMax = Math.max(last.valueMax, liveTotal);
+      last.valueMin = Math.min(last.valueMin, liveTotal);
     }
   }
 

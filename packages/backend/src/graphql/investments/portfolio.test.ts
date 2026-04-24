@@ -466,4 +466,39 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     // Series forward-fills at £60 once the last cached price is consumed.
     expect(points[points.length - 1]).toMatchObject({ to: 60, hi: 60 });
   });
+
+  it("combines candlestick values across multiple selected assets", async () => {
+    const isa = await createAsset("ISA");
+    const sipp = await createAsset("SIPP");
+    const a = await createStock("A", "AAA");
+    const b = await createStock("B", "BBB");
+    await buy(a, isa, "2024-01-01", 10, 5);
+    await buy(b, sipp, "2024-01-01", 4, 20);
+    await setPrice(a, "2024-01-01", 500);
+    await setPrice(b, "2024-01-01", 2000);
+
+    const doc = graphql(`
+      query ($assets: [ID!]) {
+        portfolio(filterAssetIdIn: $assets, skipLive: true) {
+          candlestick(unit: WEEK, length: 5) {
+            points {
+              from
+              to
+            }
+          }
+        }
+      }
+    `);
+    const isaOnly = await runGql(doc, { assets: [isa] });
+    const sippOnly = await runGql(doc, { assets: [sipp] });
+    const combined = await runGql(doc, { assets: [isa, sipp] });
+
+    const isaFirst = isaOnly.portfolio?.candlestick?.points[0];
+    const sippFirst = sippOnly.portfolio?.candlestick?.points[0];
+    const combinedFirst = combined.portfolio?.candlestick?.points[0];
+    // ISA = 10 × £5 = £50, SIPP = 4 × £20 = £80, combined = £130.
+    expect(isaFirst).toMatchObject({ from: 50, to: 50 });
+    expect(sippFirst).toMatchObject({ from: 80, to: 80 });
+    expect(combinedFirst).toMatchObject({ from: 130, to: 130 });
+  });
 });

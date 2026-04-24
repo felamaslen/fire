@@ -374,15 +374,11 @@ export class Portfolio {
       !this.filterInvestmentIdIn,
       "Portfolio.candlestick does not support filtering by investment ID",
     );
-    assert(
-      !this.filterAssetIdIn || this.filterAssetIdIn.length === 1,
-      "Portfolio.candlestick supports at most one asset ID filter",
-    );
     const candlestick = await loadCandlestick(ctx).load({
       unit,
       length,
       max,
-      assetId: this.filterAssetIdIn?.[0],
+      assetIds: this.filterAssetIdIn ?? undefined,
       skipLive: this.skipLive,
     });
     assert(candlestick, "No data");

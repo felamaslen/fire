@@ -545,10 +545,10 @@ function InvestmentsPageContent() {
   const selectedLabel =
     filterAssetIds.length === 0
       ? null
-      : filterAssetIds
-          .map((id) => portfolioOptions.find((o) => o.id === id)?.name ?? null)
-          .filter((n): n is string => n != null)
-          .join(", ") || null;
+      : filterAssetIds.length === 1
+        ? (portfolioOptions.find((o) => o.id === filterAssetIds[0])?.name ??
+          null)
+        : "Selected portfolios";
 
   // Freeze the initial suspense-query variables so later set* calls don't
   // re-suspend the page — children refetch via their own `useQuery`. The
