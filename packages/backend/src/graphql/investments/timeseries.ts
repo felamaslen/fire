@@ -360,7 +360,11 @@ export const loadTimeseries = contextAwareDataLoader(
             valueByNone += value;
           }
         }
-        bufferPrices(cursorPrices - 1);
+        // Skip the final flush when there are no prices in the window (no
+        // investments, or all holdings pre-date the first cached price).
+        // `bufferPrices` would index `pricesAdjRows[-1]` and crash on `.date`
+        // — the empty `yBy*` maps already yield a null series per key below.
+        if (pricesAdjRows.length > 0) bufferPrices(cursorPrices - 1);
 
         // Fetch today's live-overlaid portfolio total per non-skipLive key.
         // The last x is today's date by construction (union in the `dates`

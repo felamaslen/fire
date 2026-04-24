@@ -2062,7 +2062,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 candlestick: {
                     description: "Candlestick buckets of portfolio total over the requested period.",
                     name: "candlestick",
-                    type: new GraphQLNonNull(PortfolioCandlestickType),
+                    type: PortfolioCandlestickType,
                     args: {
                         length: {
                             type: new GraphQLNonNull(GraphQLInt),

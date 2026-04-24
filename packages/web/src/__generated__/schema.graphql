@@ -1836,7 +1836,7 @@ type Portfolio {
     """
     max: Int! = 50 @constraint(max: 100, min: 1)
     unit: PortfolioCandleUnit!
-  ): PortfolioCandlestick!
+  ): PortfolioCandlestick
   """
   ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
   """

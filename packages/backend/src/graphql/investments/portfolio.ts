@@ -371,20 +371,18 @@ export class Portfolio {
      * @gqlAnnotate constraint(min: 1, max: 100)
      */
     max: Int = 50,
-  ): Promise<PortfolioCandlestick> {
+  ): Promise<PortfolioCandlestick | null> {
     assert(
       !this.filterInvestmentIdIn,
       "Portfolio.candlestick does not support filtering by investment ID",
     );
-    const candlestick = await loadCandlestick(ctx).load({
+    return loadCandlestick(ctx).load({
       unit,
       length,
       max,
       assetIds: this.filterAssetIdIn ?? undefined,
       skipLive: this.skipLive,
     });
-    assert(candlestick, "No data");
-    return candlestick;
   }
 }
 
