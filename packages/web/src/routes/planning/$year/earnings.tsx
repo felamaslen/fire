@@ -52,6 +52,10 @@ const PlanningEarningsDialogDocument = graphql(
               id
               name
             }
+            pensionAsset {
+              id
+              name
+            }
             ukTaxCodes {
               start
               end
@@ -79,6 +83,11 @@ const PlanningEarningsDialogDocument = graphql(
               id
               name
             }
+            ... on NetWorthCategoryAsset {
+              id
+              name
+              type
+            }
           }
         }
       }
@@ -100,6 +109,7 @@ const PlanningEarningsCreateDocument = graphql(`
     $pensionSalarySacrifice: Float
     $studentLoanPlan2: Boolean
     $studentLoanLiabilityId: ID
+    $pensionAssetId: ID
     $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ) {
     earningsCreate(
@@ -114,6 +124,7 @@ const PlanningEarningsCreateDocument = graphql(`
       pensionSalarySacrifice: $pensionSalarySacrifice
       studentLoanPlan2: $studentLoanPlan2
       studentLoanLiabilityId: $studentLoanLiabilityId
+      pensionAssetId: $pensionAssetId
       ukTaxCodes: $ukTaxCodes
     ) {
       id
@@ -134,6 +145,7 @@ const PlanningEarningsUpdateDocument = graphql(`
     $pensionSalarySacrifice: Float
     $studentLoanPlan2: Boolean
     $studentLoanLiabilityId: ID
+    $pensionAssetId: ID
     $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ) {
     earningsUpdate(
@@ -148,6 +160,7 @@ const PlanningEarningsUpdateDocument = graphql(`
       pensionSalarySacrifice: $pensionSalarySacrifice
       studentLoanPlan2: $studentLoanPlan2
       studentLoanLiabilityId: $studentLoanLiabilityId
+      pensionAssetId: $pensionAssetId
       ukTaxCodes: $ukTaxCodes
     ) {
       id
@@ -180,6 +193,12 @@ type LiabilityOption = Extract<
   >["edges"][number]["node"],
   { __typename: "NetWorthCategoryLiability" }
 >;
+type PensionAssetOption = Extract<
+  NonNullable<
+    PlanningEarningsData["netWorthCategories"]
+  >["edges"][number]["node"],
+  { __typename: "NetWorthCategoryAsset" }
+>;
 
 type RefetchEntry =
   | {
@@ -208,6 +227,8 @@ type FormValues = {
   studentLoanPlan2: boolean;
   /** Empty string = no liability linked. Only meaningful when `studentLoanPlan2` is true. */
   studentLoanLiabilityId: string;
+  /** Empty string = no asset linked. Only meaningful when at least one pension fraction is set. */
+  pensionAssetId: string;
   taxCodes: TaxCodeEntry[];
 };
 
@@ -222,6 +243,7 @@ const emptyForm: FormValues = {
   pensionSalarySacrificePct: "",
   studentLoanPlan2: false,
   studentLoanLiabilityId: "",
+  pensionAssetId: "",
   taxCodes: [],
 };
 
@@ -244,6 +266,7 @@ function earningToForm(earning: Earning): FormValues {
         : String(earning.pensionSalarySacrifice * 100),
     studentLoanPlan2: earning.studentLoanPlan2 ?? false,
     studentLoanLiabilityId: earning.studentLoanLiability?.id ?? "",
+    pensionAssetId: earning.pensionAsset?.id ?? "",
     // Codes arrive unsorted; chain them by start date.
     taxCodes: [...earning.ukTaxCodes]
       .sort((a, b) => a.start.localeCompare(b.start))
@@ -275,6 +298,14 @@ function dayAfter(iso: string): string {
 
 const CURRENCY = "GBP";
 
+function hasAnyPensionFraction(values: FormValues): boolean {
+  return (
+    values.pensionReliefAtSourcePct.trim() !== "" ||
+    values.pensionNetPayPct.trim() !== "" ||
+    values.pensionSalarySacrificePct.trim() !== ""
+  );
+}
+
 function formIsValid(values: FormValues): boolean {
   const parsedAmount = Number(values.amount);
   return (
@@ -305,6 +336,14 @@ function PlanningEarningsDialog() {
     .filter(
       (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",
     );
+  const pensionAssets: PensionAssetOption[] = (
+    data.netWorthCategories?.edges ?? []
+  )
+    .map((e) => e.node)
+    .filter(
+      (n): n is PensionAssetOption =>
+        n.__typename === "NetWorthCategoryAsset" && n.type === "PENSION",
+    );
 
   const close = () =>
     void navigate({ to: "/planning/$year", params: { year } });
@@ -333,6 +372,7 @@ function PlanningEarningsDialog() {
                 earning={e}
                 accounts={accounts}
                 liabilities={liabilities}
+                pensionAssets={pensionAssets}
                 refetch={refetch}
               />
             ))}
@@ -346,6 +386,7 @@ function PlanningEarningsDialog() {
             <AddEarningForm
               accounts={accounts}
               liabilities={liabilities}
+              pensionAssets={pensionAssets}
               refetch={refetch}
             />
           )}
@@ -364,11 +405,13 @@ function EarningRow({
   earning,
   accounts,
   liabilities,
+  pensionAssets,
   refetch,
 }: {
   earning: Earning;
   accounts: AccountOption[];
   liabilities: LiabilityOption[];
+  pensionAssets: PensionAssetOption[];
   refetch: RefetchEntry[];
 }) {
   const [editing, setEditing] = useState(false);
@@ -388,6 +431,7 @@ function EarningRow({
           earning={earning}
           accounts={accounts}
           liabilities={liabilities}
+          pensionAssets={pensionAssets}
           refetch={refetch}
           onDone={() => setEditing(false)}
         />
@@ -436,10 +480,12 @@ function EarningRow({
 function AddEarningForm({
   accounts,
   liabilities,
+  pensionAssets,
   refetch,
 }: {
   accounts: AccountOption[];
   liabilities: LiabilityOption[];
+  pensionAssets: PensionAssetOption[];
   refetch: RefetchEntry[];
 }) {
   const [values, setValues] = useState<FormValues>(emptyForm);
@@ -476,6 +522,10 @@ function AddEarningForm({
           values.studentLoanPlan2 && values.studentLoanLiabilityId !== ""
             ? values.studentLoanLiabilityId
             : null,
+        pensionAssetId:
+          hasAnyPensionFraction(values) && values.pensionAssetId !== ""
+            ? values.pensionAssetId
+            : null,
         toAccountId: values.toAccountId,
         ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
       },
@@ -492,6 +542,7 @@ function AddEarningForm({
         setValues={setValues}
         accounts={accounts}
         liabilities={liabilities}
+        pensionAssets={pensionAssets}
       />
       <div className="flex justify-end">
         <Button type="submit" disabled={disabled}>
@@ -506,12 +557,14 @@ function EditEarningForm({
   earning,
   accounts,
   liabilities,
+  pensionAssets,
   refetch,
   onDone,
 }: {
   earning: Earning;
   accounts: AccountOption[];
   liabilities: LiabilityOption[];
+  pensionAssets: PensionAssetOption[];
   refetch: RefetchEntry[];
   onDone: () => void;
 }) {
@@ -552,6 +605,10 @@ function EditEarningForm({
             ? null
             : values.studentLoanLiabilityId
           : null,
+        pensionAssetId:
+          hasAnyPensionFraction(values) && values.pensionAssetId !== ""
+            ? values.pensionAssetId
+            : null,
         toAccountId: values.toAccountId,
         ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
       },
@@ -568,6 +625,7 @@ function EditEarningForm({
         setValues={setValues}
         accounts={accounts}
         liabilities={liabilities}
+        pensionAssets={pensionAssets}
       />
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onDone}>
@@ -586,11 +644,13 @@ function EarningFormFields({
   setValues,
   accounts,
   liabilities,
+  pensionAssets,
 }: {
   values: FormValues;
   setValues: React.Dispatch<React.SetStateAction<FormValues>>;
   accounts: AccountOption[];
   liabilities: LiabilityOption[];
+  pensionAssets: PensionAssetOption[];
 }) {
   const patch = (p: Partial<FormValues>) => setValues((v) => ({ ...v, ...p }));
   return (
@@ -672,6 +732,33 @@ function EarningFormFields({
             />
           </FormField>
         </div>
+        {hasAnyPensionFraction(values) && (
+          <div className="mt-2 space-y-1">
+            <Label className="text-xs">Pension asset (optional)</Label>
+            <Select
+              value={
+                values.pensionAssetId === ""
+                  ? "__none__"
+                  : values.pensionAssetId
+              }
+              onValueChange={(v) =>
+                patch({ pensionAssetId: v === "__none__" ? "" : v })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="No asset" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">No asset</SelectItem>
+                {pensionAssets.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <label className="mt-2 flex items-center gap-2">
           <Checkbox
             checked={values.studentLoanPlan2}
