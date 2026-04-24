@@ -204,6 +204,13 @@
       "when": 1777041108701,
       "tag": "0028_add_date_indexes_to_investment_prices_and_transactions",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1777060182077,
+      "tag": "0029_add_sort_order_to_planning_accounts",
+      "breakpoints": true
     }
   ]
 }

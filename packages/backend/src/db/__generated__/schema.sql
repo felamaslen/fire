@@ -299,6 +299,7 @@ CREATE TABLE "NetWorthValues" (
 CREATE TABLE "PlanningAccounts" (
   "accountId" uuid PRIMARY KEY NOT NULL,
   "alias" text,
+  "sortOrder" INTEGER DEFAULT 0 NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );

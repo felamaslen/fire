@@ -269,6 +269,8 @@ export const PlanningAccounts = pgTable("PlanningAccounts", {
     .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
   /** Short display name used in planning views (null falls back to the asset name). */
   alias: text("alias"),
+  /** Position in the user-defined ordering of planning accounts (0-based, dense). Enforced unique + deferrable in SQL so a multi-row shift inside one transaction can swap values without tripping the constraint mid-way. */
+  sortOrder: integer("sortOrder").notNull().default(0),
   createdAt: timestamp("createdAt", { withTimezone: true })
     .notNull()
     .defaultNow(),
