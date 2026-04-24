@@ -1,0 +1,3 @@
+ALTER TABLE "PlanningEarnings" ADD COLUMN "pensionAssetId" uuid;--> statement-breakpoint
+ALTER TABLE "PlanningEarnings" ADD CONSTRAINT "PlanningEarnings_pensionAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("pensionAssetId") REFERENCES "public"."NetWorthCategoryAssets"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "PlanningEarnings" ADD CONSTRAINT "PlanningEarnings_pensionAsset_ck" CHECK ("PlanningEarnings"."pensionAssetId" IS NULL OR ("PlanningEarnings"."pensionSalarySacrifice" IS NOT NULL OR "PlanningEarnings"."pensionNetPay" IS NOT NULL OR "PlanningEarnings"."pensionReliefAtSource" IS NOT NULL));

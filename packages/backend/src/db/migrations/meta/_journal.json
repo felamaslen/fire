@@ -183,6 +183,13 @@
       "when": 1777276800000,
       "tag": "0025_create_app_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1777363200000,
+      "tag": "0026_earnings_pension_asset",
+      "breakpoints": true
     }
   ]
 }

@@ -164,6 +164,11 @@ export const PlanningEarnings = pgTable(
       () => NetWorthCategoryLiabilities.id,
       { onDelete: "set null" },
     ),
+    /** Pension asset (`NetWorthCategoryAsset` of type `PENSION`) that predicted pension deductions (salary sacrifice / net pay / relief at source) contribute to. Must be null unless at least one pension fraction is set. */
+    pensionAssetId: uuid("pensionAssetId").references(
+      () => NetWorthCategoryAssets.id,
+      { onDelete: "set null" },
+    ),
     /** Planning account the net earnings land in. */
     toAccountId: uuid("toAccountId")
       .notNull()
@@ -195,6 +200,10 @@ export const PlanningEarnings = pgTable(
     check(
       "PlanningEarnings_studentLoanLiability_ck",
       sql`${t.studentLoanLiabilityId} IS NULL OR ${t.studentLoanPlan2} = true`,
+    ),
+    check(
+      "PlanningEarnings_pensionAsset_ck",
+      sql`${t.pensionAssetId} IS NULL OR (${t.pensionSalarySacrifice} IS NOT NULL OR ${t.pensionNetPay} IS NOT NULL OR ${t.pensionReliefAtSource} IS NOT NULL)`,
     ),
   ],
 );

@@ -345,6 +345,7 @@ CREATE TABLE "PlanningEarnings" (
   "pensionNetPay" DOUBLE PRECISION,
   "studentLoanPlan2" BOOLEAN DEFAULT FALSE NOT NULL,
   "studentLoanLiabilityId" uuid,
+  "pensionAssetId" uuid,
   "toAccountId" uuid NOT NULL,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
@@ -372,6 +373,15 @@ CREATE TABLE "PlanningEarnings" (
     CHECK (
       "PlanningEarnings"."studentLoanLiabilityId" IS NULL
       OR "PlanningEarnings"."studentLoanPlan2" = TRUE
+    ),
+  CONSTRAINT "PlanningEarnings_pensionAsset_ck"
+    CHECK (
+      "PlanningEarnings"."pensionAssetId" IS NULL
+      OR (
+        "PlanningEarnings"."pensionSalarySacrifice" IS NOT NULL
+        OR "PlanningEarnings"."pensionNetPay" IS NOT NULL
+        OR "PlanningEarnings"."pensionReliefAtSource" IS NOT NULL
+      )
     )
 );
 
@@ -645,6 +655,13 @@ ADD CONSTRAINT "PlanningEarnings_studentLoanLiabilityId_NetWorthCategoryLiabilit
   FOREIGN KEY (
     "studentLoanLiabilityId"
   ) REFERENCES "public"."NetWorthCategoryLiabilities" ("id")
+    ON DELETE SET NULL
+    ON UPDATE NO ACTION;
+ALTER TABLE "PlanningEarnings"
+ADD CONSTRAINT "PlanningEarnings_pensionAssetId_NetWorthCategoryAssets_id_fk"
+  FOREIGN KEY ("pensionAssetId") REFERENCES "public"."NetWorthCategoryAssets" (
+    "id"
+  )
     ON DELETE SET NULL
     ON UPDATE NO ACTION;
 ALTER TABLE "PlanningEarnings"
