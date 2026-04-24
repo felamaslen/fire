@@ -69,6 +69,14 @@ const InvestmentDetailDocument = graphql(
               totalValue {
                 ...Figure
               }
+              reinvested {
+                cost {
+                  ...Figure
+                }
+                value {
+                  ...Figure
+                }
+              }
               totalGain {
                 ...Figure
               }
@@ -341,7 +349,7 @@ function InvestmentDetail({
         refetchQueries={[{ query: InvestmentDetailDocument }]}
       />
       <header className="space-y-1">
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-5">
           <Stat label="Units" value={investment.position.units.toString()} />
           <Stat
             label="Cost basis"
@@ -361,6 +369,20 @@ function InvestmentDetail({
               ) : (
                 "—"
               )
+            }
+          />
+          <Stat
+            label="Reinvested"
+            value={
+              <>
+                <Figure data={investment.position.reinvested.cost} />
+                {investment.position.reinvested.value && (
+                  <span className="text-muted-foreground">
+                    {" → "}
+                    <Figure data={investment.position.reinvested.value} />
+                  </span>
+                )}
+              </>
             }
           />
           <Stat
