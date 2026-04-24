@@ -226,12 +226,19 @@ export async function netWorthForecast(
             projectedBalance,
           ),
         );
-      } else if ((type === "STOCK" || type === "PENSION") && w.xirr != null) {
+      } else if (
+        (type === "STOCK" || type === "PENSION") &&
+        (w.xirr != null || w.monthlyContribution > 0)
+      ) {
+        // Expose the category as a portfolio whenever the engine has
+        // anything non-flat to show — XIRR-driven growth, ongoing
+        // contributions, or both. XIRR defaults to 0 when unknown so the
+        // balance compounds at 1× while contributions accumulate.
         projectedCategories.push(
           new NetWorthForecastPortfolio(
             loaded,
             startingBalance,
-            w.xirr,
+            w.xirr ?? 0,
             Money.fromMinorDenomination(w.monthlyContribution, HOME_CURRENCY),
             projectedBalance,
           ),

@@ -36,7 +36,6 @@ import { computeUKTake } from "../graphql/planning/tax";
 import { type ForecastCategory, type ForecastInputs } from "./engine";
 import {
   creditCardEwmaSpend,
-  ewma,
   type InvestmentTx,
   type LiabilityBill,
   type LiabilityTx,
@@ -66,7 +65,7 @@ export async function loadForecastInputs(
     portfolioContributionTxs,
     creditCardTxs,
     nonLiabilityBills,
-    monthlyIncome,
+    earningsForecast,
     settingsRow,
   ] = await Promise.all([
     loadCategories(),
@@ -78,9 +77,10 @@ export async function loadForecastInputs(
     loadPortfolioContributionTxs(ewmaCutoff),
     loadCreditCardTxs(ewmaCutoff),
     loadNonLiabilityBills(asOfDate),
-    loadPredictedMonthlyNetIncome(asOfDate),
+    loadPredictedEarningsForecast(asOfDate),
     model("AppSettings").findByIdOrNull(true),
   ]);
+  const monthlyIncome = earningsForecast.monthlyIncome;
 
   // Compute XIRR per STOCK / PENSION wrapper, using that wrapper's
   // starting balance as the terminal flow. We use `latestEntryDate` as
@@ -129,23 +129,27 @@ export async function loadForecastInputs(
     monthlySpending += billMonthlyEquivalent(b);
   }
 
-  // Recover payslip deductions tied to loans that would be fully paid off
-  // before retirement — if that deduction disappears, the user would
-  // redirect it into ongoing investment contributions. Fold the recovered
-  // amount into each portfolio's contribution so the pre-retirement
-  // projection reflects the freed-up cash. Post-retirement, contributions
-  // stop anyway.
+  // Fold predicted pension contributions (from linked earnings) into the
+  // per-portfolio contribution map, as synthetic monthly outflows over the
+  // last year — the engine's EWMA then picks them up. This deposits
+  // salary-sacrifice, net-pay, and relief-at-source (grossed up for HMRC's
+  // top-up) into the linked pension asset.
+  const pensionAugmentedContributionTxs = augmentPensionContributions(
+    portfolioContributionTxs,
+    earningsForecast.monthlyPensionByAssetId,
+    asOfMonthStart,
+  );
+
+  // Same pattern for student-loan deductions: synthesise monthly payslip
+  // adjustments against the linked loan liability so the forecast models
+  // the loan paying down.
+  const loanPayslipAdjustmentsWithStudentLoans = augmentWithSyntheticMonthly(
+    loanPayslipAdjustments,
+    earningsForecast.monthlyStudentLoanByLiabilityId,
+    asOfMonthStart,
+  );
+
   const retirementYear = settingsRow?.retirementYear ?? null;
-  const augmentedPortfolioContributionTxs = retirementYear
-    ? augmentPortfolioContributionsWithRecoveredDeductions(
-        portfolioContributionTxs,
-        loanPayslipAdjustments,
-        categoriesWithXirr,
-        startingBalance,
-        asOfMonthStart,
-        retirementYear,
-      )
-    : portfolioContributionTxs;
 
   return {
     asOfMonthStart,
@@ -154,12 +158,36 @@ export async function loadForecastInputs(
     startingBalance,
     liabilityTxs,
     loanBills,
-    loanPayslipAdjustments,
-    portfolioContributionTxs: augmentedPortfolioContributionTxs,
+    loanPayslipAdjustments: loanPayslipAdjustmentsWithStudentLoans,
+    portfolioContributionTxs: pensionAugmentedContributionTxs,
     retirementYear,
     monthlyIncome,
     monthlySpending,
   };
+}
+
+const augmentPensionContributions = augmentWithSyntheticMonthly;
+
+/**
+ * Append synthetic monthly rows (one per month across `EWMA_LOOKBACK_MONTHS`) to the map, keyed by id. Used to turn a predicted monthly amount into EWMA-friendly history so the engine's `ewma` averages to (nearly) the right figure rather than getting diluted against an under-filled window. Sign matches real tx rows (outflows stored negative).
+ */
+function augmentWithSyntheticMonthly(
+  original: Map<string, readonly LiabilityTx[] | LiabilityTx[]>,
+  monthlyById: Map<string, number>,
+  asOfMonthStart: Date,
+): Map<string, LiabilityTx[]> {
+  const out = new Map<string, LiabilityTx[]>();
+  for (const [id, txs] of original) out.set(id, [...txs]);
+  if (monthlyById.size === 0) return out;
+  for (const [id, monthly] of monthlyById) {
+    if (monthly <= 0) continue;
+    const synthetic: LiabilityTx[] = [];
+    for (let i = 1; i <= EWMA_LOOKBACK_MONTHS; i++) {
+      synthetic.push({ date: addMonths(asOfMonthStart, -i), amount: -monthly });
+    }
+    out.set(id, [...(out.get(id) ?? []), ...synthetic]);
+  }
+  return out;
 }
 
 function billMonthlyEquivalent(bill: LiabilityBill): number {
@@ -171,86 +199,6 @@ function billMonthlyEquivalent(bill: LiabilityBill): number {
     case "YEARLY":
       return bill.amount / 12;
   }
-}
-
-/**
- * When a payslip-funded loan will be paid off before the retirement year, recover its EWMA deduction and fold it into every portfolio's contribution stream as an extra synthetic tx per month. Splits evenly across portfolios so the math stays simple. If there are no portfolios the recovery is dropped — there's nowhere sensible for it to land.
- */
-function augmentPortfolioContributionsWithRecoveredDeductions(
-  original: Map<string, LiabilityTx[]>,
-  loanPayslipAdjustments: Map<string, readonly LiabilityTx[]>,
-  categories: readonly ForecastCategory[],
-  startingBalance: Map<string, number>,
-  asOfMonthStart: Date,
-  retirementYear: number,
-): Map<string, LiabilityTx[]> {
-  const portfolioIds = categories
-    .filter(
-      (c) =>
-        c.kind === "asset" &&
-        (c.assetType === "STOCK" || c.assetType === "PENSION"),
-    )
-    .map((c) => c.id);
-  if (portfolioIds.length === 0) return original;
-
-  const monthsToRetirement =
-    (retirementYear - asOfMonthStart.getUTCFullYear()) * 12 -
-    asOfMonthStart.getUTCMonth();
-  if (monthsToRetirement <= 0) return original;
-
-  let recovered = 0;
-  for (const cat of categories) {
-    if (cat.kind !== "liability" || cat.liabilityType !== "LOAN") continue;
-    const adjustments = loanPayslipAdjustments.get(cat.id);
-    if (!adjustments || adjustments.length === 0) continue;
-    const monthly = recentMonthlyEwma(adjustments, asOfMonthStart, 12);
-    if (monthly <= 0) continue;
-    const start = startingBalance.get(cat.id) ?? 0;
-    // Crude linear payoff estimate — ignores interest. Good enough to
-    // decide whether the deduction frees up before retirement.
-    const monthsToPayoff = start / monthly;
-    if (monthsToPayoff < monthsToRetirement) {
-      recovered += monthly;
-    }
-  }
-  if (recovered <= 0) return original;
-
-  const perPortfolio = recovered / portfolioIds.length;
-  // Emit a year's worth of synthetic outflows so the contribution EWMA
-  // picks up the recovered amount rather than diluting across zero-months.
-  const syntheticTxs: LiabilityTx[] = [];
-  for (let i = 1; i <= 12; i++) {
-    syntheticTxs.push({
-      date: addMonths(asOfMonthStart, -i),
-      amount: -perPortfolio,
-    });
-  }
-
-  const out = new Map<string, LiabilityTx[]>();
-  for (const [id, txs] of original) out.set(id, [...txs]);
-  for (const id of portfolioIds) {
-    const existing = out.get(id) ?? [];
-    out.set(id, [...existing, ...syntheticTxs]);
-  }
-  return out;
-}
-
-function recentMonthlyEwma(
-  txs: readonly LiabilityTx[],
-  asOfMonthStart: Date,
-  windowMonths: number,
-): number {
-  const samples: number[] = [];
-  for (let i = 1; i <= windowMonths; i++) {
-    const m = addMonths(asOfMonthStart, -i);
-    const next = addMonths(m, 1);
-    let sum = 0;
-    for (const t of txs) {
-      if (t.date >= m && t.date < next) sum += Math.abs(t.amount);
-    }
-    samples.push(sum);
-  }
-  return ewma(samples);
 }
 
 // ============================================================
@@ -555,12 +503,27 @@ async function loadNonLiabilityBills(asOfDate: Date): Promise<LiabilityBill[]> {
     );
 }
 
+type PredictedEarningsForecast = {
+  /** Monthly net income landing in cash accounts, summed across all active earnings. */
+  monthlyIncome: number;
+  /** Monthly pension contribution into a specific pension asset (`NetWorthCategoryAsset` of type `PENSION`), by asset id. Grossed up to include HMRC relief-at-source top-up. */
+  monthlyPensionByAssetId: Map<string, number>;
+  /** Monthly student-loan payroll deduction paid against a specific loan liability (`NetWorthCategoryLiability`), by liability id. Synthesised from the earning's tax calc; only populated for earnings with `studentLoanPlan2 = true` and a linked `studentLoanLiabilityId`. */
+  monthlyStudentLoanByLiabilityId: Map<string, number>;
+};
+
 /**
- * Predicted monthly net income from `PlanningEarnings` active on `asOfDate`, summed across streams. Runs each earning's annual gross through `computeUKTake` (UK PAYE: tax + NI + student loan + pension) using the active tax code and the current UK FY's rates, then divides by 12.
+ * Predicted monthly net income + per-asset pension contributions from `PlanningEarnings` active on `asOfDate`. Runs each earning's annual gross through `computeUKTake` (UK PAYE: tax + NI + student loan + pension) using the active tax code and the current UK FY's rates, then divides by 12.
+ *
+ * An earning's pension fractions are only applied when `pensionAssetId` is set — if the user hasn't linked the earning to a pension asset, we assume the pension contribution stays as take-home cash (since the forecast has no other wrapper to deposit it into, and pretending it vanishes would understate net worth).
+ *
+ * Pension deposit into the asset includes HMRC's basic-rate top-up for relief-at-source (grossed up by `1 / (1 - rateBasic)`). Salary sacrifice and net-pay amounts are already gross contributions, no additional top-up applies.
  *
  * This is a prediction from the user's configured earnings — not an EWMA of actual payslips, which is unreliable on data where adjustments (tax/NI/pension) aren't populated per row and treating raw gross as net would overstate income.
  */
-async function loadPredictedMonthlyNetIncome(asOfDate: Date): Promise<number> {
+async function loadPredictedEarningsForecast(
+  asOfDate: Date,
+): Promise<PredictedEarningsForecast> {
   // UK financial year starts 6 April; at the schema level we identify years
   // by the calendar year they start in (FY25/26 → 2025).
   const fyYear =
@@ -594,7 +557,15 @@ async function loadPredictedMonthlyNetIncome(asOfDate: Date): Promise<number> {
       .limit(1)
       .then((rows) => rows[0] ?? null),
   ]);
-  if (!rates) return 0;
+  const monthlyPensionByAssetId = new Map<string, number>();
+  const monthlyStudentLoanByLiabilityId = new Map<string, number>();
+  if (!rates) {
+    return {
+      monthlyIncome: 0,
+      monthlyPensionByAssetId,
+      monthlyStudentLoanByLiabilityId,
+    };
+  }
 
   // Group tax codes by earning. `taxCode` is null for earnings with no
   // codes on file — the left join still returns a row for the earning.
@@ -613,15 +584,18 @@ async function loadPredictedMonthlyNetIncome(asOfDate: Date): Promise<number> {
     if (row.taxCode) g.taxCodes.push(row.taxCode);
   }
 
-  let monthly = 0;
+  let monthlyIncome = 0;
   for (const { earning, taxCodes } of grouped.values()) {
     if (earning.countryCode !== "GB") continue;
+    const sacFrac = earning.pensionSalarySacrifice ?? 0;
+    const netPayFrac = earning.pensionNetPay ?? 0;
+    const reliefFrac = earning.pensionReliefAtSource ?? 0;
     const take = computeUKTake({
       gross: earning.amountGross,
       pension: {
         sacrifice: earning.pensionSalarySacrifice,
-        netPay: earning.pensionNetPay ?? 0,
-        relief: earning.pensionReliefAtSource ?? 0,
+        netPay: netPayFrac,
+        relief: reliefFrac,
       },
       studentLoanPlan2: earning.studentLoanPlan2,
       rates,
@@ -630,9 +604,57 @@ async function loadPredictedMonthlyNetIncome(asOfDate: Date): Promise<number> {
     // `take.net` is post-tax/NI/student-loan; the employee-side pension
     // contribution (net-pay + relief-at-source) comes out of payroll too,
     // so the amount actually hitting the bank account is `net - pension`.
-    monthly += (take.net - take.pensionEmployee) / 12;
+    // We always deduct the pension from cash income — even when no asset
+    // is linked — otherwise pre-retirement cash would be inflated by a
+    // phantom amount.
+    monthlyIncome += (take.net - take.pensionEmployee) / 12;
+
+    // Only deposit into a pension asset when the earning is linked to
+    // one. Without a link the contribution still leaves the bank via
+    // payroll but the forecast has nowhere concrete to deposit it — it
+    // drops out of the projected net worth. This mirrors how unlinked
+    // student-loan deductions are treated (repayment happens but the
+    // forecast doesn't show the liability paydown).
+    if (earning.pensionAssetId != null) {
+      // Contributions into the pension pot per year:
+      //   - Salary sacrifice: full sacrifice amount (already gross — paid
+      //     by the employer before any tax/NI).
+      //   - Net pay: the full netPay deduction (pre-tax from gross).
+      //   - Relief at source: the employee's net contribution grossed up
+      //     by the basic-rate relief HMRC adds directly to the pot.
+      const sac = Math.round(earning.amountGross * sacFrac);
+      const postSacrifice = earning.amountGross - sac;
+      const netPayAmt = Math.round(postSacrifice * netPayFrac);
+      const reliefAmt = Math.round(postSacrifice * reliefFrac);
+      const rasGrossUp = 1 / (1 - rates.rateBasic);
+      const annualPension = sac + netPayAmt + reliefAmt * rasGrossUp;
+      const monthly = annualPension / 12;
+      const prev = monthlyPensionByAssetId.get(earning.pensionAssetId) ?? 0;
+      monthlyPensionByAssetId.set(earning.pensionAssetId, prev + monthly);
+    }
+
+    // Route the predicted student-loan deduction to the linked loan
+    // liability so the forecast models the loan paying down. The employee
+    // never receives this money (it's deducted from payroll) — `take.net`
+    // already excludes it, so no cash adjustment is needed.
+    if (earning.studentLoanPlan2 && earning.studentLoanLiabilityId != null) {
+      const monthly = take.studentLoan / 12;
+      if (monthly > 0) {
+        const prev =
+          monthlyStudentLoanByLiabilityId.get(earning.studentLoanLiabilityId) ??
+          0;
+        monthlyStudentLoanByLiabilityId.set(
+          earning.studentLoanLiabilityId,
+          prev + monthly,
+        );
+      }
+    }
   }
-  return monthly;
+  return {
+    monthlyIncome,
+    monthlyPensionByAssetId,
+    monthlyStudentLoanByLiabilityId,
+  };
 }
 
 function activeTaxCode(

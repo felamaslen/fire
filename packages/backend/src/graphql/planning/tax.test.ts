@@ -149,7 +149,7 @@ it("salary sacrifice reduces tax, NI and student-loan bases", () => {
   `);
 });
 
-it("net-pay pension reduces income-tax + SL bases but not NIC", () => {
+it("net-pay pension reduces the income-tax base but leaves NIC and student loan unchanged", () => {
   const baseline = computeUKTake({
     gross: 5_000_000,
     pension: noPension,
@@ -175,10 +175,10 @@ it("net-pay pension reduces income-tax + SL bases but not NIC", () => {
       "withNetPay": {
         "gross": 5000000,
         "incomeTax": 648600,
-        "net": 3892615,
+        "net": 3847615,
         "nic": 299440,
         "pensionEmployee": 500000,
-        "studentLoan": 159345,
+        "studentLoan": 204345,
       },
     }
   `);

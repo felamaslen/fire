@@ -140,7 +140,7 @@ export type UKTake = {
  *   - Annual basis, not cumulative per-period. Divide by 12 for a per-month view.
  *   - Personal allowance = basic-rate threshold (the band's lower edge). Tapers by £1 per £2 earned over £100k (standard UK rule).
  *   - Salary sacrifice reduces the base for income tax + NI + student loan.
- *   - Net-pay pension reduces income-tax and student-loan base (NI is unchanged).
+ *   - Net-pay pension reduces the income-tax base only — NI and student loan are both computed on post-sacrifice earnings regardless of net-pay contributions (HMRC's SL3 rule: student loan is deducted on NIable pay, not income-taxable pay).
  *   - Relief-at-source is ignored at PAYE time (reclaimed separately).
  */
 export function computeUKTake({
@@ -156,7 +156,10 @@ export function computeUKTake({
   const netPay = Math.round(postSacrifice * pension.netPay);
   const reliefAtSource = Math.round(postSacrifice * pension.relief);
   const incomeTaxBase = postSacrifice - netPay;
-  const studentLoanBase = postSacrifice - netPay;
+  // Student loan is deducted on NIable earnings — i.e. post-sacrifice (salary
+  // sacrifice reduces NIable pay), but NOT reduced by net-pay or
+  // relief-at-source pension contributions. Those only affect income tax.
+  const studentLoanBase = postSacrifice;
 
   const parsed = parseUKTaxCode(taxCode, rates);
   // Fall back to the year's default PA (with the high-income taper) only if
