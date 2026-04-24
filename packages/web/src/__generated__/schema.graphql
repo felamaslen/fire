@@ -891,7 +891,7 @@ type Mutation {
   """
   Invalidate the current session. For real sessions this is a no-op on the server (tokens are stateless — the client just discards it). For demo sessions this drops the per-session schema and its `DemoSessions` row, so a reconnect with the same token would fail.
   """
-  logout: Boolean! @noAuth
+  logout: Void! @noAuth
   """Create a new category (asset, liability, or option)."""
   netWorthCategoryCreate(input: NetWorthCategoryInput!): NetWorthCategory!
   """

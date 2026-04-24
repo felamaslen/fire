@@ -38,7 +38,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-import { useIsDemo } from "../../../auth/use-is-demo";
 import { graphql, type ResultOf } from "../../../graphql";
 import { PlanningYearViewDocument } from "../$year";
 
@@ -50,6 +49,9 @@ const PlanningPayslipsDialogDocument = graphql(`
         id
         name
       }
+    }
+    me {
+      isDemo
     }
     netWorthCategories(first: 100) {
       edges {
@@ -374,6 +376,7 @@ function PlanningPayslipsDialog() {
             <>
               <PayslipParseDropZone
                 accounts={accounts}
+                isDemo={!!data.me?.isDemo}
                 liabilities={liabilities}
                 refetch={refetch}
                 onCreated={resetToFirstPage}
@@ -1087,11 +1090,13 @@ function formatDate(d: string): string {
 /** Drop zone + quick-pick button that sends a payslip PDF to Gemini, then opens the review sub-dialog pre-filled with whatever the model extracted. Nothing is persisted until the user hits Save inside that dialog. */
 function PayslipParseDropZone({
   accounts,
+  isDemo,
   liabilities,
   refetch,
   onCreated,
 }: {
   accounts: AccountOption[];
+  isDemo: boolean;
   liabilities: LiabilityOption[];
   refetch: RefetchEntry[];
   onCreated?: () => void;
@@ -1104,7 +1109,6 @@ function PayslipParseDropZone({
   } | null>(null);
   const inputId = useId();
   const [parse, { loading }] = useMutation(PlanningPayslipParseDocument);
-  const isDemo = useIsDemo();
   const disabled = loading || isDemo;
 
   const accept = (f: File | null | undefined): f is File => {

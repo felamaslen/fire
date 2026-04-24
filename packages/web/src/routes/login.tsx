@@ -1,14 +1,11 @@
-import { useMutation, useQuery } from "@apollo/client/react";
+import { useApolloClient, useMutation, useQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Delete, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import {
-  DemoLoginDocument,
-  DemosDocument,
-  LoginDocument,
-} from "../auth/documents";
+import { graphql } from "@/graphql";
+
 import { setToken } from "../auth/token";
 import {
   Card,
@@ -24,12 +21,39 @@ export const Route = createFileRoute("/login")({
 
 const PIN_LENGTH = 4;
 
+const LoginDocument = graphql(`
+  mutation Login($pin: Int!) {
+    login(pin: $pin) {
+      token
+    }
+  }
+`);
+
+const DemoLoginDocument = graphql(`
+  mutation DemoLogin($id: ID!) {
+    demoLogin(id: $id) {
+      token
+    }
+  }
+`);
+
+const DemosDocument = graphql(`
+  query Demos {
+    demos {
+      id
+      name
+      description
+    }
+  }
+`);
+
 function LoginPage() {
   const navigate = useNavigate();
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [shake, setShake] = useState(false);
 
+  const apollo = useApolloClient();
   const { data: demosData } = useQuery(DemosDocument);
   const [loginMutation] = useMutation(LoginDocument);
   const [demoLoginMutation] = useMutation(DemoLoginDocument);
@@ -43,6 +67,7 @@ function LoginPage() {
         });
         if (!data?.login.token) throw new Error("No token returned");
         setToken(data.login.token);
+        await apollo.resetStore();
         await navigate({ to: "/" });
       } catch (err) {
         setShake(true);
@@ -88,6 +113,7 @@ function LoginPage() {
       const { data } = await demoLoginMutation({ variables: { id } });
       if (!data?.demoLogin.token) throw new Error("No token returned");
       setToken(data.demoLogin.token);
+      await apollo.resetStore();
       await navigate({ to: "/" });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Demo login failed");

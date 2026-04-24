@@ -60,6 +60,7 @@ export function createApolloClient() {
       typePolicies: {
         // Computed value objects with no server-side identity — embed them in
         // their parent entity instead of trying to normalise.
+        AuthResult: { keyFields: false, merge: true },
         InvestmentPosition: { keyFields: false, merge: true },
         InvestmentStock: { keyFields: false, merge: true },
         InvestmentFund: { keyFields: false, merge: true },

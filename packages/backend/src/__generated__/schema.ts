@@ -3751,7 +3751,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 logout: {
                     description: "Invalidate the current session. For real sessions this is a no-op on the server (tokens are stateless \u2014 the client just discards it). For demo sessions this drops the per-session schema and its `DemoSessions` row, so a reconnect with the same token would fail.",
                     name: "logout",
-                    type: new GraphQLNonNull(GraphQLBoolean),
+                    type: new GraphQLNonNull(VoidType),
                     extensions: {
                         grats: {
                             directives: [{

@@ -9,10 +9,11 @@ import {
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { FragmentOf, graphql, readFragment, ResultOf } from "@/graphql";
 import { cn } from "@/lib/cn";
+import { RootDocument } from "@/routes/__root";
 
-import { LogoutDocument } from "../auth/documents";
-import { clearToken, getToken } from "../auth/token";
+import { clearToken } from "../auth/token";
 import { ThemeToggle } from "./theme-toggle";
 import { Button } from "./ui/button";
 
@@ -57,7 +58,19 @@ const LINKS: {
   { to: "/investments", label: "Investments", icon: TrendingUp },
 ];
 
-export function NavHeader() {
+export const NavHeaderDocument = graphql(`
+  fragment NavHeader on Query {
+    me {
+      token
+    }
+  }
+`);
+
+export function NavHeader({
+  data,
+}: {
+  data: FragmentOf<typeof NavHeaderDocument> | null | undefined;
+}) {
   return (
     <header className="fixed inset-x-0 top-0 z-40 border-b bg-background/80 backdrop-blur">
       <nav className="mx-auto flex h-8 max-w-6xl items-center gap-0.5 px-3 sm:h-10 sm:gap-1 sm:px-6">
@@ -91,17 +104,30 @@ export function NavHeader() {
           );
         })}
         <ThemeToggle />
-        <LogoutButton />
+        <LogoutButton data={readFragment(NavHeaderDocument, data)} />
       </nav>
     </header>
   );
 }
 
-function LogoutButton() {
+const LogoutDocument = graphql(`
+  mutation Logout {
+    logout {
+      __typename
+    }
+  }
+`);
+
+function LogoutButton({
+  data,
+}: {
+  data: ResultOf<typeof NavHeaderDocument> | null | undefined;
+}) {
   const navigate = useNavigate();
   const apollo = useApolloClient();
   const [logoutMutation] = useMutation(LogoutDocument);
-  if (typeof window !== "undefined" && !getToken()) return null;
+  const isLoggedIn = data?.me?.token != null;
+  if (!isLoggedIn) return;
   return (
     <Button
       variant="ghost"
@@ -109,10 +135,11 @@ function LogoutButton() {
       className="h-7 w-7 sm:h-9 sm:w-9"
       aria-label="Log out"
       onClick={async () => {
-        await logoutMutation().catch(() => {});
         clearToken();
+        await logoutMutation().catch(() => {});
         await apollo.clearStore();
         await navigate({ to: "/login" });
+        await apollo.refetchQueries({ include: [RootDocument] });
       }}
     >
       <LogOut />

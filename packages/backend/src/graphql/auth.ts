@@ -9,6 +9,7 @@ import { signToken } from "@/auth/token";
 import { env } from "@/env";
 
 import type { Context } from "./context";
+import { VOID, Void } from "./void";
 
 /**
  * Result of a successful `login` / `demoLogin`, and the shape of `me` for a valid token. The client just needs to know "am I logged in?" — `token` doubles as both credential and success signal. Session kind / flavour live inside the signed token itself and are re-derived server-side from the `Authorization` header on every request, so there's nothing for the client to track beyond this string.
@@ -136,11 +137,11 @@ export async function demoLogin(id: ID): Promise<AuthResult> {
  * @gqlMutationField
  * @gqlAnnotate noAuth
  */
-export async function logout(ctx: Context): Promise<boolean> {
+export async function logout(ctx: Context): Promise<Void> {
   if (ctx.session.kind === "demo") {
     await dropDemoSession(ctx.session.database);
   }
-  return true;
+  return VOID;
 }
 
 function constantTimeEqualInt(a: number, b: number): boolean {
