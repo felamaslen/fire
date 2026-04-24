@@ -627,10 +627,34 @@ async function loadPredictedEarningsForecast(
       const netPayAmt = Math.round(postSacrifice * netPayFrac);
       const reliefAmt = Math.round(postSacrifice * reliefFrac);
       const rasGrossUp = 1 / (1 - rates.rateBasic);
-      const annualPension = sac + netPayAmt + reliefAmt * rasGrossUp;
+      const rasGrossedUpAnnual = reliefAmt * rasGrossUp;
+      const annualPension = sac + netPayAmt + rasGrossedUpAnnual;
       const monthly = annualPension / 12;
       const prev = monthlyPensionByAssetId.get(earning.pensionAssetId) ?? 0;
       monthlyPensionByAssetId.set(earning.pensionAssetId, prev + monthly);
+
+      // Higher/additional-rate relief is claimed via self-assessment: the
+      // basic-rate band is extended by the grossed-up RAS amount, so
+      // income that PAYE taxed at 40%/45% is re-taxed at 20%. The refund
+      // lands in the earner's bank, so we add it back to take-home. Only
+      // RAS drives this — net-pay and salary-sacrifice already give full
+      // marginal relief at PAYE time.
+      if (rasGrossedUpAnnual > 0) {
+        const takeSa = computeUKTake({
+          gross: earning.amountGross,
+          pension: {
+            sacrifice: earning.pensionSalarySacrifice,
+            netPay: netPayFrac,
+            relief: reliefFrac,
+          },
+          studentLoanPlan2: earning.studentLoanPlan2,
+          rates,
+          taxCode: activeTaxCode(taxCodes, asOfDate),
+          rasGrossedUp: rasGrossedUpAnnual,
+        });
+        const refund = take.incomeTax - takeSa.incomeTax;
+        if (refund > 0) monthlyIncome += refund / 12;
+      }
     }
 
     // Route the predicted student-loan deduction to the linked loan

@@ -117,6 +117,10 @@ export type UKTakeInput = {
   rates: typeof PlanningYearUKTaxRates.$inferSelect;
   /** HMRC tax code in effect for this projection — e.g. `1257L`, `K475`, `0T`, `BR`, `NT`. When null / unset, the year's default personal allowance (`rates.thresholdBasic`) is used with the high-income taper. */
   taxCode?: string | null;
+  /**
+   * Annual grossed-up relief-at-source pension contribution, in pence (i.e. the figure that lands in the pension pot, including HMRC's basic-rate top-up). When non-zero, extends the basic-rate band by this amount (so higher/additional-rate income is re-taxed at basic rate) and reduces the income used for the PA taper by the same amount. Set this to derive the self-assessment result (total relief) rather than the PAYE result (basic-rate only); the difference in `incomeTax` between the two calls is the refund a 40%/45% earner claims back.
+   */
+  rasGrossedUp?: number;
 };
 
 /** Output of `computeUKTake`. All values are annual integers in fractional units of GBP (pence). Deductions are returned as positive numbers; callers can render them as negatives. */
@@ -149,6 +153,7 @@ export function computeUKTake({
   studentLoanPlan2,
   rates,
   taxCode,
+  rasGrossedUp,
 }: UKTakeInput): UKTake {
   const sac = Math.round(gross * (pension.sacrifice ?? 0));
   const postSacrifice = gross - sac;
@@ -162,6 +167,25 @@ export function computeUKTake({
   const studentLoanBase = postSacrifice;
 
   const parsed = parseUKTaxCode(taxCode, rates);
+  // Relief-at-source "extends" the basic-rate band (and reduces adjusted net
+  // income for PA-taper purposes) when self-assessment is filed — so a
+  // 40%/45% earner reclaims the extra relief beyond basic rate. `rasExt`
+  // shifts the higher-rate threshold upward and drops the taper income by
+  // the same amount; leaving it 0 gives the PAYE result HMRC actually
+  // withholds (which this calc produces when the caller doesn't pass the
+  // argument).
+  const rasExt = rasGrossedUp ?? 0;
+  const effectiveRates =
+    rasExt > 0
+      ? {
+          ...rates,
+          thresholdHigher: rates.thresholdHigher + rasExt,
+          thresholdAdditional: rates.thresholdAdditional + rasExt,
+          thresholdPersonalAllowanceTaper:
+            rates.thresholdPersonalAllowanceTaper + rasExt,
+        }
+      : rates;
+
   // Fall back to the year's default PA (with the high-income taper) only if
   // no code override applies. Codes already bake the PA into their numeric
   // prefix, so no taper on top of them.
@@ -173,7 +197,8 @@ export function computeUKTake({
         Math.max(
           0,
           Math.floor(
-            (incomeTaxBase - rates.thresholdPersonalAllowanceTaper) / 2,
+            (incomeTaxBase - effectiveRates.thresholdPersonalAllowanceTaper) /
+              2,
           ),
         ),
     );
@@ -182,7 +207,7 @@ export function computeUKTake({
     ? 0
     : parsed.flatRate != null
       ? Math.round(Math.max(0, incomeTaxBase) * parsed.flatRate)
-      : taxOnIncome(incomeTaxBase, personalAllowance, rates);
+      : taxOnIncome(incomeTaxBase, personalAllowance, effectiveRates);
 
   const nic = nicOnEarnings(postSacrifice, rates);
 
