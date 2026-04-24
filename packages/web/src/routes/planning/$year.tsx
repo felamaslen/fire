@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
+import { useMutation, useQuery } from "@apollo/client/react";
 import {
   createFileRoute,
   Link,
@@ -298,15 +298,7 @@ function PlanningYearRoute() {
   return (
     <main className="flex h-[calc(100svh-2rem)] flex-col sm:h-[calc(100svh-2.5rem)]">
       <div id="planning-scroll" className="min-h-0 flex-1 overflow-auto">
-        <Suspense
-          fallback={
-            <div className="flex h-full items-center justify-center">
-              <Spinner />
-            </div>
-          }
-        >
-          <PlanningYearPage year={year} />
-        </Suspense>
+        <PlanningYearPage year={year} />
       </div>
       <YearFooter current={year} />
       <Suspense fallback={null}>
@@ -328,10 +320,21 @@ function PlanningYearPage({ year }: { year: string }) {
   // old grid keeps rendering instantly, and the new one is built concurrently
   // across frames — keeping the main thread responsive.
   const deferredYear = useDeferredValue(year);
-  const { data } = useSuspenseQuery(PlanningYearViewDocument, {
+  // Non-suspense query: show the spinner only on initial load. During
+  // refetches — e.g. after a transaction edit triggers
+  // `refetchQueries: "active"` — Apollo keeps `data` populated with the
+  // previous result, so the grid stays rendered without flashing.
+  const { data, loading } = useQuery(PlanningYearViewDocument, {
     variables: { id: deferredYear },
   });
   const isStale = deferredYear !== year;
+  if (!data) {
+    return loading ? (
+      <div className="flex h-full items-center justify-center">
+        <Spinner />
+      </div>
+    ) : null;
+  }
   if (!data.planningYear) {
     return (
       <div className="mx-auto max-w-3xl space-y-2 p-8">
@@ -1212,6 +1215,9 @@ function AmountCell({
           void commit();
         }}
         onKeyDown={(e) => {
+          // Don't let Enter/Space/Escape bubble up to the row handler, which
+          // would open the full edit dialog.
+          e.stopPropagation();
           if (e.key === "Enter") {
             e.preventDefault();
             void commit();
