@@ -42,6 +42,7 @@ const AssetRowDocument = graphql(`
     name
     assetType: type
     growthRate
+    accessibleFrom
   }
 `);
 
@@ -255,10 +256,11 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
   const moveAsset = (id: string, nextType: AssetType) => {
     const existing = data.find((d) => d.id === id);
     if (!existing || existing.assetType === nextType) return;
-    // Clear any growthRate when moving away from PROPERTY/VEHICLE so the
-    // CHECK constraint stays satisfied; the user can re-enter it in the new
-    // bucket if applicable.
+    // Clear type-specific fields when moving away from a bucket that
+    // supports them so the CHECK constraints stay satisfied; the user can
+    // re-enter them in the new bucket if applicable.
     const canKeepGrowth = nextType === "PROPERTY" || nextType === "VEHICLE";
+    const canKeepAccessibleFrom = nextType === "PENSION";
     void updateType({
       variables: {
         id,
@@ -266,6 +268,7 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
           asset: {
             type: nextType,
             growthRate: canKeepGrowth ? undefined : null,
+            accessibleFrom: canKeepAccessibleFrom ? undefined : null,
           },
         },
       },
@@ -399,11 +402,13 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
 
   const supportsGrowth =
     asset.assetType === "PROPERTY" || asset.assetType === "VEHICLE";
+  const supportsAccessibleFrom = asset.assetType === "PENSION";
 
   const form = useForm({
     defaultValues: {
       name: asset.name,
       growthRate: percentToStr(asset.growthRate),
+      accessibleFrom: asset.accessibleFrom ?? "",
     },
     onSubmit: async ({ value }) => {
       await update({
@@ -414,6 +419,11 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
               name: value.name,
               growthRate: supportsGrowth
                 ? strToPercent(value.growthRate)
+                : null,
+              accessibleFrom: supportsAccessibleFrom
+                ? value.accessibleFrom === ""
+                  ? null
+                  : value.accessibleFrom
                 : null,
             },
           },
@@ -470,6 +480,27 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
                 Assumed annual growth rate used by the net-worth forecast. Use a
                 negative number for depreciation (e.g. −15 for a vehicle losing
                 15% of its value per year).
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </form.Field>
+      )}
+      {supportsAccessibleFrom && (
+        <form.Field name="accessibleFrom">
+          {(field) => (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Input
+                  type="date"
+                  className="w-40"
+                  aria-label="Accessible from"
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                />
+              </TooltipTrigger>
+              <TooltipContent>
+                Earliest date you can draw this pension. The retirement forecast
+                skips drawdown on this pot until this date.
               </TooltipContent>
             </Tooltip>
           )}
