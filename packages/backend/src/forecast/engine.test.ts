@@ -256,6 +256,42 @@ describe("runForecast", () => {
       expect(isaW?.projectedBalance[retirementIdx]).toBeCloseTo(expected, 0);
     });
 
+    it("does not compress the bridge when the chart horizon ends before the last pension access", () => {
+      // Retirement 2030, pension access 2045 → real bridge is 15 years.
+      // Query with only 10 years visible (months = 120). The STOCK pot
+      // should drain slowly enough that it's nowhere near zero at the end
+      // of the visible horizon — the bridge is a household property, not
+      // a chart property.
+      const isa: ForecastCategory = {
+        id: "isa",
+        kind: "asset",
+        assetType: "STOCK",
+        xirr: 0,
+      };
+      const sipp: ForecastCategory = {
+        id: "sipp",
+        kind: "asset",
+        assetType: "PENSION",
+        xirr: 0,
+        accessibleFrom: new Date(Date.UTC(2045, 0, 1)),
+      };
+      const { workings } = runForecast(
+        baseInputs({
+          months: 120,
+          categories: [isa, sipp],
+          startingBalance: new Map([
+            [isa.id, 120000],
+            [sipp.id, 500000],
+          ]),
+          retirementYear: 2030,
+        }),
+      );
+      const isaW = workings.categories.find((c) => c.categoryId === isa.id);
+      // At the visible horizon (month 120) we're only partway through the
+      // 15-year bridge — plenty of ISA left.
+      expect(isaW?.projectedBalance[120]).toBeGreaterThan(30000);
+    });
+
     it("applies 4% to STOCK from retirement when retirement is at/after the last pension access", () => {
       const isa: ForecastCategory = {
         id: "isa",

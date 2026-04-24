@@ -159,13 +159,14 @@ function monthIndexForDate(
 }
 
 /**
- * Month index at which the "ISA bridge" — STOCK pots draining to zero to carry a household from retirement to the first pension access — ends. That's the month the LAST `PENSION` with an `accessibleFrom` date becomes accessible, clamped to `[retirementIndex, months]`. When no pension has an access date or the last-accessible month is already at/before retirement, we return `retirementIndex` (no bridge — STOCKs join pensions at the 4% SWR from month 0 of retirement). Returns `null` when there's no retirement at all — there's nothing to bridge.
+ * Month index at which the "ISA bridge" — STOCK pots draining to zero to carry a household from retirement to the first pension access — ends. That's the month the LAST `PENSION` with an `accessibleFrom` date becomes accessible. When no pension has an access date or the last-accessible month is already at/before retirement, we return `retirementIndex` (no bridge — STOCKs join pensions at the 4% SWR from month 0 of retirement). Returns `null` when there's no retirement at all — there's nothing to bridge.
+ *
+ * NOT clamped to the forecast horizon `months`: the bridge is a property of the *household*, not the chart. If the user zooms the chart to 10 years but the last pension unlocks at year 25, the ISA should drain slowly over 25 years — not compress into the visible 10. Clamping here used to cause STOCK pots to drain to zero mid-chart whenever `years` was set short.
  */
 function computeBridgeEndIndex(
   categories: readonly ForecastCategory[],
   asOfMonthStart: Date,
   retirementIndex: number | null,
-  months: number,
 ): number | null {
   if (retirementIndex == null) return null;
   let latest = retirementIndex;
@@ -175,7 +176,7 @@ function computeBridgeEndIndex(
     if (idx == null) continue;
     if (idx > latest) latest = idx;
   }
-  return Math.min(latest, months);
+  return latest;
 }
 
 /**
@@ -210,7 +211,6 @@ export function runForecast(inputs: ForecastInputs): ForecastResult {
     categories,
     asOfMonthStart,
     retirementIndex,
-    months,
   );
   const monthlyIncome = inputs.monthlyIncome ?? 0;
   const monthlySpending = inputs.monthlySpending ?? 0;
