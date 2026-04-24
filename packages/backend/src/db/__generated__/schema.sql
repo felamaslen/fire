@@ -760,6 +760,7 @@ CREATE UNIQUE INDEX "InvestmentPrices_investmentId_date_uq" ON "InvestmentPrices
   "investmentId",
   "date"
 );
+CREATE INDEX "InvestmentPrices_date" ON "InvestmentPrices" USING btree ("date");
 CREATE UNIQUE INDEX "InvestmentPrices_investmentId_isLatest_uq" ON "InvestmentPrices" USING btree (
   "investmentId",
   "isLatest"
@@ -774,6 +775,9 @@ CREATE INDEX "InvestmentTransactions_investmentId_idx" ON "InvestmentTransaction
 );
 CREATE INDEX "InvestmentTransactions_assetId_idx" ON "InvestmentTransactions" USING btree (
   "assetId"
+);
+CREATE INDEX "InvestmentTransactions_date" ON "InvestmentTransactions" USING btree (
+  "date"
 );
 CREATE UNIQUE INDEX "NetWorthEntries_month_uq" ON "NetWorthEntries" USING btree (
   date_trunc('month', "date"::TIMESTAMP)

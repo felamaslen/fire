@@ -94,6 +94,7 @@ export const InvestmentTransactions = pgTable(
     check("InvestmentTransactions_fees_ck", sql`${t.fees} >= 0`),
     index("InvestmentTransactions_investmentId_idx").on(t.investmentId),
     index("InvestmentTransactions_assetId_idx").on(t.assetId),
+    index("InvestmentTransactions_date").on(t.date),
   ],
 );
 
@@ -190,6 +191,7 @@ export const InvestmentPrices = pgTable(
       t.investmentId,
       t.date,
     ),
+    index("InvestmentPrices_date").on(t.date),
     uniqueIndex("InvestmentPrices_investmentId_isLatest_uq")
       .on(t.investmentId, t.isLatest)
       .where(sql`${t.isLatest} IS NOT NULL`),

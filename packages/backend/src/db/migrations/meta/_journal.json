@@ -197,6 +197,13 @@
       "when": 1777449600000,
       "tag": "0027_pension_accessible_from",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1777041108701,
+      "tag": "0028_add_date_indexes_to_investment_prices_and_transactions",
+      "breakpoints": true
     }
   ]
 }
