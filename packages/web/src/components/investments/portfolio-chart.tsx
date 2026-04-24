@@ -440,11 +440,9 @@ export function PortfolioChart({
                 onPointerMove={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   if (rect.width === 0) return;
-                  const svgX = ((e.clientX - rect.left) / rect.width) * width;
+                  const ratio = (e.clientX - rect.left) / rect.width;
                   const xRange = xMax - xMin || 1;
-                  const dataX =
-                    xMin + ((svgX - AXIS_PAD_LEFT) / plotW) * xRange;
-                  setLineHoverX(dataX);
+                  setLineHoverX(xMin + ratio * xRange);
                 }}
                 onPointerLeave={() => setLineHoverX(null)}
               />
