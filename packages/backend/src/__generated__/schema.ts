@@ -833,6 +833,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
                 },
+                pensionAsset: {
+                    description: "Pension asset the predicted pension deductions contribute to. Null when no pension fractions are configured or no asset has been linked.",
+                    name: "pensionAsset",
+                    type: NetWorthCategoryAssetType
+                },
                 pensionNetPay: {
                     description: "Fraction of gross contributed via net-pay arrangement. Null when the concept doesn't apply.",
                     name: "pensionNetPay",
@@ -3332,6 +3337,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         name: {
                             type: new GraphQLNonNull(GraphQLString)
                         },
+                        pensionAssetId: {
+                            description: "Pension asset (`NetWorthCategoryAsset` of type `PENSION`) the predicted pension deductions contribute to. May only be set when at least one pension fraction is configured.",
+                            type: GraphQLID
+                        },
                         pensionNetPay: {
                             description: "Fraction (0-1) contributed via net-pay arrangement. Leave null when the concept doesn't apply.",
                             type: GraphQLFloat
@@ -3363,7 +3372,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.ukTaxCodes);
+                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes);
                     }
                 },
                 earningsDelete: {
@@ -3399,6 +3408,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         name: {
                             type: GraphQLString
                         },
+                        pensionAssetId: {
+                            description: "New linked pension asset; pass null explicitly to clear. Must be null whenever every pension fraction ends up null (after this patch applies).",
+                            type: GraphQLID
+                        },
                         pensionNetPay: {
                             type: GraphQLFloat
                         },
@@ -3427,7 +3440,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.ukTaxCodes);
+                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes);
                     }
                 },
                 investmentAllocationsSet: {

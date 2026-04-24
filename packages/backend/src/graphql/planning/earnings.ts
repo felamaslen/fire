@@ -57,6 +57,7 @@ export class PlanningEarning {
     public readonly studentLoanPlan2: boolean | null,
     public readonly toAccountId: string,
     private readonly studentLoanLiabilityId: string | null,
+    private readonly pensionAssetId: string | null,
   ) {}
 
   static load(row: typeof PlanningEarnings.$inferSelect): PlanningEarning {
@@ -79,6 +80,7 @@ export class PlanningEarning {
       row.studentLoanPlan2,
       row.toAccountId,
       row.studentLoanLiabilityId,
+      row.pensionAssetId,
     );
   }
 
@@ -89,6 +91,15 @@ export class PlanningEarning {
       this.studentLoanLiabilityId,
     );
     return NetWorthCategoryLiability.load(row);
+  }
+
+  /** Pension asset the predicted pension deductions contribute to. Null when no pension fractions are configured or no asset has been linked. @gqlField */
+  async pensionAsset(): Promise<NetWorthCategoryAsset | null> {
+    if (!this.pensionAssetId) return null;
+    const row = await model("NetWorthCategoryAssets").findById(
+      this.pensionAssetId,
+    );
+    return NetWorthCategoryAsset.load(row);
   }
 
   /** Destination planning account for the net earnings. @gqlField */
@@ -203,6 +214,8 @@ export async function earningsCreate(
   studentLoanPlan2?: boolean | null,
   /** Liability the predicted student-loan deduction pays down. May only be set when `studentLoanPlan2` is true. */
   studentLoanLiabilityId?: ID | null,
+  /** Pension asset (`NetWorthCategoryAsset` of type `PENSION`) the predicted pension deductions contribute to. May only be set when at least one pension fraction is configured. */
+  pensionAssetId?: ID | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
 ): Promise<PlanningEarning> {
   assertCountryCode(countryCode);
@@ -210,6 +223,14 @@ export async function earningsCreate(
   assert(
     studentLoanLiabilityId == null || slp2,
     "studentLoanLiabilityId may only be set when studentLoanPlan2 is true",
+  );
+  const hasPensionFraction =
+    pensionSalarySacrifice != null ||
+    pensionNetPay != null ||
+    pensionReliefAtSource != null;
+  assert(
+    pensionAssetId == null || hasPensionFraction,
+    "pensionAssetId may only be set when at least one pension fraction is configured",
   );
   const { currency, amount } = getMoneyInputFractionalAmount(amountGross);
   const row = await db.transaction(async (tx) => {
@@ -227,6 +248,7 @@ export async function earningsCreate(
         pensionNetPay: pensionNetPay ?? null,
         studentLoanPlan2: slp2,
         studentLoanLiabilityId: studentLoanLiabilityId ?? null,
+        pensionAssetId: pensionAssetId ?? null,
         toAccountId: toAccountId,
       })
       .returning();
@@ -256,6 +278,8 @@ export async function earningsUpdate(
   studentLoanPlan2?: boolean | null,
   /** New linked liability; pass null explicitly to clear. Must be null whenever `studentLoanPlan2` ends up false (after this patch applies). */
   studentLoanLiabilityId?: ID | null,
+  /** New linked pension asset; pass null explicitly to clear. Must be null whenever every pension fraction ends up null (after this patch applies). */
+  pensionAssetId?: ID | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
 ): Promise<PlanningEarning> {
   const [existing] = await db
@@ -275,6 +299,27 @@ export async function earningsUpdate(
   assert(
     nextLiabilityId == null || nextStudentLoanPlan2,
     "studentLoanLiabilityId may only be set when studentLoanPlan2 is true",
+  );
+
+  const nextPensionSacrifice =
+    pensionSalarySacrifice !== undefined
+      ? pensionSalarySacrifice
+      : existing.pensionSalarySacrifice;
+  const nextPensionNetPay =
+    pensionNetPay !== undefined ? pensionNetPay : existing.pensionNetPay;
+  const nextPensionRelief =
+    pensionReliefAtSource !== undefined
+      ? pensionReliefAtSource
+      : existing.pensionReliefAtSource;
+  const nextPensionAssetId =
+    pensionAssetId !== undefined ? pensionAssetId : existing.pensionAssetId;
+  const nextHasPensionFraction =
+    nextPensionSacrifice != null ||
+    nextPensionNetPay != null ||
+    nextPensionRelief != null;
+  assert(
+    nextPensionAssetId == null || nextHasPensionFraction,
+    "pensionAssetId may only be set when at least one pension fraction is configured",
   );
 
   let narrowedCountry: "GB" | undefined;
@@ -312,6 +357,7 @@ export async function earningsUpdate(
         ...(studentLoanLiabilityId !== undefined && {
           studentLoanLiabilityId,
         }),
+        ...(pensionAssetId !== undefined && { pensionAssetId }),
         ...(toAccountId != null && { toAccountId: toAccountId }),
         updatedAt: new Date(),
       })

@@ -718,6 +718,10 @@ type Mutation {
     end: Date
     name: String!
     """
+    Pension asset (`NetWorthCategoryAsset` of type `PENSION`) the predicted pension deductions contribute to. May only be set when at least one pension fraction is configured.
+    """
+    pensionAssetId: ID
+    """
     Fraction (0-1) contributed via net-pay arrangement. Leave null when the concept doesn't apply.
     """
     pensionNetPay: Float
@@ -754,6 +758,10 @@ type Mutation {
     end: Date
     id: ID!
     name: String
+    """
+    New linked pension asset; pass null explicitly to clear. Must be null whenever every pension fraction ends up null (after this patch applies).
+    """
+    pensionAssetId: ID
     pensionNetPay: Float
     pensionReliefAtSource: Float
     pensionSalarySacrifice: Float
@@ -1486,6 +1494,10 @@ type PlanningEarning {
   end: Date
   id: ID!
   name: String!
+  """
+  Pension asset the predicted pension deductions contribute to. Null when no pension fractions are configured or no asset has been linked.
+  """
+  pensionAsset: NetWorthCategoryAsset
   """
   Fraction of gross contributed via net-pay arrangement. Null when the concept doesn't apply.
   """
