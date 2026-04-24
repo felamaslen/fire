@@ -17,13 +17,14 @@ services:
       timeout: 3s
       retries: 10
 
-  jaeger:
-    image: jaegertracing/all-in-one:latest
+  # Single-container observability backend: Grafana (UI) + Tempo (traces) +
+  # Loki (logs) + Prometheus (metrics), fronted by an OTel collector on
+  # 4317/4318. Replaces Jaeger, which doesn't accept OTLP logs.
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
     restart: unless-stopped
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      - "16686:16686" # Jaeger UI — http://localhost:16686
+      - "3015:3000" # Grafana UI — http://localhost:3015 (anonymous admin)
       - "4318:4318" # OTLP/HTTP receiver (matches backend's OTEL_EXPORTER_OTLP_ENDPOINT default)
       - "4317:4317" # OTLP/gRPC receiver
 
@@ -37,15 +38,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      jaeger:
+      otel-lgtm:
         condition: service_started
     environment:
       NODE_ENV: development
       DATABASE_URL: postgres://fire:fire@postgres:5432/fire
       UPLOADS_DIR: /app/packages/backend/uploads
-      # Traces go to the Jaeger OTLP/HTTP receiver on the docker network.
-      OTEL_ENABLED: "true"
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      # Traces and logs go to the otel-lgtm OTLP/HTTP receiver on the docker
+      # network. Signal-specific endpoints / header envs are available too —
+      # see `src/env.ts`.
+      OTEL_ENABLED: "1"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       # Forwarded from the host's shell / `packages/backend/.env` — only set
       # if present so compose doesn't require it to exist. Leaving it unset
       # disables the `payslipParse` mutation.

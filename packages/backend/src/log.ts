@@ -1,3 +1,4 @@
+import { OpenTelemetryTransportV3 } from "@opentelemetry/winston-transport";
 import type { FastifyBaseLogger } from "fastify";
 import winston from "winston";
 
@@ -32,7 +33,13 @@ export const log = winston.createLogger({
       ? winston.format.json()
       : winston.format.combine(winston.format.colorize(), devFormat),
   ),
-  transports: [new winston.transports.Console({ handleExceptions: true })],
+  transports: [
+    new winston.transports.Console({ handleExceptions: true }),
+    // Forwards log records to the OTel LoggerProvider set up in `otel.mjs`,
+    // which exports them via OTLP/HTTP. A no-op when `OTEL_ENABLED` is false
+    // (no provider is registered, so records are dropped).
+    ...(env.OTEL_ENABLED ? [new OpenTelemetryTransportV3()] : []),
+  ],
   silent: env.NODE_ENV === "test",
 });
 
