@@ -256,6 +256,7 @@ async function loadCategories(): Promise<ForecastCategory[]> {
       kind: "asset",
       assetType: a.type,
       growthRate: a.growthRate === null ? null : Number(a.growthRate),
+      accessibleFrom: a.accessibleFrom,
     });
   }
   for (const l of liabilities) {

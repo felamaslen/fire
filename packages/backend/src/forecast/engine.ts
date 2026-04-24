@@ -39,6 +39,8 @@ export type ForecastCategory =
       growthRate?: number | null;
       /** Annualised return as a decimal (e.g. `0.08` = 8%/yr) for `STOCK` / `PENSION` portfolio wrappers. */
       xirr?: number | null;
+      /** Date from which a `PENSION` can be drawn down. When set, the post-retirement drawdown skips this pot until the month containing the date. Null or absent means "accessible now". */
+      accessibleFrom?: Date | null;
     }
   | {
       id: string;
@@ -129,6 +131,20 @@ export type ForecastResult = {
 
 function flatProjection(start: number, months: number): number[] {
   return new Array<number>(months + 1).fill(start);
+}
+
+/**
+ * Month-offset from `asOfMonthStart` to the 1st of the month containing `date`. Returns `null` when `date` is null/undefined; returns `0` when the date is already in the past (treat as "accessible now"). Capping at the forecast horizon is the caller's job.
+ */
+function monthIndexForDate(
+  date: Date | null | undefined,
+  asOfMonthStart: Date,
+): number | null {
+  if (date == null) return null;
+  const diff =
+    (date.getUTCFullYear() - asOfMonthStart.getUTCFullYear()) * 12 +
+    (date.getUTCMonth() - asOfMonthStart.getUTCMonth());
+  return Math.max(0, diff);
 }
 
 /**
@@ -280,14 +296,28 @@ function projectNonCash(
           inputs.asOfMonthStart,
         );
         const monthlyDrawdownFactor = 1 - RETIREMENT_DRAWDOWN_RATE / 12;
+        // Pension pots with a minimum access date (e.g. UK age-57 lock-in)
+        // don't begin drawdown until the month containing that date, even
+        // if the user is retired. They still grow at XIRR in the meantime.
+        const accessibleIndex = monthIndexForDate(
+          cat.kind === "asset" ? cat.accessibleFrom : null,
+          inputs.asOfMonthStart,
+        );
         const series = new Array<number>(months + 1);
         series[0] = start;
         for (let i = 1; i <= months; i++) {
           const retired = retirementIndex != null && i >= retirementIndex;
+          const accessible = accessibleIndex == null || i >= accessibleIndex;
           const grown = series[i - 1] * monthlyFactor;
-          series[i] = retired
-            ? grown * monthlyDrawdownFactor
-            : grown + contribution;
+          if (!retired) {
+            series[i] = grown + contribution;
+          } else if (accessible) {
+            series[i] = grown * monthlyDrawdownFactor;
+          } else {
+            // Retired but pot still locked: grow without drawdown, no new
+            // contributions (income has stopped).
+            series[i] = grown;
+          }
         }
         base.xirr = xirr;
         base.monthlyContribution = contribution;
@@ -407,6 +437,13 @@ function buildCashDrift(
       ) {
         const w = workings.get(cat.id);
         if (!w) continue;
+        // Skip locked pensions — if the pot can't be drawn yet, it
+        // contributes nothing to this month's cash drift.
+        const accessibleIndex = monthIndexForDate(
+          cat.accessibleFrom,
+          inputs.asOfMonthStart,
+        );
+        if (accessibleIndex != null && m < accessibleIndex) continue;
         // Drawdown is the portion of the portfolio we pulled out this month:
         // balance[m-1] grown to balance[m-1]*monthlyFactor, multiplied by
         // drawdownFraction. That's equivalent to balance[m-1] * xirrFactor *
