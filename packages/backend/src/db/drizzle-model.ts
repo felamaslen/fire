@@ -123,8 +123,9 @@ export class DrizzleModel<N extends DrizzleTableName> {
     this.loader.clear(id);
   }
 
-  /** Returns the raw Drizzle insert builder, so callers can chain `.returning()`, `.onConflictDoUpdate(...)`, etc. */
+  /** Returns the raw Drizzle insert builder, so callers can chain `.returning()`, `.onConflictDoUpdate(...)`, etc. Invalidates the entire DataLoader cache for this table on the way in: an insert (or upsert) may touch any row, and a chained `.onConflictDoUpdate` mutates an existing one — the previously-cached row would silently stay stale otherwise, because the caller never goes through `updateById`. */
   insert(row: InsertOf<N>) {
+    this.loader.clearAll();
     return insertInto(this.table, row);
   }
 
