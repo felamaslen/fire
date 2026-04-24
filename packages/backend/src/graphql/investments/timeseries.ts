@@ -379,30 +379,35 @@ export const loadTimeseries = contextAwareDataLoader(
         );
 
         return keys.map<PortfolioTimeseries>((key, keyIndex) => {
-          const data = (() => {
-            const { assetId, investmentId } = key;
-            if (assetId) {
-              if (investmentId) {
-                return { x, y: yByBoth.get(`${investmentId}|${assetId}`) };
+          const y =
+            (() => {
+              const { assetId, investmentId } = key;
+              if (assetId) {
+                if (investmentId) {
+                  return yByBoth.get(`${investmentId}|${assetId}`);
+                }
+                return yByAsset.get(assetId);
               }
-              return { x, y: yByAsset.get(assetId) };
-            }
-            if (investmentId) {
-              return { x, y: yByInvestment.get(investmentId) };
-            }
-            return { x, y: yByNone };
-          })();
-          assert(data.y, `Could not resolve Y values for key ${key}`);
-          const lastIdx = data.x.length - 1;
+              if (investmentId) {
+                return yByInvestment.get(investmentId);
+              }
+              return yByNone;
+              // An investment (or asset) with zero holdings across the whole
+              // window — e.g. fully sold before `startDate` — never populates
+              // its `yBy*` slot. Treat that as a flat-zero series rather than
+              // erroring, so `Query.portfolios` can emit a stacked edge per
+              // investment without blowing up on dormant ones.
+            })() ?? (new Array(x.length).fill(0) as number[]);
+          const lastIdx = x.length - 1;
           const liveTotal = liveByKeyIndex[keyIndex];
           return {
             currency,
-            initialDate: data.x[0],
-            points: data.x.map((date, i) => ({
-              x: differenceInDays(date, data.x[0]),
+            initialDate: x[0],
+            points: x.map((date, i) => ({
+              x: differenceInDays(date, x[0]),
               y: Math.round(
                 Money.fromMinorDenomination(
-                  i === lastIdx && liveTotal !== null ? liveTotal : data.y![i],
+                  i === lastIdx && liveTotal !== null ? liveTotal : y[i],
                   currency,
                 ).amount,
               ),
