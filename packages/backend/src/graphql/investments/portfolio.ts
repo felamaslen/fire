@@ -281,11 +281,11 @@ export class Portfolio {
     if (assets && investments) {
       for (const assetId of assets) {
         for (const investmentId of investments) {
-          keys.push({ ...base, assetId, investmentId });
+          keys.push({ ...base, assetIds: [assetId], investmentId });
         }
       }
     } else if (assets) {
-      for (const assetId of assets) keys.push({ ...base, assetId });
+      for (const assetId of assets) keys.push({ ...base, assetIds: [assetId] });
     } else if (investments) {
       for (const investmentId of investments) {
         keys.push({ ...base, investmentId });

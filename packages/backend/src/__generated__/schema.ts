@@ -387,17 +387,17 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 position: {
-                    description: "Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to a single wrapper when `filterAssetId` is supplied.",
+                    description: "Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty).",
                     name: "position",
                     type: new GraphQLNonNull(InvestmentPositionType),
                     args: {
-                        filterAssetId: {
-                            description: "When set, the position is scoped to this wrapper.",
-                            type: GraphQLID
+                        filterAssetIdIn: {
+                            description: "When set and non-empty, scopes the position to the union of these wrappers.",
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
                         }
                     },
                     resolve(source, args, context) {
-                        return source.position(context, args.filterAssetId);
+                        return source.position(context, args.filterAssetIdIn);
                     }
                 },
                 stockSplits: {

@@ -145,15 +145,18 @@ export class Investment {
     );
   }
 
-  /** Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to a single wrapper when `filterAssetId` is supplied. @gqlField */
+  /** Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). @gqlField */
   async position(
     ctx: Context,
-    /** When set, the position is scoped to this wrapper. */
-    filterAssetId?: ID | null,
+    /** When set and non-empty, scopes the position to the union of these wrappers. */
+    filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPosition> {
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
-      assetId: filterAssetId ?? undefined,
+      assetIds:
+        filterAssetIdIn && filterAssetIdIn.length > 0
+          ? (filterAssetIdIn as string[])
+          : undefined,
     });
     return new InvestmentPosition(s);
   }
@@ -313,7 +316,7 @@ export async function investments(
           rows.map(async (row) => {
             const s = await loadInvestmentStats(ctx, {
               investmentId: row.id,
-              assetId: filterAssetId ?? undefined,
+              assetIds: filterAssetId ? [filterAssetId as string] : undefined,
             });
             const totalValue = s.totalValueMinor;
             const totalGain =

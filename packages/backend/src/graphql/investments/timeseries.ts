@@ -371,7 +371,7 @@ export const loadTimeseries = contextAwareDataLoader(
               ? Promise.resolve(null)
               : loadInvestmentStats(ctx, {
                   currency,
-                  assetId: key.assetId,
+                  assetIds: key.assetId ? [key.assetId] : undefined,
                   investmentId: key.investmentId,
                   skipLive: false,
                 }).then((s) => s.totalValueMinor),

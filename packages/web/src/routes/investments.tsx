@@ -83,7 +83,7 @@ const InvestmentRowDocument = graphql(
           url
         }
       }
-      position(filterAssetId: $filterAssetId) {
+      position(filterAssetIdIn: $filterAssetIdIn) {
         units
         totalValue {
           ...Figure
@@ -112,6 +112,7 @@ export const InvestmentsListDocument = graphql(
       $first: Int
       $sort: InvestmentSort
       $filterAssetId: ID
+      $filterAssetIdIn: [ID!]
     ) {
       investments(first: $first, sort: $sort, filterAssetId: $filterAssetId) {
         edges {
@@ -608,6 +609,7 @@ function InvestmentsPageContent() {
         sort={sort}
         onSortChange={setSort}
         filterAssetId={singleFilterAssetId}
+        filterAssetIds={filterAssetIds}
       />
     </>
   );
@@ -617,10 +619,12 @@ function InvestmentsList({
   sort,
   onSortChange,
   filterAssetId,
+  filterAssetIds,
 }: {
   sort: SortState;
   onSortChange: (next: SortState) => void;
   filterAssetId: string | null;
+  filterAssetIds: string[];
 }) {
   const setSort = (updater: (prev: SortState) => SortState) =>
     onSortChange(updater(sort));
@@ -635,15 +639,23 @@ function InvestmentsList({
   const deferredKind = useDeferredValue(sort.kind);
   const deferredDir = useDeferredValue(sort.dir);
   const deferredFilterAssetId = useDeferredValue(filterAssetId);
+  const filterAssetIdsKey = filterAssetIds.join(",");
+  const deferredFilterAssetIdsKey = useDeferredValue(filterAssetIdsKey);
+  const deferredFilterAssetIdIn =
+    deferredFilterAssetIdsKey.length > 0
+      ? deferredFilterAssetIdsKey.split(",")
+      : null;
   const loading =
     deferredKind !== sort.kind ||
     deferredDir !== sort.dir ||
-    deferredFilterAssetId !== filterAssetId;
+    deferredFilterAssetId !== filterAssetId ||
+    deferredFilterAssetIdsKey !== filterAssetIdsKey;
   const { data } = useSuspenseQuery(InvestmentsListDocument, {
     variables: {
       first: 100,
       sort: toSortInput(deferredKind, deferredDir),
       filterAssetId: deferredFilterAssetId,
+      filterAssetIdIn: deferredFilterAssetIdIn,
     },
   });
   const allRows: InvestmentRowNode[] =

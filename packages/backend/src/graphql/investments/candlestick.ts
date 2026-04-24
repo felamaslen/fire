@@ -161,27 +161,13 @@ const loadOne = async (
   // historical range. `valueStart` is the bucket's first-date value and stays
   // untouched.
   if (!key.skipLive) {
-    // `loadInvestmentStats` keys on a single `assetId`, so for a multi-asset
-    // filter we load each slice and sum. The stats loader has its own
-    // request-level coalescing, so repeated slices across the page share one
-    // underlying SQL.
-    const assetSlices =
-      key.assetIds && key.assetIds.length > 0
-        ? key.assetIds.map((assetId) => ({ assetId }))
-        : [{}];
-    const stats = await Promise.all(
-      assetSlices.map((slice) =>
-        loadInvestmentStats(ctx, { currency, ...slice, skipLive: false }),
-      ),
-    );
-    let liveTotal: number | null = 0;
-    for (const s of stats) {
-      if (s.totalValueMinor === null) {
-        liveTotal = null;
-        break;
-      }
-      liveTotal += s.totalValueMinor;
-    }
+    const s = await loadInvestmentStats(ctx, {
+      currency,
+      assetIds:
+        key.assetIds && key.assetIds.length > 0 ? key.assetIds : undefined,
+      skipLive: false,
+    });
+    const liveTotal: number | null = s.totalValueMinor;
     if (liveTotal !== null) {
       const last = points[points.length - 1];
       last.valueEnd = liveTotal;

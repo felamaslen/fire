@@ -143,7 +143,7 @@ export class InvestmentWrapper {
   async position(ctx: Context): Promise<InvestmentPosition> {
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.investmentId,
-      assetId: this.assetId,
+      assetIds: [this.assetId],
     });
     return new InvestmentPosition(s);
   }

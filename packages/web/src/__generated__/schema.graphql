@@ -430,11 +430,13 @@ type Investment {
   id: ID!
   name: String!
   """
-  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to a single wrapper when `filterAssetId` is supplied.
+  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty).
   """
   position(
-    """When set, the position is scoped to this wrapper."""
-    filterAssetId: ID
+    """
+    When set and non-empty, scopes the position to the union of these wrappers.
+    """
+    filterAssetIdIn: [ID!]
   ): InvestmentPosition!
   """Stock-split events on this investment, oldest-first."""
   stockSplits: [InvestmentStockSplit!] @semanticNonNull

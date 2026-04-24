@@ -55,7 +55,8 @@ export type InvestmentStats = {
 /** Filter combination. `undefined` on any side drops that filter — so `{}` = the entire portfolio across every investment, `{investmentId}` = that stock across every portfolio, `{assetId}` = that portfolio across every stock, `{currency}` = every investment in that currency (used by `Portfolio` to avoid summing across currencies). `skipLive` toggles between the live-price and previous-close overlays for `priceLatest` and nulls out `dailyGain*`; it's part of the key because two callers that disagree on it need distinct results, but it never changes the underlying SQL — reconciliation happens in memory from the same slice rows. */
 export type InvestmentStatsFilter = {
   investmentId?: string;
-  assetId?: string;
+  /** Asset scope: union of slices whose `assetId` is in this set. Omit for the aggregate across every wrapper. */
+  assetIds?: string[];
   currency?: string;
   skipLive?: boolean;
 };
@@ -92,7 +93,8 @@ const getLoader = contextAwareDataLoader(
 );
 
 function cacheKeyFn(k: InvestmentStatsFilter): string {
-  return `${k.investmentId ?? ""}|${k.assetId ?? ""}|${k.currency ?? ""}|${k.skipLive ? "1" : "0"}`;
+  const assetIds = k.assetIds ? [...k.assetIds].sort().join(",") : "";
+  return `${k.investmentId ?? ""}|${assetIds}|${k.currency ?? ""}|${k.skipLive ? "1" : "0"}`;
 }
 
 type SliceRow = {
@@ -130,8 +132,12 @@ async function fetchSlices(
   const investmentIds = keys.every((k) => k.investmentId !== undefined)
     ? [...new Set(keys.map((k) => k.investmentId as string))]
     : null;
-  const assetIds = keys.every((k) => k.assetId !== undefined)
-    ? [...new Set(keys.map((k) => k.assetId as string))]
+  // Asset narrowing: only valid when *every* key constrains the asset
+  // dimension via a non-empty `assetIds` set. Union the per-key sets into
+  // the SQL filter. A single key that drops it would force the whole batch
+  // to scan unfiltered.
+  const assetIds = keys.every((k) => k.assetIds && k.assetIds.length > 0)
+    ? [...new Set(keys.flatMap((k) => k.assetIds ?? []))]
     : null;
   const currencies = keys.every((k) => k.currency !== undefined)
     ? [...new Set(keys.map((k) => k.currency as string))]
@@ -409,20 +415,29 @@ function selectSlices(
   ctx: SliceContext,
   key: InvestmentStatsFilter,
 ): SliceRow[] {
+  const assetSet =
+    key.assetIds && key.assetIds.length > 0 ? new Set(key.assetIds) : null;
   let candidates: SliceRow[];
-  if (key.investmentId && key.assetId) {
-    const r = ctx.byBoth.get(`${key.investmentId}|${key.assetId}`);
+  if (key.investmentId && assetSet && assetSet.size === 1) {
+    const [assetId] = key.assetIds as string[];
+    const r = ctx.byBoth.get(`${key.investmentId}|${assetId}`);
     candidates = r ? [r] : [];
   } else if (key.investmentId) {
     candidates = ctx.byInvestment.get(key.investmentId) ?? [];
-  } else if (key.assetId) {
-    candidates = ctx.byAsset.get(key.assetId) ?? [];
+  } else if (assetSet && assetSet.size === 1) {
+    const [assetId] = key.assetIds as string[];
+    candidates = ctx.byAsset.get(assetId) ?? [];
   } else {
-    // No filter → every row (including the "no transactions" placeholder
-    // rows for investments that have no txs yet; those contribute zero to
-    // every sum and no investment to the per-investment pass, so they're
-    // inert).
+    // No narrowing hit → every row (including the "no transactions"
+    // placeholder rows for investments that have no txs yet; those
+    // contribute zero to every sum and no investment to the
+    // per-investment pass, so they're inert).
     candidates = ctx.all;
+  }
+  if (assetSet && assetSet.size > 1) {
+    candidates = candidates.filter(
+      (r) => r.assetId !== null && assetSet.has(r.assetId),
+    );
   }
   // Currency filter applies even when the SQL was issued without it — a
   // batch mixing GBP and USD keys still brings back both currencies'

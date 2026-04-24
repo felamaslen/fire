@@ -44,7 +44,7 @@ import { formatAccountingMoney } from "@/lib/format";
 
 const InvestmentDetailDocument = graphql(
   `
-    query InvestmentDetail($filterAssetId: ID) {
+    query InvestmentDetail($filterAssetIdIn: [ID!]) {
       investment: investments {
         edges {
           node {
@@ -61,7 +61,7 @@ const InvestmentDetailDocument = graphql(
                 url
               }
             }
-            position(filterAssetId: $filterAssetId) {
+            position(filterAssetIdIn: $filterAssetIdIn) {
               units
               costBasis {
                 ...Figure
@@ -328,7 +328,9 @@ function InvestmentDetail({
   filterAssetIds: string[];
 }) {
   const { data } = useSuspenseQuery(InvestmentDetailDocument, {
-    variables: { filterAssetId },
+    variables: {
+      filterAssetIdIn: filterAssetIds.length > 0 ? filterAssetIds : null,
+    },
   });
   const investment = data.investment?.edges
     .map((e) => e.node)

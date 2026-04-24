@@ -55,7 +55,6 @@ const PortfolioChartDocument = graphql(
       $candlestick: Boolean!
       $stack: Boolean!
       $filterAssetIdIn: [ID!]
-      $filterAssetId: ID
     ) {
       portfolio(filterAssetIdIn: $filterAssetIdIn) {
         ...PortfolioChartPortfolio
@@ -72,7 +71,7 @@ const PortfolioChartDocument = graphql(
                   code
                 }
               }
-              position(filterAssetId: $filterAssetId) {
+              position(filterAssetIdIn: $filterAssetIdIn) {
                 totalValue {
                   amount
                 }
@@ -278,8 +277,6 @@ function PortfolioChartLoader({
   const deferredFilterAssetIds = deferredFilterKey
     ? deferredFilterKey.split(",")
     : [];
-  const singleFilterAssetId =
-    deferredFilterAssetIds.length === 1 ? deferredFilterAssetIds[0] : null;
   const pending =
     deferredPeriod !== period ||
     deferredLength !== length ||
@@ -298,7 +295,6 @@ function PortfolioChartLoader({
       stack: deferredStack,
       filterAssetIdIn:
         deferredFilterAssetIds.length > 0 ? deferredFilterAssetIds : null,
-      filterAssetId: singleFilterAssetId,
     },
   });
 

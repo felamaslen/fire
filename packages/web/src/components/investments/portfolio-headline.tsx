@@ -33,8 +33,8 @@ export const PortfolioHeadlineFragment = graphql(
  * Poll document for the headline — always with `skipLive: false` so the
  * returned Portfolio values reflect the real live-quote picture, independent
  * of the page-level query's `skipLive: true` snapshot. Also re-fetches each
- * non-sold holding's `position(filterAssetId)` so rows in the table (which
- * read `Investment:id → position(filterAssetId: X)` from Apollo's normalised
+ * non-sold holding's `position(filterAssetIdIn)` so rows in the table (which
+ * read `Investment:id → position(filterAssetIdIn: X)` from Apollo's normalised
  * cache) update in-place when the poll lands — no per-row refetch needed.
  */
 const PortfolioHeadlineLiveDocument = graphql(
@@ -47,7 +47,7 @@ const PortfolioHeadlineLiveDocument = graphql(
         edges {
           node {
             id
-            position(filterAssetId: $filterAssetId) {
+            position(filterAssetIdIn: $filterAssetIdIn) {
               units
               totalValue {
                 ...Figure
@@ -132,9 +132,9 @@ export function PortfolioHeadline({
   rightSlot?: React.ReactNode;
 }) {
   const filterAssetIdIn = filterAssetIds.length > 0 ? filterAssetIds : null;
-  // Per-row position refresh only works with a singular `filterAssetId` —
-  // when 0 or 2+ portfolios are selected, fall back to the unfiltered
-  // positions (which the investments list shows anyway).
+  // The `investments` top-level query still takes a singular filter; for the
+  // per-row position refresh we pass the same `filterAssetIdIn` so rows key
+  // into the same Apollo cache entry the list / detail use.
   const filterAssetId = filterAssetIds.length === 1 ? filterAssetIds[0] : null;
 
   // First render: read the `skipLive: true` snapshot the page-level query
