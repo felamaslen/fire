@@ -79,6 +79,25 @@ const HomeDocument = graphql(
         }
         workings {
           ...ForecastWorkings
+          milestones {
+            kind
+            date
+            categories {
+              __typename
+              ... on NetWorthCategoryAsset {
+                id
+                name
+              }
+              ... on NetWorthCategoryLiability {
+                id
+                name
+              }
+              ... on NetWorthCategoryOption {
+                id
+                name
+              }
+            }
+          }
         }
       }
       currencyDefault
@@ -129,6 +148,25 @@ function usePersistedBool(
     }
   };
   return [state, set];
+}
+
+/**
+ * Interpolate a calendar date onto the combined history + forecast chart axis. Returns the fractional index into the chart's `combined` array, or `undefined` when the date falls outside the forecast window. `forecastPoints` is already sorted by ascending date.
+ */
+function forecastDateToChartIndex(
+  target: string,
+  forecastPoints: readonly { date: string }[],
+  historyLength: number,
+): number | undefined {
+  if (forecastPoints.length === 0) return undefined;
+  const idx = forecastPoints.findIndex((p) => p.date >= target);
+  if (idx < 0) return undefined;
+  if (idx === 0) return historyLength;
+  const prev = forecastPoints[idx - 1].date;
+  const curr = forecastPoints[idx].date;
+  const span = Date.parse(curr) - Date.parse(prev);
+  const frac = span > 0 ? (Date.parse(target) - Date.parse(prev)) / span : 0;
+  return historyLength + (idx - 1) + Math.max(0, Math.min(1, frac));
 }
 
 function clampYears(n: number): number {
@@ -231,21 +269,39 @@ export function Home() {
   // the forecast is thinned to a handful of points.
   const retirementStart =
     showForecast && retirementYear != null && forecastPoints.length > 0
-      ? (() => {
-          const target = `${retirementYear}-01-01`;
-          const idx = forecastPoints.findIndex((p) => p.date >= target);
-          if (idx < 0) return undefined;
-          if (idx === 0) return historyPoints.length;
-          const prev = forecastPoints[idx - 1].date;
-          const curr = forecastPoints[idx].date;
-          const span = Date.parse(curr) - Date.parse(prev);
-          const frac =
-            span > 0 ? (Date.parse(target) - Date.parse(prev)) / span : 0;
-          return (
-            historyPoints.length + (idx - 1) + Math.max(0, Math.min(1, frac))
-          );
-        })()
+      ? forecastDateToChartIndex(
+          `${retirementYear}-01-01`,
+          forecastPoints,
+          historyPoints.length,
+        )
       : undefined;
+
+  // Milestones: loans paid off + pensions becoming accessible. Group labels
+  // within the `milestones` array are already collapsed on the backend
+  // (multiple categories on one (kind, monthIndex) entry). Drop ones that
+  // aren't in the visible forecast window.
+  const milestones = showForecast
+    ? (data.netWorthForecast?.workings.milestones ?? [])
+        .map((m) => {
+          const index = forecastDateToChartIndex(
+            m.date,
+            forecastPoints,
+            historyPoints.length,
+          );
+          if (index == null) return null;
+          const names = m.categories.map((c) => c.name).join(", ");
+          const verb = m.kind === "LOAN_PAID_OFF" ? "paid off" : "accessible";
+          const kind: "loan" | "pension" =
+            m.kind === "LOAN_PAID_OFF" ? "loan" : "pension";
+          return { index, label: `${names} ${verb}`, kind };
+        })
+        .filter(
+          (
+            m,
+          ): m is { index: number; label: string; kind: "loan" | "pension" } =>
+            m != null,
+        )
+    : undefined;
 
   const dates = combined.map((h) => new Date(`${h.date}T00:00:00Z`));
   const net = combined.map((h) => h.net.amount);
@@ -445,6 +501,7 @@ export function Home() {
             retirementStart={retirementStart}
             onRetirementDrag={onRetirementDrag}
             onRetirementDragEnd={onRetirementDragEnd}
+            milestones={milestones}
             logY={logScale}
           />
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">

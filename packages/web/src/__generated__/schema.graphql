@@ -47,6 +47,12 @@ enum NetWorthAssetType {
   VEHICLE
 }
 
+"""Kind of notable event a `NetWorthForecastMilestone` captures."""
+enum NetWorthForecastMilestoneKind {
+  LOAN_PAID_OFF
+  PENSION_ACCESSIBLE
+}
+
 """Kind of liability a category represents."""
 enum NetWorthLiabilityType {
   CREDIT_CARD
@@ -1265,6 +1271,21 @@ type NetWorthForecastLoan {
 }
 
 """
+A notable point inside the forecast horizon — e.g. a loan paid off, a pension becoming accessible. Milestones that land on the same month with the same `kind` are grouped into a single entry with multiple `categories`.
+"""
+type NetWorthForecastMilestone {
+  """
+  Net-worth categories this milestone applies to. Multiple when several pensions become accessible or several loans are paid off on the same month.
+  """
+  categories: [NetWorthCategory!]!
+  """Date at the start of the milestone month."""
+  date: Date!
+  kind: NetWorthForecastMilestoneKind!
+  """0-based index into `points` where this milestone lands."""
+  monthIndex: Int!
+}
+
+"""
 Projection for an equity-option category. Options are held flat — the forecast doesn't model vesting or price movement.
 """
 type NetWorthForecastOptionCategory {
@@ -1336,6 +1357,10 @@ Engine workings exposed so the client can show how the forecast was derived.
 type NetWorthForecastWorkings {
   """Per-category projection. Skipped liabilities drop out entirely."""
   categories: [NetWorthForecastCategory!]!
+  """
+  Notable events to surface on the chart — loans paid off, pensions becoming accessible. Sorted by `monthIndex` ascending.
+  """
+  milestones: [NetWorthForecastMilestone!]!
   """
   Retirement transition context, or `null` when no retirement year is set or it falls outside the horizon.
   """

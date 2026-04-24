@@ -112,6 +112,15 @@ export type ForecastCategoryWorkings = {
   projectedBalance: number[];
 };
 
+/** A single point-in-time event the forecast can surface on the chart — loan paid off, pension becomes accessible, etc. Milestones that land on the same month + kind are grouped into a single entry with multiple `categoryIds`. */
+export type ForecastMilestone = {
+  kind: "LOAN_PAID_OFF" | "PENSION_ACCESSIBLE";
+  /** 0-based month index into `points`. */
+  monthIndex: number;
+  /** Ids of the categories this milestone applies to — multiple when several pay off / become accessible on the same month. */
+  categoryIds: string[];
+};
+
 export type ForecastResult = {
   points: ForecastPoint[];
   workings: {
@@ -126,6 +135,8 @@ export type ForecastResult = {
     inflationRate: number;
     /** Assumed annual drawdown rate from the portfolio post-retirement, as a decimal. */
     drawdownRate: number;
+    /** Notable events inside the forecast horizon — e.g. loans paid off, pensions becoming accessible. Sorted by `monthIndex` ascending. */
+    milestones: ForecastMilestone[];
   };
 };
 
@@ -182,7 +193,10 @@ export function runForecast(inputs: ForecastInputs): ForecastResult {
   const cashIds: string[] = [];
 
   for (const cat of categories) {
-    if (cat.kind === "liability" && cat.skip) continue;
+    // Project every category — even `skip`ped liabilities — so downstream
+    // consumers (e.g. the milestone builder) can still see when a loan
+    // would be paid off. `skip` only affects aggregation and cash drift,
+    // handled in the loops below.
     const start = startingBalance.get(cat.id) ?? 0;
     const w = projectNonCash(cat, start, inputs, retirementIndex);
     workingsById.set(cat.id, w);
@@ -240,6 +254,8 @@ export function runForecast(inputs: ForecastInputs): ForecastResult {
     });
   }
 
+  const milestones = buildMilestones(inputs, workingsById);
+
   return {
     points,
     workings: {
@@ -249,8 +265,59 @@ export function runForecast(inputs: ForecastInputs): ForecastResult {
       monthlySpending,
       inflationRate: ANNUAL_INFLATION_RATE,
       drawdownRate: RETIREMENT_DRAWDOWN_RATE,
+      milestones,
     },
   };
+}
+
+/**
+ * Scan the projected workings for notable events worth pinning to the chart: loans paid off, pension pots becoming accessible. Entries on the same `(kind, monthIndex)` are grouped so a chart marker for "3 pensions unlocked Jan 2040" doesn't stack three near-identical vertical lines.
+ */
+function buildMilestones(
+  inputs: ForecastInputs,
+  workings: Map<string, ForecastCategoryWorkings>,
+): ForecastMilestone[] {
+  const byKey = new Map<string, ForecastMilestone>();
+  const push = (
+    kind: ForecastMilestone["kind"],
+    monthIndex: number,
+    categoryId: string,
+  ) => {
+    const key = `${kind}|${monthIndex}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.categoryIds.push(categoryId);
+    } else {
+      byKey.set(key, { kind, monthIndex, categoryIds: [categoryId] });
+    }
+  };
+
+  for (const cat of inputs.categories) {
+    if (cat.kind === "liability" && cat.liabilityType === "LOAN") {
+      // Milestones include `skip`ped loans — the user may have hidden them
+      // from aggregates but still wants to see "loan paid off" on the chart.
+      const w = workings.get(cat.id);
+      if (!w) continue;
+      const series = w.projectedBalance;
+      if (series[0] <= 0) continue;
+      for (let m = 1; m < series.length; m++) {
+        if (series[m] <= 0 && series[m - 1] > 0) {
+          push("LOAN_PAID_OFF", m, cat.id);
+          break;
+        }
+      }
+    }
+    if (cat.kind === "asset" && cat.assetType === "PENSION") {
+      const idx = monthIndexForDate(cat.accessibleFrom, inputs.asOfMonthStart);
+      // Skip pensions already accessible (idx === 0) and ones outside the
+      // horizon — no marker to paint for either.
+      if (idx != null && idx > 0 && idx <= inputs.months) {
+        push("PENSION_ACCESSIBLE", idx, cat.id);
+      }
+    }
+  }
+
+  return [...byKey.values()].sort((a, b) => a.monthIndex - b.monthIndex);
 }
 
 /**

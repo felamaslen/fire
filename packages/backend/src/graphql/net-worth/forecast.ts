@@ -142,12 +142,31 @@ export type NetWorthForecastRetirement = {
   drawdownRate: Float;
 };
 
+/** Kind of notable event a `NetWorthForecastMilestone` captures. @gqlEnum */
+export type NetWorthForecastMilestoneKind =
+  | "LOAN_PAID_OFF"
+  | "PENSION_ACCESSIBLE";
+
+/** A notable point inside the forecast horizon — e.g. a loan paid off, a pension becoming accessible. Milestones that land on the same month with the same `kind` are grouped into a single entry with multiple `categories`. @gqlType */
+export type NetWorthForecastMilestone = {
+  /** @gqlField */
+  kind: NetWorthForecastMilestoneKind;
+  /** 0-based index into `points` where this milestone lands. @gqlField */
+  monthIndex: Int;
+  /** Date at the start of the milestone month. @gqlField */
+  date: CalendarDate;
+  /** Net-worth categories this milestone applies to. Multiple when several pensions become accessible or several loans are paid off on the same month. @gqlField */
+  categories: NetWorthCategory[];
+};
+
 /** Engine workings exposed so the client can show how the forecast was derived. @gqlType */
 export type NetWorthForecastWorkings = {
   /** Per-category projection. Skipped liabilities drop out entirely. @gqlField */
   categories: NetWorthForecastCategory[];
   /** Retirement transition context, or `null` when no retirement year is set or it falls outside the horizon. @gqlField */
   retirement: NetWorthForecastRetirement | null;
+  /** Notable events to surface on the chart — loans paid off, pensions becoming accessible. Sorted by `monthIndex` ascending. @gqlField */
+  milestones: NetWorthForecastMilestone[];
 };
 
 /** Monthly net-worth forecast over the requested horizon. `points` matches the shape of `netWorthHistory` so the two can be concatenated on the client. @gqlType */
@@ -309,11 +328,23 @@ export async function netWorthForecast(
         }
       : null;
 
+  const milestones: NetWorthForecastMilestone[] = workings.milestones.map(
+    (m) => ({
+      kind: m.kind,
+      monthIndex: m.monthIndex,
+      date: points[m.monthIndex].date as CalendarDate,
+      categories: m.categoryIds
+        .map((id) => loadedCategories.get(id))
+        .filter((c): c is NetWorthCategory => c != null),
+    }),
+  );
+
   return {
     points: sampledPoints,
     workings: {
       categories: projectedCategories,
       retirement,
+      milestones,
     },
   };
 }

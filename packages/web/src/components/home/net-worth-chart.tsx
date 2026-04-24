@@ -1,6 +1,11 @@
-import { GripVertical } from "lucide-react";
+import { CircleCheck, GripVertical, LockOpen } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import {
   formatAccountingMoney,
@@ -45,6 +50,13 @@ export type NetWorthChartSeries = {
   tooltipValues?: number[];
 };
 
+/** A single pinned event on the chart. `index` is a fractional index into `points`. The chart picks an icon + colour based on `kind` and wraps it in a shadcn Tooltip showing `label`. */
+export type ChartMilestone = {
+  index: number;
+  label: string;
+  kind: "loan" | "pension";
+};
+
 type Props = {
   /** Snapshot dates, in plot order. */
   points: Date[];
@@ -75,6 +87,12 @@ type Props = {
    */
   onRetirementDrag?: (date: Date) => void;
   onRetirementDragEnd?: (date: Date) => void;
+  /**
+   * Notable events to pin on the chart — e.g. loans paid off, pensions
+   * becoming accessible. Rendered as thin dashed vertical markers with
+   * a short label. Fractional index; the caller interpolates.
+   */
+  milestones?: ChartMilestone[];
   /**
    * When true, the y-axis is rendered on a log10 scale. Zero and
    * negative values are clamped to the lowest tick for display, and
@@ -172,6 +190,7 @@ export function NetWorthChart({
   retirementStart,
   onRetirementDrag,
   onRetirementDragEnd,
+  milestones,
   logY = false,
 }: Props) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -741,6 +760,47 @@ export function NetWorthChart({
             setHoverIdx(bestIdx);
           }}
         />
+
+        {milestones?.map((m, i) => {
+          if (m.index <= 0 || m.index >= points.length) return null;
+          const markerX = xScale(m.index);
+          const iconSize = 14;
+          const boxSize = 18;
+          const boxX = markerX - boxSize / 2;
+          const boxY = AXIS_PAD_TOP + 2;
+          const Icon = m.kind === "loan" ? CircleCheck : LockOpen;
+          // Liabilities + pensions share the chart's existing palette:
+          // deep crimson for loans (matches the liabilities line), deep
+          // blue for pensions (matches the pension stack band).
+          const colorClass =
+            m.kind === "loan" ? "text-[#8f1a1a]" : "text-[#1a5490]";
+          return (
+            <foreignObject
+              key={i}
+              x={boxX}
+              y={boxY}
+              width={boxSize}
+              height={boxSize}
+              style={{ overflow: "visible" }}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={m.label}
+                    className={cn(
+                      "flex h-full w-full cursor-help items-center justify-center",
+                      colorClass,
+                    )}
+                  >
+                    <Icon size={iconSize} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{m.label}</TooltipContent>
+              </Tooltip>
+            </foreignObject>
+          );
+        })}
 
         {retirementStart != null &&
           retirementStart > 0 &&
