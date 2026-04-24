@@ -40,6 +40,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { graphql, type ResultOf } from "@/graphql";
+import { formatAccountingMoney } from "@/lib/format";
 
 const InvestmentDetailDocument = graphql(
   `
@@ -587,6 +588,10 @@ function TransactionsSection({
                   {t.date}
                 </span>
                 <span className="shrink-0 text-sm tabular-nums">
+                  <span className="hidden text-muted-foreground sm:inline">
+                    {formatAccountingMoney(currency, t.units * t.price.amount)}
+                    {" · "}
+                  </span>
                   {t.units}u @ <Figure data={t.price} />
                   {t.drip && (
                     <span className="ml-1 text-xs text-muted-foreground">
