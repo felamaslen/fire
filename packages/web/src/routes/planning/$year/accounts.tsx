@@ -1,6 +1,24 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { GripVertical } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { DeleteButton } from "@/components/delete-button";
@@ -19,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/cn";
 
 import { graphql, type ResultOf } from "../../../graphql";
 import { PlanningYearViewDocument } from "../$year";
@@ -67,6 +86,14 @@ const PlanningAccountUnassignDocument = graphql(`
   }
 `);
 
+const PlanningAccountReorderDocument = graphql(`
+  mutation PlanningAccountReorder($id: ID!, $position: Int!) {
+    planningAccountReorder(id: $id, position: $position) {
+      id
+    }
+  }
+`);
+
 export const Route = createFileRoute("/planning/$year/accounts")({
   component: PlanningAccountsDialog,
 });
@@ -101,7 +128,53 @@ function PlanningAccountsDialog() {
     { query: PlanningYearViewDocument, variables: { id: year } },
   ];
 
-  const accounts: Account[] = data.planningYear?.accounts ?? [];
+  const serverAccounts: Account[] = data.planningYear?.accounts ?? [];
+  const serverById = new Map(serverAccounts.map((a) => [a.id, a]));
+  // Local state holds only the **order** of ids so dnd-kit can commit the
+  // new slot optimistically on drop without waiting for the refetch. Field
+  // data (name, alias, …) is looked up fresh from the server on every
+  // render — so an alias edit elsewhere flows through without us having to
+  // merge state by hand.
+  const [orderIds, setOrderIds] = useState<string[]>(() =>
+    serverAccounts.map((a) => a.id),
+  );
+  // Resync local order only when the *set* of ids changes (assign / unassign).
+  // Name changes or a server reorder that matches the local order are both
+  // no-ops — using the sorted key here means we ignore pure-order diffs too,
+  // so a refetch that lands with the same ids in a different order doesn't
+  // stomp on an in-flight optimistic reorder.
+  const serverIdSetKey = [...serverById.keys()].sort().join(",");
+  const orderIdSetKey = [...orderIds].sort().join(",");
+  useEffect(() => {
+    if (serverIdSetKey !== orderIdSetKey) {
+      setOrderIds(serverAccounts.map((a) => a.id));
+    }
+  }, [serverIdSetKey, orderIdSetKey, serverAccounts]);
+  const accounts: Account[] = orderIds
+    .map((id) => serverById.get(id))
+    .filter((a): a is Account => a != null);
+
+  const [reorder] = useMutation(PlanningAccountReorderDocument, {
+    refetchQueries: refetch,
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  const onDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = orderIds.indexOf(String(active.id));
+    const to = orderIds.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    setOrderIds((ids) => arrayMove(ids, from, to));
+    await reorder({ variables: { id: String(active.id), position: to } });
+  };
+
   const assignedIds = new Set(accounts.map((a) => a.asset.id));
   const available: AssetOption[] = (data.netWorthCategories?.edges ?? [])
     .map((e) => e.node)
@@ -127,16 +200,27 @@ function PlanningAccountsDialog() {
           <DialogTitle>Planning accounts</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <ul className="divide-y rounded-md border">
-            {accounts.length === 0 && (
-              <li className="px-3 py-6 text-center text-sm text-muted-foreground">
-                No accounts yet.
-              </li>
-            )}
-            {accounts.map((a) => (
-              <AccountRow key={a.id} account={a} refetch={refetch} />
-            ))}
-          </ul>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={onDragEnd}
+          >
+            <SortableContext
+              items={accounts.map((a) => a.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ul className="divide-y rounded-md border">
+                {accounts.length === 0 && (
+                  <li className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    No accounts yet.
+                  </li>
+                )}
+                {accounts.map((a) => (
+                  <AccountRow key={a.id} account={a} refetch={refetch} />
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
           <AddAccountForm options={available} refetch={refetch} />
         </div>
         <div className="flex justify-end">
@@ -156,6 +240,15 @@ function AccountRow({
   account: Account;
   refetch: RefetchEntry[];
 }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: account.id });
+
   const hasAlias = account.name !== account.asset.name;
   const [alias, setAlias] = useState(hasAlias ? account.name : "");
   const [assign, assignState] = useMutation(PlanningAccountAssignDocument, {
@@ -185,7 +278,28 @@ function AccountRow({
   };
 
   return (
-    <li className="flex items-center gap-2 px-3 py-2">
+    <li
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+      className={cn(
+        "group/row relative flex items-center gap-2 bg-background px-3 py-2",
+        // `dnd-kit` lifts the dragged item above siblings — bump z-index so
+        // its shadow sits on top of the neighbours it's passing over.
+        isDragging && "z-10 shadow-md",
+      )}
+    >
+      <button
+        type="button"
+        aria-label="Drag to reorder"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 cursor-grab self-start pt-1 text-muted-foreground/60 hover:text-foreground active:cursor-grabbing"
+      >
+        <GripVertical className="size-4" />
+      </button>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{account.asset.name}</div>
         <div className="mt-1 flex items-center gap-2">
