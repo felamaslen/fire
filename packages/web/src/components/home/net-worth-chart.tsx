@@ -1,5 +1,11 @@
 import { CircleCheck, GripVertical, LockOpen } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import {
   Tooltip,
@@ -102,10 +108,29 @@ type Props = {
   logY?: boolean;
 };
 
-const AXIS_PAD_LEFT = 86;
+const AXIS_PAD_LEFT_MOBILE = 44;
+const AXIS_PAD_LEFT_DESKTOP = 86;
 const AXIS_PAD_RIGHT = 16;
 const AXIS_PAD_TOP = 12;
 const AXIS_PAD_BOTTOM = 36;
+
+// Mirror Tailwind's `sm:` breakpoint by reading `--breakpoint-sm` at
+// module load — keeps the media query in lockstep with `sm:` utility
+// classes. Module-scoped so every chart instance shares the same
+// `MediaQueryList` and listener set.
+const smMediaQuery = (() => {
+  if (typeof window === "undefined") return null;
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue("--breakpoint-sm")
+    .trim();
+  return window.matchMedia(`(min-width: ${raw || "40rem"})`);
+})();
+const subscribeSmBreakpoint = (onChange: () => void) => {
+  if (!smMediaQuery) return () => {};
+  smMediaQuery.addEventListener("change", onChange);
+  return () => smMediaQuery.removeEventListener("change", onChange);
+};
+const getSmBreakpointMatch = () => smMediaQuery?.matches ?? false;
 
 function shortDate(d: Date): string {
   return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
@@ -198,25 +223,40 @@ export function NetWorthChart({
   // and text stays crisp without aspect-ratio-based scaling. On mobile we
   // fall back to a square-ish aspect; on desktop the height is constant
   // (see the wrapping div's Tailwind classes).
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [measured, setMeasured] = useState<{ w: number; h: number }>({
-    w: widthProp ?? 800,
-    h: heightProp,
-  });
-  useEffect(() => {
-    if (widthProp != null || !containerRef.current) return;
-    const el = containerRef.current;
-    const ro = new ResizeObserver(() => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (w > 0 && h > 0) setMeasured({ w, h });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [widthProp]);
-  const width = widthProp ?? measured.w;
-  const height = widthProp != null ? heightProp : measured.h;
+  const subscribeSize = useCallback(
+    (onChange: () => void) => {
+      if (widthProp != null || !containerEl) return () => {};
+      const ro = new ResizeObserver(onChange);
+      ro.observe(containerEl);
+      return () => ro.disconnect();
+    },
+    [containerEl, widthProp],
+  );
+  // Encode the snapshot as a string so `useSyncExternalStore`'s === bail-out
+  // works — two reads with the same dimensions compare equal without a cache.
+  const getSize = useCallback(
+    () =>
+      containerEl
+        ? `${containerEl.clientWidth}x${containerEl.clientHeight}`
+        : `${widthProp ?? 800}x${heightProp}`,
+    [containerEl, widthProp, heightProp],
+  );
+  const sizeKey = useSyncExternalStore(subscribeSize, getSize, getSize);
+  const [measuredW, measuredH] = sizeKey.split("x").map(Number);
+  const width = widthProp ?? measuredW;
+  const height = widthProp != null ? heightProp : measuredH;
+  // Mirror Tailwind's `sm:` breakpoint (40rem) via matchMedia — keeps the
+  // padding switch tied to viewport width, not the chart's own width.
+  const isDesktop = useSyncExternalStore(
+    subscribeSmBreakpoint,
+    getSmBreakpointMatch,
+    () => false,
+  );
+  const AXIS_PAD_LEFT = isDesktop
+    ? AXIS_PAD_LEFT_DESKTOP
+    : AXIS_PAD_LEFT_MOBILE;
 
   const {
     xScale,
@@ -434,7 +474,7 @@ export function NetWorthChart({
 
   return (
     <div
-      ref={containerRef}
+      ref={setContainerEl}
       className={cn(
         "w-full",
         // Mobile: keep the historical 800 : 420 aspect so the chart
@@ -448,7 +488,7 @@ export function NetWorthChart({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
-        className="block h-full w-full overflow-visible"
+        className="block h-full w-full overflow-visible text-[10px] tabular-nums sm:text-[13px]"
       >
         {yTicks.map((v) => (
           <g key={`y${v}`}>
@@ -464,7 +504,7 @@ export function NetWorthChart({
               x={AXIS_PAD_LEFT - 6}
               y={yScale(v) + 3}
               textAnchor="end"
-              className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums"
+              className="fill-muted-foreground"
             >
               {formatAccountingMoney(currency, v, { compact: true })}
             </text>
@@ -477,7 +517,7 @@ export function NetWorthChart({
             x={t.x}
             y={height - 8}
             textAnchor="middle"
-            className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
+            className="fill-muted-foreground"
           >
             {t.label}
           </text>
@@ -622,7 +662,7 @@ export function NetWorthChart({
                   className="fill-popover stroke-border"
                   strokeWidth={1}
                 />
-                <g className="fill-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums">
+                <g className="fill-foreground">
                   <text x={boxX + 14} y={boxY + 26} className="font-medium">
                     {fullDate(date)}
                   </text>
@@ -693,7 +733,7 @@ export function NetWorthChart({
                 <text
                   x={markerX + 4}
                   y={AXIS_PAD_TOP + 10}
-                  className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
+                  className="fill-muted-foreground"
                 >
                   Forecast →
                 </text>
@@ -720,7 +760,7 @@ export function NetWorthChart({
                 <text
                   x={markerX + 4}
                   y={AXIS_PAD_TOP + 10}
-                  className="fill-muted-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px]"
+                  className="fill-muted-foreground"
                 >
                   Retirement →
                 </text>
