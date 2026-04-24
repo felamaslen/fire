@@ -29,12 +29,14 @@ function parseHeaders(raw) {
 }
 
 if (process.env.OTEL_ENABLED === "true" || process.env.OTEL_ENABLED === "1") {
+  // `||` not `??`: compose's `${VAR:-}` default forwards an empty string for
+  // unset host vars, and we want those to fall through to the defaults.
   const base =
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "http://localhost:4318";
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://localhost:4318";
   const tracesEndpoint =
-    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? `${base}/v1/traces`;
+    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || `${base}/v1/traces`;
   const logsEndpoint =
-    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ?? `${base}/v1/logs`;
+    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT || `${base}/v1/logs`;
 
   // Signal-specific header envs override the generic `OTEL_EXPORTER_OTLP_HEADERS`.
   const commonHeaders = parseHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);

@@ -14,7 +14,21 @@ services:
       UPLOADS_DIR: /data/uploads
       YAHOO_CACHE_PATH: /data/cache/yahoo.json
       PORT: 4000
-      OTEL_ENABLED: "false"
+      # OTel config flows in from the host's `.env` (or shell). Defaults to
+      # off so the backend doesn't silently depend on a running collector.
+      # Point `OTEL_EXPORTER_OTLP_ENDPOINT` at a hosted collector (e.g.
+      # Sentry, Grafana Cloud) and set `OTEL_EXPORTER_OTLP_HEADERS` with
+      # the auth header — see `packages/backend/src/env.ts` for the full
+      # list of supported signal-specific overrides.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: ${OTEL_EXPORTER_OTLP_TRACES_HEADERS:-}
+      OTEL_EXPORTER_OTLP_LOGS_HEADERS: ${OTEL_EXPORTER_OTLP_LOGS_HEADERS:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       AUTH_SECRET: ${AUTH_SECRET:-}
       AUTH_PIN: ${AUTH_PIN:-}

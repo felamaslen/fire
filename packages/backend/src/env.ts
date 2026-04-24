@@ -39,4 +39,11 @@ const schema = z.object({
   AUTH_SECRET: z.string().min(32),
 });
 
-export const env = schema.parse(process.env);
+// Strip empty-string values so compose's `${VAR:-}` pass-through (which forwards
+// an empty string when the host var is unset) falls through to zod's `.default()`
+// or `.optional()` instead of being accepted as a real value.
+const rawEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([, v]) => v !== ""),
+);
+
+export const env = schema.parse(rawEnv);
