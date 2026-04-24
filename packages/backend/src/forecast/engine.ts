@@ -75,6 +75,8 @@ export type ForecastInputs = {
   monthlyIncome?: number;
   /** EWMA of monthly spending (credit-card EWMA + non-liability bills, monthlified) in home-currency minor units. Drives the post-retirement cash drawdown; inflated at `ANNUAL_INFLATION_RATE` per year after retirement. */
   monthlySpending?: number;
+  /** Annual HMRC self-assessment refund from higher/additional-rate pension-relief claims — lands as a lump sum in the earner's cash account once per year. Applied at months 12, 24, ... pre-retirement; skipped at / after the retirement month (no income, no refund). */
+  annualSelfAssessmentRefund?: number;
 };
 
 export type ForecastPoint = {
@@ -173,21 +175,20 @@ export function runForecast(inputs: ForecastInputs): ForecastResult {
     }
   }
 
-  // Post-retirement cash drift. For each month at or after `retirementIndex`,
-  // cash absorbs the portfolio drawdown minus inflation-adjusted spending and
-  // the ongoing bill-funded loan repayments (which are actually paid *from*
-  // cash in the real world; pre-retirement we handwave this because income
-  // covers it). We distribute the drift across CASH categories in proportion
-  // to their starting balance — or evenly if all are zero.
-  if (retirementIndex != null) {
-    const cashDrift = computeCashDrift(
-      inputs,
-      workingsById,
-      retirementIndex,
-      monthlySpending,
-    );
-    distributeDriftAcrossCash(cashIds, workingsById, cashDrift);
-  }
+  // Cash drift combines:
+  //   - Pre-retirement: an annual lump-sum bump on each 12-month anniversary
+  //     representing the self-assessment refund landing in the bank.
+  //   - Post-retirement: portfolio drawdown minus inflation-adjusted
+  //     spending minus ongoing bill-funded loan repayments.
+  // Distributed across CASH categories in proportion to their starting
+  // balance (or onto the first one if every cash balance is zero).
+  const cashDrift = buildCashDrift(
+    inputs,
+    workingsById,
+    retirementIndex,
+    monthlySpending,
+  );
+  distributeDriftAcrossCash(cashIds, workingsById, cashDrift);
 
   const points: ForecastPoint[] = [];
   for (let m = 0; m <= months; m++) {
@@ -371,19 +372,32 @@ function projectLoanWithRetirement(
 }
 
 /**
- * Compute the per-month cash delta at and after `retirementIndex`. Returns an array of length `months + 1`; indices before `retirementIndex` are 0 (cash held flat). Each post-retirement index is the drawdown inflow (4%/12 of that month's portfolio balance, pre-growth) minus inflation-adjusted spending minus bill-funded loan repayments actually paid from cash.
+ * Cumulative per-month cash delta across the whole horizon. Combines:
+ *   - Pre-retirement: a lump-sum `annualSelfAssessmentRefund` bump at each 12-month anniversary (months 12, 24, …) up to — but not including — `retirementIndex`. Other pre-retirement months are zero.
+ *   - Post-retirement: drawdown (≈ `RETIREMENT_DRAWDOWN_RATE/12` of each portfolio's balance) minus inflation-adjusted spending minus bill-funded loan repayments that still have a balance to pay.
  */
-function computeCashDrift(
+function buildCashDrift(
   inputs: ForecastInputs,
   workings: Map<string, ForecastCategoryWorkings>,
-  retirementIndex: number,
+  retirementIndex: number | null,
   monthlySpending: number,
 ): number[] {
   const drift = new Array<number>(inputs.months + 1).fill(0);
   const monthlyInflationFactor = Math.pow(1 + ANNUAL_INFLATION_RATE, 1 / 12);
   const drawdownFraction = RETIREMENT_DRAWDOWN_RATE / 12;
+  const annualSaRefund = inputs.annualSelfAssessmentRefund ?? 0;
+  const preRetirementEnd =
+    retirementIndex == null ? inputs.months + 1 : retirementIndex;
 
-  for (let m = retirementIndex; m <= inputs.months; m++) {
+  for (let m = 1; m <= inputs.months; m++) {
+    if (m < preRetirementEnd) {
+      // Pre-retirement: cash is flat except for the annual SA refund
+      // lump sum landing on each 12-month anniversary.
+      const bump = m % 12 === 0 ? annualSaRefund : 0;
+      drift[m] = drift[m - 1] + bump;
+      continue;
+    }
+    // Post-retirement.
     let drawdown = 0;
     let loanRepayments = 0;
     for (const cat of inputs.categories) {
@@ -419,8 +433,8 @@ function computeCashDrift(
         }
       }
     }
-    // Spending inflates continuously from the retirement transition.
-    const monthsSinceRetirement = m - retirementIndex;
+    const monthsSinceRetirement =
+      retirementIndex == null ? 0 : m - retirementIndex;
     const inflatedSpending =
       monthlySpending * Math.pow(monthlyInflationFactor, monthsSinceRetirement);
     drift[m] = drift[m - 1] + drawdown - loanRepayments - inflatedSpending;

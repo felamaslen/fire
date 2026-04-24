@@ -36,6 +36,7 @@ import { computeUKTake } from "../graphql/planning/tax";
 import { type ForecastCategory, type ForecastInputs } from "./engine";
 import {
   creditCardEwmaSpend,
+  ewmaMonthlyContribution,
   type InvestmentTx,
   type LiabilityBill,
   type LiabilityTx,
@@ -62,10 +63,9 @@ export async function loadForecastInputs(
     loanBills,
     loanPayslipAdjustments,
     { portfolioInvestmentTxs, portfolioAssetIds },
-    portfolioContributionTxs,
+    contributionRows,
     creditCardTxs,
     nonLiabilityBills,
-    earningsForecast,
     settingsRow,
   ] = await Promise.all([
     loadCategories(),
@@ -74,12 +74,49 @@ export async function loadForecastInputs(
     loadLoanBills(),
     loadLoanPayslipAdjustments(ewmaCutoff),
     loadPortfolioInvestmentTxs(),
-    loadPortfolioContributionTxs(ewmaCutoff),
+    loadPortfolioContributionRows(ewmaCutoff),
     loadCreditCardTxs(ewmaCutoff),
     loadNonLiabilityBills(asOfDate),
-    loadPredictedEarningsForecast(asOfDate),
     model("AppSettings").findByIdOrNull(true),
   ]);
+
+  // Manual pension contributions (raw user-recorded outflows) need two
+  // treatments to account for RAS-style relief:
+  //   1. The pension pot grows by 1.25× the outflow — basic-rate relief
+  //      HMRC pays directly to the provider.
+  //   2. For a 40%/45% earner, the extra relief above basic rate is
+  //      reclaimed via self-assessment. We attribute each manual contrib
+  //      to the earning whose `toAccountId` matches the tx's `accountId`
+  //      (i.e. "<person> paid My pension from the cash account My job salary lands
+  //      in"). See `loadPredictedEarningsForecast`.
+  const pensionAssetIds = new Set(
+    categories
+      .filter((c) => c.kind === "asset" && c.assetType === "PENSION")
+      .map((c) => c.id),
+  );
+  const portfolioContributionTxs = new Map<string, LiabilityTx[]>();
+  for (const r of contributionRows) {
+    const arr = portfolioContributionTxs.get(r.assetId) ?? [];
+    // Basic-rate gross-up applies to PENSION wrappers only — stock/ISA
+    // contributions aren't relieved.
+    const amount = pensionAssetIds.has(r.assetId)
+      ? r.amount / (1 - 0.2)
+      : r.amount;
+    arr.push({ date: r.date, amount });
+    portfolioContributionTxs.set(r.assetId, arr);
+  }
+  const manualPensionContribsByAccount = new Map<string, LiabilityTx[]>();
+  for (const r of contributionRows) {
+    if (!pensionAssetIds.has(r.assetId)) continue;
+    const arr = manualPensionContribsByAccount.get(r.accountId) ?? [];
+    arr.push({ date: r.date, amount: r.amount });
+    manualPensionContribsByAccount.set(r.accountId, arr);
+  }
+
+  const earningsForecast = await loadPredictedEarningsForecast(
+    asOfDate,
+    manualPensionContribsByAccount,
+  );
   const monthlyIncome = earningsForecast.monthlyIncome;
 
   // Compute XIRR per STOCK / PENSION wrapper, using that wrapper's
@@ -163,6 +200,7 @@ export async function loadForecastInputs(
     retirementYear,
     monthlyIncome,
     monthlySpending,
+    annualSelfAssessmentRefund: earningsForecast.annualSelfAssessmentRefund,
   };
 }
 
@@ -383,13 +421,21 @@ async function loadPortfolioInvestmentTxs(): Promise<{
   };
 }
 
-/** Per-wrapper contribution transactions — `PlanningTransactions` with an `assetId` set. Each row is a cash outflow from a planning account into the wrapper's investments; the forecast EWMAs `|amount|` per month to project ongoing contributions. */
-async function loadPortfolioContributionTxs(
+/** Raw per-row contribution transactions — `PlanningTransactions` with an `assetId` set. Each row is a cash outflow from `accountId` into the wrapper's investments. The caller groups these by `assetId` (for per-wrapper EWMA) and by `accountId` (for per-payer pension-relief attribution). */
+type PortfolioContributionRow = {
+  assetId: string;
+  accountId: string;
+  date: Date;
+  amount: number;
+};
+
+async function loadPortfolioContributionRows(
   cutoff: Date,
-): Promise<Map<string, LiabilityTx[]>> {
+): Promise<PortfolioContributionRow[]> {
   const rows = await db
     .select({
       assetId: PlanningTransactions.assetId,
+      accountId: PlanningTransactions.accountId,
       date: PlanningTransactions.date,
       amount: PlanningTransactions.amount,
     })
@@ -401,12 +447,15 @@ async function loadPortfolioContributionTxs(
         eq(PlanningTransactions.currency, HOME_CURRENCY),
       ),
     );
-  const out = new Map<string, LiabilityTx[]>();
+  const out: PortfolioContributionRow[] = [];
   for (const r of rows) {
     if (!r.assetId) continue;
-    const arr = out.get(r.assetId) ?? [];
-    arr.push({ date: r.date, amount: r.amount });
-    out.set(r.assetId, arr);
+    out.push({
+      assetId: r.assetId,
+      accountId: r.accountId,
+      date: r.date,
+      amount: r.amount,
+    });
   }
   return out;
 }
@@ -504,12 +553,14 @@ async function loadNonLiabilityBills(asOfDate: Date): Promise<LiabilityBill[]> {
 }
 
 type PredictedEarningsForecast = {
-  /** Monthly net income landing in cash accounts, summed across all active earnings. */
+  /** Monthly net income landing in cash accounts, summed across all active earnings. Excludes the annual self-assessment refund (see `annualSelfAssessmentRefund`). */
   monthlyIncome: number;
   /** Monthly pension contribution into a specific pension asset (`NetWorthCategoryAsset` of type `PENSION`), by asset id. Grossed up to include HMRC relief-at-source top-up. */
   monthlyPensionByAssetId: Map<string, number>;
   /** Monthly student-loan payroll deduction paid against a specific loan liability (`NetWorthCategoryLiability`), by liability id. Synthesised from the earning's tax calc; only populated for earnings with `studentLoanPlan2 = true` and a linked `studentLoanLiabilityId`. */
   monthlyStudentLoanByLiabilityId: Map<string, number>;
+  /** Annual higher/additional-rate pension-relief refund claimed via self-assessment, summed across all active earnings. Lands as a lump sum on each 12-month anniversary pre-retirement. */
+  annualSelfAssessmentRefund: number;
 };
 
 /**
@@ -523,6 +574,8 @@ type PredictedEarningsForecast = {
  */
 async function loadPredictedEarningsForecast(
   asOfDate: Date,
+  /** Manual (user-recorded) pension contribs routed to a PENSION asset, keyed by the source cash account id. Used to attribute the RAS basic-rate gross-up + self-assessment higher-rate relief to the earning paid into that account. Amounts are raw (negative) cash outflows — the owner's net contribution before HMRC's 25% top-up. */
+  manualPensionContribsByAccount: Map<string, readonly LiabilityTx[]>,
 ): Promise<PredictedEarningsForecast> {
   // UK financial year starts 6 April; at the schema level we identify years
   // by the calendar year they start in (FY25/26 → 2025).
@@ -559,11 +612,13 @@ async function loadPredictedEarningsForecast(
   ]);
   const monthlyPensionByAssetId = new Map<string, number>();
   const monthlyStudentLoanByLiabilityId = new Map<string, number>();
+  let annualSelfAssessmentRefund = 0;
   if (!rates) {
     return {
       monthlyIncome: 0,
       monthlyPensionByAssetId,
       monthlyStudentLoanByLiabilityId,
+      annualSelfAssessmentRefund,
     };
   }
 
@@ -615,6 +670,8 @@ async function loadPredictedEarningsForecast(
     // drops out of the projected net worth. This mirrors how unlinked
     // student-loan deductions are treated (repayment happens but the
     // forecast doesn't show the liability paydown).
+    const rasGrossUp = 1 / (1 - rates.rateBasic);
+    let rasGrossedUpFromEarning = 0;
     if (earning.pensionAssetId != null) {
       // Contributions into the pension pot per year:
       //   - Salary sacrifice: full sacrifice amount (already gross — paid
@@ -626,35 +683,46 @@ async function loadPredictedEarningsForecast(
       const postSacrifice = earning.amountGross - sac;
       const netPayAmt = Math.round(postSacrifice * netPayFrac);
       const reliefAmt = Math.round(postSacrifice * reliefFrac);
-      const rasGrossUp = 1 / (1 - rates.rateBasic);
-      const rasGrossedUpAnnual = reliefAmt * rasGrossUp;
-      const annualPension = sac + netPayAmt + rasGrossedUpAnnual;
+      rasGrossedUpFromEarning = reliefAmt * rasGrossUp;
+      const annualPension = sac + netPayAmt + rasGrossedUpFromEarning;
       const monthly = annualPension / 12;
       const prev = monthlyPensionByAssetId.get(earning.pensionAssetId) ?? 0;
       monthlyPensionByAssetId.set(earning.pensionAssetId, prev + monthly);
+    }
 
-      // Higher/additional-rate relief is claimed via self-assessment: the
-      // basic-rate band is extended by the grossed-up RAS amount, so
-      // income that PAYE taxed at 40%/45% is re-taxed at 20%. The refund
-      // lands in the earner's bank, so we add it back to take-home. Only
-      // RAS drives this — net-pay and salary-sacrifice already give full
-      // marginal relief at PAYE time.
-      if (rasGrossedUpAnnual > 0) {
-        const takeSa = computeUKTake({
-          gross: earning.amountGross,
-          pension: {
-            sacrifice: earning.pensionSalarySacrifice,
-            netPay: netPayFrac,
-            relief: reliefFrac,
-          },
-          studentLoanPlan2: earning.studentLoanPlan2,
-          rates,
-          taxCode: activeTaxCode(taxCodes, asOfDate),
-          rasGrossedUp: rasGrossedUpAnnual,
-        });
-        const refund = take.incomeTax - takeSa.incomeTax;
-        if (refund > 0) monthlyIncome += refund / 12;
-      }
+    // Manual pension contribs flowing out of this earning's cash
+    // account — attributed to this earner for SA-refund purposes. The
+    // pot-deposit gross-up already happened in `loadForecastInputs`; here
+    // we just need the grossed-up annual figure for the tax calc.
+    const manualMonthlyNetContrib = ewmaMonthlyContribution(
+      manualPensionContribsByAccount.get(earning.toAccountId) ?? [],
+      startOfMonth(asOfDate),
+    );
+    const manualAnnualRasGrossedUp = manualMonthlyNetContrib * 12 * rasGrossUp;
+
+    // Higher/additional-rate relief is claimed via self-assessment: the
+    // basic-rate band is extended by the total grossed-up RAS amount, so
+    // income PAYE taxed at 40%/45% is re-taxed at 20%. The refund lands
+    // in the earner's bank, so we add it back to take-home. Only RAS
+    // drives this — net-pay and salary-sacrifice already give full
+    // marginal relief at PAYE time.
+    const totalRasGrossedUp =
+      rasGrossedUpFromEarning + manualAnnualRasGrossedUp;
+    if (totalRasGrossedUp > 0) {
+      const takeSa = computeUKTake({
+        gross: earning.amountGross,
+        pension: {
+          sacrifice: earning.pensionSalarySacrifice,
+          netPay: netPayFrac,
+          relief: reliefFrac,
+        },
+        studentLoanPlan2: earning.studentLoanPlan2,
+        rates,
+        taxCode: activeTaxCode(taxCodes, asOfDate),
+        rasGrossedUp: totalRasGrossedUp,
+      });
+      const refund = take.incomeTax - takeSa.incomeTax;
+      if (refund > 0) annualSelfAssessmentRefund += refund;
     }
 
     // Route the predicted student-loan deduction to the linked loan
@@ -678,6 +746,7 @@ async function loadPredictedEarningsForecast(
     monthlyIncome,
     monthlyPensionByAssetId,
     monthlyStudentLoanByLiabilityId,
+    annualSelfAssessmentRefund,
   };
 }
 
