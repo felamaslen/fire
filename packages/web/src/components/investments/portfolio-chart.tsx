@@ -533,7 +533,7 @@ export function PortfolioChart({
                         {perLine.map((pl, i) => {
                           const y = boxY + headerH + i * rowH + 10;
                           return (
-                            <g key={pl.label}>
+                            <g key={pl.label} fontSize="9">
                               <rect
                                 x={boxX + 8}
                                 y={y - 7}
