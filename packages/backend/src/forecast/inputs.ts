@@ -3,17 +3,7 @@
  */
 
 import { addMonths, startOfMonth } from "date-fns";
-import {
-  and,
-  desc,
-  eq,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lte,
-  or,
-} from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
@@ -29,26 +19,27 @@ import {
   NetWorthValues,
 } from "@/db/schema/net-worth";
 import {
-  PlanningAccounts,
   PlanningBills,
+  PlanningEarnings,
+  PlanningEarningsUKTaxCodes,
   PlanningPayslipAdjustments,
   PlanningPayslips,
   PlanningTransactions,
+  PlanningYearUKTaxRates,
 } from "@/db/schema/planning";
 
 import {
   buildRateToHome,
   convertToHomeMinor,
 } from "../graphql/net-worth/index";
+import { computeUKTake } from "../graphql/planning/tax";
 import { type ForecastCategory, type ForecastInputs } from "./engine";
 import {
   creditCardEwmaSpend,
   ewma,
-  ewmaPayslipNet,
   type InvestmentTx,
   type LiabilityBill,
   type LiabilityTx,
-  type Payslip,
   solveXirr,
 } from "./growth";
 
@@ -75,8 +66,7 @@ export async function loadForecastInputs(
     portfolioContributionTxs,
     creditCardTxs,
     nonLiabilityBills,
-    payslips,
-    accountIds,
+    monthlyIncome,
     settingsRow,
   ] = await Promise.all([
     loadCategories(),
@@ -88,8 +78,7 @@ export async function loadForecastInputs(
     loadPortfolioContributionTxs(ewmaCutoff),
     loadCreditCardTxs(ewmaCutoff),
     loadNonLiabilityBills(asOfDate),
-    loadPayslips(ewmaCutoff),
-    loadAccountIds(),
+    loadPredictedMonthlyNetIncome(asOfDate),
     model("AppSettings").findByIdOrNull(true),
   ]);
 
@@ -126,14 +115,6 @@ export async function loadForecastInputs(
     }
     return c;
   });
-
-  // Monthly net income: EWMA per account, summed. `ewmaPayslipNet` slices
-  // the window per account so accounts paid bi-weekly or irregularly still
-  // contribute sensibly.
-  let monthlyIncome = 0;
-  for (const acc of accountIds) {
-    monthlyIncome += ewmaPayslipNet(payslips, acc);
-  }
 
   // Monthly spending baseline: EWMA of credit-card activity across all
   // cards + monthlified non-liability bills. Loan repayments are NOT
@@ -574,51 +555,95 @@ async function loadNonLiabilityBills(asOfDate: Date): Promise<LiabilityBill[]> {
     );
 }
 
-async function loadPayslips(cutoff: Date): Promise<Payslip[]> {
-  const slips = await db
-    .select({
-      id: PlanningPayslips.id,
-      date: PlanningPayslips.date,
-      toAccountId: PlanningPayslips.toAccountId,
-      amountGross: PlanningPayslips.amountGross,
-    })
-    .from(PlanningPayslips)
-    .where(
-      and(
-        gte(PlanningPayslips.date, cutoff),
-        eq(PlanningPayslips.currency, HOME_CURRENCY),
+/**
+ * Predicted monthly net income from `PlanningEarnings` active on `asOfDate`, summed across streams. Runs each earning's annual gross through `computeUKTake` (UK PAYE: tax + NI + student loan + pension) using the active tax code and the current UK FY's rates, then divides by 12.
+ *
+ * This is a prediction from the user's configured earnings — not an EWMA of actual payslips, which is unreliable on data where adjustments (tax/NI/pension) aren't populated per row and treating raw gross as net would overstate income.
+ */
+async function loadPredictedMonthlyNetIncome(asOfDate: Date): Promise<number> {
+  // UK financial year starts 6 April; at the schema level we identify years
+  // by the calendar year they start in (FY25/26 → 2025).
+  const fyYear =
+    asOfDate.getUTCMonth() > 3 ||
+    (asOfDate.getUTCMonth() === 3 && asOfDate.getUTCDate() >= 6)
+      ? asOfDate.getUTCFullYear()
+      : asOfDate.getUTCFullYear() - 1;
+
+  const [earningRows, rates] = await Promise.all([
+    db
+      .select({
+        earning: PlanningEarnings,
+        taxCode: PlanningEarningsUKTaxCodes,
+      })
+      .from(PlanningEarnings)
+      .leftJoin(
+        PlanningEarningsUKTaxCodes,
+        eq(PlanningEarningsUKTaxCodes.earningsId, PlanningEarnings.id),
+      )
+      .where(
+        and(
+          lte(PlanningEarnings.start, asOfDate),
+          or(isNull(PlanningEarnings.end), gte(PlanningEarnings.end, asOfDate)),
+          eq(PlanningEarnings.currency, HOME_CURRENCY),
+        ),
       ),
-    );
-  if (slips.length === 0) return [];
-  const adjRows = await db
-    .select({
-      payslipId: PlanningPayslipAdjustments.payslipId,
-      amount: PlanningPayslipAdjustments.amount,
-    })
-    .from(PlanningPayslipAdjustments)
-    .where(
-      inArray(
-        PlanningPayslipAdjustments.payslipId,
-        slips.map((s) => s.id),
-      ),
-    );
-  const adjByPayslip = new Map<string, number>();
-  for (const a of adjRows) {
-    adjByPayslip.set(
-      a.payslipId,
-      (adjByPayslip.get(a.payslipId) ?? 0) + a.amount,
-    );
+    db
+      .select()
+      .from(PlanningYearUKTaxRates)
+      .where(eq(PlanningYearUKTaxRates.year, fyYear))
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
+  ]);
+  if (!rates) return 0;
+
+  // Group tax codes by earning. `taxCode` is null for earnings with no
+  // codes on file — the left join still returns a row for the earning.
+  type EarningRow = typeof PlanningEarnings.$inferSelect;
+  type TaxCodeRow = typeof PlanningEarningsUKTaxCodes.$inferSelect;
+  const grouped = new Map<
+    string,
+    { earning: EarningRow; taxCodes: TaxCodeRow[] }
+  >();
+  for (const row of earningRows) {
+    let g = grouped.get(row.earning.id);
+    if (!g) {
+      g = { earning: row.earning, taxCodes: [] };
+      grouped.set(row.earning.id, g);
+    }
+    if (row.taxCode) g.taxCodes.push(row.taxCode);
   }
-  return slips.map((s) => ({
-    date: s.date,
-    toAccountId: s.toAccountId,
-    netAmount: s.amountGross + (adjByPayslip.get(s.id) ?? 0),
-  }));
+
+  let monthly = 0;
+  for (const { earning, taxCodes } of grouped.values()) {
+    if (earning.countryCode !== "GB") continue;
+    const take = computeUKTake({
+      gross: earning.amountGross,
+      pension: {
+        sacrifice: earning.pensionSalarySacrifice,
+        netPay: earning.pensionNetPay ?? 0,
+        relief: earning.pensionReliefAtSource ?? 0,
+      },
+      studentLoanPlan2: earning.studentLoanPlan2,
+      rates,
+      taxCode: activeTaxCode(taxCodes, asOfDate),
+    });
+    // `take.net` is post-tax/NI/student-loan; the employee-side pension
+    // contribution (net-pay + relief-at-source) comes out of payroll too,
+    // so the amount actually hitting the bank account is `net - pension`.
+    monthly += (take.net - take.pensionEmployee) / 12;
+  }
+  return monthly;
 }
 
-async function loadAccountIds(): Promise<string[]> {
-  const rows = await db
-    .select({ accountId: PlanningAccounts.accountId })
-    .from(PlanningAccounts);
-  return rows.map((r) => r.accountId);
+function activeTaxCode(
+  taxCodes: readonly (typeof PlanningEarningsUKTaxCodes.$inferSelect)[],
+  asOf: Date,
+): string | null {
+  const ms = asOf.getTime();
+  for (const tc of taxCodes) {
+    const s = tc.start.getTime();
+    const e = tc.end?.getTime() ?? Number.POSITIVE_INFINITY;
+    if (s <= ms && ms <= e) return tc.taxCode;
+  }
+  return null;
 }
