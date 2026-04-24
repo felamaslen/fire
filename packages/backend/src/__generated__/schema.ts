@@ -547,6 +547,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         description: "A reusable bucket for assets (current account, pension pot, property, ...).",
         fields() {
             return {
+                accessibleFrom: {
+                    description: "Calendar date from which the pot can be drawn down (e.g. UK pension access age). Only meaningful for `PENSION` assets; null means \"accessible now\". The retirement forecast skips drawdown on this pot until the date is reached.",
+                    name: "accessibleFrom",
+                    type: DateType
+                },
                 growthRate: {
                     description: "Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.",
                     name: "growthRate",
@@ -2682,6 +2687,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "NetWorthCategoryAssetInput",
         fields() {
             return {
+                accessibleFrom: {
+                    description: "Calendar date from which the pot can be drawn down. Only valid for `PENSION`. Omit for other types.",
+                    name: "accessibleFrom",
+                    type: DateType
+                },
                 growthRate: {
                     description: "Decimal-fraction assumed annual growth rate (e.g. 0.03 for +3%/year, -0.15 for a vehicle depreciating 15%/year). Only valid for `PROPERTY` and `VEHICLE`. Omit for other types.",
                     name: "growthRate",
@@ -2799,6 +2809,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "NetWorthCategoryAssetPatch",
         fields() {
             return {
+                accessibleFrom: {
+                    description: "Calendar date from which the pot can be drawn down. Pass null explicitly to clear. Only valid for `PENSION`.",
+                    name: "accessibleFrom",
+                    type: DateType
+                },
                 growthRate: {
                     description: "Decimal-fraction assumed annual growth rate. Pass null explicitly to clear. Only valid for `PROPERTY` and `VEHICLE`.",
                     name: "growthRate",

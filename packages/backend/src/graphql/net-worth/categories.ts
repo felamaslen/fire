@@ -13,6 +13,7 @@ import {
   NetWorthValues,
 } from "@/db/schema/net-worth";
 
+import type { Date as CalendarDate } from "../date";
 import { buildConnection, type Connection } from "../pagination";
 import { PlanningAccount } from "../planning/index";
 import { VOID, type Void } from "../void";
@@ -95,6 +96,11 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
   async growthRate(): Promise<Float | null> {
     const g = (await this.row()).growthRate;
     return g === null ? null : (Number(g) as Float);
+  }
+
+  /** Calendar date from which the pot can be drawn down (e.g. UK pension access age). Only meaningful for `PENSION` assets; null means "accessible now". The retirement forecast skips drawdown on this pot until the date is reached. @gqlField */
+  async accessibleFrom(): Promise<CalendarDate | null> {
+    return (await this.row()).accessibleFrom;
   }
 }
 
@@ -350,6 +356,8 @@ export type NetWorthCategoryAssetInput = {
   type: NetWorthAssetType;
   /** Decimal-fraction assumed annual growth rate (e.g. 0.03 for +3%/year, -0.15 for a vehicle depreciating 15%/year). Only valid for `PROPERTY` and `VEHICLE`. Omit for other types. */
   growthRate?: Float | null;
+  /** Calendar date from which the pot can be drawn down. Only valid for `PENSION`. Omit for other types. */
+  accessibleFrom?: CalendarDate | null;
 };
 
 /** Create payload for a liability category. @gqlInput */
@@ -392,6 +400,8 @@ export type NetWorthCategoryAssetPatch = {
   type?: NetWorthAssetType | null;
   /** Decimal-fraction assumed annual growth rate. Pass null explicitly to clear. Only valid for `PROPERTY` and `VEHICLE`. */
   growthRate?: Float | null;
+  /** Calendar date from which the pot can be drawn down. Pass null explicitly to clear. Only valid for `PENSION`. */
+  accessibleFrom?: CalendarDate | null;
 };
 
 /** Partial update for a liability category; unset fields are left unchanged. @gqlInput */
@@ -454,6 +464,17 @@ function validateAssetGrowthRate(
   );
 }
 
+function validateAssetAccessibleFrom(
+  type: NetWorthAssetType,
+  accessibleFrom: CalendarDate | null | undefined,
+): void {
+  if (accessibleFrom == null) return;
+  assert(
+    type === "PENSION",
+    "accessibleFrom is only valid when type is PENSION",
+  );
+}
+
 function validateLiabilityInput(input: NetWorthCategoryLiabilityInput): void {
   const isLoan = input.type === "LOAN";
   const hasRate =
@@ -473,6 +494,7 @@ export async function netWorthCategoryCreate(
 ): Promise<NetWorthCategory> {
   if ("asset" in input) {
     validateAssetGrowthRate(input.asset.type, input.asset.growthRate);
+    validateAssetAccessibleFrom(input.asset.type, input.asset.accessibleFrom);
     const [row] = await db
       .insert(NetWorthCategoryAssets)
       .values({
@@ -482,6 +504,7 @@ export async function netWorthCategoryCreate(
           input.asset.growthRate == null
             ? null
             : String(input.asset.growthRate),
+        accessibleFrom: input.asset.accessibleFrom ?? null,
       })
       .returning();
     return NetWorthCategoryAsset.load(row);
@@ -531,6 +554,14 @@ export async function netWorthCategoryUpdate(
       if (nextType != null)
         validateAssetGrowthRate(nextType, patch.asset.growthRate);
     }
+    if (
+      patch.asset.accessibleFrom !== undefined &&
+      patch.asset.accessibleFrom != null
+    ) {
+      const nextType = patch.asset.type;
+      if (nextType != null)
+        validateAssetAccessibleFrom(nextType, patch.asset.accessibleFrom);
+    }
     const [row] = await db
       .update(NetWorthCategoryAssets)
       .set({
@@ -541,6 +572,9 @@ export async function netWorthCategoryUpdate(
             patch.asset.growthRate == null
               ? null
               : String(patch.asset.growthRate),
+        }),
+        ...(patch.asset.accessibleFrom !== undefined && {
+          accessibleFrom: patch.asset.accessibleFrom,
         }),
         updatedAt: new Date(),
       })
