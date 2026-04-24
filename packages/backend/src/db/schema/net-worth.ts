@@ -120,6 +120,8 @@ export const NetWorthCategoryAssets = pgTable(
     type: netWorthCategoryAssetType("type").notNull(),
     /** Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation (vehicles). Used only by the net-worth forecast; null means no extrapolation. Only valid for `PROPERTY` and `VEHICLE` — enforced by check constraint. */
     growthRate: numeric("growthRate", { precision: 6, scale: 4 }),
+    /** Date from which the pot can be drawn down (e.g. UK pension access age 57). Only valid for `PENSION` assets — enforced by check constraint. Null means "accessible now"; the forecast skips retirement drawdown on this pot until the date is reached. */
+    accessibleFrom: date("accessibleFrom", { mode: "date" }),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -131,6 +133,10 @@ export const NetWorthCategoryAssets = pgTable(
     check(
       "NetWorthCategoryAssets_growthRate_ck",
       sql`${t.growthRate} IS NULL OR ${t.type} IN ('PROPERTY', 'VEHICLE')`,
+    ),
+    check(
+      "NetWorthCategoryAssets_accessibleFrom_ck",
+      sql`${t.accessibleFrom} IS NULL OR ${t.type} = 'PENSION'`,
     ),
   ],
 );

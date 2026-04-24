@@ -174,12 +174,18 @@ CREATE TABLE "NetWorthCategoryAssets" (
   "name" text NOT NULL,
   "type" "netWorthCategoryAssetType" NOT NULL,
   "growthRate" NUMERIC(6, 4),
+  "accessibleFrom" date,
   "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   CONSTRAINT "NetWorthCategoryAssets_growthRate_ck"
     CHECK (
       "NetWorthCategoryAssets"."growthRate" IS NULL
       OR "NetWorthCategoryAssets"."type" IN ('PROPERTY', 'VEHICLE')
+    ),
+  CONSTRAINT "NetWorthCategoryAssets_accessibleFrom_ck"
+    CHECK (
+      "NetWorthCategoryAssets"."accessibleFrom" IS NULL
+      OR "NetWorthCategoryAssets"."type" = 'PENSION'
     )
 );
 
