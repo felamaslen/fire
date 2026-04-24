@@ -160,15 +160,33 @@ function RetirementSection({
       </h3>
       <p className="mt-0.5 text-xs text-muted-foreground">
         From {retirement.date} income drops to zero. Portfolios continue to grow
-        at their existing XIRR but pay out{" "}
-        {(retirement.drawdownRate * 100).toFixed(1)}% per year (a
-        safe-withdrawal rate applied monthly). Cash absorbs the drawdown minus
-        spending and any bill-funded loan repayments still outstanding. Spending
-        compounds at {(retirement.inflationRate * 100).toFixed(1)}% per year for
-        inflation. Loan repayments funded from payslip deductions stop at
-        retirement (no more income to deduct from); loans paid via bills
-        continue out of cash.
+        at their existing XIRR; cash absorbs the drawdown minus spending and any
+        bill-funded loan repayments still outstanding. Spending compounds at{" "}
+        {(retirement.inflationRate * 100).toFixed(1)}% per year for inflation.
+        Loan repayments funded from payslip deductions stop at retirement (no
+        more income to deduct from); loans paid via bills continue out of cash.
       </p>
+      <p className="mt-2 text-xs font-medium">Drawdown sequence</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
+        <li>
+          <strong>Stocks</strong>: drain linearly from retirement until the last
+          pension becomes accessible (the "ISA bridge"). Each month's drawdown
+          equals the remaining balance divided by months left to the bridge end.
+        </li>
+        <li>
+          <strong>Pensions</strong>: held at XIRR growth (no contributions, no
+          drawdown) while locked. Once accessible <em>and</em> post-retirement,
+          drawn at {(retirement.drawdownRate * 100).toFixed(1)}% per year
+          (applied monthly).
+        </li>
+        <li>
+          <strong>After the bridge ends</strong>: any remaining stocks join
+          pensions at the {(retirement.drawdownRate * 100).toFixed(1)}%
+          safe-withdrawal rate. When retirement is at or after the last pension
+          access date, the bridge is skipped entirely — everything starts at the
+          SWR from day one.
+        </li>
+      </ul>
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm tabular-nums">
         <dt className="text-muted-foreground">
           Monthly net income (pre-retirement)

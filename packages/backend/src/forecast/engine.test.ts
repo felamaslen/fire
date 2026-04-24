@@ -160,4 +160,131 @@ describe("runForecast", () => {
     // Balance must go down after the first month (repayment > accrued interest on £100k@5%).
     expect(w?.projectedBalance[1]).toBeLessThan(100000);
   });
+
+  describe("ISA bridge", () => {
+    // Retirement 2030-01, last pension access 2035-01 → 60-month bridge.
+    // asOfMonthStart is 2026-04, so retirementIndex = 45, bridgeEndIndex = 105.
+    const retirementYear = 2030;
+    const pensionAccessIdx = (2035 - 2026) * 12 - 3; // 105
+
+    it("drains STOCK linearly to ~0 by the last pension access date", () => {
+      const isa: ForecastCategory = {
+        id: "isa",
+        kind: "asset",
+        assetType: "STOCK",
+        xirr: 0,
+      };
+      const sipp: ForecastCategory = {
+        id: "sipp",
+        kind: "asset",
+        assetType: "PENSION",
+        xirr: 0,
+        accessibleFrom: new Date(Date.UTC(2035, 0, 1)),
+      };
+      const { workings } = runForecast(
+        baseInputs({
+          months: 240,
+          categories: [isa, sipp],
+          startingBalance: new Map([
+            [isa.id, 120000],
+            [sipp.id, 500000],
+          ]),
+          retirementYear,
+        }),
+      );
+      const isaW = workings.categories.find((c) => c.categoryId === isa.id);
+      // Just before bridge end — pot is near zero.
+      expect(isaW?.projectedBalance[pensionAccessIdx - 1]).toBeLessThan(1500);
+      // At bridge end the pot is effectively empty; 4% SWR then applies
+      // but there's nothing left to draw from.
+      expect(isaW?.projectedBalance[pensionAccessIdx]).toBeLessThan(1500);
+    });
+
+    it("holds locked PENSION flat during the bridge, drawing 4% only after it becomes accessible", () => {
+      const isa: ForecastCategory = {
+        id: "isa",
+        kind: "asset",
+        assetType: "STOCK",
+        xirr: 0,
+      };
+      const sipp: ForecastCategory = {
+        id: "sipp",
+        kind: "asset",
+        assetType: "PENSION",
+        xirr: 0,
+        accessibleFrom: new Date(Date.UTC(2035, 0, 1)),
+      };
+      const { workings } = runForecast(
+        baseInputs({
+          months: 240,
+          categories: [isa, sipp],
+          startingBalance: new Map([
+            [isa.id, 120000],
+            [sipp.id, 500000],
+          ]),
+          retirementYear,
+        }),
+      );
+      const sippW = workings.categories.find((c) => c.categoryId === sipp.id);
+      // Untouched throughout the bridge (xirr=0 so balance stays flat).
+      expect(sippW?.projectedBalance[pensionAccessIdx - 1]).toBeCloseTo(500000);
+      // Drawdown begins at / after pension access.
+      expect(sippW?.projectedBalance[pensionAccessIdx + 1]).toBeLessThan(
+        500000,
+      );
+    });
+
+    it("applies 4% to STOCK from retirement when there's no bridge (no pensions)", () => {
+      const isa: ForecastCategory = {
+        id: "isa",
+        kind: "asset",
+        assetType: "STOCK",
+        xirr: 0,
+      };
+      const retirementIdx = (retirementYear - 2026) * 12 - 3; // 45
+      const { workings } = runForecast(
+        baseInputs({
+          months: 240,
+          categories: [isa],
+          startingBalance: new Map([[isa.id, 120000]]),
+          retirementYear,
+        }),
+      );
+      const isaW = workings.categories.find((c) => c.categoryId === isa.id);
+      // First post-retirement month: 4%/12 drawdown = balance * (1 - 0.04/12).
+      const expected = 120000 * (1 - 0.04 / 12);
+      expect(isaW?.projectedBalance[retirementIdx]).toBeCloseTo(expected, 0);
+    });
+
+    it("applies 4% to STOCK from retirement when retirement is at/after the last pension access", () => {
+      const isa: ForecastCategory = {
+        id: "isa",
+        kind: "asset",
+        assetType: "STOCK",
+        xirr: 0,
+      };
+      const sipp: ForecastCategory = {
+        id: "sipp",
+        kind: "asset",
+        assetType: "PENSION",
+        xirr: 0,
+        accessibleFrom: new Date(Date.UTC(2030, 0, 1)), // at retirement
+      };
+      const retirementIdx = (retirementYear - 2026) * 12 - 3; // 45
+      const { workings } = runForecast(
+        baseInputs({
+          months: 240,
+          categories: [isa, sipp],
+          startingBalance: new Map([
+            [isa.id, 120000],
+            [sipp.id, 500000],
+          ]),
+          retirementYear,
+        }),
+      );
+      const isaW = workings.categories.find((c) => c.categoryId === isa.id);
+      const expected = 120000 * (1 - 0.04 / 12);
+      expect(isaW?.projectedBalance[retirementIdx]).toBeCloseTo(expected, 0);
+    });
+  });
 });

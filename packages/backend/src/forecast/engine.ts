@@ -159,6 +159,26 @@ function monthIndexForDate(
 }
 
 /**
+ * Month index at which the "ISA bridge" — STOCK pots draining to zero to carry a household from retirement to the first pension access — ends. That's the month the LAST `PENSION` with an `accessibleFrom` date becomes accessible, clamped to `[retirementIndex, months]`. When no pension has an access date or the last-accessible month is already at/before retirement, we return `retirementIndex` (no bridge — STOCKs join pensions at the 4% SWR from month 0 of retirement). Returns `null` when there's no retirement at all — there's nothing to bridge.
+ */
+function computeBridgeEndIndex(
+  categories: readonly ForecastCategory[],
+  asOfMonthStart: Date,
+  retirementIndex: number | null,
+  months: number,
+): number | null {
+  if (retirementIndex == null) return null;
+  let latest = retirementIndex;
+  for (const cat of categories) {
+    if (cat.kind !== "asset" || cat.assetType !== "PENSION") continue;
+    const idx = monthIndexForDate(cat.accessibleFrom, asOfMonthStart);
+    if (idx == null) continue;
+    if (idx > latest) latest = idx;
+  }
+  return Math.min(latest, months);
+}
+
+/**
  * Compute the first post-retirement month index into a monthly series starting at `asOfMonthStart`. Returns `null` when no retirement year is set, when retirement is already in the past at the start of the forecast (treated as "already retired" — index 0), or when it falls beyond the horizon.
  */
 function computeRetirementMonthIndex(
@@ -186,6 +206,12 @@ export function runForecast(inputs: ForecastInputs): ForecastResult {
     months,
     inputs.retirementYear,
   );
+  const bridgeEndIndex = computeBridgeEndIndex(
+    categories,
+    asOfMonthStart,
+    retirementIndex,
+    months,
+  );
   const monthlyIncome = inputs.monthlyIncome ?? 0;
   const monthlySpending = inputs.monthlySpending ?? 0;
 
@@ -198,7 +224,13 @@ export function runForecast(inputs: ForecastInputs): ForecastResult {
     // would be paid off. `skip` only affects aggregation and cash drift,
     // handled in the loops below.
     const start = startingBalance.get(cat.id) ?? 0;
-    const w = projectNonCash(cat, start, inputs, retirementIndex);
+    const w = projectNonCash(
+      cat,
+      start,
+      inputs,
+      retirementIndex,
+      bridgeEndIndex,
+    );
     workingsById.set(cat.id, w);
     if (cat.kind === "asset" && cat.assetType === "CASH") {
       cashIds.push(cat.id);
@@ -328,6 +360,7 @@ function projectNonCash(
   start: number,
   inputs: ForecastInputs,
   retirementIndex: number | null,
+  bridgeEndIndex: number | null,
 ): ForecastCategoryWorkings {
   const months = inputs.months;
   const base: ForecastCategoryWorkings = {
@@ -378,7 +411,24 @@ function projectNonCash(
           const grown = series[i - 1] * monthlyFactor;
           if (!retired) {
             series[i] = grown + contribution;
-          } else if (accessible) {
+            continue;
+          }
+          if (
+            cat.assetType === "STOCK" &&
+            bridgeEndIndex != null &&
+            i < bridgeEndIndex
+          ) {
+            // Linear-annuity "ISA bridge": drain to ~0 at bridgeEndIndex so
+            // STOCK pots carry the household until the last pension unlocks.
+            // Monthly drawdown is `balance / months_remaining` — an RMD-style
+            // formula that smoothly tapers to zero.
+            const monthsRemaining = bridgeEndIndex - i;
+            const drawdown =
+              monthsRemaining > 0 ? grown / monthsRemaining : grown;
+            series[i] = Math.max(0, grown - drawdown);
+            continue;
+          }
+          if (accessible) {
             series[i] = grown * monthlyDrawdownFactor;
           } else {
             // Retired but pot still locked: grow without drawdown, no new
@@ -481,7 +531,6 @@ function buildCashDrift(
 ): number[] {
   const drift = new Array<number>(inputs.months + 1).fill(0);
   const monthlyInflationFactor = Math.pow(1 + ANNUAL_INFLATION_RATE, 1 / 12);
-  const drawdownFraction = RETIREMENT_DRAWDOWN_RATE / 12;
   const annualSaRefund = inputs.annualSelfAssessmentRefund ?? 0;
   const preRetirementEnd =
     retirementIndex == null ? inputs.months + 1 : retirementIndex;
@@ -504,22 +553,19 @@ function buildCashDrift(
       ) {
         const w = workings.get(cat.id);
         if (!w) continue;
-        // Skip locked pensions — if the pot can't be drawn yet, it
-        // contributes nothing to this month's cash drift.
-        const accessibleIndex = monthIndexForDate(
-          cat.accessibleFrom,
-          inputs.asOfMonthStart,
-        );
-        if (accessibleIndex != null && m < accessibleIndex) continue;
-        // Drawdown is the portion of the portfolio we pulled out this month:
-        // balance[m-1] grown to balance[m-1]*monthlyFactor, multiplied by
-        // drawdownFraction. That's equivalent to balance[m-1] * xirrFactor *
-        // drawdownFraction — but since post-retirement contribution is zero,
-        // `balance[m-1] * xirrFactor = balance[m] / (1 - drawdownFraction)`.
-        // Use that to extract the drawdown directly from the series.
+        // Drawdown is "what would the balance have been without today's
+        // withdrawal, minus what it actually is". Deriving it from the
+        // projected series directly keeps cash drift in sync with
+        // whichever rule `projectNonCash` applied this month — bridge,
+        // 4% SWR, or "locked / no drawdown" — without the cash-drift
+        // code having to know which phase we're in.
+        const prev = w.projectedBalance[m - 1];
+        const xirr = w.xirr ?? 0;
+        const monthlyFactor = Math.pow(1 + xirr, 1 / 12);
+        const grown = prev * monthlyFactor;
         const bal = w.projectedBalance[m];
-        const balBeforeDrawdown = bal / (1 - drawdownFraction);
-        drawdown += balBeforeDrawdown - bal;
+        const delta = grown - bal;
+        if (delta > 0) drawdown += delta;
       }
       if (
         cat.kind === "liability" &&
