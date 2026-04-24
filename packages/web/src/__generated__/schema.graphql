@@ -418,6 +418,32 @@ type Demo {
 }
 
 """
+Handle returned by `demoLogin`. Kicks off demo provisioning in the background and hands the client a `jobId` to subscribe to via `demoProgress` for live progress + the final auth token.
+"""
+type DemoLoginStart {
+  """
+  Opaque job identifier. Pass to the `demoProgress` subscription to stream progress events; the final event carries the signed auth token.
+  """
+  jobId: ID!
+}
+
+"""
+One tick of progress while a demo session is being provisioned. Streamed by the `demoProgress` subscription. The terminal event has `progress === 1` and a non-null `token` — at that point the client stores the token and navigates into the app.
+"""
+type DemoProgress {
+  """Fraction complete, 0..1. The final event has `progress === 1`."""
+  progress: Float!
+  """
+  Human-readable label for the current milestone (e.g. `"Seeding assets & liabilities"`). Safe to show verbatim in the UI.
+  """
+  step: String!
+  """
+  Signed session token. Set only on the final (`progress === 1`) event — null on every intermediate tick.
+  """
+  token: String
+}
+
+"""
 A tradable holding — either a listed stock or a fund. `position` gives the aggregate across every wrapper that holds this investment; per-wrapper numbers live on each `wrappers[].position`.
 """
 type Investment {
@@ -721,9 +747,9 @@ type Mutation {
     start: Date
   ): PlanningBill!
   """
-  Provision a fresh demo session: creates a dedicated Postgres schema, replays the schema + seeds it from the demo identified by `id`, and returns a 6-hour token bound to the new schema. Each call returns a new isolated session — logging out and calling again yields a clean, freshly-seeded environment.
+  Start provisioning a fresh demo session: validates the flavour, kicks off database creation + seeding in the background, and returns immediately with a `jobId`. Subscribe to `demoProgress(jobId)` to stream progress events and receive the signed auth token on completion.
   """
-  demoLogin(id: ID!): AuthResult! @noAuth
+  demoLogin(id: ID!): DemoLoginStart! @noAuth
   """
   Register a new earnings stream (salary, contract income, …). Each month the stream is active and no actual payslip covers it, the planner predicts a net transaction into `toAccountId` using the country's tax rules: for `GB`, it applies PAYE income tax, NIC, and — when enabled — Student Loan plan 2, using the year's tax rates and any attached UK tax codes.
   """
@@ -2089,6 +2115,13 @@ type RetirementSettings {
   Calendar year the user plans to retire in. Null when no retirement year has been set — the forecast then runs without a retirement transition.
   """
   retirementYear: Int
+}
+
+type Subscription {
+  """
+  Live progress stream for a `demoLogin` job. Yields `DemoProgress` events as the seed pipeline runs; the final event has `progress === 1` and carries the signed session token. Terminates with an error if the seed fails.
+  """
+  demoProgress(jobId: ID!): DemoProgress! @noAuth
 }
 
 """

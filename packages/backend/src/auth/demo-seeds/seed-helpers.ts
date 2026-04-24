@@ -139,10 +139,13 @@ export async function applyFlavour(
   db: DB,
   today: Date,
   spec: FlavourSpec,
+  /** Receives milestone pings as the pipeline walks through the sections below — the client uses these to drive the login progress bar. */
+  onProgress: (step: string, progress: number) => void = () => {},
 ): Promise<void> {
   const rand = prng(hashSeed(JSON.stringify(spec)));
 
   // ── Planning year + UK tax rates ──────────────────────────────────────────
+  onProgress("Preparing planning years", 0.2);
   const fy = ukFinancialYear(today);
   await db.insert(PlanningYears).values({ year: fy });
   await db.insert(PlanningYears).values({ year: fy + 1 });
@@ -164,6 +167,7 @@ export async function applyFlavour(
   }
 
   // ── Assets ────────────────────────────────────────────────────────────────
+  onProgress("Seeding assets & liabilities", 0.3);
   const assetIdByName = new Map<string, string>();
   for (const asset of spec.assets) {
     const [row] = await db
@@ -204,6 +208,7 @@ export async function applyFlavour(
   }
 
   // ── Net-worth entries (monthly history + current month) ───────────────────
+  onProgress("Generating net-worth history", 0.4);
   const firstMonth = startOfMonth(addMonths(today, -(spec.historyMonths - 1)));
   const totalMonths = spec.historyMonths;
   for (let i = 0; i < totalMonths; i++) {
@@ -250,6 +255,7 @@ export async function applyFlavour(
   }
 
   // ── Recurring bills ───────────────────────────────────────────────────────
+  onProgress("Seeding bills & earnings", 0.55);
   for (const bill of spec.bills) {
     await db.insert(PlanningBills).values({
       name: bill.name,
@@ -314,7 +320,14 @@ export async function applyFlavour(
     }
   }
 
+  const tickerCount = positionsByTicker.size;
+  let tickerIndex = 0;
   for (const [ticker, positions] of positionsByTicker) {
+    onProgress(
+      `Building investment positions (${tickerIndex + 1}/${tickerCount})`,
+      0.6 + (0.35 * tickerIndex) / Math.max(1, tickerCount),
+    );
+    tickerIndex++;
     const stock = demoStock(ticker);
     if (!stock) continue;
     const priceSeries = dailyPrices(ticker, firstMonthForInvestments);

@@ -1,6 +1,11 @@
-import { useApolloClient, useMutation, useQuery } from "@apollo/client/react";
+import {
+  useApolloClient,
+  useMutation,
+  useQuery,
+  useSubscription,
+} from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Delete, Loader2 } from "lucide-react";
+import { Delete } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -32,6 +37,16 @@ const LoginDocument = graphql(`
 const DemoLoginDocument = graphql(`
   mutation DemoLogin($id: ID!) {
     demoLogin(id: $id) {
+      jobId
+    }
+  }
+`);
+
+const DemoProgressDocument = graphql(`
+  subscription DemoProgress($jobId: ID!) {
+    demoProgress(jobId: $jobId) {
+      step
+      progress
       token
     }
   }
@@ -105,23 +120,54 @@ function LoginPage() {
   }, [busy]);
 
   const [pendingDemo, setPendingDemo] = useState<string | null>(null);
+  const [demoJobId, setDemoJobId] = useState<string | null>(null);
+  const [demoProgress, setDemoProgress] = useState(0);
+  const [demoStep, setDemoStep] = useState("");
+
+  const resetDemoState = useCallback(() => {
+    setBusy(false);
+    setPendingDemo(null);
+    setDemoJobId(null);
+    setDemoProgress(0);
+    setDemoStep("");
+  }, []);
 
   const demoLogin = async (id: string) => {
     setBusy(true);
     setPendingDemo(id);
+    setDemoProgress(0);
+    setDemoStep("Starting");
     try {
       const { data } = await demoLoginMutation({ variables: { id } });
-      if (!data?.demoLogin.token) throw new Error("No token returned");
-      setToken(data.demoLogin.token);
-      await apollo.resetStore();
-      await navigate({ to: "/" });
+      if (!data?.demoLogin.jobId) throw new Error("No job id returned");
+      setDemoJobId(data.demoLogin.jobId);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Demo login failed");
-    } finally {
-      setBusy(false);
-      setPendingDemo(null);
+      resetDemoState();
     }
   };
+
+  useSubscription(DemoProgressDocument, {
+    variables: { jobId: demoJobId ?? "" },
+    skip: !demoJobId,
+    onData: ({ data: { data } }) => {
+      const event = data?.demoProgress;
+      if (!event) return;
+      setDemoProgress(event.progress);
+      setDemoStep(event.step);
+      if (event.token) {
+        setToken(event.token);
+        void (async () => {
+          await apollo.resetStore();
+          await navigate({ to: "/" });
+        })();
+      }
+    },
+    onError: (err) => {
+      toast.error(err.message || "Demo login failed");
+      resetDemoState();
+    },
+  });
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-12">
@@ -158,25 +204,46 @@ function LoginPage() {
                 onClick={() => {
                   void demoLogin(demo.id);
                 }}
-                className="flex cursor-pointer flex-col items-start gap-1 rounded-md border p-3 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                className="relative flex cursor-pointer flex-col items-start gap-1 overflow-hidden rounded-md border p-3 pb-8 text-left transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <span className="flex w-full items-center gap-2">
-                  <span className="flex-1 text-sm font-medium">
-                    {demo.name}
-                  </span>
-                  {isPending && (
-                    <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                  )}
-                </span>
+                <span className="flex-1 text-sm font-medium">{demo.name}</span>
                 <span className="text-xs text-muted-foreground">
                   {demo.description}
                 </span>
+                {isPending && (
+                  <span className="absolute inset-x-0 bottom-0 flex h-6 items-center overflow-hidden bg-blue-500/10">
+                    <span
+                      aria-hidden
+                      className="absolute inset-y-0 left-0 bg-blue-500/35 transition-[width] duration-200 ease-out"
+                      style={{ width: `${demoProgress * 100}%` }}
+                    />
+                    <span className="relative z-10 truncate px-3 text-xs font-medium text-foreground">
+                      {demoStep}
+                      <AnimatedEllipsis />
+                    </span>
+                  </span>
+                )}
               </button>
             );
           })}
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function AnimatedEllipsis() {
+  const [dots, setDots] = useState(1);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setDots((d) => (d % 3) + 1);
+    }, 400);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <span aria-hidden className="inline-block w-3 text-left">
+      {".".repeat(dots)}
+    </span>
   );
 }
 

@@ -12,8 +12,14 @@ import { dropDemoDatabase, provisionDemoDatabase } from "./demo-database";
 import { DEMO_SEEDS } from "./demo-seeds";
 import { DEMO_TOKEN_TTL_SECONDS } from "./token";
 
-/** Provision a fresh demo session: allocate a database name, `CREATE DATABASE … WITH TEMPLATE`, run the flavour's seed, register the row in `DemoSessions`. Returns the registry row. */
-export async function createDemoSession(flavour: string): Promise<{
+/** Progress callback for `createDemoSession`. `progress` is 0..1 exclusive of 1 — the final 1.0 event is fired by the caller once the auth token has been signed. */
+export type DemoSessionProgress = (step: string, progress: number) => void;
+
+/** Provision a fresh demo session: allocate a database name, `CREATE DATABASE … WITH TEMPLATE`, run the flavour's seed, register the row in `DemoSessions`. Returns the registry row. `onProgress` (if passed) receives milestone pings as the pipeline runs — consumed by the `demoProgress` subscription to drive the login progress bar. */
+export async function createDemoSession(
+  flavour: string,
+  onProgress: DemoSessionProgress = () => {},
+): Promise<{
   database: string;
   expiresAt: Date;
 }> {
@@ -23,10 +29,13 @@ export async function createDemoSession(flavour: string): Promise<{
   const now = new Date();
   const expiresAt = new Date(now.getTime() + DEMO_TOKEN_TTL_SECONDS * 1000);
 
+  onProgress("Provisioning database", 0.05);
   await provisionDemoDatabase(database);
   try {
     const sessionDb = getDemoDb(database);
-    await seed({ db: sessionDb, today: now });
+    onProgress("Seeding demo data", 0.15);
+    await seed({ db: sessionDb, today: now, onProgress });
+    onProgress("Registering session", 0.97);
     await defaultDb
       .insert(DemoSessions)
       .values({ database, flavour, expiresAt });

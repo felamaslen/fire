@@ -101,6 +101,9 @@ importers:
       graphql:
         specifier: ^16.13.2
         version: 16.13.2
+      graphql-sse:
+        specifier: ^2.6.0
+        version: 2.6.0(graphql@16.13.2)
       graphql-upload:
         specifier: ^17.0.0
         version: 17.0.0(@types/express@5.0.6)(graphql@16.13.2)
@@ -240,6 +243,9 @@ importers:
       graphql:
         specifier: ^16.13.2
         version: 16.13.2
+      graphql-sse:
+        specifier: ^2.6.0
+        version: 2.6.0(graphql@16.13.2)
       lucide-react:
         specifier: ^1.8.0
         version: 1.8.0(react@19.2.5)
@@ -3164,6 +3170,12 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  graphql-sse@2.6.0:
+    resolution: {integrity: sha512-BXT5Rjv9UFunjQsmN9WWEIq+TFNhgYibgwo1xkXLxzguQVyOd6paJ4v5DlL9K5QplS0w74bhF+aUiqaGXZBaug==}
+    engines: {node: '>=12'}
+    peerDependencies:
+      graphql: '>=0.11 <=16'
 
   graphql-tag@2.12.6:
     resolution: {integrity: sha512-FdSNcu2QQcWnM2VNvSCCDCVS5PpPqpzgFT8+GXzqJuoDd0CBncxCY278u4mhRO7tMgo2JjgJA5aZ+nWSQ/Z+xg==}
@@ -7257,6 +7269,10 @@ snapshots:
       - graphql
 
   graceful-fs@4.2.11: {}
+
+  graphql-sse@2.6.0(graphql@16.13.2):
+    dependencies:
+      graphql: 16.13.2
 
   graphql-tag@2.12.6(graphql@16.13.2):
     dependencies:

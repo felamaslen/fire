@@ -3,7 +3,8 @@ import { fastifyApolloHandler } from "@as-integrations/fastify";
 import { context as otelContext } from "@opentelemetry/api";
 import { suppressTracing } from "@opentelemetry/core";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
-import { GraphQLError } from "graphql";
+import { execute, GraphQLError, subscribe, validate } from "graphql";
+import { createHandler as createSseHandler } from "graphql-sse";
 
 import { runWithSession } from "@/auth/session-als";
 import { runWithDb } from "@/db";
@@ -34,13 +35,19 @@ export const scalars = {
 // resolver changes take effect without a process restart.
 declare global {
   var __apolloState: { current: ApolloServer<Context> | null } | undefined;
+  var __sseState:
+    | { current: ReturnType<typeof createSseHandler> | null }
+    | undefined;
 
   var __apolloRouted: boolean | undefined;
 }
 
+const builtSchema = applySemanticNonNull(getSchema({ scalars }));
+const builtNoAuthFields = collectNoAuthFields(builtSchema);
+
 async function buildApollo(): Promise<ApolloServer<Context>> {
-  const schema = applySemanticNonNull(getSchema({ scalars }));
-  const noAuthFields = collectNoAuthFields(schema);
+  const schema = builtSchema;
+  const noAuthFields = builtNoAuthFields;
   const apollo = new ApolloServer<Context>({
     schema,
     includeStacktraceInErrorResponses: false,
@@ -94,6 +101,26 @@ const prev = globalThis.__apolloState.current;
 globalThis.__apolloState.current = await buildApollo();
 if (prev) await prev.stop();
 
+// Standalone `graphql-sse` handler for the `/graphql/stream` route. Apollo
+// doesn't speak subscriptions; we share the same executable schema and run it
+// over SSE. We use the framework-agnostic `createHandler` (not the Node-http
+// variant) because Fastify's body parser has already drained the request
+// stream by the time we get here — the http variant would hang waiting for
+// bytes that were consumed upstream. The `demoProgress` subscription is
+// `@noAuth`, so no per-request auth scoping is needed here.
+globalThis.__sseState ??= { current: null };
+// Pass our graphql module's `validate` / `execute` / `subscribe` explicitly so
+// graphql-sse uses the same `graphql` instance that built the schema.
+// Otherwise the ESM copy of graphql that graphql-sse imports internally does
+// an `instanceof` check against a schema built from the CJS copy and throws
+// "Cannot use GraphQLSchema from another module or realm".
+globalThis.__sseState.current = createSseHandler({
+  schema: builtSchema,
+  validate,
+  execute,
+  subscribe,
+});
+
 if (!globalThis.__apolloRouted) {
   globalThis.__apolloRouted = true;
   const state = globalThis.__apolloState;
@@ -127,6 +154,58 @@ if (!globalThis.__apolloRouted) {
           );
         }
         return handle();
+      },
+    });
+
+    app.route({
+      method: ["GET", "POST"],
+      url: "/graphql/stream",
+      async handler(request, reply) {
+        const sse = globalThis.__sseState?.current;
+        if (!sse) throw new Error("SSE handler not initialised");
+        reply.hijack();
+        const raw = reply.raw;
+        const headerMap = new Map<string, string>();
+        for (const [k, v] of Object.entries(request.headers)) {
+          if (Array.isArray(v)) headerMap.set(k, v.join(", "));
+          else if (v != null) headerMap.set(k, v);
+        }
+        const [body, init] = await otelContext.with(
+          suppressTracing(otelContext.active()),
+          () =>
+            sse({
+              method: request.method,
+              url: request.url,
+              headers: { get: (key) => headerMap.get(key.toLowerCase()) },
+              body: request.body as Record<string, unknown> | null,
+              raw: request.raw,
+              context: undefined,
+            }),
+        );
+        raw.writeHead(init.status, init.statusText, init.headers);
+        raw.flushHeaders();
+        if (body == null) {
+          raw.end();
+          return;
+        }
+        if (typeof body === "string") {
+          raw.end(body);
+          return;
+        }
+        // Disable Nagle so each SSE event hits the wire immediately rather
+        // than sitting in the TCP buffer for up to 200ms.
+        raw.socket?.setNoDelay(true);
+        request.raw.on("close", () => {
+          void body.return?.(undefined);
+        });
+        try {
+          for await (const chunk of body) {
+            if (raw.writableEnded) break;
+            raw.write(chunk);
+          }
+        } finally {
+          if (!raw.writableEnded) raw.end();
+        }
       },
     });
   };
