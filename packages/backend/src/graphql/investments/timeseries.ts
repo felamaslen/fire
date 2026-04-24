@@ -110,7 +110,7 @@ const loadAdjustedUnits = contextAwareDataLoader(
  */
 export const loadTimeseries = contextAwareDataLoader(
   (ctx) =>
-    new DataLoader<TimeseriesKey, PortfolioTimeseries, string>(
+    new DataLoader<TimeseriesKey, PortfolioTimeseries | null, string>(
       async (keys) => {
         const { whereAssetId, whereInvestmentId } =
           loadInvestmentsByKeyConditions(keys);
@@ -378,26 +378,26 @@ export const loadTimeseries = contextAwareDataLoader(
           ),
         );
 
-        return keys.map<PortfolioTimeseries>((key, keyIndex) => {
-          const y =
-            (() => {
-              const { assetId, investmentId } = key;
-              if (assetId) {
-                if (investmentId) {
-                  return yByBoth.get(`${investmentId}|${assetId}`);
-                }
-                return yByAsset.get(assetId);
-              }
+        return keys.map<PortfolioTimeseries | null>((key, keyIndex) => {
+          const y = (() => {
+            const { assetId, investmentId } = key;
+            if (assetId) {
               if (investmentId) {
-                return yByInvestment.get(investmentId);
+                return yByBoth.get(`${investmentId}|${assetId}`);
               }
-              return yByNone;
-              // An investment (or asset) with zero holdings across the whole
-              // window — e.g. fully sold before `startDate` — never populates
-              // its `yBy*` slot. Treat that as a flat-zero series rather than
-              // erroring, so `Query.portfolios` can emit a stacked edge per
-              // investment without blowing up on dormant ones.
-            })() ?? (new Array(x.length).fill(0) as number[]);
+              return yByAsset.get(assetId);
+            }
+            if (investmentId) {
+              return yByInvestment.get(investmentId);
+            }
+            return yByNone;
+            // An investment (or asset) with zero holdings across the whole
+            // window — e.g. fully sold before `startDate` — never populates
+            // its `yBy*` slot. Treat that as a flat-zero series rather than
+            // erroring, so `Query.portfolios` can emit a stacked edge per
+            // investment without blowing up on dormant ones.
+          })();
+          if (!y?.length) return null;
           const lastIdx = x.length - 1;
           const liveTotal = liveByKeyIndex[keyIndex];
           return {

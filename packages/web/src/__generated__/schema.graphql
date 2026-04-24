@@ -1834,7 +1834,7 @@ type Portfolio {
   """
   Daily-sampled line series of portfolio total over the requested period.
   """
-  timeseries(length: Int, period: PortfolioTimePeriod!): PortfolioTimeseries!
+  timeseries(length: Int, period: PortfolioTimePeriod!): PortfolioTimeseries
   """
   Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes.
   """

@@ -2134,7 +2134,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 timeseries: {
                     description: "Daily-sampled line series of portfolio total over the requested period.",
                     name: "timeseries",
-                    type: new GraphQLNonNull(PortfolioTimeseriesType),
+                    type: PortfolioTimeseriesType,
                     args: {
                         length: {
                             type: GraphQLInt

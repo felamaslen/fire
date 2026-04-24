@@ -9,6 +9,7 @@ import { model } from "@/db/drizzle-model";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import { assertNoErrors, assertNotError } from "@/errors";
 import { solveXirr } from "@/forecast/growth";
+import { isNonNullish } from "@/is-truthy";
 
 import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
@@ -301,16 +302,17 @@ export class Portfolio {
     ctx: Context,
     period: PortfolioTimePeriod,
     length?: Int | null,
-  ): Promise<PortfolioTimeseries> {
+  ): Promise<PortfolioTimeseries | null> {
     const loader = loadTimeseries(ctx);
     const options = {
       period,
       length: length ?? 1,
       skipLive: this.skipLive,
     };
-    const combineSeries = (series: (PortfolioTimeseries | Error)[]) => {
+    const combineSeries = (all: (PortfolioTimeseries | null | Error)[]) => {
+      const series = all.filter(isNonNullish);
       assertNoErrors(series);
-      assert(series.length, "No results");
+      if (!series.length) return null;
       return {
         ...series[0],
         points: series[0].points.map((v, i) => ({
