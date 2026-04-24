@@ -16,6 +16,7 @@ import {
 } from "@/db/schema/net-worth";
 import { PlanningAccounts } from "@/db/schema/planning";
 import { env } from "@/env";
+import { log } from "@/log";
 
 import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
@@ -162,6 +163,7 @@ export async function payslipParse(
   let parsed = parseCache.get(sha);
   if (!parsed) {
     parsed = await callGemini(buffer);
+    log.info("Parsed payslip", { parsed });
     parsed.adjustments = collapseDuplicateAdjustments(parsed.adjustments);
     parseCache.set(sha, parsed);
   }
