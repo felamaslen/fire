@@ -171,7 +171,7 @@ function RetirementSection({
       </p>
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm tabular-nums">
         <dt className="text-muted-foreground">
-          Monthly income (pre-retirement)
+          Monthly net income (pre-retirement)
         </dt>
         <dd className="text-right">
           {formatAccountingMoneyRounded(
@@ -179,7 +179,9 @@ function RetirementSection({
             retirement.monthlyIncome.amount,
           )}
         </dd>
-        <dt className="text-muted-foreground">Monthly spending (today)</dt>
+        <dt className="text-muted-foreground">
+          Monthly spending (today, excl. loan repayments)
+        </dt>
         <dd className="text-right">
           {formatAccountingMoneyRounded(
             currency,
