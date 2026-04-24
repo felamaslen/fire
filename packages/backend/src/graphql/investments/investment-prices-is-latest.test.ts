@@ -98,4 +98,96 @@ describe("InvestmentPrices.isLatest trigger", () => {
     const inv = await createInvestment("ZZZ");
     expect(await latestIdFor(inv)).toBeNull();
   });
+
+  it("flags only the max-date row when many rows insert in one statement", async () => {
+    const inv = await createInvestment("BULK");
+    const rows = await db
+      .insert(InvestmentPrices)
+      .values(
+        [
+          "2026-01-01",
+          "2026-04-01",
+          "2026-06-01",
+          "2026-03-01",
+          "2026-05-01",
+        ].map((d) => ({
+          investmentId: inv,
+          date: new Date(d),
+          price: 100,
+          currency: "GBP" as const,
+        })),
+      )
+      .returning({ id: InvestmentPrices.id, date: InvestmentPrices.date });
+    const maxId = rows.reduce((a, b) => (a.date > b.date ? a : b)).id;
+    expect(await latestIdFor(inv)).toBe(maxId);
+  });
+
+  it("isolates `isLatest` per investment inside a mixed bulk insert", async () => {
+    const a = await createInvestment("BULKA");
+    const b = await createInvestment("BULKB");
+    const rows = await db
+      .insert(InvestmentPrices)
+      .values([
+        {
+          investmentId: a,
+          date: new Date("2026-01-01"),
+          price: 10,
+          currency: "GBP",
+        },
+        {
+          investmentId: a,
+          date: new Date("2026-06-01"),
+          price: 20,
+          currency: "GBP",
+        },
+        {
+          investmentId: b,
+          date: new Date("2026-03-01"),
+          price: 30,
+          currency: "GBP",
+        },
+        {
+          investmentId: b,
+          date: new Date("2026-02-01"),
+          price: 40,
+          currency: "GBP",
+        },
+      ])
+      .returning({
+        id: InvestmentPrices.id,
+        investmentId: InvestmentPrices.investmentId,
+        date: InvestmentPrices.date,
+      });
+    const maxFor = (inv: string) =>
+      rows
+        .filter((r) => r.investmentId === inv)
+        .reduce((x, y) => (x.date > y.date ? x : y)).id;
+    expect(await latestIdFor(a)).toBe(maxFor(a));
+    expect(await latestIdFor(b)).toBe(maxFor(b));
+  });
+
+  it("handles a bulk delete that removes the current latest", async () => {
+    const inv = await createInvestment("BULKDEL");
+    await db.insert(InvestmentPrices).values(
+      ["2026-01-01", "2026-02-01", "2026-06-01"].map((d) => ({
+        investmentId: inv,
+        date: new Date(d),
+        price: 100,
+        currency: "GBP" as const,
+      })),
+    );
+    // Drop the two newest rows in one statement.
+    await db
+      .delete(InvestmentPrices)
+      .where(
+        sql`${InvestmentPrices.investmentId} = ${inv} AND ${InvestmentPrices.date} > '2026-01-01'`,
+      );
+    const [[surviving]] = [
+      await db
+        .select({ id: InvestmentPrices.id })
+        .from(InvestmentPrices)
+        .where(eq(InvestmentPrices.investmentId, inv)),
+    ];
+    expect(await latestIdFor(inv)).toBe(surviving.id);
+  });
 });
