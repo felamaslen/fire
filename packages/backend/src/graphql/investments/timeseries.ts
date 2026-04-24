@@ -1,7 +1,7 @@
 import assert from "node:assert";
 
 import DataLoader from "dataloader";
-import { differenceInDays } from "date-fns";
+import { differenceInDays, formatISO } from "date-fns";
 import { and, asc, desc, eq, inArray, lte, min, sql, sum } from "drizzle-orm";
 import type { PgColumn, PgSelectBase } from "drizzle-orm/pg-core";
 
@@ -133,6 +133,8 @@ export const loadTimeseries = contextAwareDataLoader(
         // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
         const currency = HOME_CURRENCY;
 
+        const now = formatISO(new Date(), { representation: "date" });
+
         // Earliest transaction in the filter scope — anchors the series at
         // the first-cached-price boundary for all periods. For `ALL`, this is
         // the series start. For `YEAR` / `MONTH` / `YTD`, we clamp the period
@@ -154,11 +156,11 @@ export const loadTimeseries = contextAwareDataLoader(
             case "ALL":
               return firstTxDate;
             case "YEAR":
-              return sql`select greatest((now() - interval '${sql.raw(keys[0].length.toString())} year')::date, (${firstTxDate}))`;
+              return sql`select greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} year')::date, (${firstTxDate}))`;
             case "MONTH":
-              return sql`select greatest((now() - interval '${sql.raw(keys[0].length.toString())} month')::date, (${firstTxDate}))`;
+              return sql`select greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} month')::date, (${firstTxDate}))`;
             case "YTD":
-              return sql`select greatest(date_trunc('year', now())::date, (${firstTxDate}))`;
+              return sql`select greatest(date_trunc('year', ${now}::timestamptz)::date, (${firstTxDate}))`;
             default:
               throw new UnreachableCaseError(keys[0].period);
           }
@@ -171,10 +173,10 @@ export const loadTimeseries = contextAwareDataLoader(
           select distinct date from (
             select generate_series(
               (${startDate}),
-              now(),
-              (ceil((now()::date - (${startDate}) + 1) / ${MAX_POINTS}::float) || ' day')::interval
+              ${now},
+              (ceil((${now}::date - (${startDate}) + 1) / ${MAX_POINTS}::float) || ' day')::interval
             ) as date
-            union select now()::date as date
+            union select ${now}::date as date
           ) d
           order by 1
         ` as any as PgSelectBase<
@@ -361,7 +363,7 @@ export const loadTimeseries = contextAwareDataLoader(
         bufferPrices(cursorPrices - 1);
 
         // Fetch today's live-overlaid portfolio total per non-skipLive key.
-        // The last x is `now()::date` by construction (union in the `dates`
+        // The last x is today's date by construction (union in the `dates`
         // CTE), so we just substitute that point's y rather than appending.
         const liveByKeyIndex = await Promise.all(
           keys.map((key) =>

@@ -318,23 +318,15 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
     {
       "aggregate": {
         "candlestick": {
-          "initialDate": "2026-04-08",
+          "initialDate": "2026-04-10",
           "points": [
             {
               "from": 6700,
-              "hi": 7100,
+              "hi": 7500,
               "lo": 6700,
-              "to": 7100,
+              "to": 7500,
               "x0": 0,
               "x1": 7,
-            },
-            {
-              "from": 7100,
-              "hi": 7500,
-              "lo": 7100,
-              "to": 7500,
-              "x0": 7,
-              "x1": 14,
             },
           ],
         },
@@ -351,15 +343,7 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
               "y": 10150,
             },
             {
-              "x": 4,
-              "y": 10500,
-            },
-            {
-              "x": 6,
-              "y": 10500,
-            },
-            {
-              "x": 8,
+              "x": 3,
               "y": 10500,
             },
           ],

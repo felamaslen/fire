@@ -1,5 +1,5 @@
 import DataLoader from "dataloader";
-import { differenceInDays } from "date-fns";
+import { differenceInDays, formatISO } from "date-fns";
 import { sql } from "drizzle-orm";
 
 import { HOME_CURRENCY } from "@/config";
@@ -61,6 +61,7 @@ const loadOne = async (
   const assetFilter = key.assetId
     ? sql`and t."assetId" = ${key.assetId}`
     : sql``;
+  const now = formatISO(new Date(), { representation: "date" });
 
   // `u_tx` / `u` are MATERIALIZED so (a) the stock-split scalar subquery runs
   // once per transaction (~hundreds) rather than once per (bucket × price) pair
@@ -74,8 +75,8 @@ const loadOne = async (
           select date, row_number() over (order by date desc) as rn
           from (
             select generate_series(
-              now()::date - interval '${windowLen} ${unit}',
-              now()::date,
+              ${now}::date - interval '${windowLen} ${unit}',
+              ${now}::date,
               '${step} ${unit}'::interval
             ) as date
           ) x
