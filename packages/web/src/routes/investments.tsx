@@ -895,6 +895,12 @@ function UnitPrice({
   const price = readFragment(FigureDocument, priceFragment);
   const isLive = live !== null;
   const at = isLive ? live.capturedAt : cachedAt;
+  const now = useNow(30_000);
+  const liveAgeMs =
+    isLive && live.capturedAt ? now - new Date(live.capturedAt).getTime() : 0;
+  // 0–60s = green (hue 140), ≥5min = yellow (hue 50), linear in between.
+  const t = Math.min(1, Math.max(0, (liveAgeMs - 60_000) / (300_000 - 60_000)));
+  const liveHue = 140 - t * 90;
   return (
     <span className="inline-flex items-center gap-1">
       {prefix}
@@ -905,10 +911,9 @@ function UnitPrice({
             <Clock
               className={cn(
                 "h-3 w-3 shrink-0",
-                isLive
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-muted-foreground",
+                !isLive && "text-muted-foreground",
               )}
+              style={isLive ? { color: `hsl(${liveHue} 70% 40%)` } : undefined}
             />
           </TooltipTrigger>
           <TooltipContent>
@@ -919,6 +924,15 @@ function UnitPrice({
       )}
     </span>
   );
+}
+
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
 }
 
 function InvestmentRow({
