@@ -2,7 +2,7 @@
  * Backfills a database migrated using drizzle-kit, to use @pgkit/migrator (see scripts/migrator.ts)
  * This requires copying the migrations table to a different schema
  *
- * Usage: `npx tsx scripts/backfill-migrations.ts`
+ * Usage: `pnpm exec tsx scripts/backfill-migrations.ts`
  */
 
 import assert from "node:assert";
