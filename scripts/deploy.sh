@@ -165,7 +165,7 @@ docker pull '$IMAGE:latest'
 # migration has something to talk to.
 docker compose up -d --wait postgres
 
-# Run drizzle-kit migrate in a one-off container built from the app image.
+# Run @pgkit/migrator in a one-off container built from the app image.
 # \`--rm\`      — don't leave a stopped container around; env (DATABASE_URL
 #                etc.) is inherited from docker-compose.yml.
 # \`-T\`       — disable pseudo-TTY allocation (compose would otherwise try
@@ -179,6 +179,7 @@ docker compose up -d --wait postgres
 #                the app recreate below. Deploys looked green but left
 #                the old container running.
 echo '==> Running database migrations'
+docker compose run --rm -T app pnpm db:migrate:backfill </dev/null
 docker compose run --rm -T app pnpm db:migrate </dev/null
 
 # Bring \`backup\` (and anything else non-app) up / prune orphans. Does NOT
