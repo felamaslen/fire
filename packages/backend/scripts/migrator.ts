@@ -37,7 +37,10 @@ const isMain =
   process.argv[1]?.endsWith("/migrator.ts");
 
 export async function migrator(clientUrl?: string) {
-  const client = clientUrl ?? process.env.DATABASE_URL;
+  const client =
+    clientUrl ??
+    process.env.DATABASE_URL ??
+    "postgres://fire:fire@localhost:5433/fire";
   assert(client, "Missing database client URL");
 
   const pool = new pg.Pool({ connectionString: client });

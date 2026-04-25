@@ -1,9 +1,9 @@
 {
-  "plugins": ["prettier-plugin-sql-cst"],
+  "plugins": ["prettier-plugin-sql"],
   "overrides": [
     {
       "files": "*.sql",
-      "options": { "parser": "postgresql" }
+      "options": { "language": "postgresql" }
     }
   ]
 }

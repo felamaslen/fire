@@ -6,7 +6,6 @@
  */
 
 import assert from "node:assert";
-import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -39,17 +38,15 @@ const files = await readdir(migrationsDirectory);
 for (const file of files) {
   if (!file.endsWith(".sql")) continue;
   const content = await readFile(resolve(migrationsDirectory, file), "utf8");
-  const hash = createHash("sha256").update(content).digest("hex");
   logger.info("Backfilling migration", { name: file });
   await pool.query(
     sql`
   insert into migrator_internal.migrations (name, content, status, date)
   select \$1 as name, \$2 as content, \$3 as status, to_timestamp(d.created_at / 1000) as date
   from drizzle.__drizzle_migrations d
-  where d.hash = \$4
   on conflict do nothing
   `,
-    [file, content, "executed", hash],
+    [file, content, "executed"],
   );
 }
 await pool.end();

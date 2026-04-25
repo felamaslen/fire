@@ -138,7 +138,8 @@ if (postMigration.length > 0) {
 }
 
 const prettierConfig = await prettier.resolveConfig(SCHEMA_SQL);
-const output = await prettier.format(parts.join("\n\n") + "\n", {
+const raw = parts.join("\n\n") + "\n";
+const output = await prettier.format(raw, {
   ...prettierConfig,
   filepath: SCHEMA_SQL,
 });

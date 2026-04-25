@@ -16,6 +16,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+import { pgCustomSQL } from "../sql";
 import { currencyCode } from "./currency";
 import { NetWorthCategoryAssets } from "./net-worth";
 
@@ -170,8 +171,6 @@ export const InvestmentPrices = pgTable(
     price: doublePrecision("price").notNull(),
     /** Split-adjusted unit price, in fractional units of `currency`. Equal to `price * product(ratio for every later split)`. Maintained by trigger — do not write directly; any value supplied on INSERT / UPDATE is overwritten. */
     priceAdjusted: doublePrecision("priceAdjusted").notNull().default(0),
-    /** `true` on the row with the greatest `date` per `investmentId`, `null` on every other row (nullable-`true` pattern so the partial unique index enforces "at most one latest per investment" without needing to store `false` on the other rows). Maintained by trigger — do not write directly. Lets the hot "what's the latest close for these N investments?" query hit the partial index directly instead of window-sorting the full history. */
-    isLatest: boolean("isLatest"),
     currency: currencyCode("currency").notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
@@ -179,6 +178,8 @@ export const InvestmentPrices = pgTable(
     updatedAt: timestamp("updatedAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** `true` on the row with the greatest `date` per `investmentId`, `null` on every other row (nullable-`true` pattern so the partial unique index enforces "at most one latest per investment" without needing to store `false` on the other rows). Maintained by trigger — do not write directly. Lets the hot "what's the latest close for these N investments?" query hit the partial index directly instead of window-sorting the full history. Column position matches the migration that added it (`0024`) — keep last to avoid drift. */
+    isLatest: boolean("isLatest"),
   },
   (t) => [
     check("InvestmentPrices_price_ck", sql`${t.price} >= 0`),
@@ -317,4 +318,166 @@ export const InvestmentPortfolioDailyBreakdown = pgView(
     WHERE p.price IS NOT NULL AND u.units <> 0
     GROUP BY i.currency, u."assetId", u.date
   `,
+);
+
+// The function bodies below match the migration text byte-for-byte — Postgres
+// stores the body between the `$$` markers verbatim in `pg_proc.prosrc`, so
+// any whitespace difference between the migrated and the schema.sql versions
+// shows up as drift. Do not re-indent.
+
+/** Returns `price` divided by the product of every stock-split ratio dated strictly after `p_date`, normalising the historical quote into today's post-split share-count terms. Used by `InvestmentPrices_setAdjusted_fn` and `InvestmentStockSplits_recomputePrices_fn` to maintain `InvestmentPrices.priceAdjusted`. */
+// prettier-ignore
+export const InvestmentPrices_computeAdjusted_fn = pgCustomSQL(
+  sql`CREATE FUNCTION "InvestmentPrices_computeAdjusted"(
+  p_investment_id uuid,
+  p_date date,
+  p_price double precision
+) RETURNS double precision LANGUAGE sql STABLE AS $$
+  SELECT p_price / COALESCE(
+    (SELECT EXP(SUM(LN(ratio)))
+     FROM "InvestmentStockSplits"
+     WHERE "investmentId" = p_investment_id AND date > p_date)::double precision,
+    1
+  );
+$$;`,
+  { priority: 1 },
+);
+
+/** Per-row `BEFORE INSERT / UPDATE` trigger function on `InvestmentPrices` that overwrites `NEW."priceAdjusted"` with the freshly computed value. Any value supplied by the caller is discarded — `priceAdjusted` is derived, not authored. */
+// prettier-ignore
+export const InvestmentPrices_setAdjusted_fn = pgCustomSQL(
+  sql`CREATE FUNCTION "InvestmentPrices_setAdjusted_fn"() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW."priceAdjusted" := "InvestmentPrices_computeAdjusted"(
+    NEW."investmentId", NEW.date, NEW.price
+  );
+  RETURN NEW;
+END;
+$$;`,
+  { priority: 2 },
+);
+
+/** Per-statement `AFTER INSERT / UPDATE / DELETE` trigger function on `InvestmentPrices` that maintains the `isLatest` flag (true on the row with the greatest `date` per `investmentId`, NULL elsewhere). Statement-level + transition tables to keep bulk inserts O(N) — see migration `0030` for the row-level → statement-level rationale. */
+// prettier-ignore
+export const InvestmentPrices_setIsLatest_stmt_fn = pgCustomSQL(
+  sql`CREATE FUNCTION "InvestmentPrices_setIsLatest_stmt_fn"() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  affected uuid[] := ARRAY[]::uuid[];
+BEGIN
+  -- The function re-enters via its own UPDATEs below. Without a column list
+  -- (not permitted on transition-table triggers) the UPDATE trigger fires on
+  -- every UPDATE including \`isLatest = …\`. Guard on \`pg_trigger_depth()\` so
+  -- only the outermost call does any work.
+  IF pg_trigger_depth() > 1 THEN
+    RETURN NULL;
+  END IF;
+
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    affected := affected || ARRAY(SELECT DISTINCT "investmentId" FROM new_rows);
+  END IF;
+  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+    affected := affected || ARRAY(SELECT DISTINCT "investmentId" FROM old_rows);
+  END IF;
+  IF cardinality(affected) = 0 THEN
+    RETURN NULL;
+  END IF;
+
+  -- Clear every \`isLatest\` on the affected investments first so the partial
+  -- unique index on \`(investmentId, isLatest) WHERE isLatest IS NOT NULL\`
+  -- doesn't reject the second UPDATE below.
+  UPDATE "InvestmentPrices"
+  SET "isLatest" = NULL
+  WHERE "investmentId" = ANY(affected) AND "isLatest" IS NOT NULL;
+
+  UPDATE "InvestmentPrices" p
+  SET "isLatest" = true
+  FROM (
+    SELECT DISTINCT ON ("investmentId") id
+    FROM "InvestmentPrices"
+    WHERE "investmentId" = ANY(affected)
+    ORDER BY "investmentId", date DESC
+  ) latest
+  WHERE p.id = latest.id;
+
+  RETURN NULL;
+END;
+$$;`,
+  { priority: 2 },
+);
+
+/** Per-row `AFTER INSERT / UPDATE / DELETE` trigger function on `InvestmentStockSplits` that recomputes `priceAdjusted` for every `InvestmentPrices` row of the affected investment(s). Fires after split events because the multiplicative correction depends on later splits. */
+// prettier-ignore
+export const InvestmentStockSplits_recomputePrices_fn = pgCustomSQL(
+  sql`CREATE FUNCTION "InvestmentStockSplits_recomputePrices_fn"() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  affected uuid[] := ARRAY[]::uuid[];
+BEGIN
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    affected := affected || NEW."investmentId";
+  END IF;
+  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+    affected := affected || OLD."investmentId";
+  END IF;
+
+  UPDATE "InvestmentPrices" p
+  SET "priceAdjusted" = "InvestmentPrices_computeAdjusted"(p."investmentId", p.date, p.price)
+  WHERE p."investmentId" = ANY(affected);
+
+  RETURN NULL;
+END;
+$$;`,
+  { priority: 2 },
+);
+
+/** Wires `InvestmentPrices_setAdjusted_fn` to `BEFORE INSERT / UPDATE` of `price`, `date`, `investmentId` on `InvestmentPrices`. */
+export const InvestmentPrices_setAdjusted_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentPrices_setAdjusted_trg"
+    BEFORE INSERT OR UPDATE OF price, date, "investmentId" ON "InvestmentPrices"
+    FOR EACH ROW EXECUTE FUNCTION "InvestmentPrices_setAdjusted_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires `InvestmentPrices_setIsLatest_stmt_fn` to `AFTER INSERT` on `InvestmentPrices`, with a `NEW` transition table. */
+export const InvestmentPrices_setIsLatest_ins_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentPrices_setIsLatest_ins_trg"
+    AFTER INSERT ON "InvestmentPrices"
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentPrices_setIsLatest_stmt_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires `InvestmentPrices_setIsLatest_stmt_fn` to `AFTER UPDATE` on `InvestmentPrices`. Postgres forbids column lists on UPDATE triggers that use transition tables, so the trigger fires on every UPDATE and the function guards against unnecessary work. */
+export const InvestmentPrices_setIsLatest_upd_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentPrices_setIsLatest_upd_trg"
+    AFTER UPDATE ON "InvestmentPrices"
+    REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentPrices_setIsLatest_stmt_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires `InvestmentPrices_setIsLatest_stmt_fn` to `AFTER DELETE` on `InvestmentPrices`, with an `OLD` transition table. */
+export const InvestmentPrices_setIsLatest_del_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentPrices_setIsLatest_del_trg"
+    AFTER DELETE ON "InvestmentPrices"
+    REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentPrices_setIsLatest_stmt_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires `InvestmentStockSplits_recomputePrices_fn` to `AFTER INSERT / UPDATE / DELETE` per row on `InvestmentStockSplits`. */
+export const InvestmentStockSplits_recomputePrices_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentStockSplits_recomputePrices_trg"
+    AFTER INSERT OR UPDATE OR DELETE ON "InvestmentStockSplits"
+    FOR EACH ROW EXECUTE FUNCTION "InvestmentStockSplits_recomputePrices_fn"();
+  `,
+  { priority: 3 },
 );

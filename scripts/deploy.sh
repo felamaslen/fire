@@ -180,7 +180,7 @@ docker compose up -d --wait postgres
 #                the old container running.
 echo '==> Running database migrations'
 docker compose run --rm -T app pnpm db:migrate:backfill </dev/null
-docker compose run --rm -T app pnpm db:migrate </dev/null
+docker compose run --rm -T app pnpm db:migrate up </dev/null
 
 # Bring \`backup\` (and anything else non-app) up / prune orphans. Does NOT
 # touch \`app\` — that's handled explicitly below with stronger recreation
