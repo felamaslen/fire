@@ -65,6 +65,7 @@ const PortfolioLiveDocument = graphql(
               ...Figure
             }
             capturedAt
+            tickAt
           }
         }
       }
