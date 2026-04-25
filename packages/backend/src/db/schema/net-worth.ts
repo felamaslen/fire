@@ -118,16 +118,16 @@ export const NetWorthCategoryAssets = pgTable(
       .default(sql`uuidv7()`),
     name: text("name").notNull(),
     type: netWorthCategoryAssetType("type").notNull(),
-    /** Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation (vehicles). Used only by the net-worth forecast; null means no extrapolation. Only valid for `PROPERTY` and `VEHICLE` — enforced by check constraint. */
-    growthRate: numeric("growthRate", { precision: 6, scale: 4 }),
-    /** Date from which the pot can be drawn down (e.g. UK pension access age 57). Only valid for `PENSION` assets — enforced by check constraint. Null means "accessible now"; the forecast skips retirement drawdown on this pot until the date is reached. */
-    accessibleFrom: date("accessibleFrom", { mode: "date" }),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
     updatedAt: timestamp("updatedAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation (vehicles). Used only by the net-worth forecast; null means no extrapolation. Only valid for `PROPERTY` and `VEHICLE` — enforced by check constraint. Position matches migration `0021` (added after `updatedAt`). */
+    growthRate: numeric("growthRate", { precision: 6, scale: 4 }),
+    /** Date from which the pot can be drawn down (e.g. UK pension access age 57). Only valid for `PENSION` assets — enforced by check constraint. Null means "accessible now"; the forecast skips retirement drawdown on this pot until the date is reached. Position matches migration `0027`. */
+    accessibleFrom: date("accessibleFrom", { mode: "date" }),
   },
   (t) => [
     check(
@@ -165,19 +165,19 @@ export const NetWorthCategoryLiabilities = pgTable(
     ),
     /** Annual interest rate as a percentage (e.g. 5.25 for 5.25%). Required iff type=LOAN. */
     interestRate: numeric("interestRate", { precision: 6, scale: 4 }),
-    /** Planning account this liability is billed from (e.g. a credit card paid off from a current account). When set, the planner emits predicted monthly payment transactions on that account. Only valid for `CREDIT_CARD` type — enforced by check constraint. */
-    billedFromAccountId: uuid("billedFromAccountId").references(
-      () => PlanningAccounts.accountId,
-      { onDelete: "set null" },
-    ),
-    /** When true, the liability is hidden from aggregate totals (e.g. a closed credit card). */
-    skip: boolean("skip").notNull().default(false),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
     updatedAt: timestamp("updatedAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** When true, the liability is hidden from aggregate totals (e.g. a closed credit card). Position matches migration that added it. */
+    skip: boolean("skip").notNull().default(false),
+    /** Planning account this liability is billed from (e.g. a credit card paid off from a current account). When set, the planner emits predicted monthly payment transactions on that account. Only valid for `CREDIT_CARD` type — enforced by check constraint. Position matches migration `0009` (added after `skip`). */
+    billedFromAccountId: uuid("billedFromAccountId").references(
+      () => PlanningAccounts.accountId,
+      { onDelete: "set null" },
+    ),
   },
   (t) => [
     check(
