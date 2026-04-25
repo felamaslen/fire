@@ -1,4 +1,4 @@
-import { fetchQuote, TEST__clearCacheForTesting } from "@/tasks/yahoo";
+import { fetchQuote, TEST__clearInflightForTesting } from "@/tasks/yahoo";
 import { graphql, runGql } from "#test/gql";
 import { http, HttpResponse, useMswServer } from "#test/msw";
 
@@ -43,7 +43,7 @@ function yahooHandlers(
 }
 
 beforeEach(() => {
-  TEST__clearCacheForTesting();
+  TEST__clearInflightForTesting();
 });
 
 async function createInvestment(): Promise<string> {
@@ -140,7 +140,11 @@ describe("dailyGain uses live quote when available", () => {
     await setCachedPrice(id, "2024-01-01", 500);
 
     server.use(...yahooHandlers(7, "GBP", 6.5));
-    await fetchQuote("AAPL");
+    await fetchQuote("AAPL", {
+      investmentId: id,
+      currency: "GBP",
+      bypassBusinessHours: true,
+    });
 
     const data = await runGql(POSITION_QUERY, {});
     const pos = data.investments?.edges[0]?.node.position;
@@ -158,7 +162,11 @@ describe("dailyGain uses live quote when available", () => {
     await setCachedPrice(id, "2024-01-01", 500);
 
     server.use(...yahooHandlers(7, "GBP"));
-    await fetchQuote("AAPL");
+    await fetchQuote("AAPL", {
+      investmentId: id,
+      currency: "GBP",
+      bypassBusinessHours: true,
+    });
 
     const data = await runGql(POSITION_QUERY, {});
     const pos = data.investments?.edges[0]?.node.position;
@@ -182,7 +190,11 @@ describe("dailyGain uses live quote when available", () => {
     // the stock is actually DOWN today. The old logic would have reported
     // dailyGain = (210 − 200) × 10 = +100 using the ancient close.
     server.use(...yahooHandlers(2.1, "GBP", 2.12));
-    await fetchQuote("AAPL");
+    await fetchQuote("AAPL", {
+      investmentId: id,
+      currency: "GBP",
+      bypassBusinessHours: true,
+    });
 
     const data = await runGql(POSITION_QUERY, {});
     const pos = data.investments?.edges[0]?.node.position;
@@ -198,7 +210,11 @@ describe("dailyGain uses live quote when available", () => {
     await setCachedPrice(id, "2024-01-01", 500);
 
     server.use(...yahooHandlers(7, "USD", 6.5));
-    await fetchQuote("AAPL");
+    await fetchQuote("AAPL", {
+      investmentId: id,
+      currency: "GBP",
+      bypassBusinessHours: true,
+    });
 
     const doc = graphql(`
       query {

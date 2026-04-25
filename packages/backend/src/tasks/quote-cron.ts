@@ -44,7 +44,11 @@ export async function refreshAllStockQuotes(
           skippedNoTicker++;
           continue;
         }
-        const quote = await fetchQuote(inv.stockCode);
+        const quote = await fetchQuote(inv.stockCode, {
+          investmentId: inv.id,
+          currency: inv.currency,
+          bypassBusinessHours: true,
+        });
         fetched++;
         if (!quote) {
           skippedNoQuote++;

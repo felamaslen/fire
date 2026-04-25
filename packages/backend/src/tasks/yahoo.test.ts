@@ -1,11 +1,19 @@
+import { db } from "@/db";
+import { Investments } from "@/db/schema/investments";
 import { http, HttpResponse, useMswServer } from "#test/msw";
 
-import {
-  fetchQuote,
-  readCachedQuote,
-  readOrRefresh,
-  TEST__clearCacheForTesting,
-} from "./yahoo";
+import { fetchQuote, TEST__clearInflightForTesting } from "./yahoo";
+
+async function createInvestment(
+  stockCode: string,
+  currency: "GBP" | "USD" = "GBP",
+): Promise<string> {
+  const [row] = await db
+    .insert(Investments)
+    .values({ name: stockCode, stockCode, currency })
+    .returning({ id: Investments.id });
+  return row.id;
+}
 
 const server = useMswServer();
 
@@ -49,7 +57,7 @@ function yahooConsentHandlers() {
 }
 
 beforeEach(() => {
-  TEST__clearCacheForTesting();
+  TEST__clearInflightForTesting();
   server.use(...yahooConsentHandlers());
 });
 
@@ -60,12 +68,16 @@ describe("fetchQuote", () => {
         { symbol: "AAPL", regularMarketPrice: 123.45, currency: "GBP" },
       ]),
     );
-    const result = await fetchQuote("AAPL");
+    const id = await createInvestment("AAPL");
+    const result = await fetchQuote("AAPL", {
+      investmentId: id,
+      currency: "GBP",
+      bypassBusinessHours: true,
+    });
     expect(result).toMatchObject({
       priceMinorUnits: 12345,
       currency: "GBP",
     });
-    expect(readCachedQuote("AAPL")).toEqual(result);
   });
 
   it("treats GBp / GBX quotes as already being in pence", async () => {
@@ -74,7 +86,12 @@ describe("fetchQuote", () => {
         { symbol: "EQQQ.L", regularMarketPrice: 48145, currency: "GBp" },
       ]),
     );
-    const result = await fetchQuote("EQQQ.L");
+    const id = await createInvestment("EQQQ.L");
+    const result = await fetchQuote("EQQQ.L", {
+      investmentId: id,
+      currency: "GBP",
+      bypassBusinessHours: true,
+    });
     expect(result).toMatchObject({
       priceMinorUnits: 48145,
       currency: "GBP",
@@ -89,39 +106,50 @@ describe("fetchQuote", () => {
         { hits },
       ),
     );
+    const id = await createInvestment("AAPL", "USD");
+    const opts = {
+      investmentId: id,
+      currency: "USD",
+      bypassBusinessHours: true,
+    };
     await Promise.all([
-      fetchQuote("AAPL"),
-      fetchQuote("AAPL"),
-      fetchQuote("AAPL"),
+      fetchQuote("AAPL", opts),
+      fetchQuote("AAPL", opts),
+      fetchQuote("AAPL", opts),
     ]);
     expect(hits.count).toBe(1);
   });
 
   it("returns null when the quote has no price", async () => {
     server.use(yahooQuoteHandler([{ symbol: "BAD", currency: "GBP" }]));
-    expect(await fetchQuote("BAD")).toBeNull();
+    const id = await createInvestment("BAD");
+    expect(
+      await fetchQuote("BAD", {
+        investmentId: id,
+        currency: "GBP",
+        bypassBusinessHours: true,
+      }),
+    ).toBeNull();
   });
 
   it("returns null when the network call fails", async () => {
     server.use(http.get(QUOTE_URL, () => HttpResponse.error()));
-    expect(await fetchQuote("ERR")).toBeNull();
+    const id = await createInvestment("ERR");
+    expect(
+      await fetchQuote("ERR", {
+        investmentId: id,
+        currency: "GBP",
+        bypassBusinessHours: true,
+      }),
+    ).toBeNull();
   });
 });
 
-describe("readOrRefresh", () => {
-  it("returns null on the first call and triggers a background fetch", async () => {
-    server.use(
-      yahooQuoteHandler([
-        { symbol: "AAPL", regularMarketPrice: 50, currency: "GBP" },
-      ]),
-    );
-
-    expect(readOrRefresh("AAPL")).toBeNull();
-    await vi.waitFor(() => expect(readCachedQuote("AAPL")).not.toBeNull());
-    expect(readOrRefresh("AAPL")).toMatchObject({ priceMinorUnits: 5000 });
-  });
-
-  it("serves cached quotes that are still fresh without triggering a new fetch", async () => {
+describe("business-hours gate", () => {
+  it("skips the network when called for GBP outside the LSE window", async () => {
+    // TEST_NOW (Sat 2026-04-18 12:00 UTC) is a weekend → outside the GBP
+    // window for any time-of-day. Without `bypassBusinessHours` the call
+    // must not hit Yahoo, even with no cached row to fall back to.
     const hits = { count: 0 };
     server.use(
       yahooQuoteHandler(
@@ -129,8 +157,38 @@ describe("readOrRefresh", () => {
         { hits },
       ),
     );
-    await fetchQuote("AAPL");
-    readOrRefresh("AAPL");
-    expect(hits.count).toBe(1);
+    const id = await createInvestment("AAPL");
+    const result = await fetchQuote("AAPL", {
+      investmentId: id,
+      currency: "GBP",
+    });
+    expect(result).toBeNull();
+    expect(hits.count).toBe(0);
+  });
+
+  it("persists the live quote to InvestmentPricesLive on success", async () => {
+    server.use(
+      yahooQuoteHandler([
+        {
+          symbol: "AAPL",
+          regularMarketPrice: 123.45,
+          currency: "GBP",
+        },
+      ]),
+    );
+    const id = await createInvestment("AAPL");
+    await fetchQuote("AAPL", {
+      investmentId: id,
+      currency: "GBP",
+      bypassBusinessHours: true,
+    });
+    const { InvestmentPricesLive } = await import("@/db/schema/investments");
+    const rows = await db.select().from(InvestmentPricesLive);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      investmentId: id,
+      currency: "GBP",
+      price: 12345,
+    });
   });
 });

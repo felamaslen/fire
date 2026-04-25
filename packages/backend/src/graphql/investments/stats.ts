@@ -4,11 +4,16 @@ import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   InvestmentPrices,
+  InvestmentPricesLive,
   Investments,
   InvestmentStockSplits,
   InvestmentTransactions,
 } from "@/db/schema/investments";
-import { readCachedQuote, readOrRefresh } from "@/tasks/yahoo";
+import {
+  fetchQuote,
+  isInBusinessHours,
+  LIVE_QUOTE_STALE_MS,
+} from "@/tasks/yahoo";
 
 import { type Context, contextAwareDataLoader } from "../context";
 
@@ -52,6 +57,23 @@ export type InvestmentStats = {
   dailyGainValueMinor: number | null;
   /** Denominator for the aggregate daily-gain percentage — Σ of `previousClose × unitsHeld` over the same investments that fed `dailyGainValueMinor`. `null` with the same conditions. */
   dailyGainPrevValueMinor: number | null;
+
+  /** Raw live-quote row for the investment, lifted off `InvestmentPricesLive`. Populated only on single-investment slices (`key.investmentId` set); `null` everywhere else and for non-stock investments / investments that have never been quoted. */
+  live: LiveQuoteSnapshot | null;
+};
+
+/** What `InvestmentStats.live` exposes — the persisted live row for one investment. */
+export type LiveQuoteSnapshot = {
+  /** Live unit price in fractional units of `currency`. */
+  priceMinor: number;
+  /** Yahoo's `regularMarketPreviousClose` in the same fractional units. `null` when the upstream provider doesn't report it. */
+  previousClosePriceMinor: number | null;
+  /** Currency reported by the quote provider. */
+  currency: string;
+  /** Wall-clock time we last refreshed this entry. */
+  refreshedAt: Date;
+  /** Time of the actual price tick reported by the provider. */
+  tickAt: Date;
 };
 
 /** Filter combination. `undefined` on any side drops that filter — so `{}` = the entire portfolio across every investment, `{investmentId}` = that stock across every portfolio, `{assetId}` = that portfolio across every stock, `{currency}` = every investment in that currency (used by `Portfolio` to avoid summing across currencies). `skipLive` toggles between the live-price and previous-close overlays for `priceLatest` and nulls out `dailyGain*`; it's part of the key because two callers that disagree on it need distinct results, but it never changes the underlying SQL — reconciliation happens in memory from the same slice rows. */
@@ -125,6 +147,13 @@ type SliceRow = {
   feesSum: number;
   reinvestedUnits: number;
   reinvestedCostSum: number;
+
+  /** Live-quote columns lifted off `InvestmentPricesLive` via `LEFT JOIN`. All five are non-null together, or all five are null (no live row for the investment yet, or the investment is a fund). */
+  livePrice: number | null;
+  livePricePreviousClose: number | null;
+  liveCurrency: string | null;
+  liveRefreshedAt: Date | null;
+  liveTickAt: Date | null;
 };
 
 type SliceContext = {
@@ -233,6 +262,11 @@ async function fetchSlices(
       stockCode: Investments.stockCode,
       priceLatestCached: latestPrices.priceAdjusted,
       priceLatestCachedAt: latestPrices.createdAt,
+      livePrice: InvestmentPricesLive.price,
+      livePricePreviousClose: InvestmentPricesLive.pricePreviousClose,
+      liveCurrency: InvestmentPricesLive.currency,
+      liveRefreshedAt: InvestmentPricesLive.refreshedAt,
+      liveTickAt: InvestmentPricesLive.date,
       unitsHeld:
         sql<number>`COALESCE(SUM(${txAdj.adjUnits}), 0)::double precision`.as(
           "unitsHeld",
@@ -266,6 +300,10 @@ async function fetchSlices(
     })
     .from(Investments)
     .leftJoin(latestPrices, eq(latestPrices.investmentId, Investments.id))
+    .leftJoin(
+      InvestmentPricesLive,
+      eq(InvestmentPricesLive.investmentId, Investments.id),
+    )
     .leftJoin(txAdj, eq(txAdj.investmentId, Investments.id))
     .where(
       and(
@@ -284,6 +322,11 @@ async function fetchSlices(
       Investments.stockCode,
       latestPrices.priceAdjusted,
       latestPrices.createdAt,
+      InvestmentPricesLive.price,
+      InvestmentPricesLive.pricePreviousClose,
+      InvestmentPricesLive.currency,
+      InvestmentPricesLive.refreshedAt,
+      InvestmentPricesLive.date,
       txAdj.assetId,
     );
 
@@ -303,7 +346,14 @@ async function fetchSlices(
     reinvestedCostSum: Number(r.reinvestedCostSum),
     priceLatestCached:
       r.priceLatestCached === null ? null : Number(r.priceLatestCached),
+    livePrice: r.livePrice === null ? null : Number(r.livePrice),
+    livePricePreviousClose:
+      r.livePricePreviousClose === null
+        ? null
+        : Number(r.livePricePreviousClose),
   }));
+
+  triggerLiveRefreshes(rows);
 
   const byInvestment = new Map<string, SliceRow[]>();
   const byAsset = new Map<string, SliceRow[]>();
@@ -386,11 +436,11 @@ function aggregateKey(
     }
     // Daily gain requires a held position + a live quote with previousClose.
     if (!skipLive && invUnits > 0 && overlay.live) {
-      const prev = overlay.live.previousClosePriceMinorUnits;
+      const prev = overlay.live.previousClosePriceMinor;
       if (prev !== null) {
         dailyGainValueMinor =
           (dailyGainValueMinor ?? 0) +
-          (overlay.live.priceMinorUnits - prev) * invUnits;
+          (overlay.live.priceMinor - prev) * invUnits;
         dailyGainPrevValueMinor =
           (dailyGainPrevValueMinor ?? 0) + prev * invUnits;
       }
@@ -425,6 +475,7 @@ function aggregateKey(
     totalValueMinor,
     dailyGainValueMinor,
     dailyGainPrevValueMinor,
+    live: overlay?.live ?? null,
   };
 }
 
@@ -467,27 +518,60 @@ function selectSlices(
 
 type LiveOverlay = {
   priceLatest: number | null;
-  live: ReturnType<typeof readOrRefresh> | null;
+  live: LiveQuoteSnapshot | null;
 };
 
 function overlayLive(row: SliceRow, skipLive: boolean): LiveOverlay {
-  if (!row.stockCode) {
+  const live = liveSnapshot(row);
+  if (!live) {
     return { priceLatest: row.priceLatestCached, live: null };
   }
-  // `skipLive` controls whether we *fetch* a fresh quote over the network,
-  // not whether we read the in-process LRU — the cached quote is always
-  // consulted so both "live" and "previous close" views stay internally
-  // consistent with `Investment.unitPriceLatest`.
-  const live = skipLive
-    ? readCachedQuote(row.stockCode)
-    : readOrRefresh(row.stockCode);
-  if (!live || live.currency !== row.currency) {
-    return { priceLatest: row.priceLatestCached, live: null };
-  }
+  // `skipLive` doesn't change which row we *read* — the persisted live row is
+  // always the source — only whether we expose `live.priceMinor` (live) or
+  // `live.previousClosePriceMinor` (yesterday's close) as `priceLatest`.
   const priceLatest = skipLive
-    ? (live.previousClosePriceMinorUnits ?? live.priceMinorUnits)
-    : live.priceMinorUnits;
+    ? (live.previousClosePriceMinor ?? live.priceMinor)
+    : live.priceMinor;
   return { priceLatest, live };
+}
+
+function liveSnapshot(row: SliceRow): LiveQuoteSnapshot | null {
+  if (
+    row.livePrice === null ||
+    row.liveCurrency === null ||
+    row.liveRefreshedAt === null ||
+    row.liveTickAt === null
+  ) {
+    return null;
+  }
+  if (row.liveCurrency !== row.currency) return null;
+  return {
+    priceMinor: row.livePrice,
+    previousClosePriceMinor: row.livePricePreviousClose,
+    currency: row.liveCurrency,
+    refreshedAt: row.liveRefreshedAt,
+    tickAt: row.liveTickAt,
+  };
+}
+
+/** Scan the just-loaded slice rows and fire-and-forget a Yahoo refresh for any held stock investment whose live row is missing or older than `LIVE_QUOTE_STALE_MS` and whose currency is currently inside its business-hours window. The current request still answers from the row we just read; the refreshed row only surfaces on the *next* loader hit (e.g. the next `portfolioLive` tick). */
+function triggerLiveRefreshes(rows: SliceRow[]): void {
+  const seen = new Set<string>();
+  const now = Date.now();
+  for (const r of rows) {
+    if (!r.stockCode) continue;
+    if (seen.has(r.investmentId)) continue;
+    seen.add(r.investmentId);
+    const fresh =
+      r.liveRefreshedAt !== null &&
+      now - r.liveRefreshedAt.getTime() <= LIVE_QUOTE_STALE_MS;
+    if (fresh) continue;
+    if (!isInBusinessHours(r.currency)) continue;
+    void fetchQuote(r.stockCode, {
+      investmentId: r.investmentId,
+      currency: r.currency,
+    });
+  }
 }
 
 // ---- Derived helpers -----------------------------------------------------
