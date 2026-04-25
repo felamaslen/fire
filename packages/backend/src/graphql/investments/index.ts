@@ -134,6 +134,12 @@ export class Investment {
     return Money.fromMinorDenomination(s.priceLatest, s.currency);
   }
 
+  /** When the most recent cached unit price was first recorded for this investment. `null` if no prices have been recorded yet. @gqlField */
+  async unitPriceCachedAt(ctx: Context): Promise<DateTime | null> {
+    const s = await loadInvestmentStats(ctx, { investmentId: this.id });
+    return (s.priceLatestCachedAt as DateTime | null) ?? null;
+  }
+
   /** Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes). @gqlField */
   async unitPriceLatest(): Promise<InvestmentPriceLatest | null> {
     if (!(this.asset instanceof InvestmentStock)) return null;

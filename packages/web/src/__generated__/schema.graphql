@@ -484,6 +484,10 @@ type Investment {
   """
   unitPriceCached: Money
   """
+  When the most recent cached unit price was first recorded for this investment. `null` if no prices have been recorded yet.
+  """
+  unitPriceCachedAt: DateTime
+  """
   Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).
   """
   unitPriceLatest: InvestmentPriceLatest

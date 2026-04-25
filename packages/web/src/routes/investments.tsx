@@ -6,7 +6,14 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, Check, ExternalLink, Plus } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  Clock,
+  ExternalLink,
+  Plus,
+} from "lucide-react";
 import {
   Suspense,
   useCallback,
@@ -59,6 +66,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   type FragmentOf,
   graphql,
   readFragment,
@@ -66,6 +78,7 @@ import {
   type VariablesOf,
 } from "@/graphql";
 import { cn } from "@/lib/cn";
+import { formatUnitPrice } from "@/lib/format";
 
 const InvestmentRowDocument = graphql(
   `
@@ -82,6 +95,16 @@ const InvestmentRowDocument = graphql(
           __typename
           url
         }
+      }
+      unitPriceCached {
+        ...Figure
+      }
+      unitPriceCachedAt
+      unitPriceLatest {
+        price {
+          ...Figure
+        }
+        capturedAt
       }
       position(filterAssetIdIn: $filterAssetIdIn) {
         units
@@ -711,6 +734,9 @@ function InvestmentsList({
               <TableHead className="w-full">Name</TableHead>
               <TableHead className="hidden sm:table-cell">Ticker</TableHead>
               <TableHead className="text-right">Units</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">
+                Price
+              </TableHead>
               <TableHead className="text-right sm:hidden">
                 <SortHeader
                   label="Value / Gain"
@@ -853,6 +879,48 @@ function gainSignColor(amount: number | null | undefined): string {
     : "text-red-600 dark:text-red-400";
 }
 
+function UnitPrice({
+  live,
+  cached,
+  cachedAt,
+  prefix,
+}: {
+  live: { price: FragmentOf<typeof FigureDocument>; capturedAt: string } | null;
+  cached: FragmentOf<typeof FigureDocument> | null;
+  cachedAt: string | null;
+  prefix?: string;
+}) {
+  const priceFragment = live?.price ?? cached;
+  if (!priceFragment) return <span className="text-muted-foreground">—</span>;
+  const price = readFragment(FigureDocument, priceFragment);
+  const isLive = live !== null;
+  const at = isLive ? live.capturedAt : cachedAt;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {prefix}
+      {formatUnitPrice(price.currency, price.amount)}
+      {at && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Clock
+              className={cn(
+                "h-3 w-3 shrink-0",
+                isLive
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-muted-foreground",
+              )}
+            />
+          </TooltipTrigger>
+          <TooltipContent>
+            {isLive ? "Fetched " : "Recorded "}
+            {new Date(at).toLocaleString("en-GB")}
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </span>
+  );
+}
+
 function InvestmentRow({
   data,
   onOpen,
@@ -889,7 +957,24 @@ function InvestmentRow({
         {ticker ?? ""}
       </TableCell>
       <TableCell className="text-right align-middle tabular-nums">
-        {inv.position.units}
+        <span className="flex flex-col items-end leading-tight">
+          <span>{inv.position.units}</span>
+          <span className="text-xs text-muted-foreground sm:hidden">
+            <UnitPrice
+              live={inv.unitPriceLatest}
+              cached={inv.unitPriceCached}
+              cachedAt={inv.unitPriceCachedAt}
+              prefix="@ "
+            />
+          </span>
+        </span>
+      </TableCell>
+      <TableCell className="hidden text-right tabular-nums align-middle sm:table-cell">
+        <UnitPrice
+          live={inv.unitPriceLatest}
+          cached={inv.unitPriceCached}
+          cachedAt={inv.unitPriceCachedAt}
+        />
       </TableCell>
       <TableCell className="text-right align-middle sm:hidden">
         <div className="flex flex-col items-end leading-tight">

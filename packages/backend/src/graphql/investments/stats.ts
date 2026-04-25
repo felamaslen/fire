@@ -26,6 +26,8 @@ export type InvestmentStats = {
   stockCode: string | null;
   /** Live-overlaid latest price when the slice spans a single investment: the Yahoo live price (or `previousClose` under `skipLive`) when a matching quote exists, otherwise the `InvestmentPrices` row with `isLatest = true`. `null` for multi-investment slices. */
   priceLatest: number | null;
+  /** When the latest cached `InvestmentPrices` row for this investment was created. `null` for multi-investment slices, or when no price history exists yet. */
+  priceLatestCachedAt: Date | null;
 
   /** Net split-adjusted units matching the slice. Meaningful per-investment; across investments it's a meaningless sum (leave to callers that know the slice is single-investment). */
   unitsHeld: number;
@@ -104,6 +106,7 @@ type SliceRow = {
   currency: string;
   stockCode: string | null;
   priceLatestCached: number | null;
+  priceLatestCachedAt: Date | null;
   unitsHeld: number;
   unitsPriceSum: number;
   buyCostSum: number;
@@ -194,6 +197,7 @@ async function fetchSlices(
     .select({
       investmentId: InvestmentPrices.investmentId,
       priceAdjusted: InvestmentPrices.priceAdjusted,
+      createdAt: InvestmentPrices.createdAt,
     })
     .from(InvestmentPrices)
     .where(
@@ -218,6 +222,7 @@ async function fetchSlices(
       currency: Investments.currency,
       stockCode: Investments.stockCode,
       priceLatestCached: latestPrices.priceAdjusted,
+      priceLatestCachedAt: latestPrices.createdAt,
       unitsHeld:
         sql<number>`COALESCE(SUM(${txAdj.adjUnits}), 0)::double precision`.as(
           "unitsHeld",
@@ -268,6 +273,7 @@ async function fetchSlices(
       Investments.currency,
       Investments.stockCode,
       latestPrices.priceAdjusted,
+      latestPrices.createdAt,
       txAdj.assetId,
     );
 
@@ -397,6 +403,7 @@ function aggregateKey(
     currency: metaSource?.currency ?? null,
     stockCode: metaSource?.stockCode ?? null,
     priceLatest: overlay?.priceLatest ?? null,
+    priceLatestCachedAt: metaSource?.priceLatestCachedAt ?? null,
     unitsHeld,
     unitsPriceSum,
     buyCostSum,

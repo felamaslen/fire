@@ -444,6 +444,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return source.unitPriceCached(context);
                     }
                 },
+                unitPriceCachedAt: {
+                    description: "When the most recent cached unit price was first recorded for this investment. `null` if no prices have been recorded yet.",
+                    name: "unitPriceCachedAt",
+                    type: DateTimeType,
+                    resolve(source, _args, context) {
+                        return source.unitPriceCachedAt(context);
+                    }
+                },
                 unitPriceLatest: {
                     description: "Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).",
                     name: "unitPriceLatest",

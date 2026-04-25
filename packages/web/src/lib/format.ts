@@ -54,6 +54,21 @@ export function formatAccountingMoney(
 }
 
 /**
+ * Format a per-unit price (e.g. a stock quote). GBP prices are conventionally
+ * quoted in pence on UK exchanges, so `GBP` renders as e.g. `1,524.50p`;
+ * every other currency falls through to the standard accounting format.
+ */
+export function formatUnitPrice(currency: string, amount: number): string {
+  if (currency === "GBP") {
+    return `${numberFormat("en-GB", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount * 100)}p`;
+  }
+  return formatAccountingMoney(currency, amount);
+}
+
+/**
  * Whole-unit variant of `formatAccountingMoney` — no decimals. Useful for
  * dense UI like chart tooltips where every pixel of width counts.
  */
