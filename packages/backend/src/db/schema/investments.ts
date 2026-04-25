@@ -6,6 +6,7 @@ import {
   date,
   doublePrecision,
   index,
+  jsonb,
   numeric,
   pgTable,
   pgView,
@@ -203,6 +204,40 @@ export const investmentPricesRelations = relations(
   ({ one }) => ({
     investment: one(Investments, {
       fields: [InvestmentPrices.investmentId],
+      references: [Investments.id],
+    }),
+  }),
+);
+
+/** Most recent live (intraday) quote for an investment. One row per investment — `investmentId` is the primary key, so refreshes upsert in place rather than appending history. Read by the live-overlay path that powers the investments page; the daily-close history lives in `InvestmentPrices`. */
+export const InvestmentPricesLive = pgTable("InvestmentPricesLive", {
+  investmentId: uuid("investmentId")
+    .primaryKey()
+    .references(() => Investments.id, { onDelete: "cascade" }),
+  /** When this row was last refreshed from the upstream provider — i.e. wall-clock time of the network fetch, not of the price tick. */
+  refreshedAt: timestamp("refreshedAt", { withTimezone: true }).notNull(),
+  /** Time of the actual price tick as reported by the upstream provider (Yahoo's `regularMarketTime`). */
+  date: timestamp("date", { withTimezone: true }).notNull(),
+  currency: currencyCode("currency").notNull(),
+  /** Live unit price, in fractional units of `currency` (e.g. pence for `GBP`). */
+  price: doublePrecision("price").notNull(),
+  /** Previous-trading-day close, in fractional units of `currency`. `null` when the upstream provider doesn't report it. */
+  pricePreviousClose: doublePrecision("pricePreviousClose"),
+  /** Raw upstream response payload, kept for debugging / future fields. */
+  data: jsonb("data"),
+  createdAt: timestamp("createdAt", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const investmentPricesLiveRelations = relations(
+  InvestmentPricesLive,
+  ({ one }) => ({
+    investment: one(Investments, {
+      fields: [InvestmentPricesLive.investmentId],
       references: [Investments.id],
     }),
   }),

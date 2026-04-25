@@ -218,6 +218,13 @@
       "when": 1777708800000,
       "tag": "0030_statement_level_is_latest_trigger",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1777127321811,
+      "tag": "0031_create_investment_prices_live",
+      "breakpoints": true
     }
   ]
 }

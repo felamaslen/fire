@@ -121,6 +121,18 @@ CREATE TABLE "InvestmentPrices" (
     )
 );
 
+CREATE TABLE "InvestmentPricesLive" (
+  "investmentId" uuid PRIMARY KEY NOT NULL,
+  "refreshedAt" TIMESTAMP WITH TIME ZONE NOT NULL,
+  "date" TIMESTAMP WITH TIME ZONE NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL,
+  "pricePreviousClose" DOUBLE PRECISION,
+  "data" jsonb,
+  "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+  "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "InvestmentStockSplits" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
@@ -565,6 +577,11 @@ ADD CONSTRAINT "InvestmentAllocations_investmentId_Investments_id_fk"
     ON UPDATE NO ACTION;
 ALTER TABLE "InvestmentPrices"
 ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk"
+  FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
+    ON DELETE CASCADE
+    ON UPDATE NO ACTION;
+ALTER TABLE "InvestmentPricesLive"
+ADD CONSTRAINT "InvestmentPricesLive_investmentId_Investments_id_fk"
   FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id")
     ON DELETE CASCADE
     ON UPDATE NO ACTION;
