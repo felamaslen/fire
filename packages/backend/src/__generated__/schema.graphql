@@ -1943,6 +1943,18 @@ type PortfolioEdge {
 }
 
 """
+One push of live values for the investments page: the aggregated `Portfolio` the headline reads from, plus every currently-held investment matching the same filter (sold-out positions are excluded — their per-row figures don't change between ticks). Streamed by the `portfolioLive` subscription.
+"""
+type PortfolioLiveTick {
+  """
+  Currently-held investments matching the filter, with refreshed price + position fields.
+  """
+  investments: [Investment!]!
+  """Aggregated portfolio (live-overlaid) for the subscription's filter."""
+  portfolio: Portfolio!
+}
+
+"""
 Daily-valued time series of portfolio total, downsampled to at most 300 points while always preserving the first and last sample.
 """
 type PortfolioTimeseries {
@@ -2126,6 +2138,10 @@ type Subscription {
   Live progress stream for a `demoLogin` job. Yields `DemoProgress` events as the seed pipeline runs; the final event has `progress === 1` and carries the signed session token. Terminates with an error if the seed fails.
   """
   demoProgress(jobId: ID!): DemoProgress! @noAuth
+  """
+  Live stream of portfolio + per-investment price updates. Emits the first tick immediately and a fresh one every 30 s while the client stays connected. Each tick clears the request's stats loader so resolvers recompute against the latest Yahoo quote overlay; clients normalise per-investment fields by id, so the row table updates in place without its own poll.
+  """
+  portfolioLive(filterAssetIdIn: [ID!]): PortfolioLiveTick!
 }
 
 """

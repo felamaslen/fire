@@ -119,6 +119,10 @@ globalThis.__sseState.current = createSseHandler({
   validate,
   execute,
   subscribe,
+  // The route handler builds a `Context` per request and stuffs it into the
+  // SSE request's `.context` field — pluck it out here so resolvers receive
+  // the right `Context` (with the request's session) as `contextValue`.
+  context: (req) => req.context as unknown as Record<PropertyKey, unknown>,
 });
 
 if (!globalThis.__apolloRouted) {
@@ -170,6 +174,11 @@ if (!globalThis.__apolloRouted) {
           if (Array.isArray(v)) headerMap.set(k, v.join(", "));
           else if (v != null) headerMap.set(k, v);
         }
+        const ctx = createContext({ request });
+        const scopedDb =
+          ctx.session.kind === "demo"
+            ? getDemoDb(ctx.session.database)
+            : defaultDb;
         const [body, init] = await otelContext.with(
           suppressTracing(otelContext.active()),
           () =>
@@ -179,7 +188,7 @@ if (!globalThis.__apolloRouted) {
               headers: { get: (key) => headerMap.get(key.toLowerCase()) },
               body: request.body as Record<string, unknown> | null,
               raw: request.raw,
-              context: undefined,
+              context: ctx,
             }),
         );
         raw.writeHead(init.status, init.statusText, init.headers);
@@ -199,10 +208,14 @@ if (!globalThis.__apolloRouted) {
           void body.return?.(undefined);
         });
         try {
-          for await (const chunk of body) {
-            if (raw.writableEnded) break;
-            raw.write(chunk);
-          }
+          await runWithSession(ctx.session, () =>
+            runWithDb(scopedDb, async () => {
+              for await (const chunk of body) {
+                if (raw.writableEnded) break;
+                raw.write(chunk);
+              }
+            }),
+          );
         } finally {
           if (!raw.writableEnded) raw.end();
         }

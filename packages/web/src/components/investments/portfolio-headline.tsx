@@ -1,4 +1,4 @@
-import { useQuery } from "@apollo/client/react";
+import { useQuery, useSubscription } from "@apollo/client/react";
 import { useEffect, useRef, useState } from "react";
 
 import { Figure, FigureDocument } from "@/components/figure";
@@ -30,34 +30,41 @@ export const PortfolioHeadlineFragment = graphql(
 );
 
 /**
- * Poll document for the headline — always with `skipLive: false` so the
- * returned Portfolio values reflect the real live-quote picture, independent
- * of the page-level query's `skipLive: true` snapshot. Also re-fetches each
- * non-sold holding's `position(filterAssetIdIn)` so rows in the table (which
- * read `Investment:id → position(filterAssetIdIn: X)` from Apollo's normalised
- * cache) update in-place when the poll lands — no per-row refetch needed.
+ * Subscription for the live headline + per-row figures. The server pushes a
+ * fresh tick every 30 s with `skipLive: false`, plus each currently-held
+ * investment's `position(filterAssetIdIn)`, `unitPriceLatest`, and
+ * `unitPriceCachedAt`. Apollo normalises by `(typename, id)` so the
+ * investments table updates in place — no per-row poll needed.
  */
-const PortfolioHeadlineLiveDocument = graphql(
+const PortfolioLiveDocument = graphql(
   `
-    query PortfolioHeadlineLive($filterAssetId: ID, $filterAssetIdIn: [ID!]) {
-      portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: false) {
-        ...PortfolioHeadline
-      }
-      investments(first: 1000, filterAssetId: $filterAssetId) {
-        edges {
-          node {
-            id
-            position(filterAssetIdIn: $filterAssetIdIn) {
-              units
-              totalValue {
-                ...Figure
-              }
-              totalGain {
-                amount
-                ...Figure
-              }
-              percentGain
+    subscription PortfolioLive($filterAssetIdIn: [ID!]) {
+      portfolioLive(filterAssetIdIn: $filterAssetIdIn) {
+        portfolio {
+          ...PortfolioHeadline
+        }
+        investments {
+          id
+          position(filterAssetIdIn: $filterAssetIdIn) {
+            units
+            totalValue {
+              ...Figure
             }
+            totalGain {
+              amount
+              ...Figure
+            }
+            percentGain
+          }
+          unitPriceCached {
+            ...Figure
+          }
+          unitPriceCachedAt
+          unitPriceLatest {
+            price {
+              ...Figure
+            }
+            capturedAt
           }
         }
       }
@@ -132,10 +139,6 @@ export function PortfolioHeadline({
   rightSlot?: React.ReactNode;
 }) {
   const filterAssetIdIn = filterAssetIds.length > 0 ? filterAssetIds : null;
-  // The `investments` top-level query still takes a singular filter; for the
-  // per-row position refresh we pass the same `filterAssetIdIn` so rows key
-  // into the same Apollo cache entry the list / detail use.
-  const filterAssetId = filterAssetIds.length === 1 ? filterAssetIds[0] : null;
 
   // First render: read the `skipLive: true` snapshot the page-level query
   // already populated. Synchronous cache hit — the headline renders
@@ -145,8 +148,8 @@ export function PortfolioHeadline({
     fetchPolicy: "cache-only",
   });
 
-  // Delay the first live fetch by ~1 s so the user sees yesterday's values
-  // land first, then watches the flash when today's live total arrives.
+  // Delay subscribing by ~1 s so the user sees yesterday's values land
+  // first, then watches the flash when today's live total arrives.
   // Without this, both arrive in the same paint and the flash is invisible.
   const [fetchLive, setFetchLive] = useState(false);
   useEffect(() => {
@@ -154,26 +157,21 @@ export function PortfolioHeadline({
     return () => clearTimeout(t);
   }, []);
 
-  // Live fetch (skipLive: false). Separate cache key from the cached doc
-  // (Apollo keys fields by arg), so this always hits the server once on
-  // first enable, then polls every 30 s. The same query also re-fetches
-  // each non-sold holding's `position(filterAssetId)` so the investments
-  // table (which reads `Investment:id → position(filterAssetId)` from
-  // Apollo's normalised cache) refreshes in place without its own poll.
-  const liveQuery = useQuery(PortfolioHeadlineLiveDocument, {
-    variables: { filterAssetId, filterAssetIdIn },
-    pollInterval: 30_000,
-    notifyOnNetworkStatusChange: false,
+  // Live subscription (server emits every 30 s with `skipLive: false`).
+  // Each tick carries refreshed Portfolio aggregates plus every held
+  // investment's `position`, `unitPriceLatest`, and `unitPriceCachedAt`.
+  // Apollo normalises per-investment fields by id, so the table refreshes
+  // in place without its own poll.
+  const liveSub = useSubscription(PortfolioLiveDocument, {
+    variables: { filterAssetIdIn },
     skip: !fetchLive,
   });
 
-  // Prefer the live data once it lands; fall back to the cached snapshot
-  // while we're still in the pre-fetch delay or the first live response is
-  // in flight.
+  // Prefer the live tick once it lands; fall back to the cached snapshot
+  // while we're still in the pre-subscribe delay or the first event is in
+  // flight.
   const raw =
-    liveQuery.data?.portfolio ??
-    liveQuery.previousData?.portfolio ??
-    cachedQuery.data?.portfolio;
+    liveSub.data?.portfolioLive?.portfolio ?? cachedQuery.data?.portfolio;
   const portfolio = raw ? readFragment(PortfolioHeadlineFragment, raw) : null;
   const flash = useDailyGainFlash(portfolio?.dailyGainValue?.amount);
 

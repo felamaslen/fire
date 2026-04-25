@@ -80,6 +80,16 @@ export function loadInvestmentStats(
   return getLoader(ctx).load(filter);
 }
 
+/**
+ * Drop every cached entry on the stats `DataLoader` for `ctx`. Used by the
+ * `portfolioLive` subscription so each tick's resolver pass recomputes
+ * stats against the latest live-quote overlay instead of replaying the
+ * first tick's snapshot.
+ */
+export function clearInvestmentStatsLoader(ctx: Context): void {
+  getLoader(ctx).clearAll();
+}
+
 // One `DataLoader` per request, memoised on the `Context`. The wrapper is
 // intentionally sync (see `contextAwareDataLoader`'s docstring) so the
 // `.load(...)` above runs in the same microtask as every sibling call.
