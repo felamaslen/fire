@@ -16,6 +16,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+import { pgCustomSQL } from "../sql";
 import { countryCode } from "./country";
 import { currencyCode } from "./currency";
 import {
@@ -159,16 +160,6 @@ export const PlanningEarnings = pgTable(
     pensionNetPay: doublePrecision("pensionNetPay"),
     /** Whether the earner is repaying UK Student Loan plan 2 on this income. When false, no student-loan deduction is applied to predicted take-home. */
     studentLoanPlan2: boolean("studentLoanPlan2").notNull().default(false),
-    /** Liability the predicted student-loan deduction pays down. Must be null unless `studentLoanPlan2` is true. */
-    studentLoanLiabilityId: uuid("studentLoanLiabilityId").references(
-      () => NetWorthCategoryLiabilities.id,
-      { onDelete: "set null" },
-    ),
-    /** Pension asset (`NetWorthCategoryAsset` of type `PENSION`) that predicted pension deductions (salary sacrifice / net pay / relief at source) contribute to. Must be null unless at least one pension fraction is set. */
-    pensionAssetId: uuid("pensionAssetId").references(
-      () => NetWorthCategoryAssets.id,
-      { onDelete: "set null" },
-    ),
     /** Planning account the net earnings land in. */
     toAccountId: uuid("toAccountId")
       .notNull()
@@ -179,6 +170,16 @@ export const PlanningEarnings = pgTable(
     updatedAt: timestamp("updatedAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** Liability the predicted student-loan deduction pays down. Must be null unless `studentLoanPlan2` is true. Position matches migration `0005`. */
+    studentLoanLiabilityId: uuid("studentLoanLiabilityId").references(
+      () => NetWorthCategoryLiabilities.id,
+      { onDelete: "set null" },
+    ),
+    /** Pension asset (`NetWorthCategoryAsset` of type `PENSION`) that predicted pension deductions (salary sacrifice / net pay / relief at source) contribute to. Must be null unless at least one pension fraction is set. Position matches migration `0026`. */
+    pensionAssetId: uuid("pensionAssetId").references(
+      () => NetWorthCategoryAssets.id,
+      { onDelete: "set null" },
+    ),
   },
   (t) => [
     check(
@@ -269,14 +270,14 @@ export const PlanningAccounts = pgTable("PlanningAccounts", {
     .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
   /** Short display name used in planning views (null falls back to the asset name). */
   alias: text("alias"),
-  /** Position in the user-defined ordering of planning accounts (0-based, dense). Enforced unique + deferrable in SQL so a multi-row shift inside one transaction can swap values without tripping the constraint mid-way. */
-  sortOrder: integer("sortOrder").notNull().default(0),
   createdAt: timestamp("createdAt", { withTimezone: true })
     .notNull()
     .defaultNow(),
   updatedAt: timestamp("updatedAt", { withTimezone: true })
     .notNull()
     .defaultNow(),
+  /** Position in the user-defined ordering of planning accounts (0-based, dense). Enforced unique + deferrable in SQL so a multi-row shift inside one transaction can swap values without tripping the constraint mid-way. Position matches migration `0029`. */
+  sortOrder: integer("sortOrder").notNull().default(0),
 });
 
 export const planningAccountsRelations = relations(
@@ -287,6 +288,16 @@ export const planningAccountsRelations = relations(
       references: [NetWorthCategoryAssets.id],
     }),
   }),
+);
+
+/** Deferrable unique on `PlanningAccounts.sortOrder` so a multi-row reorder inside one transaction can pass through intermediate duplicates that resolve by commit. Drizzle's `unique()` doesn't model `DEFERRABLE INITIALLY DEFERRED`, so it lives as raw SQL. */
+export const PlanningAccounts_sortOrder_uq = pgCustomSQL(
+  sql`
+    ALTER TABLE "PlanningAccounts"
+      ADD CONSTRAINT "PlanningAccounts_sortOrder_uq" UNIQUE ("sortOrder")
+      DEFERRABLE INITIALLY DEFERRED;
+  `,
+  { priority: 1 },
 );
 
 /** A month within a planning year (day-of-month is not significant). */
@@ -356,16 +367,16 @@ export const PlanningTransactions = pgTable(
       () => NetWorthCategoryLiabilities.id,
       { onDelete: "restrict" },
     ),
-    /** Asset (stock or pension) this transaction invests into, if any. Only valid for outflows (`amount < 0`). Mutually exclusive with `liabilityId`; asset type (STOCK / PENSION) is validated in the resolver. */
-    assetId: uuid("assetId").references(() => NetWorthCategoryAssets.id, {
-      onDelete: "restrict",
-    }),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
     updatedAt: timestamp("updatedAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** Asset (stock or pension) this transaction invests into, if any. Only valid for outflows (`amount < 0`). Mutually exclusive with `liabilityId`; asset type (STOCK / PENSION) is validated in the resolver. Position matches migration `0008`. */
+    assetId: uuid("assetId").references(() => NetWorthCategoryAssets.id, {
+      onDelete: "restrict",
+    }),
   },
   (t) => [
     foreignKey({
@@ -592,17 +603,17 @@ export const PlanningPayslipAdjustments = pgTable(
     /** Signed amount in fractional units of the payslip's currency; negative = deduction. */
     amount: bigint("amount", { mode: "number" }).notNull(),
     name: text("name").notNull(),
-    /** Optional link to a liability this adjustment pays down (e.g. a loan or student loan repayment). Cleared if the liability is deleted. */
-    liabilityId: uuid("liabilityId").references(
-      () => NetWorthCategoryLiabilities.id,
-      { onDelete: "set null" },
-    ),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
     updatedAt: timestamp("updatedAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** Optional link to a liability this adjustment pays down (e.g. a loan or student loan repayment). Cleared if the liability is deleted. Position matches the migration that added it. */
+    liabilityId: uuid("liabilityId").references(
+      () => NetWorthCategoryLiabilities.id,
+      { onDelete: "set null" },
+    ),
   },
 );
 
