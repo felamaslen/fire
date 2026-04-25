@@ -2449,8 +2449,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLInt)
                         }
                     },
-                    resolve(_source, args) {
-                        return assertNonNull(queryNetWorthForecastResolver(args.years, args.limit));
+                    resolve(_source, args, context) {
+                        return assertNonNull(queryNetWorthForecastResolver(context, args.years, args.limit));
                     }
                 },
                 netWorthHistory: {

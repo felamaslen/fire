@@ -1,6 +1,6 @@
 import assert from "node:assert";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, inArray, sql } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
 import { CURRENCIES, HOME_CURRENCY } from "@/config";
@@ -8,7 +8,6 @@ import { db } from "@/db";
 import { model } from "@/db/drizzle-model";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import { assertNoErrors, assertNotError } from "@/errors";
-import { solveXirr } from "@/forecast/growth";
 import { isNonNullish } from "@/is-truthy";
 
 import type { Context } from "../context";
@@ -22,6 +21,7 @@ import {
 } from "../pagination";
 import { loadCandlestick } from "./candlestick";
 import { Investment } from "./index";
+import { computePortfolioXirr } from "./portfolio-xirr";
 import {
   type InvestmentStats,
   type InvestmentStatsFilter,
@@ -174,57 +174,12 @@ export class Portfolio {
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
   async xirr(ctx: Context): Promise<Float | null> {
-    // Terminal flow = today's total value. Reuse what the stats loader
-    // already computed (live-overlaid and currency-scoped); propagate `null`
-    // the same way `stats.totalValueMinor` does — any contributing held
-    // investment missing a price nulls the whole xirr.
-    const slices = await this.loadStats(ctx);
-    let todayValueMinor: number | null = 0;
-    for (const s of slices) {
-      if (s.totalValueMinor === null) {
-        todayValueMinor = null;
-        break;
-      }
-      todayValueMinor += s.totalValueMinor;
-    }
-
-    const txConditions = [sql`${Investments.currency} = ${this.currency}`];
-    if (this.filterAssetIdIn && this.filterAssetIdIn.length > 0) {
-      txConditions.push(
-        inArray(InvestmentTransactions.assetId, this.filterAssetIdIn),
-      );
-    }
-    if (this.filterInvestmentIdIn && this.filterInvestmentIdIn.length > 0) {
-      txConditions.push(
-        inArray(InvestmentTransactions.investmentId, this.filterInvestmentIdIn),
-      );
-    }
-    const txRows = await db
-      .select({
-        date: InvestmentTransactions.date,
-        units: InvestmentTransactions.units,
-        price: InvestmentTransactions.price,
-      })
-      .from(InvestmentTransactions)
-      .innerJoin(
-        Investments,
-        eq(Investments.id, InvestmentTransactions.investmentId),
-      )
-      .where(and(...txConditions));
-    if (txRows.length === 0) return null;
-
-    // Each buy is money out (negative), each sell is money in (positive).
-    // `t.units` is already signed, so `-t.units × price` gets the right sign
-    // in one step.
-    const flows: { date: Date; amount: number }[] = txRows.map((t) => ({
-      date: t.date,
-      amount: -t.units * t.price,
-    }));
-    if (todayValueMinor === null) return null;
-    if (todayValueMinor > 0) {
-      flows.push({ date: new Date(), amount: todayValueMinor });
-    }
-    return solveXirr(flows) as Float | null;
+    return (await computePortfolioXirr(ctx, {
+      currency: this.currency,
+      assetIds: this.filterAssetIdIn,
+      investmentIds: this.filterInvestmentIdIn,
+      skipLive: this.skipLive,
+    })) as Float | null;
   }
 
   /** Change in portfolio value over the most recent pricing interval — `Σ (live_price − previousClose) × unitsHeld` over every currently-held position with a live quote. Positions the portfolio no longer holds (`unitsHeld === 0`) and positions without a live quote are excluded, so a lapsed live quote for one ticker doesn't pollute the aggregate. `null` when no position has a live quote or when `skipLive` is set. @gqlField */

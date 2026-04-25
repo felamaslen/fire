@@ -8,7 +8,6 @@ import { and, desc, eq, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import { model } from "@/db/drizzle-model";
-import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import {
   NetWorthCategoryAssets,
   NetWorthCategoryLiabilities,
@@ -28,6 +27,8 @@ import {
   PlanningYearUKTaxRates,
 } from "@/db/schema/planning";
 
+import type { Context } from "../graphql/context";
+import { computePortfolioXirr } from "../graphql/investments/portfolio-xirr";
 import {
   buildRateToHome,
   convertToHomeMinor,
@@ -37,10 +38,8 @@ import { type ForecastCategory, type ForecastInputs } from "./engine";
 import {
   creditCardEwmaSpend,
   ewmaMonthlyContribution,
-  type InvestmentTx,
   type LiabilityBill,
   type LiabilityTx,
-  solveXirr,
 } from "./growth";
 
 /** Lookback window for planning transactions / investment transactions feeding the EWMAs. */
@@ -50,6 +49,7 @@ const EWMA_LOOKBACK_MONTHS = 36;
  * Load everything `runForecast` needs for a projection starting at the calendar month containing `asOfDate` and running `months` months forward. Rows in non-home currencies are skipped.
  */
 export async function loadForecastInputs(
+  ctx: Context,
   asOfDate: Date,
   months: number,
 ): Promise<ForecastInputs> {
@@ -58,11 +58,10 @@ export async function loadForecastInputs(
 
   const [
     categories,
-    { startingBalance, latestEntryDate },
+    { startingBalance },
     liabilityTxs,
     loanBills,
     loanPayslipAdjustments,
-    { portfolioInvestmentTxs, portfolioAssetIds },
     contributionRows,
     creditCardTxs,
     nonLiabilityBills,
@@ -73,7 +72,6 @@ export async function loadForecastInputs(
     loadLoanTxs(ewmaCutoff),
     loadLoanBills(),
     loadLoanPayslipAdjustments(ewmaCutoff),
-    loadPortfolioInvestmentTxs(),
     loadPortfolioContributionRows(ewmaCutoff),
     loadCreditCardTxs(ewmaCutoff),
     loadNonLiabilityBills(asOfDate),
@@ -119,29 +117,30 @@ export async function loadForecastInputs(
   );
   const monthlyIncome = earningsForecast.monthlyIncome;
 
-  // Compute XIRR per STOCK / PENSION wrapper, using that wrapper's
-  // starting balance as the terminal flow. We use `latestEntryDate` as
-  // the terminal flow's date so XIRR matches what the live
-  // `Portfolio.xirr` resolver would produce (it uses "today", but at
-  // the snapshot scale a month of drift is negligible).
-  const terminalDate = latestEntryDate ?? asOfDate;
+  // Compute XIRR per STOCK / PENSION wrapper using the same shared helper
+  // that backs the live `Portfolio.xirr` resolver — same cash flows, same
+  // terminal value (today's live-overlaid market value), same terminal
+  // date ("now") — so the rate shown in the forecast workings matches the
+  // rate shown on the investments page exactly.
+  const portfolioCategoryIds = categories
+    .filter(
+      (c) =>
+        c.kind === "asset" &&
+        (c.assetType === "STOCK" || c.assetType === "PENSION"),
+    )
+    .map((c) => c.id);
   const xirrByAsset = new Map<string, number | null>();
-  for (const assetId of portfolioAssetIds) {
-    const txs = portfolioInvestmentTxs.get(assetId) ?? [];
-    if (txs.length === 0) {
-      xirrByAsset.set(assetId, null);
-      continue;
-    }
-    const terminalValue = startingBalance.get(assetId) ?? 0;
-    const flows: { date: Date; amount: number }[] = txs.map((t) => ({
-      date: t.date,
-      amount: -t.units * t.price,
-    }));
-    if (terminalValue > 0) {
-      flows.push({ date: terminalDate, amount: terminalValue });
-    }
-    xirrByAsset.set(assetId, solveXirr(flows));
-  }
+  await Promise.all(
+    portfolioCategoryIds.map(async (assetId) => {
+      const xirr = await computePortfolioXirr(ctx, {
+        currency: HOME_CURRENCY,
+        assetIds: [assetId],
+        investmentIds: null,
+        skipLive: true,
+      });
+      xirrByAsset.set(assetId, xirr);
+    }),
+  );
 
   const categoriesWithXirr: ForecastCategory[] = categories.map((c) => {
     if (
@@ -390,36 +389,6 @@ async function loadLoanBills(): Promise<Map<string, LiabilityBill[]>> {
     out.set(r.liabilityId, arr);
   }
   return out;
-}
-
-/** Per-wrapper investment transactions — used to compute each portfolio's XIRR. `units * price` gives the flow for the XIRR solver; we don't use these rows for the forward contribution EWMA (see `loadPortfolioContributionTxs`). No time cutoff: XIRR needs the full tx history so the rate accounts for long-held buys, not just recent activity against a large terminal balance. */
-async function loadPortfolioInvestmentTxs(): Promise<{
-  portfolioInvestmentTxs: Map<string, InvestmentTx[]>;
-  portfolioAssetIds: string[];
-}> {
-  const rows = await db
-    .select({
-      assetId: InvestmentTransactions.assetId,
-      date: InvestmentTransactions.date,
-      units: InvestmentTransactions.units,
-      price: InvestmentTransactions.price,
-    })
-    .from(InvestmentTransactions)
-    .innerJoin(
-      Investments,
-      eq(Investments.id, InvestmentTransactions.investmentId),
-    )
-    .where(eq(InvestmentTransactions.currency, HOME_CURRENCY));
-  const out = new Map<string, InvestmentTx[]>();
-  for (const r of rows) {
-    const arr = out.get(r.assetId) ?? [];
-    arr.push({ date: r.date, units: r.units, price: r.price });
-    out.set(r.assetId, arr);
-  }
-  return {
-    portfolioInvestmentTxs: out,
-    portfolioAssetIds: [...out.keys()],
-  };
 }
 
 /** Raw per-row contribution transactions — `PlanningTransactions` with an `assetId` set. Each row is a cash outflow from `accountId` into the wrapper's investments. The caller groups these by `assetId` (for per-wrapper EWMA) and by `accountId` (for per-payer pension-relief attribution). */

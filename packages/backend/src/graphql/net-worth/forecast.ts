@@ -10,6 +10,7 @@ import { HOME_CURRENCY } from "@/config";
 import { runForecast } from "@/forecast/engine";
 import { loadForecastInputs } from "@/forecast/inputs";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { Money } from "../money";
 import {
@@ -186,6 +187,7 @@ type AssetBucketType = NetWorthHistoryAssetBucket["type"];
  * @gqlAnnotate semanticNonNull
  */
 export async function netWorthForecast(
+  ctx: Context,
   /** Forecast horizon in years (integer; 1–50). */
   years: Int,
   /**
@@ -200,7 +202,7 @@ export async function netWorthForecast(
   assert(years >= 1 && years <= 50, "years must be between 1 and 50");
 
   const months = years * 12;
-  const inputs = await loadForecastInputs(new Date(), months);
+  const inputs = await loadForecastInputs(ctx, new Date(), months);
   const { points, workings } = runForecast(inputs);
 
   // Thin the monthly series to `limit` evenly-spaced points, always
