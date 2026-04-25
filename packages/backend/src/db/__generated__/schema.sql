@@ -1,3 +1,8 @@
+-- AUTO-GENERATED FILE. DO NOT EDIT.
+-- Intermediary DB schema used for generating migrations and checking drift.
+-- The Drizzle schema (src/db/schema/) is the source of truth.
+-- Regenerate with: pnpm db:generate
+
 CREATE TYPE "public"."CountryCode" AS ENUM ('GB');
 CREATE TYPE "public"."CurrencyCode" AS ENUM (
   'AED',
