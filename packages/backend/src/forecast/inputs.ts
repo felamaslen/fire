@@ -66,6 +66,7 @@ export async function loadForecastInputs(
     creditCardTxs,
     nonLiabilityBills,
     settingsRow,
+    earningsSql,
   ] = await Promise.all([
     loadCategories(),
     loadStartingBalances(),
@@ -76,6 +77,7 @@ export async function loadForecastInputs(
     loadCreditCardTxs(ewmaCutoff),
     loadNonLiabilityBills(asOfDate),
     model("AppSettings").findByIdOrNull(true),
+    loadPredictedEarningsSql(asOfDate),
   ]);
 
   // Manual pension contributions (raw user-recorded outflows) need two
@@ -111,8 +113,9 @@ export async function loadForecastInputs(
     manualPensionContribsByAccount.set(r.accountId, arr);
   }
 
-  const earningsForecast = await loadPredictedEarningsForecast(
+  const earningsForecast = computePredictedEarningsForecast(
     asOfDate,
+    earningsSql,
     manualPensionContribsByAccount,
   );
   const monthlyIncome = earningsForecast.monthlyIncome;
@@ -533,20 +536,18 @@ type PredictedEarningsForecast = {
   annualSelfAssessmentRefund: number;
 };
 
-/**
- * Predicted monthly net income + per-asset pension contributions from `PlanningEarnings` active on `asOfDate`. Runs each earning's annual gross through `computeUKTake` (UK PAYE: tax + NI + student loan + pension) using the active tax code and the current UK FY's rates, then divides by 12.
- *
- * An earning's pension fractions are only applied when `pensionAssetId` is set — if the user hasn't linked the earning to a pension asset, we assume the pension contribution stays as take-home cash (since the forecast has no other wrapper to deposit it into, and pretending it vanishes would understate net worth).
- *
- * Pension deposit into the asset includes HMRC's basic-rate top-up for relief-at-source (grossed up by `1 / (1 - rateBasic)`). Salary sacrifice and net-pay amounts are already gross contributions, no additional top-up applies.
- *
- * This is a prediction from the user's configured earnings — not an EWMA of actual payslips, which is unreliable on data where adjustments (tax/NI/pension) aren't populated per row and treating raw gross as net would overstate income.
- */
-async function loadPredictedEarningsForecast(
+type PredictedEarningsSql = {
+  earningRows: {
+    earning: typeof PlanningEarnings.$inferSelect;
+    taxCode: typeof PlanningEarningsUKTaxCodes.$inferSelect | null;
+  }[];
+  rates: typeof PlanningYearUKTaxRates.$inferSelect | null;
+};
+
+/** Pure SQL fetch for `computePredictedEarningsForecast` — the active `PlanningEarnings` (with tax codes left-joined) plus the UK FY rates row covering `asOfDate`. Hoisted so the two queries can fire in parallel with the rest of `loadForecastInputs`'s main batch. */
+async function loadPredictedEarningsSql(
   asOfDate: Date,
-  /** Manual (user-recorded) pension contribs routed to a PENSION asset, keyed by the source cash account id. Used to attribute the RAS basic-rate gross-up + self-assessment higher-rate relief to the earning paid into that account. Amounts are raw (negative) cash outflows — the owner's net contribution before HMRC's 25% top-up. */
-  manualPensionContribsByAccount: Map<string, readonly LiabilityTx[]>,
-): Promise<PredictedEarningsForecast> {
+): Promise<PredictedEarningsSql> {
   // UK financial year starts 6 April; at the schema level we identify years
   // by the calendar year they start in (FY25/26 → 2025).
   const fyYear =
@@ -580,6 +581,24 @@ async function loadPredictedEarningsForecast(
       .limit(1)
       .then((rows) => rows[0] ?? null),
   ]);
+  return { earningRows, rates };
+}
+
+/**
+ * Predicted monthly net income + per-asset pension contributions from `PlanningEarnings` active on `asOfDate`. Runs each earning's annual gross through `computeUKTake` (UK PAYE: tax + NI + student loan + pension) using the active tax code and the current UK FY's rates, then divides by 12.
+ *
+ * An earning's pension fractions are only applied when `pensionAssetId` is set — if the user hasn't linked the earning to a pension asset, we assume the pension contribution stays as take-home cash (since the forecast has no other wrapper to deposit it into, and pretending it vanishes would understate net worth).
+ *
+ * Pension deposit into the asset includes HMRC's basic-rate top-up for relief-at-source (grossed up by `1 / (1 - rateBasic)`). Salary sacrifice and net-pay amounts are already gross contributions, no additional top-up applies.
+ *
+ * This is a prediction from the user's configured earnings — not an EWMA of actual payslips, which is unreliable on data where adjustments (tax/NI/pension) aren't populated per row and treating raw gross as net would overstate income.
+ */
+function computePredictedEarningsForecast(
+  asOfDate: Date,
+  { earningRows, rates }: PredictedEarningsSql,
+  /** Manual (user-recorded) pension contribs routed to a PENSION asset, keyed by the source cash account id. Used to attribute the RAS basic-rate gross-up + self-assessment higher-rate relief to the earning paid into that account. Amounts are raw (negative) cash outflows — the owner's net contribution before HMRC's 25% top-up. */
+  manualPensionContribsByAccount: Map<string, readonly LiabilityTx[]>,
+): PredictedEarningsForecast {
   const monthlyPensionByAssetId = new Map<string, number>();
   const monthlyStudentLoanByLiabilityId = new Map<string, number>();
   let annualSelfAssessmentRefund = 0;
