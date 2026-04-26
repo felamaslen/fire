@@ -117,6 +117,18 @@ CREATE TABLE "InvestmentPrices" (
   )
 );
 
+CREATE TABLE "InvestmentPricesLive" (
+  "investmentId" uuid PRIMARY KEY NOT NULL,
+  "refreshedAt" timestamp with time zone NOT NULL,
+  "date" timestamp with time zone NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "price" double precision NOT NULL,
+  "pricePreviousClose" double precision,
+  "data" jsonb,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "InvestmentStockSplits" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
@@ -530,6 +542,9 @@ ADD CONSTRAINT "InvestmentAllocations_investmentId_Investments_id_fk" FOREIGN KE
 
 ALTER TABLE "InvestmentPrices"
 ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+
+ALTER TABLE "InvestmentPricesLive"
+ADD CONSTRAINT "InvestmentPricesLive_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE cascade ON UPDATE no action;
 
 ALTER TABLE "InvestmentStockSplits"
 ADD CONSTRAINT "InvestmentStockSplits_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;

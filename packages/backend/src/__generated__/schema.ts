@@ -327,11 +327,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const InvestmentPriceLatestType: GraphQLObjectType = new GraphQLObjectType({
         name: "InvestmentPriceLatest",
-        description: "The real-time unit price of a stock investment, as of `capturedAt`.",
+        description: "The real-time unit price of a stock investment. `tickAt` is the time of the price tick reported by the upstream provider; `capturedAt` is the wall-clock time we last refreshed it.",
         fields() {
             return {
                 capturedAt: {
-                    description: "When the quote was captured.",
+                    description: "When we last refreshed this quote from the upstream provider.",
                     name: "capturedAt",
                     type: new GraphQLNonNull(DateTimeType)
                 },
@@ -339,6 +339,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Live quote, in the currency reported by the quote provider.",
                     name: "price",
                     type: new GraphQLNonNull(MoneyType)
+                },
+                tickAt: {
+                    description: "Time of the actual price tick reported by the upstream provider \u2014 i.e. the moment the market last printed this price. Use this (not `capturedAt`) when surfacing \"how recent is this price\" to the user.",
+                    name: "tickAt",
+                    type: new GraphQLNonNull(DateTimeType)
                 }
             };
         }
@@ -454,9 +459,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 unitPriceLatest: {
-                    description: "Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).",
+                    description: "Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.",
                     name: "unitPriceLatest",
-                    type: InvestmentPriceLatestType
+                    type: InvestmentPriceLatestType,
+                    resolve(source, _args, context) {
+                        return source.unitPriceLatest(context);
+                    }
                 },
                 wrappers: {
                     description: "Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.",

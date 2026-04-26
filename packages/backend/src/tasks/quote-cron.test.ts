@@ -5,7 +5,7 @@ import { InvestmentPrices, Investments } from "@/db/schema/investments";
 import { http, HttpResponse, useMswServer } from "#test/msw";
 
 import { refreshAllStockQuotes } from "./quote-cron";
-import { TEST__clearCacheForTesting as clearCacheForTesting } from "./yahoo";
+import { TEST__clearInflightForTesting as clearInflightForTesting } from "./yahoo";
 
 const server = useMswServer();
 
@@ -33,7 +33,7 @@ function yahooQuoteHandler(
 }
 
 beforeEach(() => {
-  clearCacheForTesting();
+  clearInflightForTesting();
 });
 
 async function createInvestment(

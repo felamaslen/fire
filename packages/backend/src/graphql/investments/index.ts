@@ -6,7 +6,6 @@ import type { ID, Int } from "grats";
 
 import { db } from "@/db";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
-import { readOrRefresh } from "@/tasks/yahoo";
 
 import type { Context } from "../context";
 import type { DateTime } from "../date-time";
@@ -34,13 +33,15 @@ import {
   loadInvestmentTransactionsConnection,
 } from "./transactions";
 
-/** The real-time unit price of a stock investment, as of `capturedAt`. @gqlType */
+/** The real-time unit price of a stock investment. `tickAt` is the time of the price tick reported by the upstream provider; `capturedAt` is the wall-clock time we last refreshed it. @gqlType */
 export class InvestmentPriceLatest {
   constructor(
     /** Live quote, in the currency reported by the quote provider. @gqlField */
     public readonly price: Money,
-    /** When the quote was captured. @gqlField */
+    /** When we last refreshed this quote from the upstream provider. @gqlField */
     public readonly capturedAt: DateTime,
+    /** Time of the actual price tick reported by the upstream provider — i.e. the moment the market last printed this price. Use this (not `capturedAt`) when surfacing "how recent is this price" to the user. @gqlField */
+    public readonly tickAt: DateTime,
   ) {}
 }
 
@@ -140,14 +141,15 @@ export class Investment {
     return (s.priceLatestCachedAt as DateTime | null) ?? null;
   }
 
-  /** Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes). @gqlField */
-  async unitPriceLatest(): Promise<InvestmentPriceLatest | null> {
+  /** Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request. @gqlField */
+  async unitPriceLatest(ctx: Context): Promise<InvestmentPriceLatest | null> {
     if (!(this.asset instanceof InvestmentStock)) return null;
-    const quote = readOrRefresh(this.asset.code);
-    if (!quote) return null;
+    const s = await loadInvestmentStats(ctx, { investmentId: this.id });
+    if (!s.live) return null;
     return new InvestmentPriceLatest(
-      Money.fromMinorDenomination(quote.priceMinorUnits, quote.currency),
-      quote.fetchedAt as DateTime,
+      Money.fromMinorDenomination(s.live.priceMinor, s.live.currency),
+      s.live.refreshedAt as DateTime,
+      s.live.tickAt as DateTime,
     );
   }
 

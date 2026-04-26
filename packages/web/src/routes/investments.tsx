@@ -6,15 +6,9 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
+import { ArrowDown, ArrowUp, Check, ExternalLink, Plus } from "lucide-react";
 import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  Clock,
-  ExternalLink,
-  Plus,
-} from "lucide-react";
-import {
+  type ComponentProps,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -105,6 +99,7 @@ const InvestmentRowDocument = graphql(
           ...Figure
         }
         capturedAt
+        tickAt
       }
       position(filterAssetIdIn: $filterAssetIdIn) {
         units
@@ -885,7 +880,11 @@ function UnitPrice({
   cachedAt,
   prefix,
 }: {
-  live: { price: FragmentOf<typeof FigureDocument>; capturedAt: string } | null;
+  live: {
+    price: FragmentOf<typeof FigureDocument>;
+    capturedAt: string;
+    tickAt: string;
+  } | null;
   cached: FragmentOf<typeof FigureDocument> | null;
   cachedAt: string | null;
   prefix?: string;
@@ -894,7 +893,13 @@ function UnitPrice({
   if (!priceFragment) return <span className="text-muted-foreground">—</span>;
   const price = readFragment(FigureDocument, priceFragment);
   const isLive = live !== null;
-  const at = isLive ? live.capturedAt : cachedAt;
+  // Tooltip + age colour reflect when we last refreshed the quote
+  // (`capturedAt` for live, `cachedAt` for the daily-close fallback) — this is
+  // the freshness signal. The clock-icon hands point at `tickAt` (the actual
+  // price tick) so you can see at a glance what wall-clock time the price is
+  // from.
+  const refreshedAt = isLive ? live.capturedAt : cachedAt;
+  const handsAt = isLive ? live.tickAt : cachedAt;
   const now = useNow(30_000);
   const liveAgeMs =
     isLive && live.capturedAt ? now - new Date(live.capturedAt).getTime() : 0;
@@ -905,10 +910,11 @@ function UnitPrice({
     <span className="inline-flex items-center gap-1">
       {prefix}
       {formatUnitPrice(price.currency, price.amount)}
-      {at && (
+      {refreshedAt && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Clock
+            <TimeClockIcon
+              at={handsAt ? new Date(handsAt) : null}
               className={cn(
                 "h-3 w-3 shrink-0",
                 !isLive && "text-muted-foreground",
@@ -917,12 +923,63 @@ function UnitPrice({
             />
           </TooltipTrigger>
           <TooltipContent>
-            {isLive ? "Fetched " : "Recorded "}
-            {new Date(at).toLocaleString("en-GB")}
+            {isLive ? (
+              <div className="grid grid-cols-[auto_auto] gap-x-2">
+                <span className="text-muted-foreground">Refreshed</span>
+                <span>{new Date(live.capturedAt).toLocaleString("en-GB")}</span>
+                <span className="text-muted-foreground">Quote date</span>
+                <span>{new Date(live.tickAt).toLocaleString("en-GB")}</span>
+              </div>
+            ) : (
+              <>Recorded {new Date(refreshedAt).toLocaleString("en-GB")}</>
+            )}
           </TooltipContent>
         </Tooltip>
       )}
     </span>
+  );
+}
+
+/** Lucide-style 24×24 clock face whose hour and minute hands point at `at`. Falls back to a static face (no hands) when `at` is null. Spreads `...rest` onto the underlying `<svg>` so it composes with Radix's `asChild` slot pattern (the Tooltip trigger needs to inject pointer / focus handlers + a ref). */
+function TimeClockIcon({
+  at,
+  ...rest
+}: {
+  at: Date | null;
+} & ComponentProps<"svg">) {
+  const hands = at
+    ? (() => {
+        const h = (at.getHours() % 12) + at.getMinutes() / 60;
+        const m = at.getMinutes();
+        const hourAng = (h / 12) * 2 * Math.PI - Math.PI / 2;
+        const minAng = (m / 60) * 2 * Math.PI - Math.PI / 2;
+        return {
+          hx: 12 + Math.cos(hourAng) * 4,
+          hy: 12 + Math.sin(hourAng) * 4,
+          mx: 12 + Math.cos(minAng) * 7,
+          my: 12 + Math.sin(minAng) * 7,
+        };
+      })()
+    : null;
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      <circle cx={12} cy={12} r={10} />
+      {hands && (
+        <>
+          <line x1={12} y1={12} x2={hands.hx} y2={hands.hy} />
+          <line x1={12} y1={12} x2={hands.mx} y2={hands.my} />
+        </>
+      )}
+    </svg>
   );
 }
 

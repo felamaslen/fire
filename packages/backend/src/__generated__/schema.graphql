@@ -488,7 +488,7 @@ type Investment {
   """
   unitPriceCachedAt: DateTime
   """
-  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).
+  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.
   """
   unitPriceLatest: InvestmentPriceLatest
   """
@@ -587,12 +587,18 @@ type InvestmentPosition {
   units: Int!
 }
 
-"""The real-time unit price of a stock investment, as of `capturedAt`."""
+"""
+The real-time unit price of a stock investment. `tickAt` is the time of the price tick reported by the upstream provider; `capturedAt` is the wall-clock time we last refreshed it.
+"""
 type InvestmentPriceLatest {
-  """When the quote was captured."""
+  """When we last refreshed this quote from the upstream provider."""
   capturedAt: DateTime!
   """Live quote, in the currency reported by the quote provider."""
   price: Money!
+  """
+  Time of the actual price tick reported by the upstream provider — i.e. the moment the market last printed this price. Use this (not `capturedAt`) when surfacing "how recent is this price" to the user.
+  """
+  tickAt: DateTime!
 }
 
 """
