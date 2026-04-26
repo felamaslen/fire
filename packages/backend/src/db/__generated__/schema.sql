@@ -1,3 +1,6 @@
+-- AUTO-GENERATED FILE. DO NOT EDIT.
+-- Intermediary DB schema used for generating migrations and checking drift.
+-- The Drizzle schema is the source of truth.
 CREATE TYPE "public"."CountryCode" AS ENUM('GB');
 
 CREATE TYPE "public"."CurrencyCode" AS ENUM(
@@ -110,7 +113,7 @@ CREATE TABLE "InvestmentPrices" (
   CONSTRAINT "InvestmentPrices_priceAdjusted_ck" CHECK ("InvestmentPrices"."priceAdjusted" >= 0),
   CONSTRAINT "InvestmentPrices_isLatest_ck" CHECK (
     "InvestmentPrices"."isLatest" IS NULL
-    OR "InvestmentPrices"."isLatest" = true
+    OR "InvestmentPrices"."isLatest" = TRUE
   )
 );
 
@@ -134,7 +137,7 @@ CREATE TABLE "InvestmentTransactions" (
   "fees" bigint DEFAULT 0 NOT NULL,
   "currency" "CurrencyCode" NOT NULL,
   "date" date NOT NULL,
-  "drip" boolean DEFAULT false NOT NULL,
+  "drip" boolean DEFAULT FALSE NOT NULL,
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT "InvestmentTransactions_price_ck" CHECK ("InvestmentTransactions"."price" >= 0),
@@ -181,7 +184,7 @@ CREATE TABLE "NetWorthCategoryLiabilities" (
   "interestRate" numeric(6, 4),
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
-  "skip" boolean DEFAULT false NOT NULL,
+  "skip" boolean DEFAULT FALSE NOT NULL,
   "billedFromAccountId" uuid,
   CONSTRAINT "NetWorthCategoryLiabilities_interestRate_ck" CHECK (
     (
@@ -330,7 +333,7 @@ CREATE TABLE "PlanningEarnings" (
   "pensionSalarySacrifice" double precision,
   "pensionReliefAtSource" double precision,
   "pensionNetPay" double precision,
-  "studentLoanPlan2" boolean DEFAULT false NOT NULL,
+  "studentLoanPlan2" boolean DEFAULT FALSE NOT NULL,
   "toAccountId" uuid NOT NULL,
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
@@ -354,7 +357,7 @@ CREATE TABLE "PlanningEarnings" (
   ),
   CONSTRAINT "PlanningEarnings_studentLoanLiability_ck" CHECK (
     "PlanningEarnings"."studentLoanLiabilityId" IS NULL
-    OR "PlanningEarnings"."studentLoanPlan2" = true
+    OR "PlanningEarnings"."studentLoanPlan2" = TRUE
   ),
   CONSTRAINT "PlanningEarnings_pensionAsset_ck" CHECK (
     "PlanningEarnings"."pensionAssetId" IS NULL
@@ -505,7 +508,7 @@ CREATE TABLE "AppSettings" (
   "retirementYear" integer,
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
-  CONSTRAINT "AppSettings_singleton_ck" CHECK ("AppSettings"."singleton" = true),
+  CONSTRAINT "AppSettings_singleton_ck" CHECK ("AppSettings"."singleton" = TRUE),
   CONSTRAINT "AppSettings_cashAllocationAmount_ck" CHECK (
     "AppSettings"."cashAllocationAmount" IS NULL
     OR "AppSettings"."cashAllocationAmount" >= 0
@@ -520,106 +523,106 @@ CREATE TABLE "AppSettings" (
 );
 
 ALTER TABLE "InvestmentAllocations"
-ADD CONSTRAINT "InvestmentAllocations_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "InvestmentAllocations_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "InvestmentAllocations"
-ADD CONSTRAINT "InvestmentAllocations_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "InvestmentAllocations_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "InvestmentPrices"
-ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "InvestmentStockSplits"
-ADD CONSTRAINT "InvestmentStockSplits_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "InvestmentStockSplits_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "InvestmentTransactions"
-ADD CONSTRAINT "InvestmentTransactions_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "InvestmentTransactions_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "InvestmentTransactions"
-ADD CONSTRAINT "InvestmentTransactions_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "InvestmentTransactions_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthCategoryLiabilities"
-ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE set null ON UPDATE no action;
+ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthCategoryLiabilities"
-ADD CONSTRAINT "NetWorthCategoryLiabilities_billedFromAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("billedFromAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE set null ON UPDATE no action;
+ADD CONSTRAINT "NetWorthCategoryLiabilities_billedFromAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("billedFromAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE SET NULL ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthCurrencyRates"
-ADD CONSTRAINT "NetWorthCurrencyRates_entryId_NetWorthEntries_id_fk" FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "NetWorthCurrencyRates_entryId_NetWorthEntries_id_fk" FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthValueAmounts"
-ADD CONSTRAINT "NetWorthValueAmounts_valueId_NetWorthValues_id_fk" FOREIGN KEY ("valueId") REFERENCES "public"."NetWorthValues" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "NetWorthValueAmounts_valueId_NetWorthValues_id_fk" FOREIGN KEY ("valueId") REFERENCES "public"."NetWorthValues" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthValueOptions"
-ADD CONSTRAINT "NetWorthValueOptions_valueId_NetWorthValues_id_fk" FOREIGN KEY ("valueId") REFERENCES "public"."NetWorthValues" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "NetWorthValueOptions_valueId_NetWorthValues_id_fk" FOREIGN KEY ("valueId") REFERENCES "public"."NetWorthValues" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthValues"
-ADD CONSTRAINT "NetWorthValues_entryId_NetWorthEntries_id_fk" FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "NetWorthValues_entryId_NetWorthEntries_id_fk" FOREIGN KEY ("entryId") REFERENCES "public"."NetWorthEntries" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthValues"
-ADD CONSTRAINT "NetWorthValues_categoryAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "NetWorthValues_categoryAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthValues"
-ADD CONSTRAINT "NetWorthValues_categoryLiabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("categoryLiabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "NetWorthValues_categoryLiabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("categoryLiabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthValues"
-ADD CONSTRAINT "NetWorthValues_categoryOptionId_NetWorthCategoryOptions_id_fk" FOREIGN KEY ("categoryOptionId") REFERENCES "public"."NetWorthCategoryOptions" ("id") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "NetWorthValues_categoryOptionId_NetWorthCategoryOptions_id_fk" FOREIGN KEY ("categoryOptionId") REFERENCES "public"."NetWorthCategoryOptions" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningAccounts"
-ADD CONSTRAINT "PlanningAccounts_accountId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("accountId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "PlanningAccounts_accountId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("accountId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningBills"
-ADD CONSTRAINT "PlanningBills_fromAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("fromAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "PlanningBills_fromAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("fromAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningBills"
-ADD CONSTRAINT "PlanningBills_liabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("liabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "PlanningBills_liabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("liabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningEarnings"
-ADD CONSTRAINT "PlanningEarnings_toAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "PlanningEarnings_toAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningEarnings"
-ADD CONSTRAINT "PlanningEarnings_studentLoanLiabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("studentLoanLiabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE set null ON UPDATE no action;
+ADD CONSTRAINT "PlanningEarnings_studentLoanLiabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("studentLoanLiabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningEarnings"
-ADD CONSTRAINT "PlanningEarnings_pensionAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("pensionAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE set null ON UPDATE no action;
+ADD CONSTRAINT "PlanningEarnings_pensionAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("pensionAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningEarningsUKTaxCodes"
-ADD CONSTRAINT "PlanningEarningsUKTaxCodes_earningsId_PlanningEarnings_id_fk" FOREIGN KEY ("earningsId") REFERENCES "public"."PlanningEarnings" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "PlanningEarningsUKTaxCodes_earningsId_PlanningEarnings_id_fk" FOREIGN KEY ("earningsId") REFERENCES "public"."PlanningEarnings" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningMonthBills"
-ADD CONSTRAINT "PlanningMonthBills_billId_PlanningBills_id_fk" FOREIGN KEY ("billId") REFERENCES "public"."PlanningBills" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "PlanningMonthBills_billId_PlanningBills_id_fk" FOREIGN KEY ("billId") REFERENCES "public"."PlanningBills" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningMonthBills"
-ADD CONSTRAINT "PlanningMonthBills_month_fk" FOREIGN KEY ("year", "date") REFERENCES "public"."PlanningMonths" ("year", "date") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "PlanningMonthBills_month_fk" FOREIGN KEY ("year", "date") REFERENCES "public"."PlanningMonths" ("year", "date") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningMonths"
-ADD CONSTRAINT "PlanningMonths_year_PlanningYears_year_fk" FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "PlanningMonths_year_PlanningYears_year_fk" FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningPayslipAdjustments"
-ADD CONSTRAINT "PlanningPayslipAdjustments_payslipId_PlanningPayslips_id_fk" FOREIGN KEY ("payslipId") REFERENCES "public"."PlanningPayslips" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "PlanningPayslipAdjustments_payslipId_PlanningPayslips_id_fk" FOREIGN KEY ("payslipId") REFERENCES "public"."PlanningPayslips" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningPayslipAdjustments"
-ADD CONSTRAINT "PlanningPayslipAdjustments_liabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("liabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE set null ON UPDATE no action;
+ADD CONSTRAINT "PlanningPayslipAdjustments_liabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("liabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningPayslips"
-ADD CONSTRAINT "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "PlanningPayslips_toAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningTransactions"
-ADD CONSTRAINT "PlanningTransactions_accountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("accountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "PlanningTransactions_accountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("accountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningTransactions"
-ADD CONSTRAINT "PlanningTransactions_toAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "PlanningTransactions_toAccountId_PlanningAccounts_accountId_fk" FOREIGN KEY ("toAccountId") REFERENCES "public"."PlanningAccounts" ("accountId") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningTransactions"
-ADD CONSTRAINT "PlanningTransactions_liabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("liabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "PlanningTransactions_liabilityId_NetWorthCategoryLiabilities_id_fk" FOREIGN KEY ("liabilityId") REFERENCES "public"."NetWorthCategoryLiabilities" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningTransactions"
-ADD CONSTRAINT "PlanningTransactions_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE restrict ON UPDATE no action;
+ADD CONSTRAINT "PlanningTransactions_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningTransactions"
-ADD CONSTRAINT "PlanningTransactions_month_fk" FOREIGN KEY ("year", "date") REFERENCES "public"."PlanningMonths" ("year", "date") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "PlanningTransactions_month_fk" FOREIGN KEY ("year", "date") REFERENCES "public"."PlanningMonths" ("year", "date") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningYearUKTaxRates"
-ADD CONSTRAINT "PlanningYearUKTaxRates_year_PlanningYears_year_fk" FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "PlanningYearUKTaxRates_year_PlanningYears_year_fk" FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 CREATE UNIQUE INDEX "InvestmentPrices_investmentId_date_uq" ON "InvestmentPrices" USING btree ("investmentId", "date");
 
@@ -735,3 +738,117 @@ CREATE VIEW "public"."InvestmentPortfolioDailyBreakdown" AS (
     u."assetId",
     u.date
 );
+
+CREATE FUNCTION "InvestmentPrices_computeAdjusted" (
+  p_investment_id uuid,
+  p_date date,
+  p_price double precision
+) RETURNS double precision LANGUAGE sql STABLE AS $$
+  SELECT p_price / COALESCE(
+    (SELECT EXP(SUM(LN(ratio)))
+     FROM "InvestmentStockSplits"
+     WHERE "investmentId" = p_investment_id AND date > p_date)::double precision,
+    1
+  );
+$$;
+
+ALTER TABLE "PlanningAccounts"
+ADD CONSTRAINT "PlanningAccounts_sortOrder_uq" UNIQUE ("sortOrder") DEFERRABLE INITIALLY DEFERRED;
+
+CREATE FUNCTION "InvestmentPrices_setAdjusted_fn" () RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW."priceAdjusted" := "InvestmentPrices_computeAdjusted"(
+    NEW."investmentId", NEW.date, NEW.price
+  );
+  RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION "InvestmentPrices_setIsLatest_stmt_fn" () RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  affected uuid[] := ARRAY[]::uuid[];
+BEGIN
+  -- The function re-enters via its own UPDATEs below. Without a column list
+  -- (not permitted on transition-table triggers) the UPDATE trigger fires on
+  -- every UPDATE including `isLatest = …`. Guard on `pg_trigger_depth()` so
+  -- only the outermost call does any work.
+  IF pg_trigger_depth() > 1 THEN
+    RETURN NULL;
+  END IF;
+
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    affected := affected || ARRAY(SELECT DISTINCT "investmentId" FROM new_rows);
+  END IF;
+  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+    affected := affected || ARRAY(SELECT DISTINCT "investmentId" FROM old_rows);
+  END IF;
+  IF cardinality(affected) = 0 THEN
+    RETURN NULL;
+  END IF;
+
+  -- Clear every `isLatest` on the affected investments first so the partial
+  -- unique index on `(investmentId, isLatest) WHERE isLatest IS NOT NULL`
+  -- doesn't reject the second UPDATE below.
+  UPDATE "InvestmentPrices"
+  SET "isLatest" = NULL
+  WHERE "investmentId" = ANY(affected) AND "isLatest" IS NOT NULL;
+
+  UPDATE "InvestmentPrices" p
+  SET "isLatest" = true
+  FROM (
+    SELECT DISTINCT ON ("investmentId") id
+    FROM "InvestmentPrices"
+    WHERE "investmentId" = ANY(affected)
+    ORDER BY "investmentId", date DESC
+  ) latest
+  WHERE p.id = latest.id;
+
+  RETURN NULL;
+END;
+$$;
+
+CREATE FUNCTION "InvestmentStockSplits_recomputePrices_fn" () RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  affected uuid[] := ARRAY[]::uuid[];
+BEGIN
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    affected := affected || NEW."investmentId";
+  END IF;
+  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+    affected := affected || OLD."investmentId";
+  END IF;
+
+  UPDATE "InvestmentPrices" p
+  SET "priceAdjusted" = "InvestmentPrices_computeAdjusted"(p."investmentId", p.date, p.price)
+  WHERE p."investmentId" = ANY(affected);
+
+  RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER "InvestmentPrices_setAdjusted_trg" BEFORE INSERT
+OR
+UPDATE OF price,
+date,
+"investmentId" ON "InvestmentPrices" FOR EACH ROW
+EXECUTE FUNCTION "InvestmentPrices_setAdjusted_fn" ();
+
+CREATE TRIGGER "InvestmentPrices_setIsLatest_del_trg"
+AFTER DELETE ON "InvestmentPrices" REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT
+EXECUTE FUNCTION "InvestmentPrices_setIsLatest_stmt_fn" ();
+
+CREATE TRIGGER "InvestmentPrices_setIsLatest_ins_trg"
+AFTER INSERT ON "InvestmentPrices" REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT
+EXECUTE FUNCTION "InvestmentPrices_setIsLatest_stmt_fn" ();
+
+CREATE TRIGGER "InvestmentPrices_setIsLatest_upd_trg"
+AFTER
+UPDATE ON "InvestmentPrices" REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT
+EXECUTE FUNCTION "InvestmentPrices_setIsLatest_stmt_fn" ();
+
+CREATE TRIGGER "InvestmentStockSplits_recomputePrices_trg"
+AFTER INSERT
+OR
+UPDATE
+OR DELETE ON "InvestmentStockSplits" FOR EACH ROW
+EXECUTE FUNCTION "InvestmentStockSplits_recomputePrices_fn" ();

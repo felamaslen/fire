@@ -15,8 +15,8 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { pgCustomSQL } from "drizzle-pgkit-migrator";
 
-import { pgCustomSQL } from "../sql";
 import { currencyCode } from "./currency";
 import { NetWorthCategoryAssets } from "./net-worth";
 
