@@ -57,7 +57,7 @@ Retirement-age modelling is a different question — it needs an explicit pictur
 ### Prerequisites
 - Node ≥ 24 (see `.tool-versions`)
 - `pnpm` (repo pins a version via `packageManager`)
-- Docker (runs Postgres, Jaeger, and the backend)
+- Docker (runs Postgres, the otel-lgtm observability stack, and the backend)
 
 ### First-time bootstrap
 
@@ -65,14 +65,14 @@ Retirement-age modelling is a different question — it needs an explicit pictur
 pnpm install
 ```
 
-Start the backing services (Postgres, Jaeger) and the backend itself:
+Start the backing services (Postgres, otel-lgtm) and the backend itself:
 
 ```bash
 cd packages/backend
 docker compose up -d
 ```
 
-This builds and runs the backend in a container against the containerised Postgres and Jaeger. The backend's source tree is mounted from the host, so `vite-node` hot-reloads on file changes without rebuilding the image.
+This builds and runs the backend in a container against the containerised Postgres and otel-lgtm stack. The backend's source tree is mounted from the host, so `vite-node` hot-reloads on file changes without rebuilding the image.
 
 Apply migrations (against the containerised Postgres, exposed on `localhost:5433`):
 
@@ -95,7 +95,7 @@ Web app (`:4001`) runs on the host:
 pnpm --filter web dev
 ```
 
-> Running the backend on the host instead of in docker is still possible (`pnpm --filter backend dev`) — just stop the container first and point `DATABASE_URL` at `localhost:5433`. The `OTEL_*` defaults in `src/env.ts` already target the containerised Jaeger.
+> Running the backend on the host instead of in docker is still possible (`pnpm --filter backend dev`) — just stop the container first and point `DATABASE_URL` at `localhost:5433`. The `OTEL_*` defaults in `src/env.ts` already target the containerised otel-lgtm OTLP receiver.
 
 With both running, regenerate the frontend's typed GraphQL from the backend's live schema whenever resolvers change:
 
@@ -128,14 +128,14 @@ flowchart LR
     Yahoo[Yahoo Finance]
     Cron[quote-cron<br/>node-cron]
     OTLP[OTLP/HTTP :4318]
-    Jaeger[Jaeger UI :16686]
+    Grafana[Grafana UI :3015<br/>otel-lgtm: Tempo + Loki + Prometheus]
 
     Browser -->|HTTPS| Web
     Web -->|GraphQL over HTTP| Backend
     Backend --> Drizzle --> PG
     Cron --> Yahoo
     Cron --> Drizzle
-    Backend -.spans.-> OTLP --> Jaeger
+    Backend -.spans.-> OTLP --> Grafana
 ```
 
 Key runtime flows:
@@ -146,7 +146,7 @@ Key runtime flows:
 
 ## Observability (OpenTelemetry)
 
-The backend emits OTLP traces to a local collector. `docker-compose.yml` ships a Jaeger all-in-one so you can read them out of the box — no extra setup.
+The backend emits OTLP traces (and logs) to a local collector. `packages/backend/docker-compose.yml` ships [`grafana/otel-lgtm`](https://github.com/grafana/docker-otel-lgtm) — a single container bundling an OTel collector with Grafana, Tempo (traces), Loki (logs), and Prometheus (metrics) — so you can read them out of the box, no extra setup.
 
 ### How it's wired
 
@@ -164,8 +164,8 @@ The backend emits OTLP traces to a local collector. `docker-compose.yml` ships a
 
 ### Viewing traces
 
-1. `docker compose up -d jaeger` (included in the default compose file).
-2. Open <http://localhost:16686>.
-3. Service: `fire-backend`.
+1. `docker compose -f packages/backend/docker-compose.yml up -d otel-lgtm` (included in the default compose file).
+2. Open Grafana at <http://localhost:3015> (anonymous admin).
+3. Explore → data source `Tempo` → service `fire-backend`. Logs live alongside under the `Loki` data source.
 
 Each GraphQL request shows up as one trace: the top span is the HTTP handler; nested under it are the Fastify lifecycle spans, the Apollo resolver work, any Drizzle queries (with SQL + params), and any outbound Yahoo Finance calls.
