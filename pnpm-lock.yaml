@@ -102,8 +102,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.20.0)(postgres@3.4.9)
       drizzle-pgkit-migrator:
-        specifier: ^0.1.0
-        version: 0.1.0(@inquirer/prompts@5.5.0)(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@types/pg@8.20.0)(drizzle-kit@0.31.10)(pg-query-stream@4.10.3(pg@8.20.0))(postgres@3.4.9)(typescript@5.9.3)
+        specifier: ^0.1.1
+        version: 0.1.1(@inquirer/prompts@5.5.0)(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@types/pg@8.20.0)(drizzle-kit@0.31.10)(pg-query-stream@4.10.3(pg@8.20.0))(postgres@3.4.9)(typescript@5.9.3)
       fastify:
         specifier: ^5.8.5
         version: 5.8.5
@@ -3008,8 +3008,8 @@ packages:
       sqlite3:
         optional: true
 
-  drizzle-pgkit-migrator@0.1.0:
-    resolution: {integrity: sha512-GD9xUT7okmFcr4ZuIxBKBb9Grpe32SxDG65OJ6BxVb3dcr102xTxLXMLoY7c7BslNEYXpawT5BgyjWAssZUtGw==}
+  drizzle-pgkit-migrator@0.1.1:
+    resolution: {integrity: sha512-WXkSYWs3+mx9Tzlb4vQ6A55B5S+I+7JYtKAI7SbmWXbPfBq2R+cpdqb4cYoJptbzkWm7ZXeB0FB6XyVk9gBGxQ==}
     engines: {node: '>=20'}
     hasBin: true
     peerDependencies:
@@ -7581,7 +7581,7 @@ snapshots:
       pg: 8.20.0
       postgres: 3.4.9
 
-  drizzle-pgkit-migrator@0.1.0(@inquirer/prompts@5.5.0)(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@types/pg@8.20.0)(drizzle-kit@0.31.10)(pg-query-stream@4.10.3(pg@8.20.0))(postgres@3.4.9)(typescript@5.9.3):
+  drizzle-pgkit-migrator@0.1.1(@inquirer/prompts@5.5.0)(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@types/pg@8.20.0)(drizzle-kit@0.31.10)(pg-query-stream@4.10.3(pg@8.20.0))(postgres@3.4.9)(typescript@5.9.3):
     dependencies:
       '@pgkit/migra': 0.6.1(@inquirer/prompts@5.5.0)(pg-query-stream@4.10.3(pg@8.20.0))(typescript@5.9.3)
       '@pgkit/migrator': 0.6.1(@types/node@24.12.2)(pg-query-stream@4.10.3(pg@8.20.0))(typescript@5.9.3)
