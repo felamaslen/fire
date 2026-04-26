@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, Check, ExternalLink, Plus } from "lucide-react";
 import {
-  type CSSProperties,
+  type ComponentProps,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -923,8 +923,16 @@ function UnitPrice({
             />
           </TooltipTrigger>
           <TooltipContent>
-            {isLive ? "Refreshed " : "Recorded "}
-            {new Date(refreshedAt).toLocaleString("en-GB")}
+            {isLive ? (
+              <div className="grid grid-cols-[auto_auto] gap-x-2">
+                <span className="text-muted-foreground">Refreshed</span>
+                <span>{new Date(live.capturedAt).toLocaleString("en-GB")}</span>
+                <span className="text-muted-foreground">Quote date</span>
+                <span>{new Date(live.tickAt).toLocaleString("en-GB")}</span>
+              </div>
+            ) : (
+              <>Recorded {new Date(refreshedAt).toLocaleString("en-GB")}</>
+            )}
           </TooltipContent>
         </Tooltip>
       )}
@@ -932,16 +940,13 @@ function UnitPrice({
   );
 }
 
-/** Lucide-style 24×24 clock face whose hour and minute hands point at `at`. Falls back to a static face (no hands) when `at` is null. */
+/** Lucide-style 24×24 clock face whose hour and minute hands point at `at`. Falls back to a static face (no hands) when `at` is null. Spreads `...rest` onto the underlying `<svg>` so it composes with Radix's `asChild` slot pattern (the Tooltip trigger needs to inject pointer / focus handlers + a ref). */
 function TimeClockIcon({
   at,
-  className,
-  style,
+  ...rest
 }: {
   at: Date | null;
-  className?: string;
-  style?: CSSProperties;
-}) {
+} & ComponentProps<"svg">) {
   const hands = at
     ? (() => {
         const h = (at.getHours() % 12) + at.getMinutes() / 60;
@@ -959,14 +964,13 @@ function TimeClockIcon({
   return (
     <svg
       viewBox="0 0 24 24"
-      className={className}
-      style={style}
       fill="none"
       stroke="currentColor"
       strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
+      {...rest}
     >
       <circle cx={12} cy={12} r={10} />
       {hands && (
