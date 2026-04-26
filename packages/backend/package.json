@@ -5,18 +5,18 @@
   "type": "module",
   "scripts": {
     "grats": "grats --tsconfig tsconfig.grats.json",
-    "codegen": "run-p grats db:generate-schema && gql.tada generate-output",
+    "codegen": "run-p grats db:generate && gql.tada generate-output",
     "dev": "NODE_ENV=development NODE_OPTIONS=\"--import=./otel.mjs\" vite",
     "start": "NODE_ENV=production NODE_OPTIONS=\"--import=./otel.mjs\" vite-node src/index.ts",
     "lint": "eslint --max-warnings=0 src",
     "typecheck": "pnpm grats && tsc --noEmit",
     "test": "vitest",
-    "db:generate": "pnpm exec tsx scripts/generate-schema-sql.ts",
-    "db:migrate": "pnpm exec tsx scripts/migrator.ts",
-    "db:migrate:backfill": "pnpm exec tsx scripts/backfill-migrations.ts",
-    "db:migrate:create": "pnpm db:generate && pnpm exec tsx scripts/create-migration",
+    "db:generate": "drizzle-pgkit-migrator generate-schema --schema-dir src/db/schema --schema-file src/db/__generated__/schema.sql",
+    "db:migrate": "drizzle-pgkit-migrator migrate --migrations-dir src/db/migrations up",
+    "db:migrate:list": "drizzle-pgkit-migrator migrate --migrations-dir src/db/migrations list",
+    "db:migrate:backfill": "drizzle-pgkit-migrator backfill --migrations-dir src/db/migrations",
+    "db:migrate:create": "pnpm db:generate && drizzle-pgkit-migrator create --schema-file src/db/__generated__/schema.sql --migrations-dir src/db/migrations",
     "db:studio": "drizzle-kit studio",
-    "db:generate-schema": "drizzle-kit export --sql > src/db/__generated__/schema.sql && prettier --write src/db/__generated__/schema.sql",
     "demo:fetch-prices": "tsx scripts/fetch-demo-prices.ts"
   },
   "dependencies": {
@@ -37,11 +37,10 @@
     "@opentelemetry/sdk-node": "^0.215.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "@opentelemetry/winston-transport": "^0.25.0",
-    "@pgkit/migra": "^0.6.1",
-    "@pgkit/migrator": "^0.6.1",
     "dataloader": "^2.2.3",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.45.2",
+    "drizzle-pgkit-migrator": "^0.1.1",
     "fastify": "^5.8.5",
     "graphql": "^16.13.2",
     "graphql-sse": "^2.6.0",
@@ -53,8 +52,7 @@
     "uuid": "^13.0.0",
     "winston": "^3.19.0",
     "yahoo-finance2": "^3.14.0",
-    "zod": "^4.3.6",
-    "zx": "^8.8.5"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@graphql-tools/schema": "^10.0.32",
