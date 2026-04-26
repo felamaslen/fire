@@ -554,7 +554,7 @@ function liveSnapshot(row: SliceRow): LiveQuoteSnapshot | null {
   };
 }
 
-/** Scan the just-loaded slice rows and fire-and-forget a Yahoo refresh for any held stock investment whose live row is missing or older than `LIVE_QUOTE_STALE_MS` and whose currency is currently inside its business-hours window. The current request still answers from the row we just read; the refreshed row only surfaces on the *next* loader hit (e.g. the next `portfolioLive` tick). */
+/** Scan the just-loaded slice rows and fire-and-forget a Yahoo refresh for any held stock investment whose live row is missing or older than `LIVE_QUOTE_STALE_MS`. Inside the currency's business-hours window the refresh always fires; outside, it only fires when no live row exists yet (so a never-quoted ticker still gets an initial price overnight / on weekends). The current request still answers from the row we just read; the refreshed row only surfaces on the *next* loader hit (e.g. the next `portfolioLive` tick). */
 function triggerLiveRefreshes(rows: SliceRow[]): void {
   const seen = new Set<string>();
   const now = Date.now();
@@ -562,14 +562,20 @@ function triggerLiveRefreshes(rows: SliceRow[]): void {
     if (!r.stockCode) continue;
     if (seen.has(r.investmentId)) continue;
     seen.add(r.investmentId);
+    const refreshedAt = r.liveRefreshedAt;
     const fresh =
-      r.liveRefreshedAt !== null &&
-      now - r.liveRefreshedAt.getTime() <= LIVE_QUOTE_STALE_MS;
+      refreshedAt !== null &&
+      now - refreshedAt.getTime() <= LIVE_QUOTE_STALE_MS;
     if (fresh) continue;
-    if (!isInBusinessHours(r.currency)) continue;
+    if (refreshedAt !== null && !isInBusinessHours(r.currency)) continue;
     void fetchQuote(r.stockCode, {
       investmentId: r.investmentId,
       currency: r.currency,
+      // Bypass the window when this would be the first quote we've ever
+      // recorded for the ticker — without it, a brand-new investment added
+      // overnight / on the weekend would render with `unitPriceLatest = null`
+      // until Monday morning.
+      bypassBusinessHours: refreshedAt === null,
     });
   }
 }
