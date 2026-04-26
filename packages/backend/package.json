@@ -14,7 +14,6 @@
     "db:generate": "drizzle-pgkit-migrator generate-schema --schema-dir src/db/schema --schema-file src/db/__generated__/schema.sql",
     "db:migrate": "drizzle-pgkit-migrator migrate --migrations-dir src/db/migrations up",
     "db:migrate:list": "drizzle-pgkit-migrator migrate --migrations-dir src/db/migrations list",
-    "db:migrate:backfill": "drizzle-pgkit-migrator backfill --migrations-dir src/db/migrations",
     "db:migrate:create": "pnpm db:generate && drizzle-pgkit-migrator create --schema-file src/db/__generated__/schema.sql --migrations-dir src/db/migrations",
     "db:studio": "drizzle-kit studio",
     "demo:fetch-prices": "tsx scripts/fetch-demo-prices.ts"
