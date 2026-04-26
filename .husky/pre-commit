@@ -38,7 +38,7 @@ if need_grats || need_db_schema; then
       || STATUS=$?
   fi
   if [ $STATUS -eq 0 ] && need_db_schema; then
-    pnpm --filter backend db:generate-schema \
+    pnpm --filter backend db:generate \
       && git add packages/backend/src/db/__generated__ \
       || STATUS=$?
   fi

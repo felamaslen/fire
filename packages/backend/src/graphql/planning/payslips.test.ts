@@ -596,7 +596,7 @@ it("rejects payslipUpdate when adjustment.liabilityId references a missing liabi
     ),
   ).rejects.toThrowErrorMatchingInlineSnapshot(
     `
-    [Error: GraphQL errors: Failed query: insert into "PlanningPayslipAdjustments" ("id", "payslipId", "amount", "name", "liabilityId", "createdAt", "updatedAt") values (default, $1, $2, $3, $4, default, default)
+    [Error: GraphQL errors: Failed query: insert into "PlanningPayslipAdjustments" ("id", "payslipId", "amount", "name", "createdAt", "updatedAt", "liabilityId") values (default, $1, $2, $3, default, default, $4)
     params: 019340b0-5a8e-7f3a-8e9a-1234567890ab,-10000,Student loan,00000000-0000-0000-0000-000000000000]
   `,
   );

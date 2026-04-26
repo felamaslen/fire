@@ -1,5 +1,4 @@
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { createMigrator } from "drizzle-pgkit-migrator";
 import postgres from "postgres";
 
 const ADMIN_URL = "postgres://fire:fire@localhost:5433/postgres";
@@ -22,13 +21,19 @@ export default async function globalSetup() {
   await admin.unsafe(`CREATE DATABASE "${TEMPLATE_DB}"`);
   await admin.end();
 
-  const sql = postgres(`postgres://fire:fire@localhost:5433/${TEMPLATE_DB}`, {
-    max: 1,
-    onnotice: () => {},
+  const templateUrl = `postgres://fire:fire@localhost:5433/${TEMPLATE_DB}`;
+  const migrator = await createMigrator({
+    databaseUrl: templateUrl,
+    migrationsDir: "./src/db/migrations",
   });
   try {
-    const db = drizzle(sql);
-    await migrate(db, { migrationsFolder: "./src/db/migrations" });
+    await migrator.up();
+  } finally {
+    await migrator.client.end();
+  }
+
+  const sql = postgres(templateUrl, { max: 1, onnotice: () => {} });
+  try {
     await seedPlanningYearFixture(sql, SEEDED_PLANNING_YEAR);
   } finally {
     await sql.end();
