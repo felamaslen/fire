@@ -10,7 +10,7 @@
     "start": "NODE_ENV=production NODE_OPTIONS=\"--import=./otel.mjs\" vite-node src/index.ts",
     "lint": "eslint --max-warnings=0 src",
     "typecheck": "pnpm grats && tsc --noEmit",
-    "test": "vitest",
+    "test": "TZ=UTC vitest",
     "db:generate": "drizzle-pgkit-migrator generate-schema --schema-dir src/db/schema --schema-file src/db/__generated__/schema.sql",
     "db:migrate": "drizzle-pgkit-migrator migrate --migrations-dir src/db/migrations up",
     "db:migrate:list": "drizzle-pgkit-migrator migrate --migrations-dir src/db/migrations list",

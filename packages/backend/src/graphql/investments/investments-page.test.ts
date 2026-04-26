@@ -318,7 +318,7 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
     {
       "aggregate": {
         "candlestick": {
-          "initialDate": "2026-04-10",
+          "initialDate": "2026-04-11",
           "points": [
             {
               "from": 6700,
