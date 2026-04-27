@@ -1201,6 +1201,10 @@ type NetWorthEntry {
   date: Date!
   id: ID!
   """
+  Subset of `values` whose `liability` is a `LOAN` — the line items that contribute to the loan-overpayment view. Saves clients from fetching every asset / option line just to filter to loans.
+  """
+  loans: [NetWorthValue!]!
+  """
   Sum of all asset and option line items for this entry, converted into GBP via the entry's `currencyRates`.
   """
   totalAssets: Money!

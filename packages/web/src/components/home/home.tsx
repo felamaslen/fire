@@ -22,6 +22,7 @@ import {
   ForecastWorkings,
   ForecastWorkingsFragment,
 } from "./forecast-workings";
+import { LoanOverpaymentCalculatorButton } from "./loan-overpayment-calculator";
 import { NetWorthBlockMapButton } from "./net-worth-block-map";
 import { NetWorthChart } from "./net-worth-chart";
 
@@ -368,6 +369,7 @@ export function Home() {
                   : "—"}
               </div>
               {latest && <NetWorthBlockMapButton />}
+              {latest && <LoanOverpaymentCalculatorButton />}
             </div>
             {latest && deltaNet !== null && (
               <div

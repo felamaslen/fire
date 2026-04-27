@@ -544,7 +544,7 @@ ALTER TABLE "InvestmentPrices"
 ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "InvestmentPricesLive"
-ADD CONSTRAINT "InvestmentPricesLive_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE cascade ON UPDATE no action;
+ADD CONSTRAINT "InvestmentPricesLive_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "InvestmentStockSplits"
 ADD CONSTRAINT "InvestmentStockSplits_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;

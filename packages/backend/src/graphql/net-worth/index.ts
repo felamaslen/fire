@@ -117,6 +117,24 @@ export async function values(entry: NetWorthEntry): Promise<NetWorthValue[]> {
   return rows.map(toNetWorthValue);
 }
 
+/** Subset of `values` whose `liability` is a `LOAN` — the line items that contribute to the loan-overpayment view. Saves clients from fetching every asset / option line just to filter to loans. @gqlField */
+export async function loans(entry: NetWorthEntry): Promise<NetWorthValue[]> {
+  const rows = await db
+    .select({ value: NetWorthValues })
+    .from(NetWorthValues)
+    .innerJoin(
+      NetWorthCategoryLiabilities,
+      eq(NetWorthCategoryLiabilities.id, NetWorthValues.categoryLiabilityId),
+    )
+    .where(
+      and(
+        eq(NetWorthValues.entryId, entry.id),
+        eq(NetWorthCategoryLiabilities.type, "LOAN"),
+      ),
+    );
+  return rows.map((r) => toNetWorthValue(r.value));
+}
+
 type EntryTotals = { assetsMinor: number; liabilitiesMinor: number };
 
 export function buildRateToHome(

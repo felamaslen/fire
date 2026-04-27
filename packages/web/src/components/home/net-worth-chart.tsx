@@ -46,14 +46,19 @@ export type NetWorthChartSeries = {
   fillOpacity?: number;
   /** Stroke width. Default 1.5; set to 0 to hide the line. */
   strokeWidth?: number;
-  /** Major-unit value per point; must match the length of `points`. */
-  values: number[];
+  /** Stroke opacity. Default 1. Useful for rendering a comparison baseline behind the main line. */
+  strokeOpacity?: number;
+  /** SVG `stroke-dasharray` for the line (e.g. `"4 3"`). Omitted by default. */
+  strokeDasharray?: string;
+  /** Major-unit value per point; must match the length of `points`. A `null` entry is rendered as a gap — the line breaks and resumes at the next non-null point. Only supported when `fill === "none"`. */
+  values: (number | null)[];
   /**
    * Optional per-point values to display in the tooltip in place of
    * `values`. Useful when `values` is a cumulative stack total but the
-   * tooltip should show the individual band amount.
+   * tooltip should show the individual band amount. `null` hides the row
+   * for that point.
    */
-  tooltipValues?: number[];
+  tooltipValues?: (number | null)[];
 };
 
 /** A single pinned event on the chart. `index` is a fractional index into `points`. The chart picks an icon + colour based on `kind` and wraps it in a shadcn Tooltip showing `label`. */
@@ -274,6 +279,7 @@ export function NetWorthChart({
     let dataMax = 0;
     for (const s of series) {
       for (const v of s.values) {
+        if (v == null) continue;
         if (v < dataMin) dataMin = v;
         if (v > dataMax) dataMax = v;
       }
@@ -455,10 +461,28 @@ export function NetWorthChart({
   const toPts = (values: number[]) =>
     values.map((v, i) => ({ x: xScale(i), y: yScale(v) }));
 
-  const linePath = (values: number[]) => pathThrough(toPts(values), "M");
+  /** Build an SVG path that breaks at `null` entries — each contiguous run of non-null values becomes its own `M …` subpath, separated by spaces. */
+  const linePath = (values: (number | null)[]) => {
+    const runs: { x: number; y: number }[][] = [];
+    let cur: { x: number; y: number }[] = [];
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v == null) {
+        if (cur.length > 0) runs.push(cur);
+        cur = [];
+      } else {
+        cur.push({ x: xScale(i), y: yScale(v) });
+      }
+    }
+    if (cur.length > 0) runs.push(cur);
+    return runs.map((r) => pathThrough(r, "M")).join(" ");
+  };
 
-  const closedAreaPath = (values: number[], baseline?: number[]) => {
-    const topPts = toPts(values);
+  const closedAreaPath = (values: (number | null)[], baseline?: number[]) => {
+    // Filled areas (fill="zero" / "baseline") aren't expected to contain
+    // gaps — coerce stray nulls to 0 so the area still closes cleanly.
+    const dense = values.map((v) => v ?? 0);
+    const topPts = toPts(dense);
     const bottomPts = baseline
       ? toPts(baseline).reverse()
       : values
@@ -547,7 +571,8 @@ export function NetWorthChart({
           }
           // fill === "zero": split at the zero line so the positive and
           // negative halves get their own colours via clip-path.
-          const hasNegative = s.negativeColor && s.values.some((v) => v < 0);
+          const hasNegative =
+            s.negativeColor && s.values.some((v) => v != null && v < 0);
           return (
             <g key={`fill-${s.key}`}>
               <defs>
@@ -598,6 +623,8 @@ export function NetWorthChart({
               fill="none"
               stroke={s.color}
               strokeWidth={sw}
+              strokeOpacity={s.strokeOpacity}
+              strokeDasharray={s.strokeDasharray}
             />
           );
         })}
@@ -610,7 +637,7 @@ export function NetWorthChart({
             // all zero across the range — a legend item the user just hid
             // shouldn't reappear in the hover card either.
             const tooltipSeries = series.filter((s) =>
-              (s.tooltipValues ?? s.values).some((v) => v !== 0),
+              (s.tooltipValues ?? s.values).some((v) => v != null && v !== 0),
             );
             const rowH = 30;
             const headerH = 38;
@@ -639,6 +666,7 @@ export function NetWorthChart({
                 />
                 {tooltipSeries.map((s) => {
                   const v = s.values[hoverIdx];
+                  if (v == null) return null;
                   return (
                     <circle
                       key={`dot-${s.key}`}
@@ -669,7 +697,7 @@ export function NetWorthChart({
                   {tooltipSeries.map((s, i) => {
                     const display = (s.tooltipValues ?? s.values)[hoverIdx];
                     const swatch =
-                      display < 0 && s.negativeColor
+                      display != null && display < 0 && s.negativeColor
                         ? s.negativeColor
                         : s.color;
                     return (
@@ -688,7 +716,9 @@ export function NetWorthChart({
                           {s.label}
                         </text>
                         <text x={boxX + boxW - 14} y={14} textAnchor="end">
-                          {formatAccountingMoneyRounded(currency, display)}
+                          {display == null
+                            ? "—"
+                            : formatAccountingMoneyRounded(currency, display)}
                         </text>
                       </g>
                     );
