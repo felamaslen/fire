@@ -1,5 +1,7 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
+import { isSameMonth } from "date-fns/isSameMonth";
+import { parseISO } from "date-fns/parseISO";
 import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -87,6 +89,24 @@ const QuickNetWorthCreateDocument = graphql(`
   }
 `);
 
+const QuickNetWorthUpdateDocument = graphql(`
+  mutation QuickNetWorthUpdate(
+    $id: ID!
+    $date: Date
+    $values: [NetWorthValueInput!]
+    $currencyRates: [NetWorthCurrencyRateInput!]
+  ) {
+    netWorthUpdate(
+      id: $id
+      date: $date
+      values: $values
+      currencyRates: $currencyRates
+    ) {
+      id
+    }
+  }
+`);
+
 type EntryFromFragment = ResultOf<typeof QuickNetWorthEntryDocument>;
 
 const KIND_ORDER = { asset: 0, liability: 1, option: 2 } as const;
@@ -117,6 +137,8 @@ type WizardRow = {
   /** "asset" | "liability" | "option" — drives which mutation-input variant we emit. */
   kind: "asset" | "liability" | "option";
   categoryId: string;
+  /** `NetWorthValue.id` from the snapshot. Sent on update so the backend upserts the row instead of replacing it. */
+  valueId: string;
   name: string;
   /** Display label for the subtype (e.g. "Cash", "Credit cards"). `null` for options, which have no subtype. */
   subtypeLabel: string | null;
@@ -150,6 +172,7 @@ function buildRows(entry: EntryFromFragment): WizardRow[] {
     return {
       kind,
       categoryId: category?.id ?? "",
+      valueId: v.id,
       name: category?.name ?? "(unknown)",
       subtypeLabel,
       subtypeRank,
@@ -299,6 +322,11 @@ function WizardWithSnapshot({
   const state: WizardState =
     decoded && !stale ? decoded : defaultState(entry.id, rows);
 
+  // The backend enforces one entry per calendar month. If the latest entry
+  // is already in the current month, the wizard updates that entry in place
+  // (upserting each row by its `valueId`) instead of creating a new one.
+  const editingExisting = isSameMonth(parseISO(entry.date), new Date());
+
   const [create, { loading: creating }] = useMutation(
     QuickNetWorthCreateDocument,
     {
@@ -309,8 +337,18 @@ function WizardWithSnapshot({
       },
     },
   );
+  const [update, { loading: updating }] = useMutation(
+    QuickNetWorthUpdateDocument,
+    {
+      refetchQueries: entriesRefetch,
+      onCompleted: () => {
+        toast.success("Entry updated");
+        onClose();
+      },
+    },
+  );
   const [refreshingRates, setRefreshingRates] = useState(false);
-  const saving = creating || refreshingRates;
+  const saving = creating || updating || refreshingRates;
 
   const stepCount = rows.length;
   const stepIndex = Math.min(Math.max(state.i, 0), Math.max(stepCount - 1, 0));
@@ -348,7 +386,11 @@ function WizardWithSnapshot({
         amount: slot[j] ?? c.previous,
         currency: c.currency,
       }));
-      const body = { categoryId: r.categoryId, amounts };
+      const body = {
+        ...(editingExisting && { id: r.valueId }),
+        categoryId: r.categoryId,
+        amounts,
+      };
       if (r.kind === "asset") return { asset: body };
       if (r.kind === "liability") return { liability: body };
       return { option: body };
@@ -360,13 +402,16 @@ function WizardWithSnapshot({
     } finally {
       setRefreshingRates(false);
     }
-    await create({
-      variables: {
-        date: new Date().toISOString().slice(0, 10),
-        values,
-        currencyRates,
-      },
-    }).catch((err: Error) => toast.error(err.message));
+    const date = new Date().toISOString().slice(0, 10);
+    if (editingExisting) {
+      await update({
+        variables: { id: entry.id, date, values, currencyRates },
+      }).catch((err: Error) => toast.error(err.message));
+    } else {
+      await create({
+        variables: { date, values, currencyRates },
+      }).catch((err: Error) => toast.error(err.message));
+    }
   };
 
   if (stepCount === 0) return <EmptySnapshot />;
@@ -394,6 +439,7 @@ function WizardWithSnapshot({
         isFirst={stepIndex === 0}
         isLast={stepIndex >= stepCount - 1}
         saving={saving}
+        saveLabel={editingExisting ? "Update entry" : "Save entry"}
         onAction={handleAction}
       />
     </div>
@@ -410,6 +456,7 @@ function StepEditor({
   isFirst,
   isLast,
   saving,
+  saveLabel,
   onAction,
 }: {
   row: WizardRow;
@@ -417,6 +464,7 @@ function StepEditor({
   isFirst: boolean;
   isLast: boolean;
   saving: boolean;
+  saveLabel: string;
   onAction: (
     action: "back" | "next" | "skip" | "save",
     values: (number | null)[],
@@ -492,8 +540,8 @@ function StepEditor({
               onClick={() => void onAction("save", parsed())}
               disabled={saving}
             >
-              {saving ? <Loader2 className="animate-spin" /> : <Check />} Save
-              entry
+              {saving ? <Loader2 className="animate-spin" /> : <Check />}{" "}
+              {saveLabel}
             </Button>
           ) : (
             <Button
