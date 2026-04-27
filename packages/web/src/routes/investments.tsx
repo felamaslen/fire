@@ -842,11 +842,13 @@ function InvestmentFormDialog({
         <DialogHeader>
           <DialogTitle>New investment</DialogTitle>
         </DialogHeader>
-        <InvestmentForm
-          existing={null}
-          onDone={onClose}
-          refetchQueries={investmentsRefetch}
-        />
+        <Suspense fallback={<Spinner />}>
+          <InvestmentForm
+            existing={null}
+            onDone={onClose}
+            refetchQueries={investmentsRefetch}
+          />
+        </Suspense>
       </DialogContent>
     </Dialog>
   );
