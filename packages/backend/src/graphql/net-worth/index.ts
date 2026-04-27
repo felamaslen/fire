@@ -59,6 +59,8 @@ export type NetWorthCurrencyRate = {
 export type NetWorthValue = {
   /** @gqlField */
   id: ID;
+  /** Parent `NetWorthEntry.id`. Used by resolvers that need to load entry-scoped state (e.g. currency rates) without re-querying. */
+  entryId: string;
   categoryAssetId: string | null;
   categoryLiabilityId: string | null;
   categoryOptionId: string | null;
@@ -69,6 +71,7 @@ function toNetWorthValue(
 ): NetWorthValue {
   return {
     id: row.id,
+    entryId: row.entryId,
     categoryAssetId: row.categoryAssetId,
     categoryLiabilityId: row.categoryLiabilityId,
     categoryOptionId: row.categoryOptionId,
@@ -233,6 +236,36 @@ export async function totalNet(
     assetsMinor - liabilitiesMinor,
     HOME_CURRENCY,
   );
+}
+
+const loadEntryRateMap = contextAwareDataLoader(
+  (_ctx: Context, entryId: string) =>
+    db
+      .select()
+      .from(NetWorthCurrencyRates)
+      .where(eq(NetWorthCurrencyRates.entryId, entryId))
+      .then(buildRateToHome),
+);
+
+/**
+ * Sum of this line item's `amounts` converted into the home currency via the entry's captured rates. Returned as a positive magnitude regardless of whether the line is an asset, option, or liability — the sign is implied by which `asset` / `liability` / `option` field is populated. Liabilities marked `skip` still report their magnitude here.
+ *
+ * @gqlField
+ */
+export async function amountHome(
+  value: NetWorthValue,
+  ctx: Context,
+): Promise<Money> {
+  const rateMap = await loadEntryRateMap(ctx, value.entryId);
+  const rows = await db
+    .select()
+    .from(NetWorthValueAmounts)
+    .where(eq(NetWorthValueAmounts.valueId, value.id));
+  let totalMinor = 0;
+  for (const row of rows) {
+    totalMinor += convertToHomeMinor(row.amount, row.currency, rateMap);
+  }
+  return Money.fromMinorDenomination(Math.abs(totalMinor), HOME_CURRENCY);
 }
 
 /** Monetary amounts for this line item — at most one per currency. @gqlField */

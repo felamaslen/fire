@@ -488,7 +488,7 @@ type Investment {
   """
   unitPriceCachedAt: DateTime
   """
-  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. Querying this may trigger a background refresh if the cached quote is stale (> 5 minutes).
+  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.
   """
   unitPriceLatest: InvestmentPriceLatest
   """
@@ -1445,6 +1445,10 @@ type NetWorthHistoryPoint {
 A single line item inside a NetWorthEntry. Exactly one of asset / liability / option is populated.
 """
 type NetWorthValue {
+  """
+  Sum of this line item's `amounts` converted into the home currency via the entry's captured rates. Returned as a positive magnitude regardless of whether the line is an asset, option, or liability — the sign is implied by which `asset` / `liability` / `option` field is populated. Liabilities marked `skip` still report their magnitude here.
+  """
+  amountHome: Money!
   """Monetary amounts for this line item — at most one per currency."""
   amounts: [Money!]!
   """The asset category this value is recorded against, if any."""

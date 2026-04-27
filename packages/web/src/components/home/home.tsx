@@ -22,6 +22,7 @@ import {
   ForecastWorkings,
   ForecastWorkingsFragment,
 } from "./forecast-workings";
+import { NetWorthBlockMapButton } from "./net-worth-block-map";
 import { NetWorthChart } from "./net-worth-chart";
 
 const HomeDocument = graphql(
@@ -357,13 +358,16 @@ export function Home() {
                 <ForecastInfoButton workings={data.netWorthForecast.workings} />
               )}
             </div>
-            <div className="text-2xl font-semibold tabular-nums sm:text-3xl">
-              {latest
-                ? formatAccountingMoneyRounded(
-                    latest.net.currency,
-                    latest.net.amount,
-                  )
-                : "—"}
+            <div className="flex items-center gap-2">
+              <div className="text-2xl font-semibold tabular-nums sm:text-3xl">
+                {latest
+                  ? formatAccountingMoneyRounded(
+                      latest.net.currency,
+                      latest.net.amount,
+                    )
+                  : "—"}
+              </div>
+              {latest && <NetWorthBlockMapButton />}
             </div>
             {latest && deltaNet !== null && (
               <div
