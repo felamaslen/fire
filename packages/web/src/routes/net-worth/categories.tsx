@@ -293,7 +293,7 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
           })}
         </Accordion>
         <form
-          className="flex items-center gap-2 pt-2"
+          className="flex flex-wrap items-center gap-2 pt-2"
           onSubmit={(e) => {
             e.preventDefault();
             void form.handleSubmit();
@@ -302,6 +302,7 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
           <form.Field name="name">
             {(field) => (
               <Input
+                className="min-w-0 flex-1 basis-48"
                 placeholder="New asset name"
                 value={field.state.value}
                 onChange={(e) => field.handleChange(e.target.value)}
@@ -435,7 +436,7 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
 
   return (
     <form
-      className="flex items-center gap-2"
+      className="flex flex-wrap items-center gap-2"
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(ASSET_DND_MIME, asset.id);
@@ -456,6 +457,7 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
       <form.Field name="name">
         {(field) => (
           <Input
+            className="min-w-0 flex-1 basis-48"
             value={field.state.value}
             onChange={(e) => field.handleChange(e.target.value)}
           />
@@ -610,7 +612,7 @@ function LiabilitiesSection({
           })}
         </Accordion>
         <form
-          className="flex items-center gap-2 pt-2"
+          className="flex flex-wrap items-center gap-2 pt-2"
           onSubmit={(e) => {
             e.preventDefault();
             void form.handleSubmit();
@@ -619,6 +621,7 @@ function LiabilitiesSection({
           <form.Field name="name">
             {(field) => (
               <Input
+                className="min-w-0 flex-1 basis-48"
                 placeholder="New liability name"
                 value={field.state.value}
                 onChange={(e) => field.handleChange(e.target.value)}
@@ -811,10 +814,7 @@ function LiabilityRow({
 
   return (
     <form
-      className={cn(
-        "items-center gap-2",
-        isLoan ? "grid grid-cols-[1fr_7rem_12rem_4rem_auto_auto]" : "flex",
-      )}
+      className="flex flex-wrap items-center gap-2"
       onSubmit={(e) => {
         e.preventDefault();
         void form.handleSubmit();
@@ -823,6 +823,7 @@ function LiabilityRow({
       <form.Field name="name">
         {(field) => (
           <Input
+            className="min-w-0 flex-1 basis-48"
             value={field.state.value}
             onChange={(e) => field.handleChange(e.target.value)}
           />
