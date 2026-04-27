@@ -587,16 +587,18 @@ export async function netWorthCreate(
   /** Exchange rates captured for this entry. */
   currencyRates?: NetWorthCurrencyRateInput[] | null,
 ): Promise<NetWorthEntry> {
-  return db.transaction(async (tx) => {
-    const [entry] = await tx
-      .insert(NetWorthEntries)
-      .values({ date })
-      .returning();
-    await writeValues(tx, entry.id, values);
-    if (currencyRates != null)
-      await writeCurrencyRates(tx, entry.id, currencyRates);
-    return NetWorthEntry.load(entry);
-  });
+  return withMonthConflictMessage(date, () =>
+    db.transaction(async (tx) => {
+      const [entry] = await tx
+        .insert(NetWorthEntries)
+        .values({ date })
+        .returning();
+      await writeValues(tx, entry.id, values);
+      if (currencyRates != null)
+        await writeCurrencyRates(tx, entry.id, currencyRates);
+      return NetWorthEntry.load(entry);
+    }),
+  );
 }
 
 /**
@@ -614,19 +616,57 @@ export async function netWorthUpdate(
   /** Exchange rates to apply to this entry, or null to leave the existing set untouched. */
   currencyRates?: NetWorthCurrencyRateInput[] | null,
 ): Promise<NetWorthEntry> {
-  return db.transaction(async (tx) => {
-    const [entry] = await tx
-      .update(NetWorthEntries)
-      .set({ ...(date != null && { date }), updatedAt: new Date() })
-      .where(eq(NetWorthEntries.id, id))
-      .returning();
-    assert(entry, `NetWorthEntry ${id} not found`);
+  return withMonthConflictMessage(date ?? null, () =>
+    db.transaction(async (tx) => {
+      const [entry] = await tx
+        .update(NetWorthEntries)
+        .set({ ...(date != null && { date }), updatedAt: new Date() })
+        .where(eq(NetWorthEntries.id, id))
+        .returning();
+      assert(entry, `NetWorthEntry ${id} not found`);
 
-    if (values != null) await writeValues(tx, entry.id, values);
-    if (currencyRates != null)
-      await writeCurrencyRates(tx, entry.id, currencyRates);
-    return NetWorthEntry.load(entry);
-  });
+      if (values != null) await writeValues(tx, entry.id, values);
+      if (currencyRates != null)
+        await writeCurrencyRates(tx, entry.id, currencyRates);
+      return NetWorthEntry.load(entry);
+    }),
+  );
+}
+
+function isMonthUniqueViolation(err: unknown): boolean {
+  for (let cur: unknown = err; cur != null; ) {
+    if (typeof cur !== "object") break;
+    const e = cur as {
+      code?: unknown;
+      constraint?: unknown;
+      constraint_name?: unknown;
+      cause?: unknown;
+    };
+    const constraint = e.constraint ?? e.constraint_name;
+    if (e.code === "23505" && constraint === "NetWorthEntries_month_uq")
+      return true;
+    cur = e.cause;
+  }
+  return false;
+}
+
+async function withMonthConflictMessage<T>(
+  date: CalendarDate | null,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isMonthUniqueViolation(err)) {
+      const month = date
+        ? `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`
+        : "that month";
+      throw new GraphQLError(
+        `A net-worth entry already exists for ${month}. Each month can only have one entry.`,
+      );
+    }
+    throw err;
+  }
 }
 
 /** Delete a net-worth entry. Its values are removed along with it. @gqlMutationField */

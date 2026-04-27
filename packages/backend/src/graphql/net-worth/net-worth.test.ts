@@ -541,6 +541,67 @@ describe("entries", () => {
     );
   });
 
+  it("rejects netWorthCreate when the month already has an entry", async () => {
+    const create = graphql(`
+      mutation ($a: ID!, $date: Date!) {
+        netWorthCreate(
+          date: $date
+          values: [
+            {
+              asset: {
+                categoryId: $a
+                amounts: [{ amount: 5000, currency: "GBP" }]
+              }
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `);
+    await runGql(create, { a: assetId, date: "2029-03-01" });
+    await expect(
+      runGql(create, { a: assetId, date: "2029-03-28" }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: GraphQL errors: A net-worth entry already exists for 2029-03. Each month can only have one entry.]`,
+    );
+  });
+
+  it("rejects netWorthUpdate when the new month collides with another entry", async () => {
+    const create = graphql(`
+      mutation ($a: ID!, $date: Date!) {
+        netWorthCreate(
+          date: $date
+          values: [
+            {
+              asset: {
+                categoryId: $a
+                amounts: [{ amount: 5000, currency: "GBP" }]
+              }
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `);
+    await runGql(create, { a: assetId, date: "2029-04-15" });
+    const second = await runGql(create, { a: assetId, date: "2029-05-15" });
+
+    const update = graphql(`
+      mutation ($id: ID!) {
+        netWorthUpdate(id: $id, date: "2029-04-20") {
+          id
+        }
+      }
+    `);
+    await expect(
+      runGql(update, { id: second.netWorthCreate.id }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: GraphQL errors: A net-worth entry already exists for 2029-04. Each month can only have one entry.]`,
+    );
+  });
+
   it("paginates entries forward and backward", async () => {
     const seed = graphql(`
       mutation Seed($a: ID!) {
