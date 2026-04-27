@@ -7,6 +7,7 @@ import { graphql } from "@/graphql";
 import { createApolloClient } from "../apollo";
 import { getToken } from "../auth/token";
 import { NavHeader, NavHeaderDocument } from "../components/nav-header";
+import { QuickAddFab } from "../components/quick-add-fab";
 import { Spinner } from "../components/spinner";
 import { Toaster } from "../components/ui/sonner";
 import { TooltipProvider } from "../components/ui/tooltip";
@@ -47,6 +48,7 @@ function RootComponent() {
             <Outlet />
           </Suspense>
         </div>
+        <QuickAddFab />
       </TooltipProvider>
       <Toaster richColors position="bottom-right" />
     </ApolloProvider>

@@ -307,7 +307,7 @@ function entryAsRates(entry: EntryFormData): RateItem[] {
   }));
 }
 
-async function fetchOpenExchangeRates(
+export async function fetchOpenExchangeRates(
   homeCurrency: string,
   codes: string[],
 ): Promise<Record<string, number>> {

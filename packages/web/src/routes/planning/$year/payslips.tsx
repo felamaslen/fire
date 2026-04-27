@@ -111,7 +111,7 @@ const PlanningPayslipsListDocument = graphql(
   [FigureDocument],
 );
 
-const PlanningPayslipCreateDocument = graphql(`
+export const PlanningPayslipCreateDocument = graphql(`
   mutation PlanningPayslipCreate(
     $date: Date!
     $amountGross: MoneyInput!
@@ -165,7 +165,7 @@ const PlanningPayslipDeleteDocument = graphql(`
   }
 `);
 
-const PlanningPayslipParseDocument = graphql(`
+export const PlanningPayslipParseDocument = graphql(`
   mutation PlanningPayslipParse($file: Upload!) {
     payslipParse(file: $file) {
       gross {
@@ -201,10 +201,10 @@ type PlanningPayslipsListData = ResultOf<typeof PlanningPayslipsListDocument>;
 type Payslip = NonNullable<
   PlanningPayslipsListData["payslips"]
 >["edges"][number]["node"];
-type AccountOption = NonNullable<
+export type AccountOption = NonNullable<
   PlanningPayslipsData["planningYear"]
 >["accounts"][number];
-type LiabilityOption = Extract<
+export type LiabilityOption = Extract<
   NonNullable<
     PlanningPayslipsData["netWorthCategories"]
   >["edges"][number]["node"],
@@ -229,7 +229,7 @@ type AdjustmentEntry = {
   liabilityId: string;
 };
 
-type FormValues = {
+export type FormValues = {
   name: string;
   date: string;
   amount: string;
@@ -238,7 +238,7 @@ type FormValues = {
   file: File | null;
 };
 
-const CURRENCY = "GBP";
+export const CURRENCY = "GBP";
 
 const FILES_ORIGIN = new URL(
   import.meta.env.VITE_GRAPHQL_URL ?? "http://localhost:4000/graphql",
@@ -275,7 +275,7 @@ function payslipToForm(p: Payslip): FormValues {
   };
 }
 
-function adjustmentsForMutation(entries: AdjustmentEntry[]) {
+export function adjustmentsForMutation(entries: AdjustmentEntry[]) {
   return entries
     .filter((e) => e.name.trim() !== "")
     .map((e) => {
@@ -292,7 +292,7 @@ function adjustmentsForMutation(entries: AdjustmentEntry[]) {
     });
 }
 
-function formIsValid(v: FormValues): boolean {
+export function formIsValid(v: FormValues): boolean {
   const parsedAmount = Number(v.amount);
   return (
     !!v.name.trim() &&
@@ -755,7 +755,7 @@ function EditPayslipForm({
   );
 }
 
-function PayslipFormFields({
+export function PayslipFormFields({
   values,
   setValues,
   accounts,
@@ -994,10 +994,13 @@ function AdjustmentsField({
       <summary className="cursor-pointer font-medium">Adjustments</summary>
       <ul className="mt-2 space-y-2">
         {entries.map((entry, i) => (
-          <li key={i} className="flex items-center gap-2">
+          <li
+            key={i}
+            className="flex flex-wrap items-center gap-2 rounded-md sm:flex-nowrap"
+          >
             <Input
               placeholder="Name (e.g. Income tax)"
-              className="flex-1"
+              className="min-w-0 flex-1 basis-full sm:basis-auto"
               value={entry.name}
               onChange={(e) => patchAt(i, { name: e.target.value })}
             />
@@ -1005,7 +1008,7 @@ function AdjustmentsField({
               value={entry.sign}
               onValueChange={(v) => patchAt(i, { sign: v as "+" | "-" })}
             >
-              <SelectTrigger className="w-14 rounded-r-none border-r-0">
+              <SelectTrigger className="w-14 shrink-0 rounded-r-none border-r-0">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1020,7 +1023,7 @@ function AdjustmentsField({
               min="0"
               currency={CURRENCY}
               placeholder="Amount"
-              className="-ml-2 w-32 rounded-l-none"
+              className="-ml-2 min-w-0 flex-1 rounded-l-none sm:w-32 sm:flex-none"
               value={entry.amount}
               onChange={(e) => patchAt(i, { amount: e.target.value })}
             />
@@ -1030,7 +1033,7 @@ function AdjustmentsField({
                 patchAt(i, { liabilityId: v === "__none__" ? "" : v })
               }
             >
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="min-w-0 flex-1 sm:w-36 sm:flex-none">
                 <SelectValue placeholder="Liability" />
               </SelectTrigger>
               <SelectContent>
@@ -1046,6 +1049,7 @@ function AdjustmentsField({
               type="button"
               variant="ghost"
               size="icon"
+              className="shrink-0"
               onClick={() => removeAt(i)}
               aria-label={`Remove adjustment ${i + 1}`}
             >
@@ -1252,7 +1256,7 @@ function PayslipParseDropZone({
   );
 }
 
-type PayslipParseResultView = NonNullable<
+export type PayslipParseResultView = NonNullable<
   ResultOf<typeof PlanningPayslipParseDocument>["payslipParse"]
 >;
 
@@ -1333,7 +1337,7 @@ function ReviewParsedPayslipDialog({
   );
 }
 
-function parseToForm(
+export function parseToForm(
   parsed: PayslipParseResultView,
   accounts: AccountOption[],
   file: File,
