@@ -60,9 +60,16 @@ if (process.env.OTEL_ENABLED === "true" || process.env.OTEL_ENABLED === "1") {
       ),
     ],
     // `@fastify/otel` is registered as a Fastify plugin in `src/router.ts` and
-    // produces the request-lifecycle spans; `HttpInstrumentation` adds the
-    // outer server span plus outbound http client spans (e.g. yahoo-finance).
-    instrumentations: [new HttpInstrumentation()],
+    // produces the request-lifecycle spans; `HttpInstrumentation` is here just
+    // for outbound http client spans (e.g. yahoo-finance). Incoming-request
+    // instrumentation is disabled so that fastify's `request` span is the
+    // trace root — `traceNamePlugin` rewrites that span to the GraphQL
+    // operation name, whereas the http.server span's name is rewritten by
+    // `HttpInstrumentation` on response from `rpcMetadata.route` and clobbers
+    // any rename we attempt.
+    instrumentations: [
+      new HttpInstrumentation({ disableIncomingRequestInstrumentation: true }),
+    ],
   });
 
   sdk.start();

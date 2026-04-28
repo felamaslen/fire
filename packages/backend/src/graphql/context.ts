@@ -1,6 +1,8 @@
+import type { Span } from "@opentelemetry/api";
 import type { FastifyRequest } from "fastify";
 
 import { type TokenPayload, verifyToken } from "@/auth/token";
+import { kFastifyRequestSpan } from "@/router";
 
 /** Resolved session attached to a request's `Context`. Anonymous requests only see unauth'd fields (those carrying `@noAuth`); every other field throws `UNAUTHENTICATED`. */
 export type Session =
@@ -14,7 +16,11 @@ export type Session =
  * @gqlContext
  */
 export class Context {
-  constructor(public readonly session: Session) {}
+  constructor(
+    public readonly session: Session,
+    /** Top-level `@fastify/otel` `request` span for this HTTP request, if OTel is enabled. Captured at `onRequest` time by `router.ts`; `traceNamePlugin` renames it to the GraphQL operation name so the trace root reads `query Foo` instead of `request`. */
+    public readonly requestSpan?: Span,
+  ) {}
 }
 
 /** Build a `Context` from a Fastify request. Reads `Authorization: Bearer <token>`; unverifiable / expired tokens resolve to an `anon` session (the auth plugin then rejects the operation unless every selected field is `@noAuth`). */
@@ -26,7 +32,7 @@ export function createContext({
   const header = request.headers.authorization;
   const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
   const payload = token ? verifyToken(token) : null;
-  return new Context(sessionFromPayload(payload));
+  return new Context(sessionFromPayload(payload), request[kFastifyRequestSpan]);
 }
 
 function sessionFromPayload(payload: TokenPayload | null): Session {

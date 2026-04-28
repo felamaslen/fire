@@ -61,17 +61,29 @@ const resolvers = {
   Mutation: { poke: () => "ok" },
 };
 
+type TestContext = { requestSpan?: Span };
+
 const schema = makeExecutableSchema({ typeDefs, resolvers });
-const apollo = new ApolloServer<object>({
+const apollo = new ApolloServer<TestContext>({
   schema,
-  plugins: [traceNamePlugin()],
+  plugins: [
+    traceNamePlugin<TestContext>({
+      getRequestSpan: (ctx) => ctx.requestSpan,
+    }),
+  ],
 });
+
+// Per-request hook so each test can stash its own fake `request` span on the
+// context that Apollo will see.
+let nextRequestSpan: Span | undefined;
 
 const graphqlRoute: FastifyPluginAsync = async (app) => {
   app.route({
     method: ["GET", "POST"],
     url: "/graphql",
-    handler: fastifyApolloHandler(apollo, { context: async () => ({}) }),
+    handler: fastifyApolloHandler(apollo, {
+      context: async () => ({ requestSpan: nextRequestSpan }),
+    }),
   });
 };
 
@@ -109,45 +121,57 @@ function fakeSpan(): Span & { updateName: ReturnType<typeof vi.fn> } {
 async function runQuery(query: string): Promise<{
   active: ReturnType<typeof fakeSpan>;
   rpc: ReturnType<typeof fakeSpan>;
+  parent: ReturnType<typeof fakeSpan>;
 }> {
   const active = fakeSpan();
   const rpc = fakeSpan();
+  const parent = fakeSpan();
+  nextRequestSpan = parent;
   const ctx = setRPCMetadata(trace.setSpan(ROOT_CONTEXT, active), {
     type: RPCType.HTTP,
     span: rpc,
   });
-  await otelContext.with(ctx, async () => {
-    const res = await router.inject({
-      method: "POST",
-      url: "/graphql",
-      payload: { query },
-      headers: { "content-type": "application/json" },
+  try {
+    await otelContext.with(ctx, async () => {
+      const res = await router.inject({
+        method: "POST",
+        url: "/graphql",
+        payload: { query },
+        headers: { "content-type": "application/json" },
+      });
+      const body = JSON.parse(res.body) as {
+        data?: unknown;
+        errors?: Array<{ message: string }>;
+      };
+      if (body.errors) {
+        throw new Error(`unexpected errors: ${JSON.stringify(body.errors)}`);
+      }
     });
-    const body = JSON.parse(res.body) as {
-      data?: unknown;
-      errors?: Array<{ message: string }>;
-    };
-    if (body.errors) {
-      throw new Error(`unexpected errors: ${JSON.stringify(body.errors)}`);
-    }
-  });
-  return { active, rpc };
+  } finally {
+    nextRequestSpan = undefined;
+  }
+  return { active, rpc, parent };
 }
 
-it("renames the active span and the http server span using the operation name", async () => {
-  const { active, rpc } = await runQuery(`query NetWorthCategories { hello }`);
-  expect(active.updateName).toHaveBeenCalledWith("query NetWorthCategories");
+it("renames the request span, the http server span and the active span using the operation name", async () => {
+  const { active, rpc, parent } = await runQuery(
+    `query NetWorthCategories { hello }`,
+  );
+  expect(parent.updateName).toHaveBeenCalledWith("query NetWorthCategories");
   expect(rpc.updateName).toHaveBeenCalledWith("query NetWorthCategories");
+  expect(active.updateName).toHaveBeenCalledWith("query NetWorthCategories");
 });
 
 it("prefixes mutations with `mutation`", async () => {
-  const { active, rpc } = await runQuery(`mutation PokeIt { poke }`);
-  expect(active.updateName).toHaveBeenCalledWith("mutation PokeIt");
+  const { active, rpc, parent } = await runQuery(`mutation PokeIt { poke }`);
+  expect(parent.updateName).toHaveBeenCalledWith("mutation PokeIt");
   expect(rpc.updateName).toHaveBeenCalledWith("mutation PokeIt");
+  expect(active.updateName).toHaveBeenCalledWith("mutation PokeIt");
 });
 
 it("falls back to the first selected field for anonymous operations", async () => {
-  const { active, rpc } = await runQuery(`{ hello world }`);
-  expect(active.updateName).toHaveBeenCalledWith("query hello");
+  const { active, rpc, parent } = await runQuery(`{ hello world }`);
+  expect(parent.updateName).toHaveBeenCalledWith("query hello");
   expect(rpc.updateName).toHaveBeenCalledWith("query hello");
+  expect(active.updateName).toHaveBeenCalledWith("query hello");
 });

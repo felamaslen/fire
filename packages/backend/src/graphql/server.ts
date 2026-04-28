@@ -61,7 +61,9 @@ async function buildApollo(): Promise<ApolloServer<Context>> {
     // every subsequent request). Shutdown is handled in `index.ts` by closing
     // the router directly, so draining from Apollo is not needed.
     plugins: [
-      traceNamePlugin(),
+      traceNamePlugin<Context>({
+        getRequestSpan: (ctx) => ctx.requestSpan,
+      }),
       constraintPlugin(schema),
       authPlugin(schema, noAuthFields),
     ],
