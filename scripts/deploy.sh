@@ -113,6 +113,128 @@ docker buildx build "${BUILD_ARGS[@]}" -f Dockerfile .
 echo "==> Preparing $HOST:$LOCATION"
 ssh "$HOST" "mkdir -p '$LOCATION/var/db' '$LOCATION/var/uploads' '$LOCATION/var/backups' '$LOCATION/var/cache'"
 
+# --- reconcile .env ---------------------------------------------------------
+# Diff the server's current `.env` against local `.env.production` and prompt
+# the operator key-by-key before mutating the server file. Comments and blank
+# lines are dropped — only `KEY=value` lines are preserved. Order is taken
+# from the server file (kept keys first, in their existing positions), then
+# any newly-added keys from `.env.production` are appended.
+echo "==> Reconciling $LOCATION/.env with local .env.production"
+
+env_prev="$(ssh "$HOST" "cat '$LOCATION/.env' 2>/dev/null || true")"
+if [[ -f .env.production ]]; then
+  env_next="$(cat .env.production)"
+else
+  env_next=""
+fi
+
+# Parse `KEY=value` lines into parallel indexed arrays. We avoid associative
+# arrays so this stays compatible with macOS's stock bash 3.2.
+parse_env_lines() {
+  local line key value
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    fi
+    printf '%s=%s\n' "$key" "$value"
+  done
+}
+
+prev_keys=(); prev_vals=()
+while IFS='=' read -r k v; do
+  [[ -z "$k" ]] && continue
+  prev_keys+=("$k"); prev_vals+=("$v")
+done < <(printf '%s\n' "$env_prev" | parse_env_lines)
+
+next_keys=(); next_vals=()
+while IFS='=' read -r k v; do
+  [[ -z "$k" ]] && continue
+  next_keys+=("$k"); next_vals+=("$v")
+done < <(printf '%s\n' "$env_next" | parse_env_lines)
+
+# Linear-search lookup: prints the value of $1 in the parallel arrays
+# `${2}_keys` / `${2}_vals` and returns 0 if found, 1 otherwise. Empty
+# values are valid, so we signal presence via exit code rather than output.
+lookup_value() {
+  local needle="$1" arr_name="$2"
+  local keys_var="${arr_name}_keys" vals_var="${arr_name}_vals"
+  eval "local n=\${#${keys_var}[@]}"
+  local i=0
+  while (( i < n )); do
+    eval "local key=\"\${${keys_var}[\$i]}\""
+    if [[ "$key" == "$needle" ]]; then
+      eval "printf '%s' \"\${${vals_var}[\$i]}\""
+      return 0
+    fi
+    i=$((i+1))
+  done
+  return 1
+}
+
+prompt_yn() {
+  local reply
+  read -r -p "$1 [Y/n] " reply </dev/tty || reply=""
+  [[ -z "$reply" || "$reply" =~ ^[Yy] ]]
+}
+
+final_keys=(); final_vals=()
+
+for i in "${!prev_keys[@]}"; do
+  key="${prev_keys[$i]}"
+  pv="${prev_vals[$i]}"
+  if nv="$(lookup_value "$key" next)"; then
+    if [[ "$pv" != "$nv" ]]; then
+      if prompt_yn "Env var $key has changed from '$pv' to '$nv'. Overwrite?"; then
+        final_keys+=("$key"); final_vals+=("$nv")
+      else
+        final_keys+=("$key"); final_vals+=("$pv")
+      fi
+    else
+      final_keys+=("$key"); final_vals+=("$pv")
+    fi
+  else
+    if prompt_yn "Env var $key has been removed (was '$pv'). Delete?"; then
+      :
+    else
+      final_keys+=("$key"); final_vals+=("$pv")
+    fi
+  fi
+done
+
+for i in "${!next_keys[@]}"; do
+  key="${next_keys[$i]}"
+  nv="${next_vals[$i]}"
+  if ! lookup_value "$key" prev >/dev/null; then
+    if prompt_yn "Env var $key has been added (value '$nv'). Add?"; then
+      final_keys+=("$key"); final_vals+=("$nv")
+    fi
+  fi
+done
+
+final_env=""
+for i in "${!final_keys[@]}"; do
+  final_env+="${final_keys[$i]}=${final_vals[$i]}"$'\n'
+done
+
+ssh "$HOST" "umask 077 && cat > '$LOCATION/.env'" <<<"$final_env"
+
+# Mirror the merged result back into local `.env.production` so the next
+# deploy starts from the same baseline the server has. Only rewrite if the
+# normalised content differs from what's already on disk.
+local_env_normalised=""
+for i in "${!next_keys[@]}"; do
+  local_env_normalised+="${next_keys[$i]}=${next_vals[$i]}"$'\n'
+done
+if [[ "$final_env" != "$local_env_normalised" ]]; then
+  printf '%s' "$final_env" > .env.production
+  echo "==> Updated local .env.production to match merged result"
+fi
+
 # Seed the server's `.env` on first deploy + top it up with any newly-
 # required secrets. Each key is generated only if it's missing — never
 # rotated — because these are effectively the keys to persistent state:
