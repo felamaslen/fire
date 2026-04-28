@@ -1,8 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { createMigrator } from "drizzle-pgkit-migrator";
 import postgres from "postgres";
 
 import { env } from "@/env";
@@ -92,7 +91,7 @@ async function dropDatabase(name: string): Promise<void> {
 }
 
 /**
- * Ensure the template database exists and is fully migrated. Safe to call repeatedly — the `CREATE DATABASE` is guarded by a `pg_database` lookup and migrations are idempotent via drizzle's `__drizzle_migrations` stamp. Called once at backend boot.
+ * Ensure the template database exists and is fully migrated. Safe to call repeatedly — the `CREATE DATABASE` is guarded by a `pg_database` lookup and `drizzle-pgkit-migrator` tracks applied migrations in its own stamp table. Called once at backend boot.
  *
  * Important: we open a migration connection, migrate, then close it immediately. `CREATE DATABASE … WITH TEMPLATE` fails if any session is connected to the template, so leaving the pool open would break every subsequent demo login.
  */
@@ -102,15 +101,14 @@ export async function ensureDemoTemplateDatabase(): Promise<void> {
     await createDatabase(name);
     log.info("Created demo template database", { name });
   }
-  const templateSql = postgres(urlForDatabase(name), {
-    max: 1,
-    onnotice: () => {},
+  const migrator = await createMigrator({
+    databaseUrl: urlForDatabase(name),
+    migrationsDir: migrationsFolder(),
   });
   try {
-    const tmpl = drizzle(templateSql);
-    await migrate(tmpl, { migrationsFolder: migrationsFolder() });
+    await migrator.up();
   } finally {
-    await templateSql.end();
+    await migrator.client.end();
   }
 }
 
