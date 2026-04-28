@@ -66,7 +66,7 @@ beforeEach(async () => {
   const { db } = await import("@/db");
   const rows = await db.execute<{ tablename: string }>(sql`
     SELECT tablename FROM pg_tables
-    WHERE schemaname = 'public' AND tablename <> '__drizzle_migrations'
+    WHERE schemaname = 'public'
   `);
   const truncatable = rows.filter((r) => !SEED_TABLES.has(r.tablename));
   if (truncatable.length > 0) {
