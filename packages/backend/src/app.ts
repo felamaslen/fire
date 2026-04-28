@@ -15,10 +15,18 @@ if (env.NODE_ENV !== "test") {
   scheduleQuoteRefresh();
   scheduleDemoSessionSweep();
   ensureDemoTemplateDatabase().catch((err) => {
-    log.error("Ensuring demo template database failed", { err });
+    log.error("Ensuring demo template database failed", {
+      err,
+      cause: (err as Error)?.cause,
+      message: (err as Error)?.message,
+    });
   });
   sweepExpiredDemoSessions().catch((err) => {
-    log.error("Initial demo sweep failed", { err });
+    log.error("Initial demo sweep failed", {
+      err,
+      cause: (err as Error)?.cause,
+      message: (err as Error)?.message,
+    });
   });
 }
 
