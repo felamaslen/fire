@@ -85,6 +85,13 @@ function buildSchema(): ReturnType<typeof makeExecutableSchema> {
       asyncFail: String!
       syncValue: String!
       defaultField: String!
+      nested: Nested!
+    }
+    type Mutation {
+      asyncMutation: String!
+    }
+    type Nested {
+      asyncChild: String!
     }
   `;
   const resolvers = {
@@ -98,8 +105,21 @@ function buildSchema(): ReturnType<typeof makeExecutableSchema> {
         throw new Error("boom");
       },
       syncValue: () => "sync",
+      nested: () => ({}),
       // `defaultField` has no explicit resolver — graphql-js falls back to the
       // default property accessor, which we should not wrap.
+    },
+    Mutation: {
+      asyncMutation: async () => {
+        await new Promise((r) => setTimeout(r, 1));
+        return "ok";
+      },
+    },
+    Nested: {
+      asyncChild: async () => {
+        await new Promise((r) => setTimeout(r, 1));
+        return "child";
+      },
     },
   };
   const schema = makeExecutableSchema({ typeDefs, resolvers });
@@ -145,5 +165,25 @@ it("does not wrap fields without a custom resolver", async () => {
   // default field resolver, which the wrapper leaves alone. Querying it on a
   // root with no `defaultField` property yields `null`, and crucially: no span.
   await graphql({ schema, source: `{ defaultField }` });
+  expect(recorded).toEqual([]);
+});
+
+it("wraps top-level mutation fields", async () => {
+  const schema = buildSchema();
+  const result = await graphql({
+    schema,
+    source: `mutation { asyncMutation }`,
+  });
+  expect(result.errors).toBeUndefined();
+  expect(recorded.map((s) => s.name)).toEqual(["Mutation.asyncMutation"]);
+});
+
+it("does not wrap nested object-type fields, only the top-level entry", async () => {
+  const schema = buildSchema();
+  const result = await graphql({ schema, source: `{ nested { asyncChild } }` });
+  expect(result.errors).toBeUndefined();
+  // The async `Nested.asyncChild` resolver runs but is intentionally not
+  // instrumented; only the synchronous root `nested` resolver is — and since
+  // it returns `{}` (not a Promise), no span is emitted for it either.
   expect(recorded).toEqual([]);
 });

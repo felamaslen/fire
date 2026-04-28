@@ -3,24 +3,21 @@ import {
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
-import {
-  type GraphQLFieldResolver,
-  type GraphQLSchema,
-  isIntrospectionType,
-  isObjectType,
-} from "graphql";
+import type { GraphQLFieldResolver, GraphQLSchema } from "graphql";
 
 const tracer = trace.getTracer("graphql-fields");
 
 /**
- * Mutate `schema` so every field with a custom resolver is wrapped in an OTel span — but only for fields whose resolver actually returns a `Promise`. Synchronous resolvers add no useful timing information and would just clutter the trace, so we call the original first and skip span creation when the return value isn't thenable. Spans use the original return time as their start, so detection cost doesn't bleed into the recorded duration. Introspection types and subscription fields (whose resolvers may be async iterables, not promises) are skipped.
+ * Mutate `schema` so every top-level operation field (`Query.*`, `Mutation.*`, `Subscription.*`) with a custom resolver is wrapped in an OTel span — but only when the resolver actually returns a `Promise`. Synchronous resolvers add no useful timing information and would just clutter the trace, so we call the original first and skip span creation when the return value isn't thenable. Spans use the original return time as their start, so detection cost doesn't bleed into the recorded duration. Nested object-type resolvers are deliberately not wrapped: per-row field spans would dominate trace volume without giving more useful breakdowns than the per-operation span already provides.
  */
 export function wrapResolversWithSpans(schema: GraphQLSchema): GraphQLSchema {
-  const subscriptionType = schema.getSubscriptionType();
-  for (const type of Object.values(schema.getTypeMap())) {
-    if (!isObjectType(type)) continue;
-    if (isIntrospectionType(type)) continue;
-    if (type === subscriptionType) continue;
+  const roots = [
+    schema.getQueryType(),
+    schema.getMutationType(),
+    schema.getSubscriptionType(),
+  ];
+  for (const type of roots) {
+    if (!type) continue;
     const typeName = type.name;
     for (const field of Object.values(type.getFields())) {
       const original = field.resolve;
