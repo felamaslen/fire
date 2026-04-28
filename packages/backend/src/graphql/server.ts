@@ -20,6 +20,7 @@ import { type Context, createContext } from "./context";
 import { dateScalar } from "./date";
 import { dateTimeScalar } from "./date-time";
 import { applySemanticNonNull } from "./semantic-non-null";
+import { traceNamePlugin } from "./trace-name-plugin";
 import { uploadScalar } from "./upload";
 
 /** Serializer/parser wiring for each custom scalar in the generated schema. Passed to `getSchema({ scalars })` so grats can hook them up. Exported so tests can build the same schema without duplicating the list. */
@@ -56,7 +57,11 @@ async function buildApollo(): Promise<ApolloServer<Context>> {
     // which would then take the whole Fastify server down with it (503s on
     // every subsequent request). Shutdown is handled in `index.ts` by closing
     // the router directly, so draining from Apollo is not needed.
-    plugins: [constraintPlugin(schema), authPlugin(schema, noAuthFields)],
+    plugins: [
+      traceNamePlugin(),
+      constraintPlugin(schema),
+      authPlugin(schema, noAuthFields),
+    ],
     formatError(formatted, rawError) {
       const original =
         rawError instanceof GraphQLError ? rawError.originalError : undefined;
