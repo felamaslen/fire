@@ -298,7 +298,12 @@ CREATE TABLE "PlanningAccounts" (
   "alias" text,
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
-  "sortOrder" integer DEFAULT 0 NOT NULL
+  "sortOrder" integer DEFAULT 0 NOT NULL,
+  "currency" "CurrencyCode",
+  "target" bigint,
+  CONSTRAINT "PlanningAccounts_target_currency_ck" CHECK (
+    ("PlanningAccounts"."target" IS NULL) = ("PlanningAccounts"."currency" IS NULL)
+  )
 );
 
 CREATE TABLE "PlanningBills" (
