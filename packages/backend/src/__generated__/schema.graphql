@@ -1121,7 +1121,7 @@ type Mutation {
   - `tx:…` / `to:…` — deletes the `PlanningTransactions` row.
   - `pay:…` — deletes the payslip (and its adjustments, via cascade).
   - `adj:…` — deletes the single adjustment.
-  - `bill:…` — writes a per-month bill override with null amount, which skips the bill for this month only.
+  - `bill:…` — clears any per-month override row for this (bill, month), so the predicted bill takes over again. To cancel a predicted bill for one month, set its amount to zero explicitly via `transactionUpdate` instead of deleting.
   - `earn:…` — inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.
   - `liab:…` — materialises a zero-amount manual transaction tagged with the liability, which suppresses the credit-card spend prediction for this month while leaving the liability visible in the grid.
   """

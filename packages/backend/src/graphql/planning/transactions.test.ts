@@ -476,7 +476,7 @@ it("transactionUpdate on a predicted bill patches the bill's liability globally 
   expect(new Set(mortgageLiabilityIds)).toEqual(new Set([liabilityId]));
 });
 
-it("transactionDelete on a predicted bill skips it for this month (null override)", async () => {
+it("transactionDelete on a predicted bill is a no-op — the prediction stays (cancel-by-zero is the explicit way to skip)", async () => {
   await seedYear("2025", false);
   const main = await createAsset();
   await assign(main);
@@ -499,7 +499,67 @@ it("transactionDelete on a predicted bill skips it for this month (null override
     `),
     { a: main },
   );
+  const predictedId = await aprilTxId("Broadband");
+
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        transactionDelete(monthId: "apr-2025", id: $id) {
+          _
+        }
+      }
+    `),
+    { id: predictedId },
+  );
+
+  expect(await aprilTransactions()).toMatchInlineSnapshot(`
+    "
+    NAME      AMOUNT SOURCE    EDIT     ID
+    Broadband -100   predicted editable {"kind":"bill","id":"<uuid>","monthId":"apr-2025"}"
+  `);
+});
+
+it("transactionDelete on an overridden bill clears the override and the prediction takes over", async () => {
+  await seedYear("2025", false);
+  const main = await createAsset();
+  await assign(main);
+  await recordSnapshot(main, "2025-03-31", 1_000_000);
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        billCreate(
+          start: "2025-04-01"
+          frequency: MONTHLY
+          collectionDate: ["15"]
+          amount: { amount: 100, currency: "GBP" }
+          name: "Broadband"
+          fromAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: main },
+  );
+
+  // Override April to 175 first, then delete that override — April should
+  // fall back to the predicted 100, not vanish.
   const overrideId = await aprilTxId("Broadband");
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        transactionUpdate(
+          monthId: "apr-2025"
+          id: $id
+          amount: { amount: 175, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `),
+    { id: overrideId },
+  );
 
   await runGql(
     graphql(`
@@ -514,7 +574,8 @@ it("transactionDelete on a predicted bill skips it for this month (null override
 
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
-    NAME AMOUNT SOURCE EDIT ID"
+    NAME      AMOUNT SOURCE    EDIT     ID
+    Broadband -100   predicted editable {"kind":"bill","id":"<uuid>","monthId":"apr-2025"}"
   `);
 });
 
