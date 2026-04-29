@@ -280,9 +280,11 @@ describe("investments query", () => {
     ]);
   });
 
-  it("scopes by wrapper while keeping investments with no transactions visible", async () => {
+  it("scopes by wrapper while keeping zero-tx investments visible, and filters by sold state", async () => {
     const isaInv = await createStock("InIsa", "ISA");
     const sippInv = await createStock("InSipp", "SIPP");
+    const giaInv = await createStock("InGia", "GIA");
+    const soldInv = await createStock("Sold", "SOLD");
     await createStock("Untouched", "EMPTY");
     const createWrapper = async (name: string) => {
       const doc = graphql(`
@@ -298,25 +300,33 @@ describe("investments query", () => {
     };
     const isaAsset = await createWrapper("ISA");
     const sippAsset = await createWrapper("SIPP");
-    const buy = graphql(`
-      mutation ($id: ID!, $asset: ID!) {
+    const giaAsset = await createWrapper("GIA");
+    const trade = graphql(`
+      mutation ($id: ID!, $asset: ID!, $units: Int!) {
         investmentTransactionCreate(
           investmentId: $id
           assetId: $asset
           date: "2024-01-01"
-          units: 1
+          units: $units
           price: { amount: 1, currency: "GBP" }
         ) {
           id
         }
       }
     `);
-    await runGql(buy, { id: isaInv, asset: isaAsset });
-    await runGql(buy, { id: sippInv, asset: sippAsset });
+    await runGql(trade, { id: isaInv, asset: isaAsset, units: 1 });
+    await runGql(trade, { id: sippInv, asset: sippAsset, units: 1 });
+    await runGql(trade, { id: giaInv, asset: giaAsset, units: 1 });
+    // `Sold` was bought and then fully sold in the ISA — net units 0.
+    await runGql(trade, { id: soldInv, asset: isaAsset, units: 1 });
+    await runGql(trade, { id: soldInv, asset: isaAsset, units: -1 });
 
     const list = graphql(`
-      query ($filterAssetId: ID) {
-        investments(filterAssetId: $filterAssetId) {
+      query ($filterAssetIdIn: [ID!], $filterIsSold: Boolean) {
+        investments(
+          filterAssetIdIn: $filterAssetIdIn
+          filterIsSold: $filterIsSold
+        ) {
           edges {
             node {
               name
@@ -326,22 +336,67 @@ describe("investments query", () => {
       }
     `);
 
-    const all = await runGql(list, { filterAssetId: null });
+    const all = await runGql(list, {
+      filterAssetIdIn: null,
+      filterIsSold: null,
+    });
     expect(all.investments?.edges.map((e) => e.node.name).sort()).toEqual([
+      "InGia",
+      "InIsa",
+      "InSipp",
+      "Sold",
+      "Untouched",
+    ]);
+
+    const isaScoped = await runGql(list, {
+      filterAssetIdIn: [isaAsset],
+      filterIsSold: null,
+    });
+    expect(isaScoped.investments?.edges.map((e) => e.node.name).sort()).toEqual(
+      ["InIsa", "Sold", "Untouched"],
+    );
+
+    // Multi-wrapper filter: union of ISA + SIPP, plus the never-touched.
+    const isaSippScoped = await runGql(list, {
+      filterAssetIdIn: [isaAsset, sippAsset],
+      filterIsSold: null,
+    });
+    expect(
+      isaSippScoped.investments?.edges.map((e) => e.node.name).sort(),
+    ).toEqual(["InIsa", "InSipp", "Sold", "Untouched"]);
+
+    // `filterIsSold: false` hides the fully-sold `Sold` but keeps the
+    // zero-transaction `Untouched` (it was never bought, so it's not "sold").
+    const notSold = await runGql(list, {
+      filterAssetIdIn: null,
+      filterIsSold: false,
+    });
+    expect(notSold.investments?.edges.map((e) => e.node.name).sort()).toEqual([
+      "InGia",
       "InIsa",
       "InSipp",
       "Untouched",
     ]);
 
-    const isaScoped = await runGql(list, { filterAssetId: isaAsset });
-    expect(isaScoped.investments?.edges.map((e) => e.node.name).sort()).toEqual(
-      ["InIsa", "Untouched"],
-    );
+    // `filterIsSold: true` keeps only the fully-sold investment.
+    const onlySold = await runGql(list, {
+      filterAssetIdIn: null,
+      filterIsSold: true,
+    });
+    expect(onlySold.investments?.edges.map((e) => e.node.name).sort()).toEqual([
+      "Sold",
+    ]);
 
-    const sippScoped = await runGql(list, { filterAssetId: sippAsset });
+    // Wrapper-scoped + filterIsSold combine: ISA-scoped non-sold list keeps
+    // the active ISA holding and the never-touched investment, but drops
+    // `Sold` (its ISA net is zero).
+    const isaNonSold = await runGql(list, {
+      filterAssetIdIn: [isaAsset],
+      filterIsSold: false,
+    });
     expect(
-      sippScoped.investments?.edges.map((e) => e.node.name).sort(),
-    ).toEqual(["InSipp", "Untouched"]);
+      isaNonSold.investments?.edges.map((e) => e.node.name).sort(),
+    ).toEqual(["InIsa", "Untouched"]);
   });
 
   it("paginates with first + after", async () => {

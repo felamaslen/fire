@@ -2368,9 +2368,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         after: {
                             type: GraphQLID
                         },
-                        filterAssetId: {
-                            description: "When set, only investments with at least one transaction booked against this wrapper are returned, and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to that wrapper.",
-                            type: GraphQLID
+                        filterAssetIdIn: {
+                            description: "When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers.",
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        },
+                        filterIsSold: {
+                            description: "Filter on whether the investment is fully sold \u2014 i.e. has at least one transaction but a net-zero unit count (scoped to `filterAssetIdIn` when set and non-empty). `false` excludes sold investments, `true` keeps only sold ones, `null` / omitted applies no filter. Investments with no transactions are never considered sold.",
+                            type: GraphQLBoolean
                         },
                         first: {
                             type: GraphQLInt
@@ -2380,7 +2384,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args, context) {
-                        return assertNonNull(queryInvestmentsResolver(context, args.first, args.after, args.sort, args.filterAssetId));
+                        return assertNonNull(queryInvestmentsResolver(context, args.first, args.after, args.sort, args.filterAssetIdIn, args.filterIsSold));
                     }
                 },
                 me: {

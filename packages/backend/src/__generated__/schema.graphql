@@ -2023,9 +2023,13 @@ type Query {
   investments(
     after: ID
     """
-    When set, only investments with at least one transaction booked against this wrapper are returned, and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to that wrapper.
+    When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers.
     """
-    filterAssetId: ID
+    filterAssetIdIn: [ID!]
+    """
+    Filter on whether the investment is fully sold — i.e. has at least one transaction but a net-zero unit count (scoped to `filterAssetIdIn` when set and non-empty). `false` excludes sold investments, `true` keeps only sold ones, `null` / omitted applies no filter. Investments with no transactions are never considered sold.
+    """
+    filterIsSold: Boolean
     first: Int
     sort: InvestmentSort
   ): InvestmentConnection @semanticNonNull

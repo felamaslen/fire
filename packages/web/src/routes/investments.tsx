@@ -129,10 +129,15 @@ export const InvestmentsListDocument = graphql(
     query InvestmentsList(
       $first: Int
       $sort: InvestmentSort
-      $filterAssetId: ID
       $filterAssetIdIn: [ID!]
+      $filterIsSold: Boolean
     ) {
-      investments(first: $first, sort: $sort, filterAssetId: $filterAssetId) {
+      investments(
+        first: $first
+        sort: $sort
+        filterAssetIdIn: $filterAssetIdIn
+        filterIsSold: $filterIsSold
+      ) {
         edges {
           node {
             id
@@ -162,10 +167,15 @@ const InvestmentsPageDocument = graphql(
       $candlestick: Boolean!
       $stack: Boolean!
       $skipLive: Boolean!
-      $filterAssetId: ID
       $filterAssetIdIn: [ID!]
+      $filterIsSold: Boolean
     ) {
-      investments(first: $first, sort: $sort, filterAssetId: $filterAssetId) {
+      investments(
+        first: $first
+        sort: $sort
+        filterAssetIdIn: $filterAssetIdIn
+        filterIsSold: $filterIsSold
+      ) {
         edges {
           node {
             id
@@ -534,10 +544,11 @@ function InvestmentsPageContent() {
   const chart = searchToChart(search);
   const sort = searchToSort(search);
   const filterAssetIds = parsePortfolioIds(search["filter-portfolio-id"]);
-  // When exactly one portfolio is selected, endpoints that only accept a
-  // singular `filterAssetId` (investments list, per-row position,
-  // transactions) can scope to it. With 0 or 2+ selected, those fall back
-  // to unfiltered — only the chart/headline aggregate over the array.
+  // The allocations widget and per-investment detail (transaction list /
+  // position lookup on `Investment.transactionsPaged` and `position`) are
+  // single-wrapper-scoped, so they only act on a unambiguously-selected
+  // portfolio. The investments list, chart and headline all support a
+  // multi-wrapper filter and use the array directly.
   const singleFilterAssetId =
     filterAssetIds.length === 1 ? filterAssetIds[0] : null;
 
@@ -588,7 +599,6 @@ function InvestmentsPageContent() {
       CANDLE_SLUGS[c.candleIdx] ?? "1w",
     );
     const ids = parsePortfolioIds(search["filter-portfolio-id"]);
-    const singleId = ids.length === 1 ? ids[0] : null;
     return {
       first: 100,
       sort: toSortInput(s.kind, s.dir),
@@ -599,8 +609,8 @@ function InvestmentsPageContent() {
       candlestick: c.mode === "candlestick",
       stack: c.stack,
       skipLive: true,
-      filterAssetId: singleId,
       filterAssetIdIn: ids.length > 0 ? ids : null,
+      filterIsSold: loadHideSold() ? false : null,
     };
   });
   useSuspenseQuery(InvestmentsPageDocument, { variables: initialVars });
@@ -626,7 +636,6 @@ function InvestmentsPageContent() {
       <InvestmentsList
         sort={sort}
         onSortChange={setSort}
-        filterAssetId={singleFilterAssetId}
         filterAssetIds={filterAssetIds}
       />
     </>
@@ -636,19 +645,17 @@ function InvestmentsPageContent() {
 function InvestmentsList({
   sort,
   onSortChange,
-  filterAssetId,
   filterAssetIds,
 }: {
   sort: SortState;
   onSortChange: (next: SortState) => void;
-  filterAssetId: string | null;
   filterAssetIds: string[];
 }) {
   const setSort = (updater: (prev: SortState) => SortState) =>
     onSortChange(updater(sort));
   const [hideSold, setHideSold] = useHideSold();
 
-  // Defer sort changes through `useDeferredValue` so switching sort
+  // Defer sort / filter changes through `useDeferredValue` so switching
   // suspends the fetch in a non-interrupting pass — the previous rows
   // stay mounted until the new data arrives. Using plain scalars (not
   // the wrapping `sort` object) keeps the deferred identity stable
@@ -656,34 +663,28 @@ function InvestmentsList({
   // the URL search), so those don't re-trigger the query.
   const deferredKind = useDeferredValue(sort.kind);
   const deferredDir = useDeferredValue(sort.dir);
-  const deferredFilterAssetId = useDeferredValue(filterAssetId);
   const filterAssetIdsKey = filterAssetIds.join(",");
   const deferredFilterAssetIdsKey = useDeferredValue(filterAssetIdsKey);
   const deferredFilterAssetIdIn =
     deferredFilterAssetIdsKey.length > 0
       ? deferredFilterAssetIdsKey.split(",")
       : null;
+  const deferredHideSold = useDeferredValue(hideSold);
   const loading =
     deferredKind !== sort.kind ||
     deferredDir !== sort.dir ||
-    deferredFilterAssetId !== filterAssetId ||
-    deferredFilterAssetIdsKey !== filterAssetIdsKey;
+    deferredFilterAssetIdsKey !== filterAssetIdsKey ||
+    deferredHideSold !== hideSold;
   const { data } = useSuspenseQuery(InvestmentsListDocument, {
     variables: {
       first: 100,
       sort: toSortInput(deferredKind, deferredDir),
-      filterAssetId: deferredFilterAssetId,
       filterAssetIdIn: deferredFilterAssetIdIn,
+      filterIsSold: deferredHideSold ? false : null,
     },
   });
-  const allRows: InvestmentRowNode[] =
+  const rows: InvestmentRowNode[] =
     data.investments?.edges.map((e) => e.node) ?? [];
-  const rows = hideSold
-    ? allRows.filter((r) => {
-        const u = readFragment(InvestmentRowDocument, r).position.units;
-        return u !== 0;
-      })
-    : allRows;
 
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
@@ -856,12 +857,14 @@ function InvestmentFormDialog({
 
 const HIDE_SOLD_STORAGE_KEY = "fire.investments.hideSold";
 
+function loadHideSold(): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = window.sessionStorage.getItem(HIDE_SOLD_STORAGE_KEY);
+  return raw === null ? true : raw === "1";
+}
+
 function useHideSold(): [boolean, (v: boolean) => void] {
-  const [hideSold, setHideSoldState] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    const raw = window.sessionStorage.getItem(HIDE_SOLD_STORAGE_KEY);
-    return raw === null ? true : raw === "1";
-  });
+  const [hideSold, setHideSoldState] = useState<boolean>(loadHideSold);
   useEffect(() => {
     window.sessionStorage.setItem(HIDE_SOLD_STORAGE_KEY, hideSold ? "1" : "0");
   }, [hideSold]);

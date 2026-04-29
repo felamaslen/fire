@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 
-import { eq, notExists } from "drizzle-orm";
+import { and, eq, exists, inArray, ne, not, or, sum } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { ID, Int } from "grats";
 
@@ -289,39 +289,75 @@ export async function investments(
   first?: Int | null,
   after?: ID | null,
   sort?: InvestmentSort | null,
-  /** When set, only investments with at least one transaction booked against this wrapper are returned, and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to that wrapper. */
-  filterAssetId?: ID | null,
+  /** When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers. */
+  filterAssetIdIn?: ID[] | null,
+  /** Filter on whether the investment is fully sold — i.e. has at least one transaction but a net-zero unit count (scoped to `filterAssetIdIn` when set and non-empty). `false` excludes sold investments, `true` keeps only sold ones, `null` / omitted applies no filter. Investments with no transactions are never considered sold. */
+  filterIsSold?: boolean | null,
 ): Promise<Connection<Investment> | null> {
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const afterCursor = after ? decodeCursor(after) : null;
   const { key, direction } = parseSortInput(sort);
+  const wrapperFilter =
+    filterAssetIdIn && filterAssetIdIn.length > 0
+      ? (filterAssetIdIn as string[])
+      : null;
 
-  const allRows = await db
-    .select({
-      // Investments with zero transactions overall are surfaced regardless of
-      // the wrapper filter, so a freshly-created investment stays visible
-      // (and thus actionable) before its first transaction is booked.
-      hasNoTransactions: notExists(
+  // Net units across all transactions for `Investments.id`, scoped to
+  // `wrapperFilter` when set. Returns `NULL` for investments with no
+  // matching transactions, which is treated as "not sold" below.
+  const unitsSum = db
+    .select({ s: sum(InvestmentTransactions.units) })
+    .from(InvestmentTransactions)
+    .where(
+      and(
+        eq(InvestmentTransactions.investmentId, Investments.id),
+        wrapperFilter
+          ? inArray(InvestmentTransactions.assetId, wrapperFilter)
+          : undefined,
+      ),
+    );
+  const hasAnyTransaction = exists(
+    db
+      .select({ id: InvestmentTransactions.id })
+      .from(InvestmentTransactions)
+      .where(eq(InvestmentTransactions.investmentId, Investments.id)),
+  );
+  const hasTransactionInWrapper = wrapperFilter
+    ? exists(
         db
           .select({ id: InvestmentTransactions.id })
           .from(InvestmentTransactions)
-          .where(eq(InvestmentTransactions.investmentId, Investments.id)),
-      ).as("hasNoTransactions"),
-      row: Investments,
-    })
-    .from(Investments);
-  const rows = filterAssetId
-    ? await (async () => {
-        const ids = await db
-          .selectDistinct({ id: InvestmentTransactions.investmentId })
-          .from(InvestmentTransactions)
-          .where(eq(InvestmentTransactions.assetId, filterAssetId));
-        const keep = new Set(ids.map((r) => r.id));
-        return allRows.flatMap((r) =>
-          keep.has(r.row.id) || r.hasNoTransactions ? [r.row] : [],
-        );
-      })()
-    : allRows.map((r) => r.row);
+          .where(
+            and(
+              eq(InvestmentTransactions.investmentId, Investments.id),
+              inArray(InvestmentTransactions.assetId, wrapperFilter),
+            ),
+          ),
+      )
+    : undefined;
+
+  const rows = await db
+    .select()
+    .from(Investments)
+    .where(
+      and(
+        // Investments with zero transactions overall are surfaced regardless
+        // of the wrapper filter, so a freshly-created investment stays visible
+        // (and thus actionable) before its first transaction is booked.
+        hasTransactionInWrapper
+          ? or(hasTransactionInWrapper, not(hasAnyTransaction))
+          : undefined,
+        // A "sold" investment has at least one transaction and a net-zero unit
+        // count (scoped to the wrapper when set). Newly-created zero-tx
+        // investments are never classified as sold.
+        filterIsSold === true
+          ? and(hasAnyTransaction, eq(unitsSum, 0))
+          : undefined,
+        filterIsSold === false
+          ? or(not(hasAnyTransaction), ne(unitsSum, 0))
+          : undefined,
+      ),
+    );
 
   // Only load stats for rows when the caller actually needs them to sort.
   const enriched: {
@@ -339,7 +375,7 @@ export async function investments(
           rows.map(async (row) => {
             const s = await loadInvestmentStats(ctx, {
               investmentId: row.id,
-              assetIds: filterAssetId ? [filterAssetId as string] : undefined,
+              assetIds: wrapperFilter ?? undefined,
             });
             const totalValue = s.totalValueMinor;
             const totalGain =
