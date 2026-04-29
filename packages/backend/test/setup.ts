@@ -47,6 +47,7 @@ beforeAll(async () => {
   const admin = new PgImpl.Client({ connectionString: ADMIN_URL });
   await admin.connect();
   try {
+    await admin.query(`SET client_min_messages = warning`);
     await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
     await admin.query(`CREATE DATABASE "${dbName}" TEMPLATE "${TEMPLATE_DB}"`);
   } finally {
@@ -106,6 +107,7 @@ afterAll(async () => {
   const admin = new PgImpl.Client({ connectionString: ADMIN_URL });
   await admin.connect();
   try {
+    await admin.query(`SET client_min_messages = warning`);
     await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
   } finally {
     await admin.end();
