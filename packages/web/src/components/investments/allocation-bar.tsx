@@ -23,7 +23,14 @@ export type AllocationBarProps = {
   onBoundaryDrag?: (
     leftId: string,
     rightId: string,
-  ) => ((fraction: number, phase: "move" | "end") => void) | null | undefined;
+  ) =>
+    | ((
+        fraction: number,
+        phase: "start" | "move" | "end",
+        point: { clientX: number; clientY: number; pointerType: string },
+      ) => void)
+    | null
+    | undefined;
   /** Optional formatter for the per-segment value shown inside the segment (defaults to percentage). */
   formatValue?: (value: number) => string;
   /** When `true`, render segments with muted colours to indicate inactivity. */
@@ -135,17 +142,29 @@ function BoundaryHandle({
 }: {
   leftPct: number;
   trackWidth: number;
-  onDrag: (fraction: number, phase: "move" | "end") => void;
+  onDrag: (
+    fraction: number,
+    phase: "start" | "move" | "end",
+    point: { clientX: number; clientY: number; pointerType: string },
+  ) => void;
 }) {
   const startXRef = useRef<number | null>(null);
   const widthRef = useRef(trackWidth);
   widthRef.current = trackWidth;
 
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-    startXRef.current = e.clientX;
-  }, []);
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      startXRef.current = e.clientX;
+      onDrag(0, "start", {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        pointerType: e.pointerType,
+      });
+    },
+    [onDrag],
+  );
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -153,7 +172,11 @@ function BoundaryHandle({
       if (start === null) return;
       const w = widthRef.current;
       if (w <= 0) return;
-      onDrag((e.clientX - start) / w, "move");
+      onDrag((e.clientX - start) / w, "move", {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        pointerType: e.pointerType,
+      });
     },
     [onDrag],
   );
@@ -163,7 +186,12 @@ function BoundaryHandle({
       const start = startXRef.current;
       if (start === null) return;
       const w = widthRef.current;
-      if (w > 0) onDrag((e.clientX - start) / w, "end");
+      if (w > 0)
+        onDrag((e.clientX - start) / w, "end", {
+          clientX: e.clientX,
+          clientY: e.clientY,
+          pointerType: e.pointerType,
+        });
       startXRef.current = null;
       (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
     },

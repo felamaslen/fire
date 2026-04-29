@@ -259,8 +259,8 @@ export function AllocationsSection({
   }, [data]);
 
   // TARGET state — baseline comes from the selected wrapper's saved
-  // allocations (or its actual weights if none are saved). Drafting a new
-  // set is gated behind a confirm dialog: drag → draft → release → dialog.
+  // allocations (or its actual weights if none are saved). Drag commits
+  // directly on pointer-up; no confirmation step.
   const baseline = useMemo<Map<string, number>>(() => {
     if (!bucket) return new Map();
     return seedAllocations(bucket, bucket.savedAllocations);
@@ -296,30 +296,89 @@ export function AllocationsSection({
 
   // Drag flow. The snapshot captures the pre-drag map so a sequence of small
   // pointer deltas behaves the same as one big one (the fraction is always
-  // relative to where the pointer went down).
+  // relative to where the pointer went down). `pointerType` decides between
+  // the touch-style flow (preview pinned to the bottom of the viewport,
+  // confirm dialog on release) and the desktop flow (preview pinned to the
+  // cursor, commit immediately on release).
   const snapshotRef = useRef<{
     boundary: string;
     map: Map<string, number>;
+    pointerType: string;
   } | null>(null);
   const [pendingDraft, setPendingDraft] = useState<Map<string, number> | null>(
     null,
   );
-  // Which boundary is currently being dragged, if any — used to light up
-  // a bottom-of-screen preview while the user is holding a handle.
   const [dragPreview, setDragPreview] = useState<{
     leftId: string;
     rightId: string;
+    clientX: number;
+    clientY: number;
+    pointerType: string;
   } | null>(null);
+
+  // No `refetchQueries`: the mutation's response carries the updated
+  // `InvestmentAllocations` for the wrapper's asset entity, and Apollo
+  // normalises it into the same `asset.investmentAllocations` field the
+  // page query reads. Refetching the section was both wasteful (it briefly
+  // dropped the wrapper's cached payload while in-flight, flashing the
+  // editable bar empty) and incorrectly scoped — the call carried no
+  // `filterAssetIdIn`, so it refetched a different `Portfolio` from the
+  // one currently on screen.
+  const [save, { loading: saving }] = useMutation(
+    InvestmentAllocationsSetDocument,
+    {
+      onError: (err) => toast.error(err.message),
+      onCompleted: () => {
+        toast.success("Allocation targets updated");
+        setPendingDraft(null);
+      },
+    },
+  );
+
+  const commit = useCallback(
+    (next: Map<string, number>, assetId: string) => {
+      const entries = [...next.entries()];
+      const sum = entries.reduce((a, [, v]) => a + v, 0);
+      if (sum <= 0) return;
+      const normalised = entries.map(([id, v]) => ({
+        investmentId: id,
+        allocation: v / sum,
+      }));
+      void save({ variables: { assetId, allocations: normalised } });
+    },
+    [save],
+  );
 
   const onBoundaryDrag = useCallback(
     (leftId: string, rightId: string) => {
-      return (fraction: number, phase: "move" | "end") => {
+      return (
+        fraction: number,
+        phase: "start" | "move" | "end",
+        point: { clientX: number; clientY: number; pointerType: string },
+      ) => {
+        const isTouch = point.pointerType === "touch";
+        if (phase === "start") {
+          snapshotRef.current = {
+            boundary: `${leftId}|${rightId}`,
+            map: new Map(draft),
+            pointerType: point.pointerType,
+          };
+          // Desktop: light up the preview at pointer-down so the user
+          // sees percentages immediately. Touch: keep the previous
+          // behaviour where the preview only appears once movement
+          // begins, so a tap on a handle doesn't pop up a tooltip.
+          if (!isTouch) setDragPreview({ leftId, rightId, ...point });
+          return;
+        }
         const key = `${leftId}|${rightId}`;
         let snap = snapshotRef.current;
         if (!snap || snap.boundary !== key) {
-          snap = { boundary: key, map: new Map(draft) };
+          snap = {
+            boundary: key,
+            map: new Map(draft),
+            pointerType: point.pointerType,
+          };
           snapshotRef.current = snap;
-          setDragPreview({ leftId, rightId });
         }
         const startLeft = snap.map.get(leftId) ?? 0;
         const startRight = snap.map.get(rightId) ?? 0;
@@ -336,45 +395,32 @@ export function AllocationsSection({
         nextMap.set(leftId, nextLeft);
         nextMap.set(rightId, nextRight);
         setDraft(nextMap);
+        if (phase === "move") {
+          setDragPreview({ leftId, rightId, ...point });
+        }
         if (phase === "end") {
           snapshotRef.current = null;
           setDragPreview(null);
           const changed = [...baseline].some(
             ([id, v]) => Math.abs((nextMap.get(id) ?? 0) - v) > EPSILON,
           );
-          if (changed) setPendingDraft(nextMap);
+          if (!changed) return;
+          if (isTouch) {
+            // Mobile: keep the confirm-dialog gate.
+            setPendingDraft(nextMap);
+          } else if (bucket) {
+            // Desktop: commit immediately.
+            commit(nextMap, bucket.assetId);
+          }
         }
       };
     },
-    [draft, baseline],
-  );
-
-  const [save, { loading: saving }] = useMutation(
-    InvestmentAllocationsSetDocument,
-    {
-      refetchQueries: [
-        { query: AllocationsSectionDocument, variables: { first: 1000 } },
-      ],
-      onError: (err) => toast.error(err.message),
-      onCompleted: () => {
-        toast.success("Allocation targets updated");
-        setPendingDraft(null);
-      },
-    },
+    [draft, baseline, bucket, commit],
   );
 
   const onAccept = () => {
     if (!pendingDraft || !bucket) return;
-    const entries = [...pendingDraft.entries()];
-    const sum = entries.reduce((a, [, v]) => a + v, 0);
-    if (sum <= 0) return;
-    const normalised = entries.map(([id, v]) => ({
-      investmentId: id,
-      allocation: v / sum,
-    }));
-    void save({
-      variables: { assetId: bucket.assetId, allocations: normalised },
-    });
+    commit(pendingDraft, bucket.assetId);
   };
   const onReject = () => {
     setDraft(baseline);
@@ -424,10 +470,11 @@ export function AllocationsSection({
       />
       {editable && (
         <DragPreview
-          visible={dragPreview != null}
+          preview={dragPreview}
           bucket={bucket}
           draft={draft}
           baseline={baseline}
+          order={actualSegments.map((s) => s.id)}
         />
       )}
       <ConfirmAllocationDialog
@@ -438,43 +485,94 @@ export function AllocationsSection({
         saving={saving}
         onAccept={onAccept}
         onReject={onReject}
+        order={actualSegments.map((s) => s.id)}
       />
     </section>
   );
 }
 
 /**
- * Floating preview pinned to the bottom of the viewport while the user is
- * dragging an allocation boundary — lists every holding with its current
- * draft percentage so the live rebalance is legible even on mobile, where
- * the bar itself is too thin to read inline.
+ * Floating preview shown while the user is dragging an allocation boundary
+ * — lists every holding with its current draft percentage so the live
+ * rebalance is legible. On touch the preview pins to the bottom of the
+ * viewport (the bar itself is too thin to read inline on mobile); with a
+ * mouse / pen it follows the cursor so it sits next to the dragged
+ * handle.
  */
 function DragPreview({
-  visible,
+  preview,
   bucket,
   draft,
   baseline,
+  order,
 }: {
-  visible: boolean;
+  preview: {
+    leftId: string;
+    rightId: string;
+    clientX: number;
+    clientY: number;
+    pointerType: string;
+  } | null;
   bucket: WrapperBucket | null;
   draft: Map<string, number>;
   baseline: Map<string, number>;
+  /** investmentIds in the order they appear in the actual-allocation bar above. */
+  order: string[];
 }) {
-  if (!bucket) return null;
+  if (!bucket || !preview) return null;
+  const byId = new Map(bucket.holdings.map((h) => [h.investmentId, h]));
+  const orderedHoldings = [
+    ...order
+      .map((id) => byId.get(id))
+      .filter((h): h is WrapperHolding => h != null),
+    // Defensive: any holding not represented in `order` (shouldn't happen
+    // in practice, since both sets come from the same wrapper) goes last.
+    ...bucket.holdings.filter((h) => !order.includes(h.investmentId)),
+  ];
+  const isTouch = preview.pointerType === "touch";
+  // Cursor mode: position at the pointer with a small offset, but clamp
+  // horizontally so the box doesn't overflow the viewport.
+  const cursorStyle = isTouch
+    ? null
+    : (() => {
+        const width = 320;
+        const margin = 8;
+        const offset = 12;
+        const maxLeft =
+          typeof window !== "undefined"
+            ? window.innerWidth - width - margin
+            : preview.clientX;
+        const left = Math.min(
+          maxLeft,
+          Math.max(margin, preview.clientX - width / 2),
+        );
+        // Sit the box's bottom edge just above the cursor — the
+        // `-translate-y-full` class on the element shifts it up by its
+        // own height so this stays correct regardless of how many
+        // holdings the preview lists.
+        const top = Math.max(margin, preview.clientY - offset);
+        return { left, top, width };
+      })();
   return (
     <div
       className={cn(
-        "pointer-events-none fixed inset-x-2 bottom-2 z-50 rounded-md border bg-popover/95 p-3 shadow-lg backdrop-blur transition-opacity duration-150 sm:inset-x-auto sm:left-1/2 sm:bottom-4 sm:w-80 sm:-translate-x-1/2",
-        visible ? "opacity-100" : "opacity-0",
+        "pointer-events-none fixed z-50 rounded-md border bg-popover/95 p-3 shadow-lg backdrop-blur",
+        // Cursor mode: the inline `top` is the cursor's clientY minus a
+        // small offset; shift the box up by its own height so the
+        // bottom edge sits just above the cursor.
+        cursorStyle != null && "-translate-y-full",
+        // Touch: bottom-pinned on mobile, centred on tablet+.
+        cursorStyle == null &&
+          "inset-x-2 bottom-2 sm:inset-x-auto sm:left-1/2 sm:bottom-4 sm:w-80 sm:-translate-x-1/2",
       )}
+      style={cursorStyle ?? undefined}
       role="status"
-      aria-hidden={!visible}
     >
       <div className="mb-1 text-xs font-medium text-muted-foreground">
         {bucket.assetName}
       </div>
       <ul className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-2">
-        {bucket.holdings.map((h) => {
+        {orderedHoldings.map((h) => {
           const target = draft.get(h.investmentId) ?? 0;
           const saved = baseline.get(h.investmentId) ?? 0;
           const changed = Math.abs(target - saved) > EPSILON;
@@ -516,6 +614,7 @@ function ConfirmAllocationDialog({
   saving,
   onAccept,
   onReject,
+  order,
 }: {
   open: boolean;
   bucket: WrapperBucket | null;
@@ -524,7 +623,20 @@ function ConfirmAllocationDialog({
   saving: boolean;
   onAccept: () => void;
   onReject: () => void;
+  /** investmentIds in the order they appear in the actual-allocation bar above. */
+  order: string[];
 }) {
+  const orderedHoldings = bucket
+    ? (() => {
+        const byId = new Map(bucket.holdings.map((h) => [h.investmentId, h]));
+        return [
+          ...order
+            .map((id) => byId.get(id))
+            .filter((h): h is WrapperHolding => h != null),
+          ...bucket.holdings.filter((h) => !order.includes(h.investmentId)),
+        ];
+      })()
+    : [];
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onReject()}>
       <DialogContent className="sm:max-w-md">
@@ -538,7 +650,7 @@ function ConfirmAllocationDialog({
         </DialogHeader>
         {bucket && next && (
           <ul className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm">
-            {bucket.holdings.map((h) => {
+            {orderedHoldings.map((h) => {
               const target = next.get(h.investmentId) ?? 0;
               const saved = baseline.get(h.investmentId) ?? 0;
               const changed = Math.abs(target - saved) > EPSILON;
