@@ -260,6 +260,121 @@ describe("categories", () => {
     expect(data.netWorthCategories!.pageInfo.hasNextPage).toBe(false);
   });
 
+  it("filters categories by kind and by type", async () => {
+    const seed = graphql(`
+      mutation {
+        cash: netWorthCategoryCreate(
+          input: { asset: { name: "Cash", type: CASH } }
+        ) {
+          id
+        }
+        stock: netWorthCategoryCreate(
+          input: { asset: { name: "ISA", type: STOCK } }
+        ) {
+          id
+        }
+        pension: netWorthCategoryCreate(
+          input: { asset: { name: "SIPP", type: PENSION } }
+        ) {
+          id
+        }
+        loan: netWorthCategoryCreate(
+          input: {
+            liability: { name: "Mortgage", type: LOAN, interestRate: 5 }
+          }
+        ) {
+          id
+        }
+        creditCard: netWorthCategoryCreate(
+          input: { liability: { name: "Amex", type: CREDIT_CARD } }
+        ) {
+          id
+        }
+        equity: netWorthCategoryCreate(input: { option: { name: "RSU" } }) {
+          id
+        }
+      }
+    `);
+    await runGql(seed, {});
+
+    const list = graphql(`
+      query ($kinds: [NetWorthCategoryKind!], $types: [NetWorthCategoryType!]) {
+        netWorthCategories(
+          first: 50
+          filterKindIn: $kinds
+          filterTypeIn: $types
+        ) {
+          edges {
+            node {
+              __typename
+              name
+            }
+          }
+        }
+      }
+    `);
+    const sortedNames = (
+      data: Awaited<ReturnType<typeof runGql<typeof list>>>,
+    ): string[] =>
+      data
+        .netWorthCategories!.edges.map((e) => e.node.name)
+        .sort((a, b) => a.localeCompare(b));
+
+    // No filter — every category surfaces.
+    const all = await runGql(list, { kinds: null, types: null });
+    expect(sortedNames(all)).toEqual([
+      "Amex",
+      "Cash",
+      "ISA",
+      "Mortgage",
+      "RSU",
+      "SIPP",
+    ]);
+
+    // Kind filter alone — assets only.
+    const onlyAssets = await runGql(list, { kinds: ["ASSET"], types: null });
+    expect(sortedNames(onlyAssets)).toEqual(["Cash", "ISA", "SIPP"]);
+    expect(
+      onlyAssets.netWorthCategories!.edges.every(
+        (e) => e.node.__typename === "NetWorthCategoryAsset",
+      ),
+    ).toBe(true);
+
+    // Equity-option kind filter.
+    const onlyOptions = await runGql(list, { kinds: ["OPTION"], types: null });
+    expect(sortedNames(onlyOptions)).toEqual(["RSU"]);
+
+    // Type filter alone — STOCK + PENSION matches assets, no liability rows
+    // share those names so liabilities drop out, and options have no `type`
+    // column so they're excluded too.
+    const stockPension = await runGql(list, {
+      kinds: null,
+      types: ["STOCK", "PENSION"],
+    });
+    expect(sortedNames(stockPension)).toEqual(["ISA", "SIPP"]);
+
+    // Combined — kind + type filter narrows to the intersection.
+    const stockOnly = await runGql(list, {
+      kinds: ["ASSET"],
+      types: ["STOCK"],
+    });
+    expect(sortedNames(stockOnly)).toEqual(["ISA"]);
+
+    // Liability type filter — works against the liability `type` column.
+    const liabilityCards = await runGql(list, {
+      kinds: ["LIABILITY"],
+      types: ["CREDIT_CARD"],
+    });
+    expect(sortedNames(liabilityCards)).toEqual(["Amex"]);
+
+    // A type filter that none of the kept kinds can match returns nothing.
+    const empty = await runGql(list, {
+      kinds: ["ASSET"],
+      types: ["CREDIT_CARD"],
+    });
+    expect(empty.netWorthCategories!.edges).toEqual([]);
+  });
+
   it("updates and deletes a category", async () => {
     const assetId = await createAsset("Current account");
     const optionId = (

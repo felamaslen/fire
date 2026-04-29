@@ -1240,6 +1240,54 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const NetWorthCategoryKindType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Top-level discriminator for `NetWorthCategory` \u2014 picks which subtype (asset, liability, or equity-option) is being addressed.",
+        name: "NetWorthCategoryKind",
+        values: {
+            ASSET: {
+                value: "ASSET"
+            },
+            LIABILITY: {
+                value: "LIABILITY"
+            },
+            OPTION: {
+                value: "OPTION"
+            }
+        }
+    });
+    const NetWorthCategoryTypeType: GraphQLEnumType = new GraphQLEnumType({
+        description: "Combined type filter for `Query.netWorthCategories` \u2014 covers every value of `NetWorthAssetType` and `NetWorthLiabilityType` so a single `filterTypeIn` argument works regardless of category kind. Equity-option categories have no `type` column, so they're excluded whenever this filter is set.",
+        name: "NetWorthCategoryType",
+        values: {
+            CASH: {
+                value: "CASH"
+            },
+            CREDIT_CARD: {
+                value: "CREDIT_CARD"
+            },
+            LOAN: {
+                value: "LOAN"
+            },
+            MISC: {
+                value: "MISC"
+            },
+            OPTION: {
+                value: "OPTION"
+            },
+            PENSION: {
+                value: "PENSION"
+            },
+            PROPERTY: {
+                value: "PROPERTY"
+            },
+            STOCK: {
+                value: "STOCK"
+            },
+            VEHICLE: {
+                value: "VEHICLE"
+            }
+        }
+    });
     const NetWorthHistoryAssetBucketType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthHistoryAssetBucket",
         description: "One bucket at a single history point, grouped by asset `type`.",
@@ -2436,6 +2484,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         before: {
                             type: GraphQLID
                         },
+                        filterKindIn: {
+                            description: "When set and non-empty, only categories whose kind is in this list are returned. Omitted / null / empty includes every kind.",
+                            type: new GraphQLList(new GraphQLNonNull(NetWorthCategoryKindType))
+                        },
+                        filterTypeIn: {
+                            description: "When set and non-empty, only categories whose `type` is in this list are returned. Asset and liability rows are filtered against their respective `type` columns; equity-option categories have no `type` and are excluded whenever this filter is set. Omitted / null / empty applies no type filter.",
+                            type: new GraphQLList(new GraphQLNonNull(NetWorthCategoryTypeType))
+                        },
                         first: {
                             type: GraphQLInt
                         },
@@ -2444,7 +2500,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return assertNonNull(queryNetWorthCategoriesResolver(args.first, args.after, args.last, args.before));
+                        return assertNonNull(queryNetWorthCategoriesResolver(args.first, args.after, args.last, args.before, args.filterKindIn, args.filterTypeIn));
                     }
                 },
                 netWorthEntry: {
@@ -4344,6 +4400,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, DemoType, DemoLoginStartType, DemoProgressType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, DemoType, DemoLoginStartType, DemoProgressType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }

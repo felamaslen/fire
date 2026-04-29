@@ -47,6 +47,30 @@ enum NetWorthAssetType {
   VEHICLE
 }
 
+"""
+Top-level discriminator for `NetWorthCategory` — picks which subtype (asset, liability, or equity-option) is being addressed.
+"""
+enum NetWorthCategoryKind {
+  ASSET
+  LIABILITY
+  OPTION
+}
+
+"""
+Combined type filter for `Query.netWorthCategories` — covers every value of `NetWorthAssetType` and `NetWorthLiabilityType` so a single `filterTypeIn` argument works regardless of category kind. Equity-option categories have no `type` column, so they're excluded whenever this filter is set.
+"""
+enum NetWorthCategoryType {
+  CASH
+  CREDIT_CARD
+  LOAN
+  MISC
+  OPTION
+  PENSION
+  PROPERTY
+  STOCK
+  VEHICLE
+}
+
 """Kind of notable event a `NetWorthForecastMilestone` captures."""
 enum NetWorthForecastMilestoneKind {
   LOAN_PAID_OFF
@@ -2072,7 +2096,20 @@ type Query {
   """
   Paginated list of all net-worth categories (assets, liabilities, options), newest first.
   """
-  netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection @semanticNonNull
+  netWorthCategories(
+    after: ID
+    before: ID
+    """
+    When set and non-empty, only categories whose kind is in this list are returned. Omitted / null / empty includes every kind.
+    """
+    filterKindIn: [NetWorthCategoryKind!]
+    """
+    When set and non-empty, only categories whose `type` is in this list are returned. Asset and liability rows are filtered against their respective `type` columns; equity-option categories have no `type` and are excluded whenever this filter is set. Omitted / null / empty applies no type filter.
+    """
+    filterTypeIn: [NetWorthCategoryType!]
+    first: Int
+    last: Int
+  ): NetWorthCategoryConnection @semanticNonNull
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
   """

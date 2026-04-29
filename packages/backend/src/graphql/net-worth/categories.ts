@@ -1,14 +1,28 @@
 import { strict as assert } from "node:assert";
 
-import { and, asc, count, desc, eq, gt, lt, or, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  lt,
+  or,
+  type SQL,
+} from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
+import type { IsEqual } from "type-fest";
 
 import { db } from "@/db";
 import {
   NetWorthCategoryAssets,
+  netWorthCategoryAssetType,
   NetWorthCategoryLiabilities,
+  netWorthCategoryLiabilityType,
   NetWorthCategoryOptions,
   NetWorthValues,
 } from "@/db/schema/net-worth";
@@ -30,6 +44,47 @@ export type NetWorthAssetType =
 
 /** Kind of liability a category represents. @gqlEnum */
 export type NetWorthLiabilityType = "CREDIT_CARD" | "LOAN" | "MISC";
+
+/** Top-level discriminator for `NetWorthCategory` — picks which subtype (asset, liability, or equity-option) is being addressed. @gqlEnum */
+export type NetWorthCategoryKind = "ASSET" | "LIABILITY" | "OPTION";
+
+/** Combined type filter for `Query.netWorthCategories` — covers every value of `NetWorthAssetType` and `NetWorthLiabilityType` so a single `filterTypeIn` argument works regardless of category kind. Equity-option categories have no `type` column, so they're excluded whenever this filter is set. @gqlEnum */
+export type NetWorthCategoryType =
+  | "CASH"
+  | "STOCK"
+  | "OPTION"
+  | "PENSION"
+  | "PROPERTY"
+  | "VEHICLE"
+  | "MISC"
+  | "CREDIT_CARD"
+  | "LOAN";
+
+// Grats requires literal-union @gqlEnum members, so the GraphQL types above
+// are duplicated from the `pgEnum` definitions. These compile-time assertions
+// fail the build if the two ever drift out of sync.
+const _assertAssetTypeMatchesDb: IsEqual<
+  NetWorthAssetType,
+  (typeof netWorthCategoryAssetType.enumValues)[number]
+> = true;
+const _assertLiabilityTypeMatchesDb: IsEqual<
+  NetWorthLiabilityType,
+  (typeof netWorthCategoryLiabilityType.enumValues)[number]
+> = true;
+const _assertCategoryTypeMatchesDb: IsEqual<
+  NetWorthCategoryType,
+  NetWorthAssetType | NetWorthLiabilityType
+> = true;
+void _assertAssetTypeMatchesDb;
+void _assertLiabilityTypeMatchesDb;
+void _assertCategoryTypeMatchesDb;
+
+const ASSET_TYPES: ReadonlySet<NetWorthCategoryType> = new Set(
+  netWorthCategoryAssetType.enumValues,
+);
+const LIABILITY_TYPES: ReadonlySet<NetWorthCategoryType> = new Set(
+  netWorthCategoryLiabilityType.enumValues,
+);
 
 /** A reusable bucket used to classify NetWorthValues (assets, liabilities, or options). @gqlInterface */
 export interface NetWorthCategory {
@@ -240,6 +295,10 @@ export async function netWorthCategories(
   after?: ID | null,
   last?: Int | null,
   before?: ID | null,
+  /** When set and non-empty, only categories whose kind is in this list are returned. Omitted / null / empty includes every kind. */
+  filterKindIn?: NetWorthCategoryKind[] | null,
+  /** When set and non-empty, only categories whose `type` is in this list are returned. Asset and liability rows are filtered against their respective `type` columns; equity-option categories have no `type` and are excluded whenever this filter is set. Omitted / null / empty applies no type filter. */
+  filterTypeIn?: NetWorthCategoryType[] | null,
 ): Promise<Connection<NetWorthCategory> | null> {
   assert(
     first == null || last == null,
@@ -259,12 +318,44 @@ export async function netWorthCategories(
 
   type Fetched = NetWorthCategory & { createdAtDate: Date };
 
+  const kindFilter =
+    filterKindIn && filterKindIn.length > 0 ? new Set(filterKindIn) : null;
+  const typeFilter =
+    filterTypeIn && filterTypeIn.length > 0 ? new Set(filterTypeIn) : null;
+  const includeAssets = !kindFilter || kindFilter.has("ASSET");
+  const includeLiabilities = !kindFilter || kindFilter.has("LIABILITY");
+  // Options have no `type` column, so a non-empty `typeFilter` excludes them.
+  const includeOptions =
+    (!kindFilter || kindFilter.has("OPTION")) && !typeFilter;
+
+  const assetTypeWhere = typeFilter
+    ? (() => {
+        const matches = [...typeFilter].filter((t): t is NetWorthAssetType =>
+          ASSET_TYPES.has(t),
+        );
+        return matches.length > 0
+          ? inArray(NetWorthCategoryAssets.type, matches)
+          : null;
+      })()
+    : undefined;
+  const liabilityTypeWhere = typeFilter
+    ? (() => {
+        const matches = [...typeFilter].filter(
+          (t): t is NetWorthLiabilityType => LIABILITY_TYPES.has(t),
+        );
+        return matches.length > 0
+          ? inArray(NetWorthCategoryLiabilities.type, matches)
+          : null;
+      })()
+    : undefined;
+
   const runPaged = async <T extends { createdAt: Date; id: string }>(
     table:
       | typeof NetWorthCategoryAssets
       | typeof NetWorthCategoryLiabilities
       | typeof NetWorthCategoryOptions,
     map: (row: T) => NetWorthCategory,
+    extraWhere?: SQL,
   ): Promise<Fetched[]> => {
     const cursorWhere: SQL | undefined = cursor
       ? forward
@@ -287,7 +378,7 @@ export async function netWorthCategories(
     const rows = (await db
       .select()
       .from(table)
-      .where(cursorWhere)
+      .where(extraWhere ? and(cursorWhere, extraWhere) : cursorWhere)
       .orderBy(
         forward ? desc(table.createdAt) : asc(table.createdAt),
         forward ? desc(table.id) : asc(table.id),
@@ -305,21 +396,33 @@ export async function netWorthCategories(
   };
 
   const [assets, liabilities, options] = await Promise.all([
-    runPaged(NetWorthCategoryAssets, (row) =>
-      NetWorthCategoryAsset.load(
-        row as typeof NetWorthCategoryAssets.$inferSelect,
-      ),
-    ),
-    runPaged(NetWorthCategoryLiabilities, (row) =>
-      NetWorthCategoryLiability.load(
-        row as typeof NetWorthCategoryLiabilities.$inferSelect,
-      ),
-    ),
-    runPaged(NetWorthCategoryOptions, (row) =>
-      NetWorthCategoryOption.load(
-        row as typeof NetWorthCategoryOptions.$inferSelect,
-      ),
-    ),
+    includeAssets && assetTypeWhere !== null
+      ? runPaged(
+          NetWorthCategoryAssets,
+          (row) =>
+            NetWorthCategoryAsset.load(
+              row as typeof NetWorthCategoryAssets.$inferSelect,
+            ),
+          assetTypeWhere,
+        )
+      : Promise.resolve([] as Fetched[]),
+    includeLiabilities && liabilityTypeWhere !== null
+      ? runPaged(
+          NetWorthCategoryLiabilities,
+          (row) =>
+            NetWorthCategoryLiability.load(
+              row as typeof NetWorthCategoryLiabilities.$inferSelect,
+            ),
+          liabilityTypeWhere,
+        )
+      : Promise.resolve([] as Fetched[]),
+    includeOptions
+      ? runPaged(NetWorthCategoryOptions, (row) =>
+          NetWorthCategoryOption.load(
+            row as typeof NetWorthCategoryOptions.$inferSelect,
+          ),
+        )
+      : Promise.resolve([] as Fetched[]),
   ]);
 
   const merged = [...assets, ...liabilities, ...options].sort((a, b) => {
