@@ -21,8 +21,8 @@ import { z } from "zod";
 import { Figure, FigureDocument } from "@/components/figure";
 import {
   AllocationsSection,
-  AllocationsSectionCashPositionFragment,
   AllocationsSectionInvestmentFragment,
+  AllocationsSectionPortfolioFragment,
 } from "@/components/investments/allocations-section";
 import {
   InvestmentForm,
@@ -151,6 +151,37 @@ export const InvestmentsListDocument = graphql(
   [InvestmentRowDocument, InvestmentFormDocument],
 );
 
+const PortfolioFilterInvestmentFragment = graphql(`
+  fragment PortfolioFilterInvestment on Investment {
+    id
+    wrappers {
+      asset {
+        id
+        name
+        type
+      }
+    }
+  }
+`);
+
+const FILTER_PORTFOLIO_TYPES = new Set(["STOCK", "PENSION"]);
+
+function portfolioFilterOptionsFromInvestments(
+  investments: FragmentOf<typeof PortfolioFilterInvestmentFragment>[],
+): { id: string; name: string }[] {
+  const seen = new Map<string, { id: string; name: string }>();
+  for (const ref of investments) {
+    const inv = readFragment(PortfolioFilterInvestmentFragment, ref);
+    for (const w of inv.wrappers ?? []) {
+      if (!FILTER_PORTFOLIO_TYPES.has(w.asset.type)) continue;
+      if (!seen.has(w.asset.id)) {
+        seen.set(w.asset.id, { id: w.asset.id, name: w.asset.name });
+      }
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 // Combined document fired once on initial page load — prewarms the Apollo
 // cache so each child's own `useQuery` renders synchronously without a
 // per-widget spinner. Each child keeps its own document for refreshes
@@ -189,6 +220,18 @@ const InvestmentsPageDocument = graphql(
         ...PortfolioHeadline
         ...PortfolioChartPortfolio
       }
+      allocationsPortfolio: portfolio(filterAssetIdIn: $filterAssetIdIn) {
+        ...AllocationsSectionPortfolio
+      }
+      portfolioFilterInvestments: investments(first: 1000) {
+        edges {
+          node {
+            id
+            ...PortfolioFilterInvestment
+            ...AllocationsSectionInvestment
+          }
+        }
+      }
       portfolios(filterAssetIdIn: $filterAssetIdIn, skipLive: $skipLive)
         @include(if: $stack) {
         edges {
@@ -208,7 +251,6 @@ const InvestmentsPageDocument = graphql(
           }
         }
       }
-      ...AllocationsSectionCashPosition
     }
   `,
   [
@@ -217,55 +259,20 @@ const InvestmentsPageDocument = graphql(
     PortfolioHeadlineFragment,
     PortfolioChartPortfolioFragment,
     AllocationsSectionInvestmentFragment,
-    AllocationsSectionCashPositionFragment,
+    AllocationsSectionPortfolioFragment,
+    PortfolioFilterInvestmentFragment,
   ],
 );
-
-const PortfolioFilterOptionsDocument = graphql(`
-  query PortfolioFilterOptions {
-    investments(first: 1000) {
-      edges {
-        node {
-          id
-          wrappers {
-            asset {
-              id
-              name
-              type
-            }
-          }
-        }
-      }
-    }
-  }
-`);
-
-const FILTER_PORTFOLIO_TYPES = new Set(["STOCK", "PENSION"]);
-
-export function usePortfolioFilterOptions(): { id: string; name: string }[] {
-  const { data } = useQuery(PortfolioFilterOptionsDocument, {
-    fetchPolicy: "cache-first",
-  });
-  const seen = new Map<string, { id: string; name: string }>();
-  for (const edge of data?.investments?.edges ?? []) {
-    for (const w of edge.node.wrappers ?? []) {
-      if (!FILTER_PORTFOLIO_TYPES.has(w.asset.type)) continue;
-      if (!seen.has(w.asset.id)) {
-        seen.set(w.asset.id, { id: w.asset.id, name: w.asset.name });
-      }
-    }
-  }
-  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
 
 function PortfolioFilterDropdown({
   value,
   onChange,
+  options,
 }: {
   value: string[];
   onChange: (ids: string[]) => void;
+  options: { id: string; name: string }[];
 }) {
-  const options = usePortfolioFilterOptions();
   const selected = new Set(value);
   const allSelected = value.length === 0;
   const label = allSelected
@@ -547,11 +554,6 @@ function InvestmentsPageContent() {
   // The allocations widget and per-investment detail (transaction list /
   // position lookup on `Investment.transactionsPaged` and `position`) are
   // single-wrapper-scoped, so they only act on a unambiguously-selected
-  // portfolio. The investments list, chart and headline all support a
-  // multi-wrapper filter and use the array directly.
-  const singleFilterAssetId =
-    filterAssetIds.length === 1 ? filterAssetIds[0] : null;
-
   const setChart = (next: PortfolioChartSettings) => {
     const patch = chartToSearch(next);
     void navigate({
@@ -577,14 +579,6 @@ function InvestmentsPageContent() {
       replace: true,
     });
   };
-  const portfolioOptions = usePortfolioFilterOptions();
-  const selectedLabel =
-    filterAssetIds.length === 0
-      ? null
-      : filterAssetIds.length === 1
-        ? (portfolioOptions.find((o) => o.id === filterAssetIds[0])?.name ??
-          null)
-        : "Selected portfolios";
 
   // Freeze the initial suspense-query variables so later set* calls don't
   // re-suspend the page — children refetch via their own `useQuery`. The
@@ -613,7 +607,26 @@ function InvestmentsPageContent() {
       filterIsSold: loadHideSold() ? false : null,
     };
   });
-  useSuspenseQuery(InvestmentsPageDocument, { variables: initialVars });
+  // Fire-and-forget prewarm. The page never reads this query's `data` —
+  // it only exists to populate the cache so each child's own `useQuery` /
+  // `useSuspenseQuery` resolves synchronously. We deliberately don't
+  // `useSuspenseQuery` here: under React 18 + Apollo's queryRef lifecycle
+  // we were seeing the same operation fire twice on initial load (also in
+  // production), and a non-suspending fetch sidesteps that entirely while
+  // still warming the cache before any child mounts and reads it.
+  const { data: pageData } = useQuery(InvestmentsPageDocument, {
+    variables: initialVars,
+  });
+  const portfolioOptions = portfolioFilterOptionsFromInvestments(
+    pageData?.portfolioFilterInvestments?.edges.map((e) => e.node) ?? [],
+  );
+  const selectedLabel =
+    filterAssetIds.length === 0
+      ? null
+      : filterAssetIds.length === 1
+        ? (portfolioOptions.find((o) => o.id === filterAssetIds[0])?.name ??
+          null)
+        : "Selected portfolios";
 
   return (
     <>
@@ -623,6 +636,7 @@ function InvestmentsPageContent() {
           <PortfolioFilterDropdown
             value={filterAssetIds}
             onChange={setFilterAssetIds}
+            options={portfolioOptions}
           />
         }
       />
@@ -631,7 +645,7 @@ function InvestmentsPageContent() {
         selectedLabel={selectedLabel}
         settings={chart}
         onChange={setChart}
-        bottomSlot={<AllocationsSection filterAssetId={singleFilterAssetId} />}
+        bottomSlot={<AllocationsSection filterAssetIds={filterAssetIds} />}
       />
       <InvestmentsList
         sort={sort}
