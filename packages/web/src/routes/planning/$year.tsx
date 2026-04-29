@@ -43,7 +43,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -1112,7 +1111,10 @@ function TransactionRow({
     </>
   );
   const rowClass = cn(
-    "group/row flex w-full items-center gap-1 px-2 py-1 text-left cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:bg-accent/40",
+    "group/row flex w-full items-center gap-1 px-2 py-1 text-left",
+    tx.isEditable
+      ? "cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:bg-accent/40"
+      : "cursor-default",
     tx.isProvisional && "italic text-muted-foreground",
     // Indent payslip deductions so they read as children of the gross row
     // rendered immediately above them.
@@ -1128,6 +1130,19 @@ function TransactionRow({
       openDialog();
     }
   };
+
+  if (!tx.isEditable) {
+    return (
+      <li>
+        <Tooltip delayDuration={1000}>
+          <TooltipTrigger asChild>
+            <div className={rowClass}>{rowBody}</div>
+          </TooltipTrigger>
+          <TooltipContent>This transaction is not editable.</TooltipContent>
+        </Tooltip>
+      </li>
+    );
+  }
 
   if (!everOpened) {
     return (
@@ -1161,12 +1176,6 @@ function TransactionRow({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Transaction</DialogTitle>
-            {!tx.isEditable && (
-              <DialogDescription>
-                This transaction is derived from earnings, payslips, or bills
-                and can't be edited here.
-              </DialogDescription>
-            )}
           </DialogHeader>
           <FullTransactionForm
             submitLabel="Save"
@@ -1184,8 +1193,7 @@ function TransactionRow({
             excludeAccountId={accountId}
             frequentLiabilityIds={frequentLiabilityIds}
             frequentAssetIds={frequentAssetIds}
-            disabled={!tx.isEditable}
-            onDelete={tx.isEditable ? onDelete : undefined}
+            onDelete={onDelete}
             onSubmit={onSaveEdit}
             onCancel={() => setEditOpen(false)}
           />
