@@ -22,6 +22,11 @@ export function runWithDb<T>(scopedDb: DB, fn: () => Promise<T>): Promise<T> {
   return als.run(scopedDb, fn);
 }
 
+export function runInTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  const active = als.getStore() ?? defaultDb;
+  return active.transaction((tx) => runWithDb(tx as unknown as DB, fn));
+}
+
 export const db: DB = new Proxy(defaultDb, {
   get(_target, prop) {
     const active = als.getStore() ?? defaultDb;

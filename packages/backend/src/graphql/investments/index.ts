@@ -4,7 +4,7 @@ import { and, eq, exists, inArray, ne, not, or, sum } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { ID, Int } from "grats";
 
-import { db } from "@/db";
+import { db, runInTransaction } from "@/db";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 
 import type { Context } from "../context";
@@ -238,25 +238,27 @@ export async function investmentCreate(
 ): Promise<Investment> {
   assertCurrencyCode(currency);
   const columns = assetInputToColumns(asset);
-  const [row] = await db
-    .insert(Investments)
-    .values({ name, currency, ...columns })
-    .returning();
-  if (transactions && transactions.length > 0) {
-    for (const tx of transactions) {
-      await investmentTransactionCreate(
-        row.id as ID,
-        tx.assetId,
-        tx.date,
-        tx.units,
-        tx.price,
-        tx.taxes,
-        tx.fees,
-        tx.drip,
-      );
+  return runInTransaction(async () => {
+    const [row] = await db
+      .insert(Investments)
+      .values({ name, currency, ...columns })
+      .returning();
+    if (transactions && transactions.length > 0) {
+      for (const tx of transactions) {
+        await investmentTransactionCreate(
+          row.id as ID,
+          tx.assetId,
+          tx.date,
+          tx.units,
+          tx.price,
+          tx.taxes,
+          tx.fees,
+          tx.drip,
+        );
+      }
     }
-  }
-  return Investment.load(row);
+    return Investment.load(row);
+  });
 }
 
 /** Partially update an investment. Omitted (or `null`) fields are left unchanged. @gqlMutationField */

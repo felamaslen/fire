@@ -1,2 +1,2 @@
 export type { DB } from "./client";
-export { db, runWithDb } from "./client";
+export { db, runInTransaction, runWithDb } from "./client";

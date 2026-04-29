@@ -42,6 +42,12 @@ export function runWithDb<T>(scopedDb: DB, fn: () => Promise<T>): Promise<T> {
   return als.run(scopedDb, fn);
 }
 
+/** Open a Postgres transaction on the active db (the request-scoped one if set, otherwise `defaultDb`) and rebind the `db` proxy to it for the duration of `fn`. Every `db.*` call made inside `fn` — including in functions it calls — runs inside the transaction, so business-logic helpers compose without having to thread a `tx` parameter through their signatures. The transaction commits when `fn` resolves and rolls back when it throws. */
+export function runInTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  const active = als.getStore() ?? defaultDb;
+  return active.transaction((tx) => runWithDb(tx as unknown as DB, fn));
+}
+
 /** `defaultDb` wrapped so property reads inside an `als.run(...)` scope come from the scoped db. */
 export const db: DB = new Proxy(defaultDb, {
   get(_target, prop) {
