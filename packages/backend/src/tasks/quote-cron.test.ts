@@ -34,6 +34,19 @@ function yahooQuoteHandler(
 
 beforeEach(() => {
   clearInflightForTesting();
+  server.use(
+    http.get(
+      "https://finance.yahoo.com/quote/AAPL",
+      () =>
+        new HttpResponse(null, {
+          status: 200,
+          headers: { "set-cookie": "A1=foo; Path=/" },
+        }),
+    ),
+    http.get("https://query1.finance.yahoo.com/v1/test/getcrumb", () =>
+      HttpResponse.text("test-crumb"),
+    ),
+  );
 });
 
 async function createInvestment(

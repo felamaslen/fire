@@ -8,6 +8,8 @@ import pgImport from "pg";
 
 import { env } from "@/env";
 
+import { mswServer } from "./msw";
+
 const PgImpl = pgImport.native ?? pgImport;
 
 // Swap the production pool for a per-worker pool with acquire/release
@@ -32,6 +34,13 @@ beforeAll(() => {
 afterAll(() => {
   vi.useRealTimers();
 });
+
+// Block outbound HTTP for the whole test process. Any request a test doesn't
+// explicitly mock with `server.use(...)` will throw — preventing fire-and-forget
+// background fetches (e.g. Yahoo live-quote refreshes) from racing past the
+// test boundary and leaking pool clients while their DB writes complete.
+beforeAll(() => mswServer.listen({ onUnhandledRequest: "error" }));
+afterAll(() => mswServer.close());
 
 const ADMIN_URL = "postgres://fire:fire@localhost:5433/postgres";
 const TEMPLATE_DB = "fire_template";
