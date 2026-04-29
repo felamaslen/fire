@@ -390,6 +390,18 @@ input PayslipAdjustmentInput {
 }
 
 """
+A parental-leave stage to attach to a `PlanningEarning`. Rows are upserted by (earnings, start) — re-supplying the same `start` overwrites the previous stage. `isSMP` and `isSPP` are mutually exclusive.
+"""
+input PlanningEarningParentalLeaveInput {
+  end: Date
+  """Fraction of normal gross paid during this stage, in `[0, 1]`."""
+  fractionOfGross: Float!
+  isSMP: Boolean
+  isSPP: Boolean
+  start: Date!
+}
+
+"""
 A tax-code entry to attach to a PlanningEarning. Rows are upserted by (earnings, start) — re-supplying the same `start` overwrites the previous code/end.
 """
 input PlanningEarningUKTaxCodeInput {
@@ -413,6 +425,10 @@ input PlanningYearTaxRatesUKInput {
   rateNicAdditional: Float!
   rateNicMain: Float!
   rateStudentLoanPlan2: Float!
+  """
+  Statutory weekly rate for parental pay (`SMP` / `SPP` / `ShPP` / `SAP`), in fractional units of GBP.
+  """
+  statutoryParentalPayWeekly: Float!
   """Start of the additional-rate band, in fractional units of GBP."""
   thresholdAdditional: Float!
   """Top of the basic-rate band, in fractional units of GBP."""
@@ -818,6 +834,10 @@ type Mutation {
     end: Date
     name: String!
     """
+    Parental-leave stages affecting predicted gross during their date ranges. Provide one row per stage of an enhanced scheme (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid).
+    """
+    parentalLeaves: [PlanningEarningParentalLeaveInput!]
+    """
     Pension asset (`NetWorthCategoryAsset` of type `PENSION`) the predicted pension deductions contribute to. May only be set when at least one pension fraction is configured.
     """
     pensionAssetId: ID
@@ -858,6 +878,10 @@ type Mutation {
     end: Date
     id: ID!
     name: String
+    """
+    New full parental-leave history; pass to replace the existing list (every supplied row is upserted, and any rows not in the list are removed). Omit to leave the history untouched.
+    """
+    parentalLeaves: [PlanningEarningParentalLeaveInput!]
     """
     New linked pension asset; pass null explicitly to clear. Must be null whenever every pension fraction ends up null (after this patch applies).
     """
@@ -1121,7 +1145,7 @@ type Mutation {
   - `tx:…` / `to:…` — deletes the `PlanningTransactions` row.
   - `pay:…` — deletes the payslip (and its adjustments, via cascade).
   - `adj:…` — deletes the single adjustment.
-  - `bill:…` — writes a per-month bill override with null amount, which skips the bill for this month only.
+  - `bill:…` — clears any per-month override row for this (bill, month), so the predicted bill takes over again. To cancel a predicted bill for one month, set its amount to zero explicitly via `transactionUpdate` instead of deleting.
   - `earn:…` — inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.
   - `liab:…` — materialises a zero-amount manual transaction tagged with the liability, which suppresses the credit-card spend prediction for this month while leaving the liability visible in the grid.
   """
@@ -1636,6 +1660,10 @@ type PlanningEarning {
   id: ID!
   name: String!
   """
+  Parental-leave stages for this earnings stream, sorted by `start` ascending. Each stage reduces the gross pay used for the predicted projections during its date range — months covered by an actual payslip are unaffected.
+  """
+  parentalLeaves: [PlanningEarningParentalLeave!]!
+  """
   Pension asset the predicted pension deductions contribute to. Null when no pension fractions are configured or no asset has been linked.
   """
   pensionAsset: NetWorthCategoryAsset
@@ -1682,6 +1710,29 @@ A single entry inside a `Connection`. Carries its own `cursor` so clients can re
 type PlanningEarningEdge {
   cursor: ID!
   node: PlanningEarning!
+}
+
+"""
+A parental-leave stage on a `PlanningEarning`. Each stage represents a single, constant pay level over a date range — an enhanced employer scheme is modelled as several stages in sequence (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid). Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually. During a stage the effective gross is `max(fractionOfGross × normal, statutoryFloor)` where `statutoryFloor` is `min(year's statutory weekly rate, 90% of normal weekly gross)` when the stage is statutorily eligible. The two eligibility flags are mutually exclusive.
+"""
+type PlanningEarningParentalLeave {
+  """
+  Last day this stage applies (inclusive); null while the stage is ongoing.
+  """
+  end: Date
+  """
+  Fraction of the earning's normal gross paid during this stage, in `[0, 1]`. `0` means unpaid; `1` means full pay. The statutory floor (when `isSMP` or `isSPP` is set) may raise the effective pay above this.
+  """
+  fractionOfGross: Float!
+  """
+  Whether this stage qualifies for Statutory Maternity Pay (also covers Shared Parental Pay and Statutory Adoption Pay — they share a weekly rate). When set, the statutory floor applies during this stage. Mutually exclusive with `isSPP`.
+  """
+  isSMP: Boolean!
+  """
+  Whether this stage qualifies for Statutory Paternity Pay. When set, the statutory floor applies during this stage. Mutually exclusive with `isSMP`.
+  """
+  isSPP: Boolean!
+  start: Date!
 }
 
 """
@@ -1875,6 +1926,10 @@ type PlanningYearTaxRatesUK {
   rateNicAdditional: Float!
   rateNicMain: Float!
   rateStudentLoanPlan2: Float!
+  """
+  Statutory weekly rate for parental pay (`SMP` / `SPP` / `ShPP` / `SAP`), in fractional units of GBP. Used as the floor for parental-leave top-ups: actual weekly pay during a leave is at least `min(this rate, 90% of normal weekly gross)` when the leave is flagged as eligible.
+  """
+  statutoryParentalPayWeekly: Float!
   """Start of the additional-rate band, in fractional units of GBP."""
   thresholdAdditional: Float!
   """Top of the basic-rate band, in fractional units of GBP."""

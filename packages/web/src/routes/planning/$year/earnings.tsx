@@ -61,6 +61,13 @@ const PlanningEarningsDialogDocument = graphql(
               end
               taxCode
             }
+            parentalLeaves {
+              start
+              end
+              fractionOfGross
+              isSMP
+              isSPP
+            }
             toAccount {
               id
               name
@@ -111,6 +118,7 @@ const PlanningEarningsCreateDocument = graphql(`
     $studentLoanLiabilityId: ID
     $pensionAssetId: ID
     $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
+    $parentalLeaves: [PlanningEarningParentalLeaveInput!]
   ) {
     earningsCreate(
       name: $name
@@ -126,6 +134,7 @@ const PlanningEarningsCreateDocument = graphql(`
       studentLoanLiabilityId: $studentLoanLiabilityId
       pensionAssetId: $pensionAssetId
       ukTaxCodes: $ukTaxCodes
+      parentalLeaves: $parentalLeaves
     ) {
       id
     }
@@ -147,6 +156,7 @@ const PlanningEarningsUpdateDocument = graphql(`
     $studentLoanLiabilityId: ID
     $pensionAssetId: ID
     $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
+    $parentalLeaves: [PlanningEarningParentalLeaveInput!]
   ) {
     earningsUpdate(
       id: $id
@@ -162,6 +172,7 @@ const PlanningEarningsUpdateDocument = graphql(`
       studentLoanLiabilityId: $studentLoanLiabilityId
       pensionAssetId: $pensionAssetId
       ukTaxCodes: $ukTaxCodes
+      parentalLeaves: $parentalLeaves
     ) {
       id
     }
@@ -215,6 +226,15 @@ type RefetchEntry =
  * form only tracks the code + its end date. */
 type TaxCodeEntry = { taxCode: string; end: string };
 
+/** One row in the user-facing parental-leave list. Stages are independent (gaps allowed) so each stage tracks its own start; `eligibility` is the SMP/SPP/none toggle. */
+type ParentalLeaveEntry = {
+  start: string;
+  end: string;
+  /** Stored as a 0–100 string so empty inputs don't coerce to 0. */
+  fractionPct: string;
+  eligibility: "NONE" | "SMP" | "SPP";
+};
+
 type FormValues = {
   name: string;
   start: string;
@@ -230,6 +250,7 @@ type FormValues = {
   /** Empty string = no asset linked. Only meaningful when at least one pension fraction is set. */
   pensionAssetId: string;
   taxCodes: TaxCodeEntry[];
+  parentalLeaves: ParentalLeaveEntry[];
 };
 
 const emptyForm: FormValues = {
@@ -245,6 +266,7 @@ const emptyForm: FormValues = {
   studentLoanLiabilityId: "",
   pensionAssetId: "",
   taxCodes: [],
+  parentalLeaves: [],
 };
 
 function earningToForm(earning: Earning): FormValues {
@@ -271,7 +293,37 @@ function earningToForm(earning: Earning): FormValues {
     taxCodes: [...earning.ukTaxCodes]
       .sort((a, b) => a.start.localeCompare(b.start))
       .map((c) => ({ taxCode: c.taxCode, end: c.end ?? "" })),
+    parentalLeaves: [...earning.parentalLeaves]
+      .sort((a, b) => a.start.localeCompare(b.start))
+      .map((l) => ({
+        start: l.start,
+        end: l.end ?? "",
+        fractionPct: String(Math.round(l.fractionOfGross * 100)),
+        eligibility: l.isSMP ? "SMP" : l.isSPP ? "SPP" : "NONE",
+      })),
   };
+}
+
+/** Build the `PlanningEarningParentalLeaveInput[]` the backend expects from the form's entries — drops rows with no start date and clamps the percentage to `[0, 100]`. */
+function parentalLeavesForMutation(entries: ParentalLeaveEntry[]): {
+  start: string;
+  end: string | null;
+  fractionOfGross: number;
+  isSMP: boolean;
+  isSPP: boolean;
+}[] {
+  return entries
+    .filter((e) => e.start !== "")
+    .map((e) => ({
+      start: e.start,
+      end: e.end === "" ? null : e.end,
+      fractionOfGross: Math.max(
+        0,
+        Math.min(1, (Number(e.fractionPct) || 0) / 100),
+      ),
+      isSMP: e.eligibility === "SMP",
+      isSPP: e.eligibility === "SPP",
+    }));
 }
 
 /** Build the `PlanningEarningUKTaxCodeInput[]` the backend expects from the
@@ -528,6 +580,7 @@ function AddEarningForm({
             : null,
         toAccountId: values.toAccountId,
         ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
+        parentalLeaves: parentalLeavesForMutation(values.parentalLeaves),
       },
     });
     toast.success(`Added ${values.name.trim()}`);
@@ -611,6 +664,7 @@ function EditEarningForm({
             : null,
         toAccountId: values.toAccountId,
         ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
+        parentalLeaves: parentalLeavesForMutation(values.parentalLeaves),
       },
     });
     toast.success(`Updated ${values.name.trim()}`);
@@ -809,7 +863,106 @@ function EarningFormFields({
         entries={values.taxCodes}
         onChange={(taxCodes) => patch({ taxCodes })}
       />
+      <ParentalLeavesField
+        entries={values.parentalLeaves}
+        onChange={(parentalLeaves) => patch({ parentalLeaves })}
+      />
     </>
+  );
+}
+
+function ParentalLeavesField({
+  entries,
+  onChange,
+}: {
+  entries: ParentalLeaveEntry[];
+  onChange: (next: ParentalLeaveEntry[]) => void;
+}) {
+  const addEntry = () => {
+    onChange([
+      ...entries,
+      { start: "", end: "", fractionPct: "0", eligibility: "NONE" },
+    ]);
+  };
+  const patchAt = (i: number, p: Partial<ParentalLeaveEntry>) => {
+    onChange(entries.map((e, idx) => (idx === i ? { ...e, ...p } : e)));
+  };
+  const removeAt = (i: number) => {
+    onChange(entries.filter((_, idx) => idx !== i));
+  };
+
+  return (
+    <details className="rounded-md border bg-muted/20 p-2 text-xs">
+      <summary className="cursor-pointer font-medium">Parental leave</summary>
+      <p className="mt-2 text-muted-foreground">
+        Each stage reduces the predicted gross during its date range. Add one
+        stage per pay level — e.g. 6 weeks at 90%, then 33 weeks at 0% with SMP,
+        then 13 weeks unpaid. Months covered by a real payslip are unaffected.
+      </p>
+      <ul className="mt-2 space-y-2">
+        {entries.map((entry, i) => (
+          <li key={i} className="flex flex-wrap items-end gap-2">
+            <FormField label="From">
+              <Input
+                type="date"
+                value={entry.start}
+                onChange={(e) => patchAt(i, { start: e.target.value })}
+                required
+              />
+            </FormField>
+            <FormField label="To">
+              <Input
+                type="date"
+                value={entry.end}
+                onChange={(e) => patchAt(i, { end: e.target.value })}
+                placeholder="(ongoing)"
+              />
+            </FormField>
+            <FormField label="Pay">
+              <PercentInput
+                value={entry.fractionPct}
+                onChange={(v) => patchAt(i, { fractionPct: v })}
+                placeholder="0"
+              />
+            </FormField>
+            <FormField label="Eligibility">
+              <Select
+                value={entry.eligibility}
+                onValueChange={(v) =>
+                  patchAt(i, {
+                    eligibility: v as ParentalLeaveEntry["eligibility"],
+                  })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="NONE">None</SelectItem>
+                  <SelectItem value="SMP">SMP / ShPP / SAP</SelectItem>
+                  <SelectItem value="SPP">SPP</SelectItem>
+                </SelectContent>
+              </Select>
+            </FormField>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => removeAt(i)}
+              aria-label={`Remove parental leave ${i + 1}`}
+            >
+              <X className="size-4" />
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2 flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={addEntry}>
+          <Plus className="mr-1 size-3" />
+          Add parental leave
+        </Button>
+      </div>
+    </details>
   );
 }
 
