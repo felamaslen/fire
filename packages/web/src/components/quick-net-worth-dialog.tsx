@@ -216,6 +216,7 @@ async function refreshRates(
       `Couldn't refresh FX rates — saving with stale rates. ${
         err instanceof Error ? err.message : String(err)
       }`,
+      { position: "top-right" },
     );
     return rates.map((r) => ({
       base: r.base,
