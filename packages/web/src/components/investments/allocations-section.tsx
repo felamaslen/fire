@@ -428,21 +428,28 @@ export function AllocationsSection({
       // card so the bars sit on the card's bottom border.
       className="absolute inset-x-0 bottom-0"
     >
-      <AllocationBar
-        segments={actualSegments}
-        compact
-        className="rounded-none"
-      />
+      {editable && (
+        <AllocationBar
+          segments={actualSegments}
+          compact
+          className="rounded-none"
+        />
+      )}
       <AllocationBar
         segments={targetSegments}
         compact
+        showLabels={editable || targetSegments.length > 1}
         className={cn(
           "rounded-none rounded-b-lg",
           // Bump the target bar's touch target when it's editable so the
-          // drag handles are actually grabbable. The stacked "actual" bar
-          // above stays at its compact default so the two don't fight
-          // visually.
-          editable ? "h-5" : undefined,
+          // drag handles are actually grabbable, and so the inline
+          // stock-code labels (shown when editable or compound) are
+          // legible.
+          editable && "h-5",
+          // When unfilterd-but-compound, this is the only bar rendered
+          // (the thin actual bar above is hidden), so size it to match
+          // the combined h-2 + h-5 stack used in editable mode.
+          !editable && targetSegments.length > 1 && "h-7",
           saving && "pointer-events-none opacity-60",
         )}
         onBoundaryDrag={editable ? onBoundaryDrag : undefined}

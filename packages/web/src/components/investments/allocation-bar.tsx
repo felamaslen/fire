@@ -28,8 +28,10 @@ export type AllocationBarProps = {
   formatValue?: (value: number) => string;
   /** When `true`, render segments with muted colours to indicate inactivity. */
   disabled?: boolean;
-  /** When `true`, render as a thin colours-only bar with no labels and no border. */
+  /** When `true`, render as a thin bar with no border. Labels are still shown when `showLabels` is set. */
   compact?: boolean;
+  /** Force label rendering on/off. Defaults to `!compact` — i.e. labels show on full bars and hide on compact ones unless explicitly enabled. */
+  showLabels?: boolean;
   className?: string;
 };
 
@@ -41,8 +43,10 @@ export function AllocationBar({
   formatValue,
   disabled,
   compact,
+  showLabels,
   className,
 }: AllocationBarProps) {
+  const labelsVisible = showLabels ?? !compact;
   const trackRef = useRef<HTMLDivElement>(null);
   const [trackWidth, setTrackWidth] = useState(0);
 
@@ -81,8 +85,9 @@ export function AllocationBar({
             key={s.id}
             className={cn(
               "h-full min-w-0",
-              !compact &&
-                "flex items-center justify-center px-1 text-[10px] font-medium text-white tabular-nums",
+              labelsVisible &&
+                "flex items-center justify-center px-1 font-medium text-white tabular-nums leading-none",
+              labelsVisible && (compact ? "text-[9px]" : "text-[10px]"),
             )}
             style={{
               width: `${widthPct}%`,
@@ -91,9 +96,13 @@ export function AllocationBar({
             }}
             title={s.title ?? `${s.label}: ${fmt(s.value)}`}
           >
-            {!compact ? (
+            {labelsVisible ? (
               <span className="truncate drop-shadow-sm">
-                {widthPct >= 6 ? `${s.label} ${fmt(s.value)}` : null}
+                {widthPct >= 6
+                  ? compact
+                    ? s.label
+                    : `${s.label} ${fmt(s.value)}`
+                  : null}
               </span>
             ) : null}
           </div>
