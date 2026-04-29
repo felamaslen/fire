@@ -15,7 +15,13 @@ WORKDIR /app
 # Install every workspace's dependencies once. Shared across the web build
 # stage and the runtime stage so the `pnpm install` layer is cached across
 # source-only changes.
+#
+# `pg-native` builds a native libpq binding via `node-gyp` during install —
+# `build-base` + `python3` cover the toolchain, `postgresql-dev` provides
+# `pg_config` + `libpq` headers. These are only needed in this build stage;
+# the runtime stage installs just the shared library.
 FROM base AS deps
+RUN apk add --no-cache build-base python3 postgresql-dev
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/backend/package.json packages/backend/
 COPY packages/web/package.json packages/web/
@@ -37,6 +43,9 @@ RUN pnpm --filter web build
 # step — we just need source + installed node_modules. The built SPA lands
 # at `/app/web-dist` and is served by `src/spa.ts` via `WEB_DIST_DIR`.
 FROM deps AS runtime
+# Runtime needs the libpq shared library so the compiled `pg-native` addon
+# can resolve its imports; the build-only headers / toolchain stay in `deps`.
+RUN apk add --no-cache libpq
 COPY packages/backend ./packages/backend
 COPY --from=web-build /app/packages/web/dist /app/web-dist
 

@@ -35,6 +35,9 @@ jobs:
         with:
           node-version-file: .tool-versions
           cache: pnpm
+      # `pg-native` compiles against libpq headers via node-gyp during
+      # `pnpm install`. `libpq-dev` provides both the headers + `pg_config`.
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev
       - run: pnpm install --frozen-lockfile
       # Run the cheap checks first so a failure short-circuits the job before
       # the (slower) backend test suite runs against the Postgres service.

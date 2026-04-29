@@ -1,5 +1,7 @@
 import { createMigrator } from "drizzle-pgkit-migrator";
-import postgres from "postgres";
+import pgImport, { type Client } from "pg";
+
+const PgImpl = pgImport.native ?? pgImport;
 
 const ADMIN_URL = "postgres://fire:fire@localhost:5433/postgres";
 const TEMPLATE_DB = "fire_template";
@@ -15,11 +17,24 @@ const TEMPLATE_DB = "fire_template";
  */
 export const SEEDED_PLANNING_YEAR = 2025;
 
+async function withAdmin<T>(
+  url: string,
+  fn: (client: Client) => Promise<T>,
+): Promise<T> {
+  const client = new PgImpl.Client({ connectionString: url });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+}
+
 export default async function globalSetup() {
-  const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
-  await admin.unsafe(`DROP DATABASE IF EXISTS "${TEMPLATE_DB}" WITH (FORCE)`);
-  await admin.unsafe(`CREATE DATABASE "${TEMPLATE_DB}"`);
-  await admin.end();
+  await withAdmin(ADMIN_URL, async (admin) => {
+    await admin.query(`DROP DATABASE IF EXISTS "${TEMPLATE_DB}" WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE "${TEMPLATE_DB}"`);
+  });
 
   const templateUrl = `postgres://fire:fire@localhost:5433/${TEMPLATE_DB}`;
   const migrator = await createMigrator({
@@ -32,12 +47,9 @@ export default async function globalSetup() {
     await migrator.client.end();
   }
 
-  const sql = postgres(templateUrl, { max: 1, onnotice: () => {} });
-  try {
-    await seedPlanningYearFixture(sql, SEEDED_PLANNING_YEAR);
-  } finally {
-    await sql.end();
-  }
+  await withAdmin(templateUrl, (client) =>
+    seedPlanningYearFixture(client, SEEDED_PLANNING_YEAR),
+  );
 }
 
 /**
@@ -46,10 +58,12 @@ export default async function globalSetup() {
  * imports — so global setup doesn't pull in the full module graph.
  */
 async function seedPlanningYearFixture(
-  sql: postgres.Sql,
+  client: Client,
   year: number,
 ): Promise<void> {
-  await sql`INSERT INTO "PlanningYears" ("year") VALUES (${year})`;
+  await client.query(`INSERT INTO "PlanningYears" ("year") VALUES ($1)`, [
+    year,
+  ]);
   // UK FY `year` runs April `year` → March `year + 1`. Each month anchors
   // on the 1st of the month, matching what `planningYearSet` writes.
   const rows = Array.from({ length: 12 }, (_, i) => {
@@ -58,8 +72,12 @@ async function seedPlanningYearFixture(
     const date = new Date(Date.UTC(calendarYear, monthIdx, 1));
     return { year, date: date.toISOString().slice(0, 10) };
   });
-  const values = rows.map((r) => `(${r.year}, '${r.date}')`).join(", ");
-  await sql.unsafe(
-    `INSERT INTO "PlanningMonths" ("year", "date") VALUES ${values}`,
+  const placeholders = rows
+    .map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`)
+    .join(", ");
+  const params = rows.flatMap((r) => [r.year, r.date]);
+  await client.query(
+    `INSERT INTO "PlanningMonths" ("year", "date") VALUES ${placeholders}`,
+    params,
   );
 }

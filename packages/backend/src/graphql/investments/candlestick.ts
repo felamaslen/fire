@@ -76,7 +76,7 @@ const loadOne = async (
   // once per transaction (~hundreds) rather than once per (bucket × price) pair
   // (~tens of thousands), and (b) the cumulative units window runs once per
   // investment instead of being inlined into every lateral probe.
-  const rows = await db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     await tx.execute(sql`set local jit = off;`);
     return await tx.execute<Row>(sql`
       with
@@ -144,9 +144,9 @@ const loadOne = async (
     `);
   });
 
-  if (!rows.length) return null;
+  if (!result.rows.length) return null;
 
-  const points = rows.map((row) => ({
+  const points = result.rows.map((row) => ({
     start: new Date(row.start),
     end: new Date(row.end),
     valueStart: row.valueStart,

@@ -6,7 +6,12 @@
 # workspace manifests in the right layout for `pnpm install`.
 FROM node:24-alpine
 
-RUN apk add --no-cache libc6-compat \
+# `libpq` is needed at runtime for the `pg-native` addon to dlopen libpq.
+# `build-base` + `python3` + `postgresql-dev` are needed at install time so
+# `node-gyp` can compile the addon against `pg_config` + the libpq headers.
+# Keeping everything in one layer because this Dockerfile doesn't split deps
+# from runtime — the dev-mode compose mount overlays the source tree anyway.
+RUN apk add --no-cache libc6-compat libpq build-base python3 postgresql-dev \
   && corepack enable \
   && corepack prepare pnpm@10.31.0 --activate
 

@@ -4,11 +4,16 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 
 import { sql } from "drizzle-orm";
-import postgres from "postgres";
+import pgImport from "pg";
 
 import { env } from "@/env";
 
-vi.mock("@/db/client");
+const PgImpl = pgImport.native ?? pgImport;
+
+// Swap the production pool for a per-worker pool with acquire/release
+// tracking — `client.ts` itself stays real, so transaction wiring (ALS,
+// runWithDb, runInTransaction) is exercised by the tests.
+vi.mock("@/db/pool");
 
 /**
  * Freeze the clock at a deterministic instant for every test. Anything that
@@ -39,10 +44,11 @@ function testDbName(): string {
 
 beforeAll(async () => {
   const dbName = testDbName();
-  const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
+  const admin = new PgImpl.Client({ connectionString: ADMIN_URL });
+  await admin.connect();
   try {
-    await admin.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
-    await admin.unsafe(`CREATE DATABASE "${dbName}" TEMPLATE "${TEMPLATE_DB}"`);
+    await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE "${dbName}" TEMPLATE "${TEMPLATE_DB}"`);
   } finally {
     await admin.end();
   }
@@ -64,11 +70,11 @@ const SEED_TABLES = new Set([
 
 beforeEach(async () => {
   const { db } = await import("@/db");
-  const rows = await db.execute<{ tablename: string }>(sql`
+  const result = await db.execute<{ tablename: string }>(sql`
     SELECT tablename FROM pg_tables
     WHERE schemaname = 'public'
   `);
-  const truncatable = rows.filter((r) => !SEED_TABLES.has(r.tablename));
+  const truncatable = result.rows.filter((r) => !SEED_TABLES.has(r.tablename));
   if (truncatable.length > 0) {
     const list = truncatable.map((r) => `"${r.tablename}"`).join(", ");
     await db.execute(sql.raw(`TRUNCATE ${list} RESTART IDENTITY CASCADE`));
@@ -90,10 +96,17 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  // Close the per-worker pool before issuing the DROP so its idle clients
+  // disconnect cleanly. Without this, `DROP DATABASE ... WITH (FORCE)` kills
+  // each open connection mid-flight and pg-native logs a `FATAL: terminating
+  // connection due to administrator command` line per worker.
+  const { pool } = await import("@/db/pool");
+  await pool.end();
   const dbName = testDbName();
-  const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
+  const admin = new PgImpl.Client({ connectionString: ADMIN_URL });
+  await admin.connect();
   try {
-    await admin.unsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+    await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
   } finally {
     await admin.end();
   }

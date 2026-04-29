@@ -1,16 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import { instrumentDrizzleClient } from "@kubiks/otel-drizzle";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import { drizzle } from "drizzle-orm/node-postgres";
 
 import { env } from "../env";
+import { pool } from "./pool";
 import { schema } from "./schema";
 
-const sql = postgres(env.DATABASE_URL);
-
 /** Untrapped Drizzle client bound to the real `public` schema. Resolvers should import `db` from this module — `defaultDb` is only exported so request wrappers can pass it to `runWithDb` (passing the `db` proxy would re-enter the proxy and blow the stack). */
-export const defaultDb = drizzle(sql, { schema });
+export const defaultDb = drizzle(pool, { schema });
 export type DB = typeof defaultDb;
 
 if (env.OTEL_ENABLED) {

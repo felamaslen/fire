@@ -2,10 +2,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createMigrator } from "drizzle-pgkit-migrator";
-import postgres from "postgres";
+import pgImport, { type Client } from "pg";
 
 import { env } from "@/env";
 import { log } from "@/log";
+
+const PgImpl = pgImport.native ?? pgImport;
+
+async function withAdmin<T>(fn: (client: Client) => Promise<T>): Promise<T> {
+  const client = new PgImpl.Client({ connectionString: adminUrl() });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+}
 
 /**
  * Per-demo-session Postgres **database** orchestration. Each demo session gets a dedicated database provisioned via `CREATE DATABASE demo_<hex> WITH TEMPLATE <template>` so the session starts with a fully-migrated, empty copy of the real app's schema — no SQL munging, no manual enum / view / trigger handling. The `<template>` database (`fire_demo_template` by default, derived from the app's `DATABASE_URL`) is migrated once at boot via the same drizzle-kit migrations the real DB runs.
@@ -51,43 +63,33 @@ function migrationsFolder(): string {
 }
 
 async function databaseExists(name: string): Promise<boolean> {
-  const admin = postgres(adminUrl(), { max: 1, onnotice: () => {} });
-  try {
-    const rows = await admin<{ count: number }[]>`
-      SELECT 1 FROM pg_database WHERE datname = ${name}
-    `;
-    return rows.length > 0;
-  } finally {
-    await admin.end();
-  }
+  return withAdmin(async (admin) => {
+    const result = await admin.query(
+      `SELECT 1 FROM pg_database WHERE datname = $1`,
+      [name],
+    );
+    return result.rowCount !== null && result.rowCount > 0;
+  });
 }
 
 async function createDatabase(name: string, template?: string): Promise<void> {
-  const admin = postgres(adminUrl(), { max: 1, onnotice: () => {} });
-  try {
+  await withAdmin(async (admin) => {
     const quoted = quoteIdent(name);
     if (template) {
       const quotedTemplate = quoteIdent(template);
-      await admin.unsafe(
-        `CREATE DATABASE ${quoted} TEMPLATE ${quotedTemplate}`,
-      );
+      await admin.query(`CREATE DATABASE ${quoted} TEMPLATE ${quotedTemplate}`);
     } else {
-      await admin.unsafe(`CREATE DATABASE ${quoted}`);
+      await admin.query(`CREATE DATABASE ${quoted}`);
     }
-  } finally {
-    await admin.end();
-  }
+  });
 }
 
 async function dropDatabase(name: string): Promise<void> {
-  const admin = postgres(adminUrl(), { max: 1, onnotice: () => {} });
-  try {
-    await admin.unsafe(
+  await withAdmin(async (admin) => {
+    await admin.query(
       `DROP DATABASE IF EXISTS ${quoteIdent(name)} WITH (FORCE)`,
     );
-  } finally {
-    await admin.end();
-  }
+  });
 }
 
 /**
