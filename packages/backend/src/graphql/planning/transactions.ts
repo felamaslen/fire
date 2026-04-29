@@ -459,6 +459,7 @@ async function reloadTransaction(
         ),
         isProvisional: false,
         isEditable: true,
+        isPayslipDeduction: true,
         toAccountId: null,
         liabilityId: row.adjustment.liabilityId ?? null,
         assetId: null,

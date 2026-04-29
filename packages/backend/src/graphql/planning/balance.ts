@@ -74,6 +74,8 @@ export type CreditCardPrediction = {
 export type PlanningAccountInfo = {
   assetId: string;
   alias: string | null;
+  /** Underlying asset's name. Cached on the info so synchronous code paths (e.g. building derived transfer-in rows like `Transfer from <name>`) don't have to await a thunk. */
+  assetName: string;
   asset: NetWorthCategoryAsset;
 };
 
@@ -116,6 +118,7 @@ export async function loadPlanningAccountInfos(): Promise<
   return rows.map((r) => ({
     assetId: r.assetId,
     alias: r.alias,
+    assetName: r.asset.name,
     asset: NetWorthCategoryAsset.load(r.asset),
   }));
 }
@@ -440,10 +443,17 @@ export function monthTransactionsFor(
       );
     }
     if (tx.toAccountId === assetId) {
+      // The receiving side of a transfer is derived from the from-side row, so
+      // its label is built from the source account's display name rather than
+      // the from-side's free-form `name` (which usually describes the *reason*
+      // for the transfer from the payer's perspective, e.g. "rent" — the
+      // payee just sees "transfer from <account>").
+      const fromInfo = data.accounts.find((a) => a.assetId === tx.accountId);
+      const fromName = fromInfo?.alias ?? fromInfo?.assetName ?? "account";
       out.push(
         mkTx({
           id: encodePlanningTransactionId({ kind: "to", id: tx.id }),
-          name: tx.name,
+          name: `Transfer from ${fromName}`,
           amount: Money.fromMinorDenomination(-tx.amount, tx.currency),
           isProvisional: false,
           isEditable: false,
@@ -485,6 +495,7 @@ export function monthTransactionsFor(
           amount: Money.fromMinorDenomination(a.amount, p.currency),
           isProvisional: false,
           isEditable: true,
+          isPayslipDeduction: true,
           toAccountId: null,
           liabilityId: a.liabilityId ?? null,
           assetId: null,
@@ -550,6 +561,7 @@ export function monthTransactionsFor(
             ),
             isProvisional: true,
             isEditable: true,
+            isPayslipDeduction: true,
             toAccountId: null,
             liabilityId: null,
             assetId: null,
@@ -572,6 +584,7 @@ export function monthTransactionsFor(
             ),
             isProvisional: true,
             isEditable: true,
+            isPayslipDeduction: true,
             toAccountId: null,
             liabilityId: null,
             assetId: null,
@@ -594,6 +607,7 @@ export function monthTransactionsFor(
             ),
             isProvisional: true,
             isEditable: true,
+            isPayslipDeduction: true,
             toAccountId: null,
             liabilityId: e.studentLoanLiabilityId ?? null,
             assetId: null,
@@ -616,6 +630,7 @@ export function monthTransactionsFor(
             ),
             isProvisional: true,
             isEditable: true,
+            isPayslipDeduction: true,
             toAccountId: null,
             liabilityId: null,
             assetId: null,
@@ -721,7 +736,92 @@ export function monthTransactionsFor(
     }
   }
 
-  return out;
+  return sortMonthTransactions(out, data.liabilitiesById);
+}
+
+/**
+ * Group a month's transactions by kind so the grid reads top-to-bottom in a
+ * predictable order:
+ *
+ * 1. Credit-card payments (predicted or materialised), sorted alphabetically by name.
+ * 2. Salary — each payslip / earning's gross row immediately followed by its
+ *    deductions (income tax, NIC, student loan, pension, manual adjustments).
+ *    Groups appear in the order they were emitted, so multiple income streams
+ *    keep stable relative ordering.
+ * 3. Bills (predicted or override), sorted alphabetically by name.
+ * 4. Transfers (out-side and in-side of a manual transfer).
+ * 5. Investments (manual transactions tagged with a stock or pension asset).
+ * 6. Anything else (ad-hoc inflows / outflows with no tagged target).
+ */
+function sortMonthTransactions(
+  txs: PlanningTransaction[],
+  liabilitiesById: Map<string, LiabilityRow>,
+): PlanningTransaction[] {
+  const cc: PlanningTransaction[] = [];
+  // Salary keeps its source order so each gross row stays adjacent to its
+  // deductions: a new group is opened on every gross, and subsequent
+  // deductions are appended to the open group until a non-deduction row
+  // closes it.
+  const salaryGroups: PlanningTransaction[][] = [];
+  let currentSalaryGroup: PlanningTransaction[] | null = null;
+  const bills: PlanningTransaction[] = [];
+  const transfers: PlanningTransaction[] = [];
+  const investments: PlanningTransaction[] = [];
+  const other: PlanningTransaction[] = [];
+
+  for (const tx of txs) {
+    if (tx.isPayslipGross) {
+      currentSalaryGroup = [tx];
+      salaryGroups.push(currentSalaryGroup);
+      continue;
+    }
+    if (tx.isPayslipDeduction) {
+      // Source code emits each deduction immediately after its gross, so the
+      // currently-open group is always the right parent. If a deduction ever
+      // arrives unparented (defensive — shouldn't happen with current data),
+      // open a fresh group for it so it still appears in the salary bucket.
+      if (currentSalaryGroup == null) {
+        currentSalaryGroup = [];
+        salaryGroups.push(currentSalaryGroup);
+      }
+      currentSalaryGroup.push(tx);
+      continue;
+    }
+    // Closing the current salary group — anything that follows belongs to a
+    // different bucket entirely, and a future deduction (in pathological data)
+    // should start a new group rather than glue itself to a previous gross.
+    currentSalaryGroup = null;
+    const liab = tx.liabilityId ? liabilitiesById.get(tx.liabilityId) : null;
+    if (liab?.type === "CREDIT_CARD") {
+      cc.push(tx);
+      continue;
+    }
+    if (tx.isBill) {
+      bills.push(tx);
+      continue;
+    }
+    if (tx.toAccountId != null || tx.fromAccountId != null) {
+      transfers.push(tx);
+      continue;
+    }
+    if (tx.assetId != null) {
+      investments.push(tx);
+      continue;
+    }
+    other.push(tx);
+  }
+
+  cc.sort((a, b) => a.name.localeCompare(b.name));
+  bills.sort((a, b) => a.name.localeCompare(b.name));
+
+  return [
+    ...cc,
+    ...salaryGroups.flat(),
+    ...bills,
+    ...transfers,
+    ...investments,
+    ...other,
+  ];
 }
 
 /** The latest net-worth snapshot for `assetId` whose date falls inside `monthDate`'s calendar month, or null if none exists. */

@@ -1785,6 +1785,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "isEditable",
                     type: new GraphQLNonNull(GraphQLBoolean)
                 },
+                isPayslipDeduction: {
+                    description: "True when the row is a payslip deduction or adjustment (income tax, NIC, student loan, pension, manual adjustment) attached to the immediately-preceding `isPayslipGross` row. Lets the UI indent these as children of their parent gross.",
+                    name: "isPayslipDeduction",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
                 isPayslipGross: {
                     description: "True when the row is the gross pay line of a payslip \u2014 either a real `PlanningPayslips` row or a projected earning that will materialise into one. Payslip *deductions* (tax / NIC / student loan) are not flagged here.",
                     name: "isPayslipGross",

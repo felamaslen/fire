@@ -577,12 +577,12 @@ it("transactions field surfaces each source with the expected provisional/editab
   expect(transactionTable(months, "Current")).toMatchInlineSnapshot(`
     "
     MONTH    TX NAME              AMOUNT PROV. EDITABLE
-    apr-2025 Transfer to joint    -200   false true    
     apr-2025 Amex payment         -150   false true    
     apr-2025 Day job — 04/2025    2500   true  true    
     apr-2025 Day job — income tax -290.5 true  true    
     apr-2025 Day job — NIC        -116.2 true  true    
     apr-2025 Internet             -50    true  true    
+    apr-2025 Transfer to joint    -200   false true    
     may-2025 May payslip          3000   false true    
     may-2025 Income Tax           -500   false true    
     may-2025 NIC                  -200   false true    
@@ -593,8 +593,8 @@ it("transactions field surfaces each source with the expected provisional/editab
   `);
   expect(transactionTable(months, "Joint")).toMatchInlineSnapshot(`
     "
-    MONTH    TX NAME           AMOUNT PROV. EDITABLE
-    apr-2025 Transfer to joint 200    false false   "
+    MONTH    TX NAME               AMOUNT PROV. EDITABLE
+    apr-2025 Transfer from Current 200    false false   "
   `);
 });
 

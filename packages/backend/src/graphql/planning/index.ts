@@ -260,14 +260,16 @@ export class PlanningTransaction {
   readonly isBill: boolean;
   /** True when the row is the gross pay line of a payslip — either a real `PlanningPayslips` row or a projected earning that will materialise into one. Payslip *deductions* (tax / NIC / student loan) are not flagged here. @gqlField */
   readonly isPayslipGross: boolean;
+  /** True when the row is a payslip deduction or adjustment (income tax, NIC, student loan, pension, manual adjustment) attached to the immediately-preceding `isPayslipGross` row. Lets the UI indent these as children of their parent gross. @gqlField */
+  readonly isPayslipDeduction: boolean;
   // The link FKs are stored opaque; we only materialise the full
   // `PlanningAccount` / `NetWorthCategoryLiability` / `NetWorthCategoryAsset`
   // instances lazily via their `fromId` factories so selecting just `{ id }`
   // doesn't hit the DB. Each lazy instance caches its row once loaded.
-  private readonly toAccountId: string | null;
-  private readonly fromAccountId: string | null;
-  private readonly liabilityId: string | null;
-  private readonly assetId: string | null;
+  readonly toAccountId: string | null;
+  readonly fromAccountId: string | null;
+  readonly liabilityId: string | null;
+  readonly assetId: string | null;
   /** When constructed from inside a `PlanningYear` roll-up, a shared map of every liability referenced anywhere in the year (pre-loaded in one batch by `loadPlanningYearData`). Lets `liability()` resolve synchronously without firing a per-row `SELECT` — avoids an N+1 across the dozens of transactions a planning-grid query returns. Null on one-off constructions (e.g. mutation return values) where lazy `fromId` loading is fine. */
   private readonly liabilitiesById: Map<string, LiabilityRow> | null;
 
@@ -279,6 +281,7 @@ export class PlanningTransaction {
     isEditable: boolean;
     isBill?: boolean;
     isPayslipGross?: boolean;
+    isPayslipDeduction?: boolean;
     toAccountId: string | null;
     fromAccountId?: string | null;
     liabilityId: string | null;
@@ -292,6 +295,7 @@ export class PlanningTransaction {
     this.isEditable = data.isEditable;
     this.isBill = data.isBill ?? false;
     this.isPayslipGross = data.isPayslipGross ?? false;
+    this.isPayslipDeduction = data.isPayslipDeduction ?? false;
     this.toAccountId = data.toAccountId;
     this.fromAccountId = data.fromAccountId ?? null;
     this.liabilityId = data.liabilityId;

@@ -15,6 +15,7 @@ import {
   ChartCandlestick,
   ChevronLeft,
   ChevronRight,
+  CornerDownRight,
   CreditCard,
   HandCoins,
   Landmark,
@@ -96,6 +97,7 @@ const PlanningTransactionRowDocument = graphql(
       isEditable
       isBill
       isPayslipGross
+      isPayslipDeduction
       toAccount {
         id
       }
@@ -1085,6 +1087,9 @@ function TransactionRow({
   const rowClass = cn(
     "group/row flex w-full items-center gap-1 px-2 py-1 text-left cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:bg-accent/40",
     tx.isProvisional && "italic text-muted-foreground",
+    // Indent payslip deductions so they read as children of the gross row
+    // rendered immediately above them.
+    tx.isPayslipDeduction && "pl-4",
   );
   const openDialog = () => {
     setEverOpened(true);
@@ -1264,6 +1269,10 @@ function TransactionKindIcon({
   tx: ResultOf<typeof PlanningTransactionRowDocument>;
 }) {
   const cls = "size-3 shrink-0 text-muted-foreground/60";
+  // Deductions hang off the immediately-preceding payslip-gross row, so the
+  // leading slot shows a child-of-parent corner glyph instead of the row's
+  // own kind icon — mirrors how a tree view nests children under a parent.
+  if (tx.isPayslipDeduction) return <CornerDownRight className={cls} />;
   if (tx.toAccount) return <ArrowUpRight className={cls} />;
   if (tx.fromAccount) return <ArrowDownLeft className={cls} />;
   if (tx.liability) {
