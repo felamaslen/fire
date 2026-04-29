@@ -8,8 +8,9 @@ import { db } from "@/db";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 
 import type { Context } from "../context";
+import type { Date as CalendarDate } from "../date";
 import type { DateTime } from "../date-time";
-import { assertCurrencyCode, Money } from "../money";
+import { assertCurrencyCode, Money, type MoneyInput } from "../money";
 import {
   buildConnection,
   type Connection,
@@ -29,6 +30,7 @@ import {
 } from "./stock-splits";
 import {
   InvestmentTransaction,
+  investmentTransactionCreate,
   loadInvestmentTransactions,
   loadInvestmentTransactionsConnection,
 } from "./transactions";
@@ -206,13 +208,33 @@ function assetInputToColumns(input: InvestmentAssetInput): {
   return { stockCode: null, fundLink: input.fund.url };
 }
 
-/** Create a new investment. @gqlMutationField */
+/** Initial transaction to book against a freshly-created `Investment` from `investmentCreate`. The investment's id is filled in by the resolver, and the price currency must match the investment's currency. @gqlInput */
+export type InvestmentInitialTransactionInput = {
+  /** Wrapper to book the trade into. Must be a `STOCK` or `PENSION` net-worth asset. */
+  assetId: ID;
+  /** Calendar date the trade was executed. */
+  date: CalendarDate;
+  /** Signed number of units traded. Positive = buy / DRIP, negative = sell. */
+  units: Int;
+  /** Unit price at execution. */
+  price: MoneyInput;
+  /** Taxes paid on the trade. Defaults to 0. */
+  taxes?: MoneyInput | null;
+  /** Broker / platform fees paid. Defaults to 0. */
+  fees?: MoneyInput | null;
+  /** Set `true` to mark this as a dividend reinvestment rather than a cash buy. Defaults to `false`. */
+  drip?: boolean | null;
+};
+
+/** Create a new investment, optionally booking one or more initial transactions in the same round-trip. @gqlMutationField */
 export async function investmentCreate(
   name: string,
   /** ISO-4217 currency code every price and transaction for this investment will be quoted in. */
   currency: string,
   /** What kind of instrument this investment represents. */
   asset: InvestmentAssetInput,
+  /** Optional list of transactions to book against the new investment. Each is created with the same semantics as `investmentTransactionCreate`. */
+  transactions?: InvestmentInitialTransactionInput[] | null,
 ): Promise<Investment> {
   assertCurrencyCode(currency);
   const columns = assetInputToColumns(asset);
@@ -220,6 +242,20 @@ export async function investmentCreate(
     .insert(Investments)
     .values({ name, currency, ...columns })
     .returning();
+  if (transactions && transactions.length > 0) {
+    for (const tx of transactions) {
+      await investmentTransactionCreate(
+        row.id as ID,
+        tx.assetId,
+        tx.date,
+        tx.units,
+        tx.price,
+        tx.taxes,
+        tx.fees,
+        tx.drip,
+      );
+    }
+  }
   return Investment.load(row);
 }
 

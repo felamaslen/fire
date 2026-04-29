@@ -133,6 +133,30 @@ input InvestmentFundInput {
 }
 
 """
+Initial transaction to book against a freshly-created `Investment` from `investmentCreate`. The investment's id is filled in by the resolver, and the price currency must match the investment's currency.
+"""
+input InvestmentInitialTransactionInput {
+  """
+  Wrapper to book the trade into. Must be a `STOCK` or `PENSION` net-worth asset.
+  """
+  assetId: ID!
+  """Calendar date the trade was executed."""
+  date: Date!
+  """
+  Set `true` to mark this as a dividend reinvestment rather than a cash buy. Defaults to `false`.
+  """
+  drip: Boolean
+  """Broker / platform fees paid. Defaults to 0."""
+  fees: MoneyInput
+  """Unit price at execution."""
+  price: MoneyInput!
+  """Taxes paid on the trade. Defaults to 0."""
+  taxes: MoneyInput
+  """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
+  units: Int!
+}
+
+"""
 Choose how to order `Query.investments`. Exactly one field must be set. When omitted entirely the list is newest-first by creation time.
 """
 input InvestmentSort @oneOf {
@@ -843,7 +867,9 @@ type Mutation {
   Set the portfolio-wide target cash reserve as an absolute monetary value (applies across every wrapper in aggregate). Amount must be non-negative.
   """
   investmentCashAllocationSet(amount: MoneyInput!): Money!
-  """Create a new investment."""
+  """
+  Create a new investment, optionally booking one or more initial transactions in the same round-trip.
+  """
   investmentCreate(
     """What kind of instrument this investment represents."""
     asset: InvestmentAssetInput!
@@ -852,6 +878,10 @@ type Mutation {
     """
     currency: String!
     name: String!
+    """
+    Optional list of transactions to book against the new investment. Each is created with the same semantics as `investmentTransactionCreate`.
+    """
+    transactions: [InvestmentInitialTransactionInput!]
   ): Investment!
   """
   Delete an investment and all its transactions, stock splits, and prices.

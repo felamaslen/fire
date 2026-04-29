@@ -5,7 +5,11 @@ import { GraphQLError } from "graphql";
 import type { ID, Int } from "grats";
 
 import { db } from "@/db";
-import { Investments, InvestmentTransactions } from "@/db/schema/investments";
+import {
+  InvestmentAllocations,
+  Investments,
+  InvestmentTransactions,
+} from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
 import type { Date as CalendarDate } from "../date";
@@ -23,6 +27,7 @@ import {
   encodeCursor,
 } from "../pagination";
 import { VOID, type Void } from "../void";
+import { invalidateAllocationsForAsset } from "./allocations";
 
 /** One buy, sell, or dividend-reinvestment booked against an `Investment` and a wrapper (a net-worth asset of type `STOCK` or `PENSION`). @gqlType */
 export class InvestmentTransaction {
@@ -153,6 +158,22 @@ export async function investmentTransactionCreate(
     ? getMoneyInputFractionalAmount(assertSameCurrency(fees, currency, "fees"))
         .amount
     : 0;
+  // Detect whether this is the first transaction booking the investment into
+  // the wrapper — in that case any saved allocation targets for the wrapper
+  // no longer cover the active set and have to be reset (the UI then falls
+  // back to actual value-weighted allocations).
+  const [firstInWrapper] = await db
+    .select({ id: InvestmentTransactions.id })
+    .from(InvestmentTransactions)
+    .where(
+      and(
+        eq(InvestmentTransactions.investmentId, investmentId),
+        eq(InvestmentTransactions.assetId, assetId),
+      ),
+    )
+    .limit(1);
+  const isFirstInWrapper = !firstInWrapper;
+
   const [row] = await db
     .insert(InvestmentTransactions)
     .values({
@@ -167,6 +188,12 @@ export async function investmentTransactionCreate(
       drip: drip ?? false,
     })
     .returning();
+  if (isFirstInWrapper) {
+    await db
+      .delete(InvestmentAllocations)
+      .where(eq(InvestmentAllocations.assetId, assetId));
+    invalidateAllocationsForAsset(assetId);
+  }
   return InvestmentTransaction.load(row);
 }
 

@@ -177,6 +177,88 @@ describe("investmentTransactionCreate", () => {
     );
   });
 
+  it("resets the wrapper's saved allocations when booking a new investment into it for the first time", async () => {
+    const assetId = await createAsset("STOCK");
+    const a = await createStock();
+    const b = await (async () => {
+      const doc = graphql(`
+        mutation {
+          investmentCreate(
+            name: "Microsoft"
+            currency: "GBP"
+            asset: { stock: { code: "MSFT" } }
+          ) {
+            id
+          }
+        }
+      `);
+      return (await runGql(doc, {})).investmentCreate.id;
+    })();
+    await createTransaction(a, assetId, { units: 10 });
+    await createTransaction(b, assetId, { units: 10 });
+
+    // Lock in 60/40 targets across the two existing holdings.
+    const setAllocations = graphql(`
+      mutation ($assetId: ID!, $a: ID!, $b: ID!) {
+        investmentAllocationsSet(
+          assetId: $assetId
+          allocations: [
+            { investmentId: $a, allocation: 0.6 }
+            { investmentId: $b, allocation: 0.4 }
+          ]
+        ) {
+          investments {
+            allocation
+          }
+        }
+      }
+    `);
+    await runGql(setAllocations, { assetId, a, b });
+
+    const readAllocations = graphql(`
+      query ($assetId: ID!) {
+        investmentAllocations(assetId: $assetId) {
+          investments {
+            allocation
+          }
+        }
+      }
+    `);
+
+    // A follow-up trade for an investment already held in the wrapper must
+    // leave the saved targets alone.
+    await createTransaction(a, assetId, { units: 5 });
+    const afterFollowUp = await runGql(readAllocations, { assetId });
+    expect(afterFollowUp.investmentAllocations?.investments).toHaveLength(2);
+
+    // Booking the first trade for a freshly-created investment in this
+    // wrapper makes the saved targets stale (they no longer cover the active
+    // set), so they're cleared. Mirror the UI flow by creating C and booking
+    // its initial transaction in a single chained mutation.
+    const createWithTrade = graphql(`
+      mutation ($assetId: ID!) {
+        investmentCreate(
+          name: "Google"
+          currency: "GBP"
+          asset: { stock: { code: "GOOG" } }
+          transactions: [
+            {
+              assetId: $assetId
+              date: "2024-03-03"
+              units: 1
+              price: { amount: 5, currency: "GBP" }
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `);
+    await runGql(createWithTrade, { assetId });
+    const afterReset = await runGql(readAllocations, { assetId });
+    expect(afterReset.investmentAllocations?.investments).toEqual([]);
+  });
+
   it("rejects a price currency that doesn't match the investment", async () => {
     const investmentId = await createStock("GBP");
     const assetId = await createAsset("STOCK");

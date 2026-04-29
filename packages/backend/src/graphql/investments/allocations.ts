@@ -218,7 +218,7 @@ function allocationsLoader(): DataLoader<string, InvestmentAllocation[]> {
   return loader;
 }
 
-function invalidateAllocationsForAsset(assetId: string): void {
+export function invalidateAllocationsForAsset(assetId: string): void {
   allocationsLoader().clear(assetId);
 }
 
