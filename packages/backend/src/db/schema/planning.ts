@@ -90,6 +90,12 @@ export const PlanningYearUKTaxRates = pgTable(
     thresholdPersonalAllowanceTaper: bigint("thresholdPersonalAllowanceTaper", {
       mode: "number",
     }).notNull(),
+    /** Statutory weekly rate for parental pay (`SMP` / `SPP` / `ShPP` / `SAP`), in fractional units of GBP. Used as the floor for parental-leave top-ups: actual weekly pay during a leave is at least `min(this rate, 90% of normal weekly gross)` when the leave is flagged as eligible. */
+    statutoryParentalPayWeekly: bigint("statutoryParentalPayWeekly", {
+      mode: "number",
+    })
+      .notNull()
+      .default(18718),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -217,6 +223,7 @@ export const planningEarningsRelations = relations(
       references: [PlanningAccounts.accountId],
     }),
     ukTaxCodes: many(PlanningEarningsUKTaxCodes),
+    parentalLeaves: many(PlanningEarningsParentalLeave),
   }),
 );
 
@@ -257,6 +264,60 @@ export const planningEarningsUKTaxCodesRelations = relations(
   ({ one }) => ({
     earnings: one(PlanningEarnings, {
       fields: [PlanningEarningsUKTaxCodes.earningsId],
+      references: [PlanningEarnings.id],
+    }),
+  }),
+);
+
+/** Parental-leave periods for a `PlanningEarnings`. Each row represents a single stage of a leave at a constant pay level — an enhanced employer scheme is modelled as several rows in sequence (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP = true`, then 13 weeks unpaid). Composite PK on (earnings, start) — at most one stage may begin on any given day. During a stage the effective weekly pay is `max(fractionOfGross × normalWeekly, statutoryFloor)` where `statutoryFloor = min(year.statutoryParentalPayWeekly, 0.9 × normalWeekly)` when `isSMP` or `isSPP` is set, else `0`. The two flags are mutually exclusive — `SMP` for maternity / shared parental / adoption eligibility, `SPP` for paternity. */
+export const PlanningEarningsParentalLeave = pgTable(
+  "PlanningEarningsParentalLeave",
+  {
+    earningsId: uuid("earningsId")
+      .notNull()
+      .references(() => PlanningEarnings.id, { onDelete: "cascade" }),
+    /** First day this stage applies. */
+    start: date("start", { mode: "date" }).notNull(),
+    /** Last day this stage applies (inclusive); null while the stage is ongoing. */
+    end: date("end", { mode: "date" }),
+    /** Fraction of the earning's normal gross paid during this stage, in `[0, 1]`. `0` = unpaid, `1` = full pay. The statutory floor (when `isSMP` / `isSPP` is set) may raise the effective pay above this. */
+    fractionOfGross: doublePrecision("fractionOfGross").notNull(),
+    /** Whether this stage qualifies for Statutory Maternity Pay (also covers Shared Parental Pay and Statutory Adoption Pay — they share a weekly rate). When set, the statutory floor applies. */
+    isSMP: boolean("isSMP").notNull().default(false),
+    /** Whether this stage qualifies for Statutory Paternity Pay. When set, the statutory floor applies. */
+    isSPP: boolean("isSPP").notNull().default(false),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      name: "PlanningEarningsParentalLeave_pk",
+      columns: [t.earningsId, t.start],
+    }),
+    check(
+      "PlanningEarningsParentalLeave_dateRange_ck",
+      sql`${t.end} IS NULL OR ${t.end} >= ${t.start}`,
+    ),
+    check(
+      "PlanningEarningsParentalLeave_fractionOfGross_ck",
+      sql`${t.fractionOfGross} BETWEEN 0 AND 1`,
+    ),
+    check(
+      "PlanningEarningsParentalLeave_eligibility_ck",
+      sql`NOT (${t.isSMP} AND ${t.isSPP})`,
+    ),
+  ],
+);
+
+export const planningEarningsParentalLeaveRelations = relations(
+  PlanningEarningsParentalLeave,
+  ({ one }) => ({
+    earnings: one(PlanningEarnings, {
+      fields: [PlanningEarningsParentalLeave.earningsId],
       references: [PlanningEarnings.id],
     }),
   }),
