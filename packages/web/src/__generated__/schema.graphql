@@ -47,6 +47,30 @@ enum NetWorthAssetType {
   VEHICLE
 }
 
+"""
+Top-level discriminator for `NetWorthCategory` — picks which subtype (asset, liability, or equity-option) is being addressed.
+"""
+enum NetWorthCategoryKind {
+  ASSET
+  LIABILITY
+  OPTION
+}
+
+"""
+Combined type filter for `Query.netWorthCategories` — covers every value of `NetWorthAssetType` and `NetWorthLiabilityType` so a single `filterTypeIn` argument works regardless of category kind. Equity-option categories have no `type` column, so they're excluded whenever this filter is set.
+"""
+enum NetWorthCategoryType {
+  CASH
+  CREDIT_CARD
+  LOAN
+  MISC
+  OPTION
+  PENSION
+  PROPERTY
+  STOCK
+  VEHICLE
+}
+
 """Kind of notable event a `NetWorthForecastMilestone` captures."""
 enum NetWorthForecastMilestoneKind {
   LOAN_PAID_OFF
@@ -130,6 +154,30 @@ input InvestmentAssetInput @oneOf {
 input InvestmentFundInput {
   """Link to the fund's product page."""
   url: String!
+}
+
+"""
+Initial transaction to book against a freshly-created `Investment` from `investmentCreate`. The investment's id is filled in by the resolver, and the price currency must match the investment's currency.
+"""
+input InvestmentInitialTransactionInput {
+  """
+  Wrapper to book the trade into. Must be a `STOCK` or `PENSION` net-worth asset.
+  """
+  assetId: ID!
+  """Calendar date the trade was executed."""
+  date: Date!
+  """
+  Set `true` to mark this as a dividend reinvestment rather than a cash buy. Defaults to `false`.
+  """
+  drip: Boolean
+  """Broker / platform fees paid. Defaults to 0."""
+  fees: MoneyInput
+  """Unit price at execution."""
+  price: MoneyInput!
+  """Taxes paid on the trade. Defaults to 0."""
+  taxes: MoneyInput
+  """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
+  units: Int!
 }
 
 """
@@ -843,7 +891,9 @@ type Mutation {
   Set the portfolio-wide target cash reserve as an absolute monetary value (applies across every wrapper in aggregate). Amount must be non-negative.
   """
   investmentCashAllocationSet(amount: MoneyInput!): Money!
-  """Create a new investment."""
+  """
+  Create a new investment, optionally booking one or more initial transactions in the same round-trip.
+  """
   investmentCreate(
     """What kind of instrument this investment represents."""
     asset: InvestmentAssetInput!
@@ -852,6 +902,10 @@ type Mutation {
     """
     currency: String!
     name: String!
+    """
+    Optional list of transactions to book against the new investment. Each is created with the same semantics as `investmentTransactionCreate`.
+    """
+    transactions: [InvestmentInitialTransactionInput!]
   ): Investment!
   """
   Delete an investment and all its transactions, stock splits, and prices.
@@ -2023,9 +2077,13 @@ type Query {
   investments(
     after: ID
     """
-    When set, only investments with at least one transaction booked against this wrapper are returned, and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to that wrapper.
+    When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers.
     """
-    filterAssetId: ID
+    filterAssetIdIn: [ID!]
+    """
+    Filter on whether the investment is fully sold — i.e. has at least one transaction but a net-zero unit count (scoped to `filterAssetIdIn` when set and non-empty). `false` excludes sold investments, `true` keeps only sold ones, `null` / omitted applies no filter. Investments with no transactions are never considered sold.
+    """
+    filterIsSold: Boolean
     first: Int
     sort: InvestmentSort
   ): InvestmentConnection @semanticNonNull
@@ -2038,7 +2096,20 @@ type Query {
   """
   Paginated list of all net-worth categories (assets, liabilities, options), newest first.
   """
-  netWorthCategories(after: ID, before: ID, first: Int, last: Int): NetWorthCategoryConnection @semanticNonNull
+  netWorthCategories(
+    after: ID
+    before: ID
+    """
+    When set and non-empty, only categories whose kind is in this list are returned. Omitted / null / empty includes every kind.
+    """
+    filterKindIn: [NetWorthCategoryKind!]
+    """
+    When set and non-empty, only categories whose `type` is in this list are returned. Asset and liability rows are filtered against their respective `type` columns; equity-option categories have no `type` and are excluded whenever this filter is set. Omitted / null / empty applies no type filter.
+    """
+    filterTypeIn: [NetWorthCategoryType!]
+    first: Int
+    last: Int
+  ): NetWorthCategoryConnection @semanticNonNull
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
   """

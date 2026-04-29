@@ -158,8 +158,9 @@ const InvestmentTransactionsDocument = graphql(
       $txFirst: Int
       $txAfter: ID
       $filterAssetId: ID
+      $filterAssetIdIn: [ID!]
     ) {
-      investment: investments(filterAssetId: $filterAssetId) {
+      investment: investments(filterAssetIdIn: $filterAssetIdIn) {
         edges {
           node {
             id
@@ -327,6 +328,7 @@ function InvestmentDetail({
   filterAssetId: string | null;
   filterAssetIds: string[];
 }) {
+  const navigate = useNavigate();
   const { data } = useSuspenseQuery(InvestmentDetailDocument, {
     variables: {
       filterAssetIdIn: filterAssetIds.length > 0 ? filterAssetIds : null,
@@ -357,7 +359,14 @@ function InvestmentDetail({
         existing={investment}
         onDone={() => {}}
         onCancel={null}
-        refetchQueries={["InvestmentDetail"]}
+        onDeleted={() =>
+          void navigate({
+            to: "/investments",
+            search: (prev) => prev,
+            resetScroll: false,
+          })
+        }
+        refetchQueries={["InvestmentDetail", "InvestmentsList"]}
       />
       <header className="space-y-1">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-5">
@@ -530,6 +539,7 @@ function TransactionsSection({
       txFirst: 15,
       txAfter: currentCursor,
       filterAssetId,
+      filterAssetIdIn: filterAssetIds.length > 0 ? filterAssetIds : null,
     },
   });
   const investment = data.investment?.edges
