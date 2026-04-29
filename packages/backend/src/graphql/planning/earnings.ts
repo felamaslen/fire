@@ -8,6 +8,7 @@ import { model } from "@/db/drizzle-model";
 import { assertCountryCode } from "@/db/schema/country";
 import {
   PlanningEarnings,
+  PlanningEarningsParentalLeave,
   PlanningEarningsUKTaxCodes,
 } from "@/db/schema/planning";
 
@@ -124,6 +125,16 @@ export class PlanningEarning {
       .orderBy(asc(PlanningEarningsUKTaxCodes.start));
     return rows.map((r) => PlanningEarningUKTaxCode.load(r));
   }
+
+  /** Parental-leave stages for this earnings stream, sorted by `start` ascending. Each stage reduces the gross pay used for the predicted projections during its date range — months covered by an actual payslip are unaffected. @gqlField */
+  async parentalLeaves(): Promise<PlanningEarningParentalLeave[]> {
+    const rows = await db
+      .select()
+      .from(PlanningEarningsParentalLeave)
+      .where(eq(PlanningEarningsParentalLeave.earningsId, this.id))
+      .orderBy(asc(PlanningEarningsParentalLeave.start));
+    return rows.map((r) => PlanningEarningParentalLeave.load(r));
+  }
 }
 
 function formatAttributes(p: {
@@ -172,6 +183,75 @@ export type PlanningEarningUKTaxCodeInput = {
   taxCode: string;
 };
 
+/** A parental-leave stage on a `PlanningEarning`. Each stage represents a single, constant pay level over a date range — an enhanced employer scheme is modelled as several stages in sequence (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid). Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually. During a stage the effective gross is `max(fractionOfGross × normal, statutoryFloor)` where `statutoryFloor` is `min(year's statutory weekly rate, 90% of normal weekly gross)` when the stage is statutorily eligible. The two eligibility flags are mutually exclusive. @gqlType */
+export class PlanningEarningParentalLeave {
+  constructor(
+    /** @gqlField */
+    public readonly start: CalendarDate,
+    /** Last day this stage applies (inclusive); null while the stage is ongoing. @gqlField */
+    public readonly end: CalendarDate | null,
+    /** Fraction of the earning's normal gross paid during this stage, in `[0, 1]`. `0` means unpaid; `1` means full pay. The statutory floor (when `isSMP` or `isSPP` is set) may raise the effective pay above this. @gqlField */
+    public readonly fractionOfGross: Float,
+    /** Whether this stage qualifies for Statutory Maternity Pay (also covers Shared Parental Pay and Statutory Adoption Pay — they share a weekly rate). When set, the statutory floor applies during this stage. Mutually exclusive with `isSPP`. @gqlField */
+    public readonly isSMP: boolean,
+    /** Whether this stage qualifies for Statutory Paternity Pay. When set, the statutory floor applies during this stage. Mutually exclusive with `isSMP`. @gqlField */
+    public readonly isSPP: boolean,
+  ) {}
+
+  static load(
+    row: typeof PlanningEarningsParentalLeave.$inferSelect,
+  ): PlanningEarningParentalLeave {
+    return new PlanningEarningParentalLeave(
+      row.start,
+      row.end,
+      row.fractionOfGross,
+      row.isSMP,
+      row.isSPP,
+    );
+  }
+}
+
+/** A parental-leave stage to attach to a `PlanningEarning`. Rows are upserted by (earnings, start) — re-supplying the same `start` overwrites the previous stage. `isSMP` and `isSPP` are mutually exclusive. @gqlInput */
+export type PlanningEarningParentalLeaveInput = {
+  start: CalendarDate;
+  end?: CalendarDate | null;
+  /** Fraction of normal gross paid during this stage, in `[0, 1]`. */
+  fractionOfGross: Float;
+  isSMP?: boolean | null;
+  isSPP?: boolean | null;
+};
+
+async function writeParentalLeaves(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  earningsId: string,
+  leaves: PlanningEarningParentalLeaveInput[],
+): Promise<void> {
+  await tx
+    .delete(PlanningEarningsParentalLeave)
+    .where(eq(PlanningEarningsParentalLeave.earningsId, earningsId));
+  if (leaves.length === 0) return;
+  for (const l of leaves) {
+    assert(
+      !(l.isSMP && l.isSPP),
+      "isSMP and isSPP are mutually exclusive on a parental leave stage",
+    );
+    assert(
+      l.fractionOfGross >= 0 && l.fractionOfGross <= 1,
+      "fractionOfGross must be between 0 and 1",
+    );
+  }
+  await tx.insert(PlanningEarningsParentalLeave).values(
+    leaves.map((l) => ({
+      earningsId,
+      start: l.start,
+      end: l.end ?? null,
+      fractionOfGross: l.fractionOfGross,
+      isSMP: l.isSMP ?? false,
+      isSPP: l.isSPP ?? false,
+    })),
+  );
+}
+
 async function writeTaxCodes(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   earningsId: string,
@@ -217,6 +297,8 @@ export async function earningsCreate(
   /** Pension asset (`NetWorthCategoryAsset` of type `PENSION`) the predicted pension deductions contribute to. May only be set when at least one pension fraction is configured. */
   pensionAssetId?: ID | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
+  /** Parental-leave stages affecting predicted gross during their date ranges. Provide one row per stage of an enhanced scheme (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid). */
+  parentalLeaves?: PlanningEarningParentalLeaveInput[] | null,
 ): Promise<PlanningEarning> {
   assertCountryCode(countryCode);
   const slp2 = studentLoanPlan2 ?? false;
@@ -253,6 +335,8 @@ export async function earningsCreate(
       })
       .returning();
     if (ukTaxCodes != null) await writeTaxCodes(tx, inserted.id, ukTaxCodes);
+    if (parentalLeaves != null)
+      await writeParentalLeaves(tx, inserted.id, parentalLeaves);
     return inserted;
   });
   return PlanningEarning.load(row);
@@ -281,6 +365,8 @@ export async function earningsUpdate(
   /** New linked pension asset; pass null explicitly to clear. Must be null whenever every pension fraction ends up null (after this patch applies). */
   pensionAssetId?: ID | null,
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
+  /** New full parental-leave history; pass to replace the existing list (every supplied row is upserted, and any rows not in the list are removed). Omit to leave the history untouched. */
+  parentalLeaves?: PlanningEarningParentalLeaveInput[] | null,
 ): Promise<PlanningEarning> {
   const [existing] = await db
     .select()
@@ -364,6 +450,8 @@ export async function earningsUpdate(
       .where(eq(PlanningEarnings.id, id))
       .returning();
     if (ukTaxCodes != null) await writeTaxCodes(tx, id, ukTaxCodes);
+    if (parentalLeaves != null)
+      await writeParentalLeaves(tx, id, parentalLeaves);
     return updated;
   });
   return PlanningEarning.load(row);

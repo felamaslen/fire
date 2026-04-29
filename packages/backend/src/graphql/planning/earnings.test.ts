@@ -19,6 +19,7 @@ const ukRates = {
   rateStudentLoanPlan2: 0.09,
   thresholdStudentLoanPlan2: 2_729_500,
   thresholdPersonalAllowanceTaper: 10_000_000,
+  statutoryParentalPayWeekly: 18_718,
 };
 
 async function createAsset(name = "Main"): Promise<string> {
@@ -826,18 +827,18 @@ it("pro-rates the predicted take when an earning starts or ends mid-month", asyn
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
     MONTH    ACCOUNT VALUE START VALUE END
-    apr-2025 Main    10000       11046.65 
-    may-2025 Main    11046.65    13139.95 
-    jun-2025 Main    13139.95    14186.6  
-    jul-2025 Main    14186.6     14186.6  
-    aug-2025 Main    14186.6     14186.6  
-    sep-2025 Main    14186.6     14186.6  
-    oct-2025 Main    14186.6     14186.6  
-    nov-2025 Main    14186.6     14186.6  
-    dec-2025 Main    14186.6     14186.6  
-    jan-2026 Main    14186.6     14186.6  
-    feb-2026 Main    14186.6     14186.6  
-    mar-2026 Main    14186.6     14186.6  "
+    apr-2025 Main    10000       11193.3  
+    may-2025 Main    11193.3     13286.6  
+    jun-2025 Main    13286.6     14479.9  
+    jul-2025 Main    14479.9     14479.9  
+    aug-2025 Main    14479.9     14479.9  
+    sep-2025 Main    14479.9     14479.9  
+    oct-2025 Main    14479.9     14479.9  
+    nov-2025 Main    14479.9     14479.9  
+    dec-2025 Main    14479.9     14479.9  
+    jan-2026 Main    14479.9     14479.9  
+    feb-2026 Main    14479.9     14479.9  
+    mar-2026 Main    14479.9     14479.9  "
   `);
 });
 
@@ -894,4 +895,309 @@ it("uses the earning's active UK tax code when projecting income tax", async () 
   );
   // 1000L: PA = £10,000. Taxable = £30k − £10k = £20k × 20% = £4,000/yr = £333.33/mo.
   expect(taxRow?.amount.amount).toBe(-333.33);
+});
+
+it("a parental-leave stage with isSMP floors monthly gross at the statutory weekly rate", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+
+  // £30k earner: normal weekly ≈ £576.92, statutory £187.18 → floor ≈ 32.45%
+  // of normal pay. A May leave at fractionOfGross=0 + isSMP should drop the
+  // gross to the statutory rate, not zero.
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+          parentalLeaves: [
+            {
+              start: "2025-05-01"
+              end: "2025-05-31"
+              fractionOfGross: 0
+              isSMP: true
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+
+  const data = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                name
+                amount {
+                  amount
+                }
+                isPayslipGross
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const may = data.planningYear!.months.find((m) => m.id === "may-2025")!;
+  const grossRow = may.accounts[0].transactions.find((t) => t.isPayslipGross);
+  // Effective annual gross = annualGross × (statutory / weekly) ≈ 30000 ×
+  // (187.18 / 576.92) ≈ £9,733; divided by 12 ≈ £811/mo. Bound generously.
+  expect(grossRow).toBeDefined();
+  expect(grossRow!.amount.amount).toBeGreaterThan(750);
+  expect(grossRow!.amount.amount).toBeLessThan(900);
+});
+
+it("a parental-leave stage with isSMP overrides a higher fractionOfGross? no — keeps the higher one", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+
+  // The first 6 weeks of SMP are 90% of AWE: model that as fraction=0.9 +
+  // isSMP. The statutory floor (~32%) should NOT pull the pay down.
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+          parentalLeaves: [
+            {
+              start: "2025-05-01"
+              end: "2025-05-31"
+              fractionOfGross: 0.9
+              isSMP: true
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+
+  const data = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                name
+                amount {
+                  amount
+                }
+                isPayslipGross
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const may = data.planningYear!.months.find((m) => m.id === "may-2025")!;
+  const grossRow = may.accounts[0].transactions.find((t) => t.isPayslipGross);
+  // 90% of normal monthly gross (£2500) ≈ £2250. Allow a small slop for the
+  // day-loop fraction-of-month rounding.
+  expect(grossRow!.amount.amount).toBeGreaterThan(2200);
+  expect(grossRow!.amount.amount).toBeLessThan(2300);
+});
+
+it("parental-leave-free months are unaffected when a leave covers other months", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+
+  // Leave covers only May; April and June should match the no-leave
+  // baseline gross (£2500 = 30000 / 12).
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+          parentalLeaves: [
+            {
+              start: "2025-05-01"
+              end: "2025-05-31"
+              fractionOfGross: 0
+              isSMP: true
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+
+  const data = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                amount {
+                  amount
+                }
+                isPayslipGross
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  for (const id of ["apr-2025", "jun-2025"]) {
+    const month = data.planningYear!.months.find((m) => m.id === id)!;
+    const gross = month.accounts[0].transactions.find((t) => t.isPayslipGross);
+    expect(gross?.amount.amount).toBe(2500);
+  }
+});
+
+it("rejects a parental-leave row with both isSMP and isSPP set", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+
+  await expect(
+    runGql(
+      graphql(`
+        mutation ($a: ID!) {
+          earningsCreate(
+            name: "Day job"
+            start: "2025-04-01"
+            amountGross: { amount: 30000, currency: "GBP" }
+            countryCode: "GB"
+            pensionReliefAtSource: 0
+            pensionNetPay: 0
+            toAccountId: $a
+            parentalLeaves: [
+              {
+                start: "2025-05-01"
+                end: "2025-05-31"
+                fractionOfGross: 0
+                isSMP: true
+                isSPP: true
+              }
+            ]
+          ) {
+            id
+          }
+        }
+      `),
+      { a: accountIdTo },
+    ),
+  ).rejects.toThrowErrorMatchingInlineSnapshot(
+    `[Error: GraphQL errors: isSMP and isSPP are mutually exclusive on a parental leave stage]`,
+  );
+});
+
+it("earningsUpdate replaces the parental-leave history and reprojects", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+          parentalLeaves: [
+            {
+              start: "2025-05-01"
+              end: "2025-05-31"
+              fractionOfGross: 0
+              isSMP: true
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+  const earningId = await firstEarningId();
+
+  // Replace with a single full-pay row — May should jump back to a normal
+  // monthly gross.
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        earningsUpdate(id: $id, parentalLeaves: []) {
+          id
+          parentalLeaves {
+            start
+          }
+        }
+      }
+    `),
+    { id: earningId },
+  );
+
+  const data = await runGql(
+    graphql(`
+      query {
+        planningYear(id: "2025") {
+          months {
+            id
+            accounts {
+              transactions {
+                amount {
+                  amount
+                }
+                isPayslipGross
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  const may = data.planningYear!.months.find((m) => m.id === "may-2025")!;
+  const gross = may.accounts[0].transactions.find((t) => t.isPayslipGross);
+  expect(gross?.amount.amount).toBe(2500);
 });

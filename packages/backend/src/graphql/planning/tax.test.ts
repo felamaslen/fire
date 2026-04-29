@@ -17,7 +17,8 @@ const rates: UKTakeInput["rates"] = {
   thresholdNicUpperEarnings: 5_027_000, // UEL = £50,270
   rateStudentLoanPlan2: 0.09,
   thresholdStudentLoanPlan2: 2_729_500, // £27,295
-  thresholdPersonalAllowanceTaper: 10_000_000, // £100,000
+  thresholdPersonalAllowanceTaper: 10_000_000,
+  statutoryParentalPayWeekly: 18_718, // £187.18/week
   createdAt: new Date(),
   updatedAt: new Date(),
 };

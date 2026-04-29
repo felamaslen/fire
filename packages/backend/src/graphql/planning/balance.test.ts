@@ -15,6 +15,7 @@ const ukRates = {
   rateStudentLoanPlan2: 0.09,
   thresholdStudentLoanPlan2: 2_729_500,
   thresholdPersonalAllowanceTaper: 10_000_000,
+  statutoryParentalPayWeekly: 18_718,
 };
 
 async function createAsset(name: string): Promise<string> {

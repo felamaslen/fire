@@ -17,6 +17,7 @@ const ukRates = {
   rateStudentLoanPlan2: 0.09,
   thresholdStudentLoanPlan2: 2_729_500,
   thresholdPersonalAllowanceTaper: 10_000_000,
+  statutoryParentalPayWeekly: 18_718,
 };
 
 async function createAsset(name = "Main"): Promise<string> {
@@ -514,7 +515,7 @@ it("transactionDelete on a predicted bill is a no-op — the prediction stays (c
 
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
-    NAME      AMOUNT SOURCE    EDIT     ID
+    NAME      AMOUNT SOURCE    EDIT     ID                                                
     Broadband -100   predicted editable {"kind":"bill","id":"<uuid>","monthId":"apr-2025"}"
   `);
 });
@@ -574,7 +575,7 @@ it("transactionDelete on an overridden bill clears the override and the predicti
 
   expect(await aprilTransactions()).toMatchInlineSnapshot(`
     "
-    NAME      AMOUNT SOURCE    EDIT     ID
+    NAME      AMOUNT SOURCE    EDIT     ID                                                
     Broadband -100   predicted editable {"kind":"bill","id":"<uuid>","monthId":"apr-2025"}"
   `);
 });

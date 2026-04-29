@@ -802,6 +802,38 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PlanningEarningParentalLeaveType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarningParentalLeave",
+        description: "A parental-leave stage on a `PlanningEarning`. Each stage represents a single, constant pay level over a date range \u2014 an enhanced employer scheme is modelled as several stages in sequence (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid). Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually. During a stage the effective gross is `max(fractionOfGross \u00D7 normal, statutoryFloor)` where `statutoryFloor` is `min(year's statutory weekly rate, 90% of normal weekly gross)` when the stage is statutorily eligible. The two eligibility flags are mutually exclusive.",
+        fields() {
+            return {
+                end: {
+                    description: "Last day this stage applies (inclusive); null while the stage is ongoing.",
+                    name: "end",
+                    type: DateType
+                },
+                fractionOfGross: {
+                    description: "Fraction of the earning's normal gross paid during this stage, in `[0, 1]`. `0` means unpaid; `1` means full pay. The statutory floor (when `isSMP` or `isSPP` is set) may raise the effective pay above this.",
+                    name: "fractionOfGross",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                isSMP: {
+                    description: "Whether this stage qualifies for Statutory Maternity Pay (also covers Shared Parental Pay and Statutory Adoption Pay \u2014 they share a weekly rate). When set, the statutory floor applies during this stage. Mutually exclusive with `isSPP`.",
+                    name: "isSMP",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                isSPP: {
+                    description: "Whether this stage qualifies for Statutory Paternity Pay. When set, the statutory floor applies during this stage. Mutually exclusive with `isSMP`.",
+                    name: "isSPP",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                start: {
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                }
+            };
+        }
+    });
     const PlanningEarningUKTaxCodeType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningEarningUKTaxCode",
         description: "A UK tax code active on a `PlanningEarning` over a date range. Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually.",
@@ -854,6 +886,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                parentalLeaves: {
+                    description: "Parental-leave stages for this earnings stream, sorted by `start` ascending. Each stage reduces the gross pay used for the predicted projections during its date range \u2014 months covered by an actual payslip are unaffected.",
+                    name: "parentalLeaves",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningEarningParentalLeaveType)))
                 },
                 pensionAsset: {
                     description: "Pension asset the predicted pension deductions contribute to. Null when no pension fractions are configured or no asset has been linked.",
@@ -1909,6 +1946,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "rateStudentLoanPlan2",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
+                statutoryParentalPayWeekly: {
+                    description: "Statutory weekly rate for parental pay (`SMP` / `SPP` / `ShPP` / `SAP`), in fractional units of GBP. Used as the floor for parental-leave top-ups: actual weekly pay during a leave is at least `min(this rate, 90% of normal weekly gross)` when the leave is flagged as eligible.",
+                    name: "statutoryParentalPayWeekly",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
                 thresholdAdditional: {
                     description: "Start of the additional-rate band, in fractional units of GBP.",
                     name: "thresholdAdditional",
@@ -2760,6 +2802,35 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PlanningEarningParentalLeaveInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "A parental-leave stage to attach to a `PlanningEarning`. Rows are upserted by (earnings, start) \u2014 re-supplying the same `start` overwrites the previous stage. `isSMP` and `isSPP` are mutually exclusive.",
+        name: "PlanningEarningParentalLeaveInput",
+        fields() {
+            return {
+                end: {
+                    name: "end",
+                    type: DateType
+                },
+                fractionOfGross: {
+                    description: "Fraction of normal gross paid during this stage, in `[0, 1]`.",
+                    name: "fractionOfGross",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
+                isSMP: {
+                    name: "isSMP",
+                    type: GraphQLBoolean
+                },
+                isSPP: {
+                    name: "isSPP",
+                    type: GraphQLBoolean
+                },
+                start: {
+                    name: "start",
+                    type: new GraphQLNonNull(DateType)
+                }
+            };
+        }
+    });
     const PlanningEarningUKTaxCodeInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
         description: "A tax-code entry to attach to a PlanningEarning. Rows are upserted by (earnings, start) \u2014 re-supplying the same `start` overwrites the previous code/end.",
         name: "PlanningEarningUKTaxCodeInput",
@@ -3337,6 +3408,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "rateStudentLoanPlan2",
                     type: new GraphQLNonNull(GraphQLFloat)
                 },
+                statutoryParentalPayWeekly: {
+                    description: "Statutory weekly rate for parental pay (`SMP` / `SPP` / `ShPP` / `SAP`), in fractional units of GBP.",
+                    name: "statutoryParentalPayWeekly",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                },
                 thresholdAdditional: {
                     description: "Start of the additional-rate band, in fractional units of GBP.",
                     name: "thresholdAdditional",
@@ -3550,6 +3626,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         name: {
                             type: new GraphQLNonNull(GraphQLString)
                         },
+                        parentalLeaves: {
+                            description: "Parental-leave stages affecting predicted gross during their date ranges. Provide one row per stage of an enhanced scheme (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid).",
+                            type: new GraphQLList(new GraphQLNonNull(PlanningEarningParentalLeaveInputType))
+                        },
                         pensionAssetId: {
                             description: "Pension asset (`NetWorthCategoryAsset` of type `PENSION`) the predicted pension deductions contribute to. May only be set when at least one pension fraction is configured.",
                             type: GraphQLID
@@ -3585,7 +3665,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes);
+                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes, args.parentalLeaves);
                     }
                 },
                 earningsDelete: {
@@ -3621,6 +3701,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         name: {
                             type: GraphQLString
                         },
+                        parentalLeaves: {
+                            description: "New full parental-leave history; pass to replace the existing list (every supplied row is upserted, and any rows not in the list are removed). Omit to leave the history untouched.",
+                            type: new GraphQLList(new GraphQLNonNull(PlanningEarningParentalLeaveInputType))
+                        },
                         pensionAssetId: {
                             description: "New linked pension asset; pass null explicitly to clear. Must be null whenever every pension fraction ends up null (after this patch applies).",
                             type: GraphQLID
@@ -3653,7 +3737,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes);
+                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes, args.parentalLeaves);
                     }
                 },
                 investmentAllocationsSet: {
@@ -4405,6 +4489,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, DemoType, DemoLoginStartType, DemoProgressType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, DemoType, DemoLoginStartType, DemoProgressType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }
