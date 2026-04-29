@@ -1966,6 +1966,10 @@ type Pong {
 Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded.
 """
 type Portfolio {
+  """
+  Per-investment breakdown of the filtered portfolio's current market value, expressed as fractions in `[0, 1]` that sum to `1`. Each entry pairs an investment with its share. Investments that contribute zero value (no holdings, fully sold, or missing a price) are excluded; the remaining fractions are renormalised over those that do contribute. Returns an empty array when the portfolio has no positive value.
+  """
+  allocations: [PortfolioAllocation!]!
   """Candlestick buckets of portfolio total over the requested period."""
   candlestick(
     length: Int! = 1
@@ -2020,6 +2024,17 @@ type Portfolio {
   Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price.
   """
   xirr: Float
+}
+
+"""
+Share of the parent `Portfolio`'s current market value held in one investment. `fraction` is in `[0, 1]`; values across a `Portfolio.allocations` array sum to `1` (modulo floating-point error). Held investments missing a price are excluded entirely so they don't drag the denominator.
+"""
+type PortfolioAllocation {
+  """
+  Fraction of the `Portfolio`'s total value held in this investment, in `[0, 1]`.
+  """
+  fraction: Float!
+  investment: Investment!
 }
 
 """

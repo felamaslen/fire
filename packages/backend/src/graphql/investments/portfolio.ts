@@ -1,6 +1,6 @@
 import assert from "node:assert";
 
-import { and, inArray, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, sql } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
 import { CURRENCIES, HOME_CURRENCY } from "@/config";
@@ -78,6 +78,21 @@ export type PortfolioCandlestick = {
   /** @gqlField */
   points: PortfolioCandlestickPoint[];
 };
+
+/** Share of the parent `Portfolio`'s current market value held in one investment. `fraction` is in `[0, 1]`; values across a `Portfolio.allocations` array sum to `1` (modulo floating-point error). Held investments missing a price are excluded entirely so they don't drag the denominator. @gqlType */
+export class PortfolioAllocation {
+  constructor(
+    private readonly investmentId: string,
+    /** Fraction of the `Portfolio`'s total value held in this investment, in `[0, 1]`. @gqlField */
+    public readonly fraction: Float,
+  ) {}
+
+  /** @gqlField */
+  async investment(): Promise<Investment> {
+    const row = await model("Investments").findById(this.investmentId);
+    return Investment.load(row);
+  }
+}
 
 type Filters = {
   filterAssetIdIn: string[] | null;
@@ -252,6 +267,32 @@ export class Portfolio {
     return Promise.all(keys.map((k) => loadInvestmentStats(ctx, k)));
   }
 
+  /** Per-investment breakdown of the filtered portfolio's current market value, expressed as fractions in `[0, 1]` that sum to `1`. Each entry pairs an investment with its share. Investments that contribute zero value (no holdings, fully sold, or missing a price) are excluded; the remaining fractions are renormalised over those that do contribute. Returns an empty array when the portfolio has no positive value. @gqlField */
+  async allocations(ctx: Context): Promise<PortfolioAllocation[]> {
+    const investmentIds = await loadInvestmentIdsInScope(this.filters);
+    if (investmentIds.length === 0) return [];
+    const perInvestment = await Promise.all(
+      investmentIds.map(async (investmentId) => {
+        const stats = await loadInvestmentStats(ctx, {
+          investmentId,
+          assetIds: this.filterAssetIdIn ?? undefined,
+          currency: this.currency,
+          skipLive: this.skipLive,
+        });
+        return { investmentId, value: stats.totalValueMinor ?? 0 };
+      }),
+    );
+    const total = perInvestment.reduce((a, x) => a + x.value, 0);
+    if (total <= 0) return [];
+    return perInvestment
+      .filter((x) => x.value > 0)
+      .map(
+        (x) =>
+          new PortfolioAllocation(x.investmentId, (x.value / total) as Float),
+      )
+      .sort((a, b) => b.fraction - a.fraction);
+  }
+
   /** Daily-sampled line series of portfolio total over the requested period. @gqlField */
   async timeseries(
     ctx: Context,
@@ -339,6 +380,42 @@ export class Portfolio {
       skipLive: this.skipLive,
     });
   }
+}
+
+/**
+ * Resolve the set of investment IDs that the current `Portfolio` filters
+ * narrow down to: investments whose `currency` matches `filters.currency`
+ * and (when set) that have at least one transaction in any of the
+ * `filterAssetIdIn` wrappers, optionally further constrained by
+ * `filterInvestmentIdIn`. Mirrors the visibility rules used by the rest of
+ * the `Portfolio` resolvers — anything that wouldn't contribute to
+ * `totalValue` is also dropped from `allocations`.
+ */
+async function loadInvestmentIdsInScope(filters: Filters): Promise<string[]> {
+  const conditions = [sql`${Investments.currency} = ${filters.currency}`];
+  if (filters.filterInvestmentIdIn && filters.filterInvestmentIdIn.length > 0) {
+    conditions.push(inArray(Investments.id, filters.filterInvestmentIdIn));
+  }
+  if (filters.filterAssetIdIn && filters.filterAssetIdIn.length > 0) {
+    conditions.push(
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(InvestmentTransactions)
+          .where(
+            and(
+              eq(InvestmentTransactions.investmentId, Investments.id),
+              inArray(InvestmentTransactions.assetId, filters.filterAssetIdIn),
+            ),
+          ),
+      ),
+    );
+  }
+  const rows = await db
+    .select({ id: Investments.id })
+    .from(Investments)
+    .where(and(...conditions));
+  return rows.map((r) => r.id);
 }
 
 const DEFAULT_PAGE_SIZE = 50;

@@ -55,19 +55,29 @@ export const AllocationsSectionInvestmentFragment = graphql(`
   }
 `);
 
-/** Query-level fragment so the page prewarm can pull `cashPosition` in the same round-trip as the investments list. */
-export const AllocationsSectionCashPositionFragment = graphql(`
-  fragment AllocationsSectionCashPosition on Query {
-    cashPosition {
-      amount
-      currency
+/** Query-level fragment so the page prewarm can pull the BE-computed per-investment allocation fractions in the same round-trip as the investments list. */
+export const AllocationsSectionPortfolioFragment = graphql(`
+  fragment AllocationsSectionPortfolio on Portfolio {
+    id
+    allocations {
+      fraction
+      investment {
+        id
+        name
+        asset {
+          ... on InvestmentStock {
+            __typename
+            code
+          }
+        }
+      }
     }
   }
 `);
 
 const AllocationsSectionDocument = graphql(
   `
-    query AllocationsSection($first: Int) {
+    query AllocationsSection($first: Int, $filterAssetIdIn: [ID!]) {
       investments(first: $first) {
         edges {
           node {
@@ -76,13 +86,12 @@ const AllocationsSectionDocument = graphql(
           }
         }
       }
-      ...AllocationsSectionCashPosition
+      portfolio(filterAssetIdIn: $filterAssetIdIn) {
+        ...AllocationsSectionPortfolio
+      }
     }
   `,
-  [
-    AllocationsSectionInvestmentFragment,
-    AllocationsSectionCashPositionFragment,
-  ],
+  [AllocationsSectionInvestmentFragment, AllocationsSectionPortfolioFragment],
 );
 
 const InvestmentAllocationsSetDocument = graphql(`
@@ -105,7 +114,6 @@ const InvestmentAllocationsSetDocument = graphql(`
   }
 `);
 
-const CASH_COLOR = "#64748b";
 const WRAPPER_TYPES = new Set(["STOCK", "PENSION"]);
 const MIN_ALLOC = 0.01;
 const ALLOC_STEP = 0.01;
@@ -186,30 +194,6 @@ function bucketsByWrapper(investments: Investment[]): WrapperBucket[] {
   return out;
 }
 
-type PortfolioRow = {
-  investmentId: string;
-  label: string;
-  color: string;
-  valueMinor: number;
-};
-
-function totalPortfolioByInvestment(investments: Investment[]): PortfolioRow[] {
-  return investments
-    .map((inv) => ({
-      investmentId: inv.id,
-      label: labelForInvestment(inv),
-      color: colorForInvestment(inv),
-      valueMinor: (inv.wrappers ?? []).reduce(
-        (acc, w) =>
-          acc +
-          (w.position.units !== 0 ? (w.position.totalValue?.amount ?? 0) : 0),
-        0,
-      ),
-    }))
-    .filter((x) => x.valueMinor > 0)
-    .sort((a, b) => a.label.localeCompare(b.label));
-}
-
 function seedAllocations(
   bucket: WrapperBucket,
   saved: Map<string, number>,
@@ -230,12 +214,14 @@ function seedAllocations(
 }
 
 export function AllocationsSection({
-  filterAssetId,
+  filterAssetIds,
 }: {
-  filterAssetId?: string | null;
+  filterAssetIds: string[];
 }) {
+  const filterAssetId = filterAssetIds.length === 1 ? filterAssetIds[0]! : null;
+  const filterAssetIdIn = filterAssetIds.length > 0 ? filterAssetIds : null;
   const { data } = useQuery(AllocationsSectionDocument, {
-    variables: { first: 1000 },
+    variables: { first: 1000, filterAssetIdIn },
     fetchPolicy: "cache-first",
   });
 
@@ -255,41 +241,22 @@ export function AllocationsSection({
     ? (allBuckets.find((b) => b.assetId === filterAssetId) ?? null)
     : null;
 
-  // ACTUAL segments: when a wrapper is selected, by holding within the wrapper;
-  // otherwise by investment across the whole portfolio plus a cash slice.
+  // ACTUAL segments come straight from the BE-computed per-investment fractions
+  // for the current filter. The server already excludes cash and renormalises
+  // over investments that contribute, so we only translate `Investment` →
+  // label / colour for rendering.
   const actualSegments = useMemo<AllocationSegment[]>(() => {
-    if (bucket) {
-      const total = bucket.holdings.reduce((a, h) => a + h.valueMinor, 0);
-      if (total <= 0) return [];
-      return bucket.holdings.map((h) => ({
-        id: h.investmentId,
-        label: h.label,
-        color: h.color,
-        value: h.valueMinor / total,
-      }));
-    }
-    const rows = totalPortfolioByInvestment(investments);
-    const cashMajor = data
-      ? (readFragment(AllocationsSectionCashPositionFragment, data).cashPosition
-          ?.amount ?? 0)
-      : 0;
-    const total = cashMajor + rows.reduce((a, r) => a + r.valueMinor, 0);
-    if (total <= 0) return [];
-    return [
-      {
-        id: "__cash__",
-        label: "Cash",
-        color: CASH_COLOR,
-        value: cashMajor / total,
-      },
-      ...rows.map((r) => ({
-        id: r.investmentId,
-        label: r.label,
-        color: r.color,
-        value: r.valueMinor / total,
-      })),
-    ];
-  }, [bucket, investments, data]);
+    const portfolio = data?.portfolio
+      ? readFragment(AllocationsSectionPortfolioFragment, data.portfolio)
+      : null;
+    const allocs = portfolio?.allocations ?? [];
+    return allocs.map((a) => ({
+      id: a.investment.id,
+      label: labelForInvestment(a.investment),
+      color: colorForInvestment(a.investment),
+      value: a.fraction,
+    }));
+  }, [data]);
 
   // TARGET state — baseline comes from the selected wrapper's saved
   // allocations (or its actual weights if none are saved). Drafting a new
@@ -317,12 +284,13 @@ export function AllocationsSection({
     if (draft !== baseline) queueMicrotask(() => setDraft(baseline));
   }
 
+  // Mirror the actual bar's ordering (which the server returns by descending
+  // fraction) so the two stacked bars line up segment-for-segment instead of
+  // the editable bar reshuffling alphabetically.
   const targetSegments: AllocationSegment[] = bucket
-    ? bucket.holdings.map((h) => ({
-        id: h.investmentId,
-        label: h.label,
-        color: h.color,
-        value: draft.get(h.investmentId) ?? 0,
+    ? actualSegments.map((s) => ({
+        ...s,
+        value: draft.get(s.id) ?? 0,
       }))
     : actualSegments;
 

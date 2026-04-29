@@ -21,8 +21,8 @@ import { z } from "zod";
 import { Figure, FigureDocument } from "@/components/figure";
 import {
   AllocationsSection,
-  AllocationsSectionCashPositionFragment,
   AllocationsSectionInvestmentFragment,
+  AllocationsSectionPortfolioFragment,
 } from "@/components/investments/allocations-section";
 import {
   InvestmentForm,
@@ -189,6 +189,9 @@ const InvestmentsPageDocument = graphql(
         ...PortfolioHeadline
         ...PortfolioChartPortfolio
       }
+      allocationsPortfolio: portfolio(filterAssetIdIn: $filterAssetIdIn) {
+        ...AllocationsSectionPortfolio
+      }
       portfolios(filterAssetIdIn: $filterAssetIdIn, skipLive: $skipLive)
         @include(if: $stack) {
         edges {
@@ -208,7 +211,6 @@ const InvestmentsPageDocument = graphql(
           }
         }
       }
-      ...AllocationsSectionCashPosition
     }
   `,
   [
@@ -217,7 +219,7 @@ const InvestmentsPageDocument = graphql(
     PortfolioHeadlineFragment,
     PortfolioChartPortfolioFragment,
     AllocationsSectionInvestmentFragment,
-    AllocationsSectionCashPositionFragment,
+    AllocationsSectionPortfolioFragment,
   ],
 );
 
@@ -547,11 +549,6 @@ function InvestmentsPageContent() {
   // The allocations widget and per-investment detail (transaction list /
   // position lookup on `Investment.transactionsPaged` and `position`) are
   // single-wrapper-scoped, so they only act on a unambiguously-selected
-  // portfolio. The investments list, chart and headline all support a
-  // multi-wrapper filter and use the array directly.
-  const singleFilterAssetId =
-    filterAssetIds.length === 1 ? filterAssetIds[0] : null;
-
   const setChart = (next: PortfolioChartSettings) => {
     const patch = chartToSearch(next);
     void navigate({
@@ -631,7 +628,7 @@ function InvestmentsPageContent() {
         selectedLabel={selectedLabel}
         settings={chart}
         onChange={setChart}
-        bottomSlot={<AllocationsSection filterAssetId={singleFilterAssetId} />}
+        bottomSlot={<AllocationsSection filterAssetIds={filterAssetIds} />}
       />
       <InvestmentsList
         sort={sort}
