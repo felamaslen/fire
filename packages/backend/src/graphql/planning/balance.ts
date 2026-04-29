@@ -26,6 +26,7 @@ import {
   PlanningAccounts,
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsParentalLeave,
   PlanningEarningsUKTaxCodes,
   PlanningMonthBills,
   PlanningPayslipAdjustments,
@@ -41,7 +42,7 @@ import { NetWorthCategoryAsset } from "../net-worth/categories";
 import { PlanningTransaction } from "./index";
 import {
   addMonthsUTC,
-  earningMonthCoverage,
+  effectiveMonthGrossFraction,
   monthId,
   monthYearLabel,
   startOfMonthUTC,
@@ -57,6 +58,7 @@ type PayslipRow = typeof PlanningPayslips.$inferSelect;
 type AdjustmentRow = typeof PlanningPayslipAdjustments.$inferSelect;
 type EarningRow = typeof PlanningEarnings.$inferSelect;
 type TaxCodeRow = typeof PlanningEarningsUKTaxCodes.$inferSelect;
+type ParentalLeaveRow = typeof PlanningEarningsParentalLeave.$inferSelect;
 type BillRow = typeof PlanningBills.$inferSelect;
 type OverrideRow = typeof PlanningMonthBills.$inferSelect;
 type RateRow = typeof PlanningYearUKTaxRates.$inferSelect;
@@ -85,7 +87,11 @@ export type PlanningYearData = {
   accounts: PlanningAccountInfo[];
   transactions: TxRow[];
   payslips: Array<{ payslip: PayslipRow; adjustments: AdjustmentRow[] }>;
-  earnings: Array<{ earning: EarningRow; taxCodes: TaxCodeRow[] }>;
+  earnings: Array<{
+    earning: EarningRow;
+    taxCodes: TaxCodeRow[];
+    parentalLeaves: ParentalLeaveRow[];
+  }>;
   bills: Array<{
     bill: BillRow;
     overridesByMonthStartIso: Map<string, OverrideRow>;
@@ -137,6 +143,7 @@ export async function loadPlanningYearData(
     txs,
     payslipJoin,
     earningJoin,
+    parentalLeaveRows,
     billJoin,
     rates,
     snapshotRows,
@@ -193,6 +200,26 @@ export async function loadPlanningYearData(
       : Promise.resolve<
           Array<{ earning: EarningRow; taxCode: TaxCodeRow | null }>
         >([]),
+    hasAccounts
+      ? db
+          .select()
+          .from(PlanningEarningsParentalLeave)
+          .innerJoin(
+            PlanningEarnings,
+            eq(PlanningEarnings.id, PlanningEarningsParentalLeave.earningsId),
+          )
+          .where(
+            and(
+              inArray(PlanningEarnings.toAccountId, assetIds),
+              lte(PlanningEarningsParentalLeave.start, fyEnd),
+              or(
+                isNull(PlanningEarningsParentalLeave.end),
+                gte(PlanningEarningsParentalLeave.end, fyStart),
+              ),
+            ),
+          )
+          .then((rows) => rows.map((r) => r.PlanningEarningsParentalLeave))
+      : Promise.resolve<ParentalLeaveRow[]>([]),
     hasAccounts
       ? db
           .select({ bill: PlanningBills, override: PlanningMonthBills })
@@ -289,15 +316,24 @@ export async function loadPlanningYearData(
 
   const earningsById = new Map<
     string,
-    { earning: EarningRow; taxCodes: TaxCodeRow[] }
+    {
+      earning: EarningRow;
+      taxCodes: TaxCodeRow[];
+      parentalLeaves: ParentalLeaveRow[];
+    }
   >();
   for (const r of earningJoin) {
     const entry = earningsById.get(r.earning.id) ?? {
       earning: r.earning,
       taxCodes: [],
+      parentalLeaves: [],
     };
     if (r.taxCode) entry.taxCodes.push(r.taxCode);
     earningsById.set(r.earning.id, entry);
+  }
+  for (const leave of parentalLeaveRows) {
+    const entry = earningsById.get(leave.earningsId);
+    if (entry) entry.parentalLeaves.push(leave);
   }
 
   const snapshots: PlanningYearData["snapshots"] = [];
@@ -507,13 +543,32 @@ export function monthTransactionsFor(
 
   // 3) Earnings predictions (skipped when a payslip covers this account+month)
   if (!hasPayslip && data.rates) {
-    for (const { earning: e, taxCodes } of data.earnings) {
+    for (const { earning: e, taxCodes, parentalLeaves } of data.earnings) {
       if (e.toAccountId !== assetId) continue;
-      const coverage = earningMonthCoverage(e.start, e.end, monthStart);
-      if (coverage === 0) continue;
       assert(e.countryCode === "GB", "Only GB earnings supported");
+      // The month's effective annual gross folds together any partial-month
+      // coverage at the earning's start/end *and* any parental-leave stages
+      // that overlap. When fully worked at full pay this equals
+      // `e.amountGross`; when partially covered or partly on leave it scales
+      // down accordingly. Tax / NIC / student loan are then computed on the
+      // effective annual and divided by 12 to give this month's projection.
+      const fraction = effectiveMonthGrossFraction(
+        e.start,
+        e.end,
+        parentalLeaves.map((l) => ({
+          start: l.start,
+          end: l.end,
+          fractionOfGross: l.fractionOfGross,
+          statutoryEligible: l.isSMP || l.isSPP,
+        })),
+        e.amountGross / 52,
+        data.rates.statutoryParentalPayWeekly,
+        monthStart,
+      );
+      if (fraction === 0) continue;
+      const effectiveAnnualGross = Math.round(e.amountGross * fraction);
       const take = computeUKTake({
-        gross: e.amountGross,
+        gross: effectiveAnnualGross,
         pension: {
           sacrifice: e.pensionSalarySacrifice,
           netPay: e.pensionNetPay ?? 0,
@@ -523,9 +578,7 @@ export function monthTransactionsFor(
         rates: data.rates,
         taxCode: activeTaxCode(taxCodes, monthStart),
       });
-      // Annualised → monthly, then pro-rata'd when the earning only covers
-      // part of the month (start or end falls mid-month).
-      const perMonth = (n: number) => Math.round((n / 12) * coverage);
+      const perMonth = (n: number) => Math.round(n / 12);
       const monthKey = monthId(monthStart);
       out.push(
         mkTx({

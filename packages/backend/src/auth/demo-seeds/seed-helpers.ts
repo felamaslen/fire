@@ -125,6 +125,7 @@ const DEFAULT_UK_TAX_RATES = {
   rateStudentLoanPlan2: 0.09,
   thresholdStudentLoanPlan2: 2729500,
   thresholdPersonalAllowanceTaper: 10000000,
+  statutoryParentalPayWeekly: 18718,
 };
 
 /** Compute the UK financial-year start year for `today`. FY runs 6 April → 5 April. */

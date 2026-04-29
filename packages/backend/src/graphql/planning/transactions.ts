@@ -25,6 +25,7 @@ import {
 import {
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsParentalLeave,
   PlanningEarningsUKTaxCodes,
   PlanningMonthBills,
   PlanningPayslipAdjustments,
@@ -45,10 +46,11 @@ import {
 import { VOID, type Void } from "../void";
 import { ensurePlanningMonth, PlanningTransaction } from "./index";
 import {
-  earningMonthCoverage,
+  effectiveMonthGrossFraction,
   monthYearLabel,
   parseMonthId,
   planningMonthKey,
+  startOfMonthUTC,
 } from "./months";
 import { computeUKTake } from "./tax";
 
@@ -632,8 +634,29 @@ async function materialiseEarningAsPayslip(
         ),
       ),
     );
+  const parentalLeaves = await db
+    .select()
+    .from(PlanningEarningsParentalLeave)
+    .where(eq(PlanningEarningsParentalLeave.earningsId, parsed.id));
+  // Keep the materialised payslip in sync with the projection that produced
+  // the row the user just clicked on: scale the annual gross by the month's
+  // effective fraction (covers mid-month start/end and any parental leave).
+  const fraction = effectiveMonthGrossFraction(
+    earning.start,
+    earning.end,
+    parentalLeaves.map((l) => ({
+      start: l.start,
+      end: l.end,
+      fractionOfGross: l.fractionOfGross,
+      statutoryEligible: l.isSMP || l.isSPP,
+    })),
+    earning.amountGross / 52,
+    rates.statutoryParentalPayWeekly,
+    startOfMonthUTC(date),
+  );
+  const effectiveAnnualGross = Math.round(earning.amountGross * fraction);
   const take = computeUKTake({
-    gross: earning.amountGross,
+    gross: effectiveAnnualGross,
     pension: {
       sacrifice: earning.pensionSalarySacrifice,
       netPay: earning.pensionNetPay ?? 0,
@@ -643,11 +666,7 @@ async function materialiseEarningAsPayslip(
     rates,
     taxCode: activeCode?.taxCode ?? null,
   });
-  // Keep the materialised payslip in sync with the projection that produced
-  // the row the user just clicked on: pro-rata the monthly figures when the
-  // earning only covers part of the month (mid-month start / end).
-  const coverage = earningMonthCoverage(earning.start, earning.end, date);
-  const perMonth = (n: number) => Math.round((n / 12) * coverage);
+  const perMonth = (n: number) => Math.round(n / 12);
 
   let gross = perMonth(take.gross);
   const adjustments: {

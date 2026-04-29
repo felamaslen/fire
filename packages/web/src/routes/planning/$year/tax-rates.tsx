@@ -35,6 +35,7 @@ const PlanningTaxRatesDialogDocument = graphql(`
           rateStudentLoanPlan2
           thresholdStudentLoanPlan2
           thresholdPersonalAllowanceTaper
+          statutoryParentalPayWeekly
         }
       }
     }
@@ -77,6 +78,7 @@ const DEFAULT_RATES = {
   rateStudentLoanPlan2: "9",
   thresholdStudentLoanPlan2: "27295",
   thresholdPersonalAllowanceTaper: "100000",
+  statutoryParentalPayWeekly: "187.18",
 };
 
 type FormValues = typeof DEFAULT_RATES;
@@ -100,6 +102,7 @@ function ratesToForm(r: CurrentRates): FormValues {
     thresholdPersonalAllowanceTaper: String(
       r.thresholdPersonalAllowanceTaper / 100,
     ),
+    statutoryParentalPayWeekly: String(r.statutoryParentalPayWeekly / 100),
   };
 }
 
@@ -120,6 +123,7 @@ function formToRates(v: FormValues) {
     rateStudentLoanPlan2: pct(v.rateStudentLoanPlan2),
     thresholdStudentLoanPlan2: pounds(v.thresholdStudentLoanPlan2),
     thresholdPersonalAllowanceTaper: pounds(v.thresholdPersonalAllowanceTaper),
+    statutoryParentalPayWeekly: pounds(v.statutoryParentalPayWeekly),
   };
 }
 
@@ -226,6 +230,15 @@ function PlanningTaxRatesDialog() {
                 label="Upper earnings limit"
                 value={values.thresholdNicUpperEarnings}
                 onChange={(v) => patch({ thresholdNicUpperEarnings: v })}
+              />
+            </div>
+          </Section>
+          <Section title="Parental leave">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Pounds
+                label="Statutory weekly rate"
+                value={values.statutoryParentalPayWeekly}
+                onChange={(v) => patch({ statutoryParentalPayWeekly: v })}
               />
             </div>
           </Section>

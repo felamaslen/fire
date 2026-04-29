@@ -58,6 +58,10 @@ export class PlanningYearTaxRatesUK {
   get thresholdPersonalAllowanceTaper(): Float {
     return this.row.thresholdPersonalAllowanceTaper;
   }
+  /** Statutory weekly rate for parental pay (`SMP` / `SPP` / `ShPP` / `SAP`), in fractional units of GBP. Used as the floor for parental-leave top-ups: actual weekly pay during a leave is at least `min(this rate, 90% of normal weekly gross)` when the leave is flagged as eligible. @gqlField */
+  get statutoryParentalPayWeekly(): Float {
+    return this.row.statutoryParentalPayWeekly;
+  }
 }
 
 /** Country-specific tax parameters captured on a PlanningYear. @gqlUnion */
@@ -85,6 +89,8 @@ export type PlanningYearTaxRatesUKInput = {
   thresholdStudentLoanPlan2: Float;
   /** Income at which the personal allowance begins to taper, in fractional units of GBP. */
   thresholdPersonalAllowanceTaper: Float;
+  /** Statutory weekly rate for parental pay (`SMP` / `SPP` / `ShPP` / `SAP`), in fractional units of GBP. */
+  statutoryParentalPayWeekly: Float;
 };
 
 /** Country-specific tax parameter payload. Exactly one variant must be set. @gqlInput */

@@ -381,6 +381,31 @@ CREATE TABLE "PlanningEarnings" (
   )
 );
 
+CREATE TABLE "PlanningEarningsParentalLeave" (
+  "earningsId" uuid NOT NULL,
+  "start" date NOT NULL,
+  "end" date,
+  "fractionOfGross" double precision NOT NULL,
+  "isSMP" boolean DEFAULT FALSE NOT NULL,
+  "isSPP" boolean DEFAULT FALSE NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "PlanningEarningsParentalLeave_pk" PRIMARY KEY ("earningsId", "start"),
+  CONSTRAINT "PlanningEarningsParentalLeave_dateRange_ck" CHECK (
+    "PlanningEarningsParentalLeave"."end" IS NULL
+    OR "PlanningEarningsParentalLeave"."end" >= "PlanningEarningsParentalLeave"."start"
+  ),
+  CONSTRAINT "PlanningEarningsParentalLeave_fractionOfGross_ck" CHECK (
+    "PlanningEarningsParentalLeave"."fractionOfGross" BETWEEN 0 AND 1
+  ),
+  CONSTRAINT "PlanningEarningsParentalLeave_eligibility_ck" CHECK (
+    NOT (
+      "PlanningEarningsParentalLeave"."isSMP"
+      AND "PlanningEarningsParentalLeave"."isSPP"
+    )
+  )
+);
+
 CREATE TABLE "PlanningEarningsUKTaxCodes" (
   "earningsId" uuid NOT NULL,
   "start" date NOT NULL,
@@ -485,6 +510,7 @@ CREATE TABLE "PlanningYearUKTaxRates" (
   "rateStudentLoanPlan2" double precision NOT NULL,
   "thresholdStudentLoanPlan2" bigint NOT NULL,
   "thresholdPersonalAllowanceTaper" bigint NOT NULL,
+  "statutoryParentalPayWeekly" bigint DEFAULT 18718 NOT NULL,
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT "PlanningYearUKTaxRates_rateBasic_ck" CHECK (
@@ -599,6 +625,9 @@ ADD CONSTRAINT "PlanningEarnings_studentLoanLiabilityId_NetWorthCategoryLiabilit
 
 ALTER TABLE "PlanningEarnings"
 ADD CONSTRAINT "PlanningEarnings_pensionAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("pensionAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
+
+ALTER TABLE "PlanningEarningsParentalLeave"
+ADD CONSTRAINT "PlanningEarningsParentalLeave_earningsId_PlanningEarnings_id_fk" FOREIGN KEY ("earningsId") REFERENCES "public"."PlanningEarnings" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningEarningsUKTaxCodes"
 ADD CONSTRAINT "PlanningEarningsUKTaxCodes_earningsId_PlanningEarnings_id_fk" FOREIGN KEY ("earningsId") REFERENCES "public"."PlanningEarnings" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;

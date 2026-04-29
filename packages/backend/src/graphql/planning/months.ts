@@ -1,4 +1,5 @@
 import {
+  addDays,
   differenceInCalendarDays,
   isAfter,
   isBefore,
@@ -81,6 +82,66 @@ export function earningMonthCoverage(
   const overlapDays = differenceInCalendarDays(overlapEnd, overlapStart) + 1;
   const monthDays = differenceInCalendarDays(monthEnd, monthStart);
   return overlapDays / monthDays;
+}
+
+/** A single parental-leave stage for an earning, in the shape consumed by `effectiveMonthGrossFraction`. */
+export type ParentalLeaveStage = {
+  start: Date;
+  end: Date | null;
+  /** Fraction of normal gross paid during this stage, in `[0, 1]`. */
+  fractionOfGross: number;
+  /** Whether the statutory parental-pay floor applies during this stage. */
+  statutoryEligible: boolean;
+};
+
+/**
+ * Fraction of an earning's normal annual gross that this calendar month represents, accounting for the earning's start / end dates and any parental-leave stages overlapping the month.
+ *
+ * Each day of the month contributes `0` if outside the earning range, `1` if fully worked, or the leave's effective fraction `max(stage.fractionOfGross, statutoryFloorFraction)` if covered by a parental-leave stage. The statutory floor is `min(statutoryWeeklyRate / weeklyGross, 0.9)` when `statutoryEligible`, else `0`.
+ *
+ * Multiply the result by `earning.amountGross` to get the effective annual gross for `computeUKTake` for this month — divide that take by 12 to get the month's projection.
+ */
+export function effectiveMonthGrossFraction(
+  earningStart: Date,
+  earningEnd: Date | null,
+  parentalLeaves: ParentalLeaveStage[],
+  weeklyGross: number,
+  statutoryWeeklyRate: number,
+  monthStart: Date,
+): number {
+  const monthEnd = addMonthsUTC(monthStart, 1);
+  const monthDays = differenceInCalendarDays(monthEnd, monthStart);
+  const effectiveEnd = earningEnd;
+  // SMP / SPP weekly entitlement, expressed as a fraction of normal weekly
+  // gross. HMRC defines the rate as the *lower of* the flat statutory weekly
+  // amount or 90% of average weekly earnings — so high earners are capped at
+  // the statutory rate, low earners at 90% of their own pay. This is the
+  // *rate calculation*; whether it actually applies on a given day is
+  // decided per-stage below.
+  const statFraction =
+    weeklyGross > 0 ? Math.min(statutoryWeeklyRate / weeklyGross, 0.9) : 0;
+  let weighted = 0;
+  for (let i = 0; i < monthDays; i++) {
+    const day = addDays(monthStart, i);
+    if (isBefore(day, earningStart)) continue;
+    if (effectiveEnd != null && isAfter(day, effectiveEnd)) continue;
+    const stage = parentalLeaves.find(
+      (l) => !isBefore(day, l.start) && (l.end == null || !isAfter(day, l.end)),
+    );
+    if (stage) {
+      // Statutory pay is a *minimum guaranteed payment* — eligible employees
+      // can never be paid below SMP / SPP, but an enhanced employer scheme
+      // can pay more. Take the *higher of* the contractual fraction and the
+      // statutory entitlement (when eligible). E.g. a `0% + isSMP` row tops
+      // up to the statutory rate; a `90% + isSMP` row stays at 90% because
+      // it already exceeds the floor.
+      const floor = stage.statutoryEligible ? statFraction : 0;
+      weighted += Math.max(stage.fractionOfGross, floor);
+    } else {
+      weighted += 1;
+    }
+  }
+  return weighted / monthDays;
 }
 
 /** `MM/YYYY` label for a UTC-anchored date — e.g. `04/2025` for an April

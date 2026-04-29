@@ -1,5 +1,6 @@
 import {
   earningMonthCoverage,
+  effectiveMonthGrossFraction,
   monthId,
   monthsInFYYear,
   parseMonthId,
@@ -127,6 +128,183 @@ it("earningMonthCoverage pro-rates when the earning ends mid-month", () => {
       new Date(Date.UTC(2025, 3, 1)),
     ),
   ).toBeCloseTo(15 / 30);
+});
+
+// `effectiveMonthGrossFraction` reuses the same fixtures: 30k annual gross =>
+// weeklyGross ~= £576.92 (57692p), and the FY25/26 statutory weekly = £187.18
+// (18718p) which is below 90% × weekly => statutory floor fraction = 18718 /
+// 57692 ≈ 0.3245.
+const APR_2025 = new Date(Date.UTC(2025, 3, 1));
+const ANNUAL_GROSS_30K_WEEKLY = 3_000_000 / 52;
+const STAT_WEEKLY = 18_718;
+
+it("effectiveMonthGrossFraction returns 1 for a fully-covered month with no leaves", () => {
+  expect(
+    effectiveMonthGrossFraction(
+      new Date(Date.UTC(2025, 3, 1)),
+      null,
+      [],
+      ANNUAL_GROSS_30K_WEEKLY,
+      STAT_WEEKLY,
+      APR_2025,
+    ),
+  ).toBe(1);
+});
+
+it("effectiveMonthGrossFraction equals coverage when the earning starts mid-month with no leaves", () => {
+  // 16-30 Apr = 15 of 30 days → 0.5
+  expect(
+    effectiveMonthGrossFraction(
+      new Date(Date.UTC(2025, 3, 16)),
+      null,
+      [],
+      ANNUAL_GROSS_30K_WEEKLY,
+      STAT_WEEKLY,
+      APR_2025,
+    ),
+  ).toBeCloseTo(15 / 30);
+});
+
+it("effectiveMonthGrossFraction takes fractionOfGross during a non-statutory leave", () => {
+  // Whole April unpaid (fraction=0) → expect 0; half pay → 0.5.
+  const leave = (frac: number) => ({
+    start: new Date(Date.UTC(2025, 3, 1)),
+    end: new Date(Date.UTC(2025, 3, 30)),
+    fractionOfGross: frac,
+    statutoryEligible: false,
+  });
+  expect(
+    effectiveMonthGrossFraction(
+      new Date(Date.UTC(2025, 3, 1)),
+      null,
+      [leave(0)],
+      ANNUAL_GROSS_30K_WEEKLY,
+      STAT_WEEKLY,
+      APR_2025,
+    ),
+  ).toBe(0);
+  expect(
+    effectiveMonthGrossFraction(
+      new Date(Date.UTC(2025, 3, 1)),
+      null,
+      [leave(0.5)],
+      ANNUAL_GROSS_30K_WEEKLY,
+      STAT_WEEKLY,
+      APR_2025,
+    ),
+  ).toBeCloseTo(0.5);
+});
+
+it("effectiveMonthGrossFraction floors a statutory-eligible leave at min(stat / weekly, 0.9)", () => {
+  // 30k annual: weekly ~£576.92, statutory £187.18 → floor ≈ 0.3245.
+  // A row at fractionOfGross=0 + isSMP gets bumped to that floor.
+  const fraction = effectiveMonthGrossFraction(
+    new Date(Date.UTC(2025, 3, 1)),
+    null,
+    [
+      {
+        start: new Date(Date.UTC(2025, 3, 1)),
+        end: new Date(Date.UTC(2025, 3, 30)),
+        fractionOfGross: 0,
+        statutoryEligible: true,
+      },
+    ],
+    ANNUAL_GROSS_30K_WEEKLY,
+    STAT_WEEKLY,
+    APR_2025,
+  );
+  expect(fraction).toBeCloseTo(STAT_WEEKLY / ANNUAL_GROSS_30K_WEEKLY);
+});
+
+it("effectiveMonthGrossFraction caps the statutory floor at 0.9 of normal weekly for low earners", () => {
+  // £5k annual: weekly = ~£96.15. Statutory £187.18 would exceed 90% of
+  // weekly (~£86.54), so the floor is capped at 0.9.
+  const lowWeekly = 500_000 / 52;
+  const fraction = effectiveMonthGrossFraction(
+    new Date(Date.UTC(2025, 3, 1)),
+    null,
+    [
+      {
+        start: new Date(Date.UTC(2025, 3, 1)),
+        end: new Date(Date.UTC(2025, 3, 30)),
+        fractionOfGross: 0,
+        statutoryEligible: true,
+      },
+    ],
+    lowWeekly,
+    STAT_WEEKLY,
+    APR_2025,
+  );
+  expect(fraction).toBeCloseTo(0.9);
+});
+
+it("effectiveMonthGrossFraction prefers the higher of fraction and statutory floor", () => {
+  // 90% explicit fraction > the ~32% statutory floor → 0.9 wins.
+  const fraction = effectiveMonthGrossFraction(
+    new Date(Date.UTC(2025, 3, 1)),
+    null,
+    [
+      {
+        start: new Date(Date.UTC(2025, 3, 1)),
+        end: new Date(Date.UTC(2025, 3, 30)),
+        fractionOfGross: 0.9,
+        statutoryEligible: true,
+      },
+    ],
+    ANNUAL_GROSS_30K_WEEKLY,
+    STAT_WEEKLY,
+    APR_2025,
+  );
+  expect(fraction).toBeCloseTo(0.9);
+});
+
+it("effectiveMonthGrossFraction blends partial-month leave with normal pay", () => {
+  // 16-30 Apr (15 days) at 0% unpaid leave; 1-15 Apr (15 days) at full pay.
+  // Expected: 15/30 × 1 + 15/30 × 0 = 0.5.
+  const fraction = effectiveMonthGrossFraction(
+    new Date(Date.UTC(2025, 3, 1)),
+    null,
+    [
+      {
+        start: new Date(Date.UTC(2025, 3, 16)),
+        end: new Date(Date.UTC(2025, 3, 30)),
+        fractionOfGross: 0,
+        statutoryEligible: false,
+      },
+    ],
+    ANNUAL_GROSS_30K_WEEKLY,
+    STAT_WEEKLY,
+    APR_2025,
+  );
+  expect(fraction).toBeCloseTo(15 / 30);
+});
+
+it("effectiveMonthGrossFraction stages compose: 6 weeks 90%, then SMP-only floor", () => {
+  // April covered by stage A (1-15 Apr at 0.9 + SMP) and stage B (16-30 Apr
+  // at 0 + SMP, floors to ~0.3245). Expect 15/30 × 0.9 + 15/30 × floor.
+  const stat = STAT_WEEKLY / ANNUAL_GROSS_30K_WEEKLY;
+  const fraction = effectiveMonthGrossFraction(
+    new Date(Date.UTC(2025, 3, 1)),
+    null,
+    [
+      {
+        start: new Date(Date.UTC(2025, 3, 1)),
+        end: new Date(Date.UTC(2025, 3, 15)),
+        fractionOfGross: 0.9,
+        statutoryEligible: true,
+      },
+      {
+        start: new Date(Date.UTC(2025, 3, 16)),
+        end: new Date(Date.UTC(2025, 3, 30)),
+        fractionOfGross: 0,
+        statutoryEligible: true,
+      },
+    ],
+    ANNUAL_GROSS_30K_WEEKLY,
+    STAT_WEEKLY,
+    APR_2025,
+  );
+  expect(fraction).toBeCloseTo((15 / 30) * 0.9 + (15 / 30) * stat);
 });
 
 it("earningMonthCoverage returns 0 when the earning doesn't overlap the month", () => {
