@@ -39,6 +39,8 @@ const schema = z.object({
   AUTH_PIN: z.coerce.number().int().min(1000).max(9999),
   /** HMAC secret used to sign auth tokens. Must be at least 32 characters. Rotating invalidates every outstanding token (real and demo). */
   AUTH_SECRET: z.string().min(32),
+  /** App ID for openexchangerates.org used by the `currencyExchangeRates` query to fetch live FX rates. Leave unset to disable the feature — the query will then error and clients fall back to whatever rates the user has saved. */
+  OPENEXCHANGERATES_APP_ID: z.string().min(1).optional(),
 });
 
 // Strip empty-string values so compose's `${VAR:-}` pass-through (which forwards

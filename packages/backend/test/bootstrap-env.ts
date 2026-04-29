@@ -12,3 +12,4 @@ process.env.UPLOADS_DIR = path.join(base, `worker-${workerId}`);
 // the enabled code path. The real Gemini client is never invoked because
 // tests mock the SDK.
 process.env.GEMINI_API_KEY ??= "test-gemini-key";
+process.env.OPENEXCHANGERATES_APP_ID ??= "test-openexchangerates-app-id";

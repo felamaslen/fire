@@ -1,4 +1,9 @@
-import { useMutation, useSuspenseQuery } from "@apollo/client/react";
+import type { ApolloClient } from "@apollo/client";
+import {
+  useApolloClient,
+  useMutation,
+  useSuspenseQuery,
+} from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
 import { isSameMonth } from "date-fns/isSameMonth";
 import { parseISO } from "date-fns/parseISO";
@@ -193,22 +198,22 @@ function buildRows(entry: EntryFromFragment): WizardRow[] {
 
 /** Fetch fresh FX rates for every foreign currency on the entry. The wizard
  * reuses the snapshot's rates as a fallback so a transient API failure (e.g.
- * `VITE_OPENEXCHANGERATES_APP_ID` missing, network error) doesn't block the
+ * server `OPENEXCHANGERATES_APP_ID` missing, network error) doesn't block the
  * save — the user gets toast-warned and the entry persists with stale rates. */
 async function refreshRates(
+  client: ApolloClient,
   rates: { base: string; currency: string; rate: number }[],
 ): Promise<{ base: string; currency: string; rate: number }[]> {
   if (rates.length === 0) return [];
-  const homeCurrency = rates[0].base;
   const codes = rates.map((r) => r.currency);
   try {
-    const fresh = await fetchOpenExchangeRates(homeCurrency, codes);
+    const fresh = await fetchOpenExchangeRates(client, codes);
     return rates.map((r) => {
-      const v = fresh[r.currency];
+      const v = fresh.rates[r.currency];
       return {
         base: r.base,
         currency: r.currency,
-        rate: v != null ? 1 / v : r.rate,
+        rate: v ?? r.rate,
       };
     });
   } catch (err) {
@@ -349,6 +354,7 @@ function WizardWithSnapshot({
     },
   );
   const [refreshingRates, setRefreshingRates] = useState(false);
+  const apollo = useApolloClient();
   const saving = creating || updating || refreshingRates;
 
   const stepCount = rows.length;
@@ -399,7 +405,7 @@ function WizardWithSnapshot({
     setRefreshingRates(true);
     let currencyRates;
     try {
-      currencyRates = await refreshRates(entry.currencyRates);
+      currencyRates = await refreshRates(apollo, entry.currencyRates);
     } finally {
       setRefreshingRates(false);
     }

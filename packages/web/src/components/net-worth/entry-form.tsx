@@ -1,5 +1,12 @@
-import type { InternalRefetchQueriesInclude } from "@apollo/client";
-import { useMutation, useSuspenseQuery } from "@apollo/client/react";
+import type {
+  ApolloClient,
+  InternalRefetchQueriesInclude,
+} from "@apollo/client";
+import {
+  useApolloClient,
+  useMutation,
+  useSuspenseQuery,
+} from "@apollo/client/react";
 import type {
   FormAsyncValidateOrFn,
   FormValidateOrFn,
@@ -307,43 +314,33 @@ function entryAsRates(entry: EntryFormData): RateItem[] {
   }));
 }
 
+const CurrencyExchangeRatesDocument = graphql(`
+  query CurrencyExchangeRates($currencies: [String!]!) {
+    currencyExchangeRates(currencies: $currencies) {
+      base
+      currency
+      rate
+    }
+  }
+`);
+
 export async function fetchOpenExchangeRates(
-  homeCurrency: string,
+  client: ApolloClient,
   codes: string[],
-): Promise<Record<string, number>> {
-  const appId = import.meta.env.VITE_OPENEXCHANGERATES_APP_ID as
-    | string
-    | undefined;
-  if (!appId) {
-    throw new Error(
-      "Missing `VITE_OPENEXCHANGERATES_APP_ID`; add it to the web package's .env.",
-    );
+): Promise<{ base: string; rates: Record<string, number> }> {
+  const { data, error } = await client.query({
+    query: CurrencyExchangeRatesDocument,
+    variables: { currencies: codes },
+    fetchPolicy: "network-only",
+  });
+  if (error) throw error;
+  const rates: Record<string, number> = {};
+  let base = "";
+  for (const r of data?.currencyExchangeRates ?? []) {
+    rates[r.currency] = r.rate;
+    base = r.base;
   }
-  // Free-tier openexchangerates always bases at USD; convert to the home
-  // currency client-side.
-  const res = await fetch(
-    `https://openexchangerates.org/api/latest.json?app_id=${encodeURIComponent(appId)}&symbols=${[homeCurrency, ...codes].join(",")}`,
-  );
-  if (!res.ok) {
-    throw new Error(`openexchangerates: ${res.status} ${res.statusText}`);
-  }
-  const body = (await res.json()) as {
-    rates: Record<string, number>;
-  };
-  const homeVsUsd = body.rates[homeCurrency];
-  if (homeVsUsd == null) {
-    throw new Error(
-      `openexchangerates didn't return a rate for ${homeCurrency}`,
-    );
-  }
-  const out: Record<string, number> = {};
-  for (const code of codes) {
-    const v = body.rates[code];
-    if (v == null) continue;
-    // rate = units of currency per 1 home-currency: (X per USD) / (HOME per USD).
-    out[code] = v / homeVsUsd;
-  }
-  return out;
+  return { base, rates };
 }
 
 export function EntryForm({
@@ -564,6 +561,7 @@ function CurrenciesSection({
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [newCode, setNewCode] = useState("");
+  const apollo = useApolloClient();
 
   return (
     <form.Field name="rates" mode="array">
@@ -578,13 +576,13 @@ function CurrenciesSection({
           setRefreshing(true);
           try {
             const fresh = await fetchOpenExchangeRates(
-              homeCurrency,
+              apollo,
               rates.map((r) => r.currency),
             );
             rates.forEach((r, i) => {
-              const v = fresh[r.currency];
+              const v = fresh.rates[r.currency];
               if (v != null) {
-                form.setFieldValue(`rates[${i}].rate`, (1 / v).toPrecision(10));
+                form.setFieldValue(`rates[${i}].rate`, v.toPrecision(10));
               }
             });
             toast.success("Rates refreshed");

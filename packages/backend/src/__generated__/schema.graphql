@@ -470,6 +470,20 @@ type Currency {
 }
 
 """
+Live exchange rate for a single currency against the server's home currency.
+"""
+type CurrencyExchangeRate {
+  """
+  ISO-4217 code of the home currency `rate` is quoted into (the server's configured `currencyDefault`).
+  """
+  base: String!
+  """ISO-4217 code of the foreign currency (e.g. `"USD"`)."""
+  currency: String!
+  """Units of `base` per 1 unit of `currency`."""
+  rate: Float!
+}
+
+"""
 A synthetic data flavour the user can pick to try the app without a real PIN. Returned by the `demos` query; passed back into `demoLogin` by `id` to provision a session seeded with that flavour's data.
 """
 type Demo {
@@ -2138,6 +2152,15 @@ type Query {
   ISO-4217 code of the server's configured home currency (e.g. `"GBP"`). Used by clients as the default currency when the user has not configured any currency rates on an entry.
   """
   currencyDefault: String @semanticNonNull
+  """
+  Fetch live exchange rates for one or more foreign currencies, quoted into the server's home currency (see `currencyDefault`). Each returned `rate` is in units of the home currency per 1 unit of the foreign currency. Rates are pulled from openexchangerates.org and cached server-side for 5 minutes per currency.
+  """
+  currencyExchangeRates(
+    """
+    ISO-4217 codes to look up against the home currency. The home currency itself is silently skipped.
+    """
+    currencies: [String!]!
+  ): [CurrencyExchangeRate!] @semanticNonNull
   """List available demo flavours for the login screen."""
   demos: [Demo!] @noAuth
   """
