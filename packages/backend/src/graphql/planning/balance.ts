@@ -79,6 +79,10 @@ export type PlanningAccountInfo = {
   /** Underlying asset's name. Cached on the info so synchronous code paths (e.g. building derived transfer-in rows like `Transfer from <name>`) don't have to await a thunk. */
   assetName: string;
   asset: NetWorthCategoryAsset;
+  /** Target month-end closing balance, in fractional units of `targetCurrency`. Null when no target is set. */
+  target: number | null;
+  /** Currency the `target` is denominated in. Null when no target is set. */
+  targetCurrency: string | null;
 };
 
 /** Every row needed to render a full planning year — pre-loaded once per PlanningYear so the month × account resolvers can filter in memory without issuing more SQL. */
@@ -113,6 +117,8 @@ export async function loadPlanningAccountInfos(): Promise<
     .select({
       assetId: PlanningAccounts.accountId,
       alias: PlanningAccounts.alias,
+      target: PlanningAccounts.target,
+      currency: PlanningAccounts.currency,
       asset: NetWorthCategoryAssets,
     })
     .from(PlanningAccounts)
@@ -126,6 +132,8 @@ export async function loadPlanningAccountInfos(): Promise<
     alias: r.alias,
     assetName: r.asset.name,
     asset: NetWorthCategoryAsset.load(r.asset),
+    target: r.target,
+    targetCurrency: r.currency,
   }));
 }
 
