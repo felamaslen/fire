@@ -69,7 +69,16 @@ export function QuickAddFab() {
     opts?: { replace?: boolean },
   ) => {
     const next = serializeHash(buildHash(patch));
-    void navigate({ hash: next || undefined, replace: opts?.replace ?? false });
+    // Pass `search: true` so router-core's search middleware preserves the
+    // current search params instead of wiping them. Without it, the route's
+    // `beforeLoad` (e.g. `/investments`) sees empty search, redirects to
+    // restore persisted defaults, and that redirect drops the hash we just
+    // set — closing the modal before it opens.
+    void navigate({
+      search: true,
+      hash: next || undefined,
+      replace: opts?.replace ?? false,
+    });
   };
 
   const closeModal = () => {
