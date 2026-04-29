@@ -132,9 +132,13 @@ const PlanningMonthAccountCellDocument = graphql(
       }
       valueStartProvisional
       valueEnd {
+        amount
         ...Figure
       }
       valueEndProvisional
+      target {
+        amount
+      }
       transactions {
         id
         ...PlanningTransactionRow
@@ -931,7 +935,16 @@ function MonthAccountCell({
           investableAssets={investableAssets}
         />
       </div>
-      <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
+      <div
+        className={cn(
+          "flex items-baseline justify-end px-2 py-1",
+          closingHighlight(
+            cell.valueEnd.amount,
+            cell.target?.amount ?? null,
+            cell.valueEndProvisional,
+          ) ?? "bg-muted/30",
+        )}
+      >
         <ProvisionalFigure
           data={cell.valueEnd}
           provisional={cell.valueEndProvisional}
@@ -941,6 +954,20 @@ function MonthAccountCell({
       </div>
     </div>
   );
+}
+
+/** Background-colour class for the month-end cell: red when the value is projected and negative, yellow when projected and below the target, green when projected and at-or-above the target, otherwise null (no highlight — keeps the default muted band). Recorded (non-projected) values never get highlighted regardless of target. */
+function closingHighlight(
+  valueEnd: number,
+  target: number | null,
+  provisional: boolean,
+): string | null {
+  if (!provisional) return null;
+  if (valueEnd < 0) return "bg-red-500/10";
+  if (target == null) return null;
+  if (valueEnd < target) return "bg-yellow-500/10";
+  if (valueEnd >= target * 1.5) return "bg-blue-500/10";
+  return "bg-green-500/10";
 }
 
 /** `Figure` with a provisional-vs-recorded affordance: projected values render italic / muted with a dashed underline and a tooltip explaining they aren't from a net-worth snapshot; recorded values render bold without any extra chrome. */

@@ -37,6 +37,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 
 import { graphql, type ResultOf } from "../../../graphql";
@@ -49,6 +54,10 @@ const PlanningAccountsDialogDocument = graphql(`
       accounts {
         id
         name
+        target {
+          amount
+          currency
+        }
         asset {
           id
           name
@@ -67,12 +76,17 @@ const PlanningAccountsDialogDocument = graphql(`
         }
       }
     }
+    currencyDefault
   }
 `);
 
 const PlanningAccountAssignDocument = graphql(`
-  mutation PlanningAccountAssign($assetId: ID!, $alias: String) {
-    planningAccountAssign(assetId: $assetId, alias: $alias) {
+  mutation PlanningAccountAssign(
+    $assetId: ID!
+    $alias: String
+    $target: MoneyInput
+  ) {
+    planningAccountAssign(assetId: $assetId, alias: $alias, target: $target) {
       id
     }
   }
@@ -216,12 +230,21 @@ function PlanningAccountsDialog() {
                   </li>
                 )}
                 {accounts.map((a) => (
-                  <AccountRow key={a.id} account={a} refetch={refetch} />
+                  <AccountRow
+                    key={a.id}
+                    account={a}
+                    currency={data.currencyDefault ?? "GBP"}
+                    refetch={refetch}
+                  />
                 ))}
               </ul>
             </SortableContext>
           </DndContext>
-          <AddAccountForm options={available} refetch={refetch} />
+          <AddAccountForm
+            options={available}
+            currency={data.currencyDefault ?? "GBP"}
+            refetch={refetch}
+          />
         </div>
         <div className="flex justify-end">
           <Button variant="outline" onClick={close}>
@@ -235,9 +258,11 @@ function PlanningAccountsDialog() {
 
 function AccountRow({
   account,
+  currency,
   refetch,
 }: {
   account: Account;
+  currency: string;
   refetch: RefetchEntry[];
 }) {
   const {
@@ -251,6 +276,9 @@ function AccountRow({
 
   const hasAlias = account.name !== account.asset.name;
   const [alias, setAlias] = useState(hasAlias ? account.name : "");
+  const initialTarget =
+    account.target == null ? "" : String(account.target.amount);
+  const [target, setTarget] = useState(initialTarget);
   const [assign, assignState] = useMutation(PlanningAccountAssignDocument, {
     refetchQueries: refetch,
   });
@@ -258,18 +286,26 @@ function AccountRow({
     refetchQueries: refetch,
   });
 
-  const initial = hasAlias ? account.name : "";
-  const dirty = alias.trim() !== initial;
+  const initialAlias = hasAlias ? account.name : "";
+  const targetParsed = parseTargetInput(target);
+  const dirty =
+    alias.trim() !== initialAlias ||
+    target.trim() !== initialTarget ||
+    targetParsed === "invalid";
+  const canSave = targetParsed !== "invalid";
 
   const save = async () => {
+    if (targetParsed === "invalid") return;
     const next = alias.trim();
     await assign({
       variables: {
         assetId: account.asset.id,
         alias: next === "" ? null : next,
+        target:
+          targetParsed == null ? null : { amount: targetParsed, currency },
       },
     });
-    toast.success("Updated alias");
+    toast.success("Updated account");
   };
 
   const remove = async () => {
@@ -309,10 +345,27 @@ function AccountRow({
             onChange={(e) => setAlias(e.target.value)}
             className="h-8 text-xs"
           />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Input
+                aria-label="Target closing balance"
+                placeholder="Target"
+                inputMode="decimal"
+                currency={currency}
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                className="h-8 w-28 text-xs"
+              />
+            </TooltipTrigger>
+            <TooltipContent>
+              Target month-end closing balance. Months projected below this show
+              in yellow; projected negatives show in red.
+            </TooltipContent>
+          </Tooltip>
           <Button
             size="sm"
             variant="secondary"
-            disabled={!dirty || assignState.loading}
+            disabled={!dirty || !canSave || assignState.loading}
             onClick={save}
           >
             Save
@@ -326,28 +379,38 @@ function AccountRow({
 
 function AddAccountForm({
   options,
+  currency,
   refetch,
 }: {
   options: AssetOption[];
+  currency: string;
   refetch: RefetchEntry[];
 }) {
   const [assetId, setAssetId] = useState("");
   const [alias, setAlias] = useState("");
+  const [target, setTarget] = useState("");
   const [assign, { loading }] = useMutation(PlanningAccountAssignDocument, {
     refetchQueries: refetch,
   });
 
-  const disabled = assetId === "" || loading;
+  const targetParsed = parseTargetInput(target);
+  const disabled = assetId === "" || loading || targetParsed === "invalid";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (disabled) return;
     const trimmed = alias.trim();
     await assign({
-      variables: { assetId, alias: trimmed === "" ? null : trimmed },
+      variables: {
+        assetId,
+        alias: trimmed === "" ? null : trimmed,
+        target:
+          targetParsed == null ? null : { amount: targetParsed, currency },
+      },
     });
     setAssetId("");
     setAlias("");
+    setTarget("");
     toast.success("Account assigned");
   };
 
@@ -381,10 +444,36 @@ function AddAccountForm({
           onChange={(e) => setAlias(e.target.value)}
           className="flex-1"
         />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Input
+              aria-label="Target closing balance"
+              placeholder="Target"
+              inputMode="decimal"
+              currency={currency}
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              className="w-32"
+            />
+          </TooltipTrigger>
+          <TooltipContent>
+            Target month-end closing balance. Months projected below this show
+            in yellow; projected negatives show in red.
+          </TooltipContent>
+        </Tooltip>
         <Button type="submit" disabled={disabled}>
           Assign
         </Button>
       </div>
     </form>
   );
+}
+
+/** Parse the target text input. Empty → `null` (clear the target); a valid non-negative decimal → the number; anything else → `"invalid"` so the caller can disable Save. */
+function parseTargetInput(s: string): number | null | "invalid" {
+  const trimmed = s.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) return "invalid";
+  return n;
 }

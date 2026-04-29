@@ -1089,9 +1089,9 @@ type Mutation {
     toAccountId: ID
   ): PlanningPayslip!
   """
-  Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.
+  Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias and a target month-end closing balance. Pass `target: null` to clear an existing target. The asset's reporting currency is the home currency, so `target.currency` must match it.
   """
-  planningAccountAssign(alias: String, assetId: ID!): PlanningAccount!
+  planningAccountAssign(alias: String, assetId: ID!, target: MoneyInput): PlanningAccount!
   """
   Move the planning account identified by `id` (a `PlanningAccount.id`) to 0-based `position` in the user-defined order, shifting everything between its old and new slot by one. Clamps `position` to the valid range.
   """
@@ -1602,6 +1602,10 @@ type PlanningAccount {
   Display name — the alias if one was set, otherwise the underlying asset's name.
   """
   name: String!
+  """
+  Target month-end closing balance the user wants this account to hold. Null when no target is set.
+  """
+  target: Money
 }
 
 """
@@ -1765,6 +1769,10 @@ type PlanningMonthAccount {
   id: ID!
   """Display name — alias if set, otherwise the underlying asset's name."""
   name: String!
+  """
+  Target month-end closing balance for the underlying planning account, or null if no target is set. Constant across the year — the field lives here so a single grid query selecting `accounts.target` and `valueEnd` can drive cell highlighting in one fetch.
+  """
+  target: Money
   """
   Transactions (actual + predicted) affecting this account in this month.
   """
