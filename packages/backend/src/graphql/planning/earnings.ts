@@ -113,6 +113,8 @@ export class PlanningEarning {
       assetId: account.accountId,
       alias: account.alias,
       asset: NetWorthCategoryAsset.load(asset),
+      target: account.target,
+      targetCurrency: account.currency,
     });
   }
 

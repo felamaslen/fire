@@ -82,8 +82,7 @@ export class PlanningBill {
   async fromAccount(): Promise<PlanningAccount> {
     const [row] = await db
       .select({
-        assetId: PlanningAccounts.accountId,
-        alias: PlanningAccounts.alias,
+        account: PlanningAccounts,
         asset: NetWorthCategoryAssets,
       })
       .from(PlanningAccounts)
@@ -97,9 +96,11 @@ export class PlanningBill {
       `PlanningAccount for asset ${this.fromAccountId} referenced by PlanningBill ${this.id} is missing — assign it via planningAccountAssign first.`,
     );
     return PlanningAccount.load({
-      assetId: row.assetId,
-      alias: row.alias,
+      assetId: row.account.accountId,
+      alias: row.account.alias,
       asset: NetWorthCategoryAsset.load(row.asset),
+      target: row.account.target,
+      targetCurrency: row.account.currency,
     });
   }
 }

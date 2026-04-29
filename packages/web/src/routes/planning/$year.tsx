@@ -43,7 +43,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -132,9 +131,13 @@ const PlanningMonthAccountCellDocument = graphql(
       }
       valueStartProvisional
       valueEnd {
+        amount
         ...Figure
       }
       valueEndProvisional
+      target {
+        amount
+      }
       transactions {
         id
         ...PlanningTransactionRow
@@ -931,7 +934,16 @@ function MonthAccountCell({
           investableAssets={investableAssets}
         />
       </div>
-      <div className="flex items-baseline justify-end bg-muted/30 px-2 py-1">
+      <div
+        className={cn(
+          "flex items-baseline justify-end px-2 py-1",
+          closingHighlight(
+            cell.valueEnd.amount,
+            cell.target?.amount ?? null,
+            cell.valueEndProvisional,
+          ) ?? "bg-muted/30",
+        )}
+      >
         <ProvisionalFigure
           data={cell.valueEnd}
           provisional={cell.valueEndProvisional}
@@ -941,6 +953,20 @@ function MonthAccountCell({
       </div>
     </div>
   );
+}
+
+/** Background-colour class for the month-end cell: red when the value is projected and negative, yellow when projected and below the target, green when projected and at-or-above the target, otherwise null (no highlight — keeps the default muted band). Recorded (non-projected) values never get highlighted regardless of target. */
+function closingHighlight(
+  valueEnd: number,
+  target: number | null,
+  provisional: boolean,
+): string | null {
+  if (!provisional) return null;
+  if (valueEnd < 0) return "bg-red-500/10";
+  if (target == null) return null;
+  if (valueEnd < target) return "bg-yellow-500/10";
+  if (valueEnd >= target * 1.5) return "bg-blue-500/10";
+  return "bg-green-500/10";
 }
 
 /** `Figure` with a provisional-vs-recorded affordance: projected values render italic / muted with a dashed underline and a tooltip explaining they aren't from a net-worth snapshot; recorded values render bold without any extra chrome. */
@@ -1085,7 +1111,10 @@ function TransactionRow({
     </>
   );
   const rowClass = cn(
-    "group/row flex w-full items-center gap-1 px-2 py-1 text-left cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:bg-accent/40",
+    "group/row flex w-full items-center gap-1 px-2 py-1 text-left",
+    tx.isEditable
+      ? "cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:bg-accent/40"
+      : "cursor-default",
     tx.isProvisional && "italic text-muted-foreground",
     // Indent payslip deductions so they read as children of the gross row
     // rendered immediately above them.
@@ -1101,6 +1130,19 @@ function TransactionRow({
       openDialog();
     }
   };
+
+  if (!tx.isEditable) {
+    return (
+      <li>
+        <Tooltip delayDuration={1000}>
+          <TooltipTrigger asChild>
+            <div className={rowClass}>{rowBody}</div>
+          </TooltipTrigger>
+          <TooltipContent>This transaction is not editable.</TooltipContent>
+        </Tooltip>
+      </li>
+    );
+  }
 
   if (!everOpened) {
     return (
@@ -1134,12 +1176,6 @@ function TransactionRow({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Transaction</DialogTitle>
-            {!tx.isEditable && (
-              <DialogDescription>
-                This transaction is derived from earnings, payslips, or bills
-                and can't be edited here.
-              </DialogDescription>
-            )}
           </DialogHeader>
           <FullTransactionForm
             submitLabel="Save"
@@ -1157,8 +1193,7 @@ function TransactionRow({
             excludeAccountId={accountId}
             frequentLiabilityIds={frequentLiabilityIds}
             frequentAssetIds={frequentAssetIds}
-            disabled={!tx.isEditable}
-            onDelete={tx.isEditable ? onDelete : undefined}
+            onDelete={onDelete}
             onSubmit={onSaveEdit}
             onCancel={() => setEditOpen(false)}
           />

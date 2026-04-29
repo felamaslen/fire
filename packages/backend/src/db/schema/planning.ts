@@ -324,22 +324,35 @@ export const planningEarningsParentalLeaveRelations = relations(
 );
 
 /** Planning-specific metadata attached to an existing NetWorthCategoryAsset. The PK is the underlying asset's id; rows in other planning tables (bills, earnings, payslips, transactions) FK to this table so the referenced asset is guaranteed to have a planning account attached. */
-export const PlanningAccounts = pgTable("PlanningAccounts", {
-  /** Underlying asset this planning account wraps. */
-  accountId: uuid("accountId")
-    .primaryKey()
-    .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
-  /** Short display name used in planning views (null falls back to the asset name). */
-  alias: text("alias"),
-  createdAt: timestamp("createdAt", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updatedAt", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  /** Position in the user-defined ordering of planning accounts (0-based, dense). Enforced unique + deferrable in SQL so a multi-row shift inside one transaction can swap values without tripping the constraint mid-way. Position matches migration `0029`. */
-  sortOrder: integer("sortOrder").notNull().default(0),
-});
+export const PlanningAccounts = pgTable(
+  "PlanningAccounts",
+  {
+    /** Underlying asset this planning account wraps. */
+    accountId: uuid("accountId")
+      .primaryKey()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
+    /** Short display name used in planning views (null falls back to the asset name). */
+    alias: text("alias"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** Position in the user-defined ordering of planning accounts (0-based, dense). Enforced unique + deferrable in SQL so a multi-row shift inside one transaction can swap values without tripping the constraint mid-way. Position matches migration `0029`. */
+    sortOrder: integer("sortOrder").notNull().default(0),
+    /** Currency the `target` is denominated in. Must match the underlying asset's reporting currency at write time; checked in the resolver. Null when no target is set. */
+    currency: currencyCode("currency"),
+    /** Target month-end closing balance, in fractional units of `currency` (e.g. pence for GBP). Null when no target is set. */
+    target: bigint("target", { mode: "number" }),
+  },
+  (t) => [
+    check(
+      "PlanningAccounts_target_currency_ck",
+      sql`(${t.target} IS NULL) = (${t.currency} IS NULL)`,
+    ),
+  ],
+);
 
 export const planningAccountsRelations = relations(
   PlanningAccounts,

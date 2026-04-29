@@ -3,6 +3,7 @@ import { strict as assert } from "node:assert";
 import { eq, gt, sql } from "drizzle-orm";
 import type { ID, Int } from "grats";
 
+import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import { NetWorthCategoryAssets, NetWorthEntries } from "@/db/schema/net-worth";
 import {
@@ -13,7 +14,11 @@ import {
 } from "@/db/schema/planning";
 
 import type { Date as CalendarDate } from "../date";
-import { Money } from "../money";
+import {
+  getMoneyInputFractionalAmount,
+  Money,
+  type MoneyInput,
+} from "../money";
 import {
   NetWorthCategoryAsset,
   NetWorthCategoryLiability,
@@ -109,6 +114,8 @@ export class PlanningYear {
         assetId: info.assetId,
         alias: info.alias,
         asset: info.asset,
+        target: info.target,
+        targetCurrency: info.targetCurrency,
       }),
     );
   }
@@ -137,6 +144,10 @@ export class PlanningMonth {
   /** Per-account rollups for this month. Each account is built with pre-filtered transactions + value-start so downstream resolvers are synchronous. @gqlField */
   accounts(): PlanningMonthAccount[] {
     return this.yearData.accounts.map((info) => {
+      const target =
+        info.target != null && info.targetCurrency != null
+          ? Money.fromMinorDenomination(info.target, info.targetCurrency)
+          : null;
       const transactions = monthTransactionsFor(
         this.yearData,
         info.assetId,
@@ -164,6 +175,7 @@ export class PlanningMonth {
         valueStart,
         valueStartProvisional,
         monthEndSnapshot,
+        target,
       });
     });
   }
@@ -182,6 +194,8 @@ export class PlanningMonthAccount {
   monthValueStart!: Money;
   monthValueStartProvisional!: boolean;
   monthEndSnapshot!: Money | null;
+  /** Target month-end closing balance for the underlying planning account, or null if no target is set. Constant across the year — the field lives here so a single grid query selecting `accounts.target` and `valueEnd` can drive cell highlighting in one fetch. @gqlField */
+  target!: Money | null;
 
   constructor(data: {
     monthId: ID;
@@ -194,6 +208,7 @@ export class PlanningMonthAccount {
     valueStart: Money;
     valueStartProvisional: boolean;
     monthEndSnapshot: Money | null;
+    target: Money | null;
   }) {
     this.id = `${data.monthId}::${data.assetId}` as ID;
     this.date = data.date;
@@ -205,6 +220,7 @@ export class PlanningMonthAccount {
     this.monthValueStart = data.valueStart;
     this.monthValueStartProvisional = data.valueStartProvisional;
     this.monthEndSnapshot = data.monthEndSnapshot;
+    this.target = data.target;
   }
 
   /** Display name — alias if set, otherwise the underlying asset's name. @gqlField */
@@ -338,6 +354,8 @@ type PlanningAccountData = {
   assetId: string;
   alias: string | null;
   asset: NetWorthCategoryAsset;
+  target: number | null;
+  targetCurrency: string | null;
 };
 
 /** A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias. @gqlType */
@@ -380,6 +398,8 @@ export class PlanningAccount {
         assetId: row.account.accountId,
         alias: row.account.alias,
         asset: NetWorthCategoryAsset.load(row.asset),
+        target: row.account.target,
+        targetCurrency: row.account.currency,
       };
     });
   }
@@ -399,6 +419,13 @@ export class PlanningAccount {
   async name(): Promise<string> {
     const d = await this.data();
     return d.alias ?? (await d.asset.name());
+  }
+
+  /** Target month-end closing balance the user wants this account to hold. Null when no target is set. @gqlField */
+  async target(): Promise<Money | null> {
+    const d = await this.data();
+    if (d.target == null || d.targetCurrency == null) return null;
+    return Money.fromMinorDenomination(d.target, d.targetCurrency);
   }
 }
 
@@ -565,19 +592,29 @@ export async function planningYearSet(
 }
 
 /**
- * Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.
+ * Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias and a target month-end closing balance. Pass `target: null` to clear an existing target. The asset's reporting currency is the home currency, so `target.currency` must match it.
  *
  * @gqlMutationField
  */
 export async function planningAccountAssign(
   assetId: ID,
   alias?: string | null,
+  target?: MoneyInput | null,
 ): Promise<PlanningAccount> {
   const [asset] = await db
     .select()
     .from(NetWorthCategoryAssets)
     .where(eq(NetWorthCategoryAssets.id, assetId));
   assert(asset, `NetWorthCategoryAsset ${assetId} not found`);
+
+  const targetMinor =
+    target == null ? null : getMoneyInputFractionalAmount(target);
+  if (targetMinor != null) {
+    assert(
+      targetMinor.currency === HOME_CURRENCY,
+      `Target currency ${targetMinor.currency} does not match the asset's currency ${HOME_CURRENCY}.`,
+    );
+  }
 
   const row = await db.transaction(async (tx) => {
     const [{ max }] = await tx
@@ -590,10 +627,17 @@ export async function planningAccountAssign(
         accountId: assetId,
         alias: alias ?? null,
         sortOrder: nextOrder,
+        target: targetMinor?.amount ?? null,
+        currency: targetMinor?.currency ?? null,
       })
       .onConflictDoUpdate({
         target: PlanningAccounts.accountId,
-        set: { alias: alias ?? null, updatedAt: new Date() },
+        set: {
+          alias: alias ?? null,
+          target: targetMinor?.amount ?? null,
+          currency: targetMinor?.currency ?? null,
+          updatedAt: new Date(),
+        },
       })
       .returning();
     return inserted;
@@ -603,6 +647,8 @@ export async function planningAccountAssign(
     assetId: row.accountId,
     alias: row.alias,
     asset: NetWorthCategoryAsset.load(asset),
+    target: row.target,
+    targetCurrency: row.currency,
   });
 }
 

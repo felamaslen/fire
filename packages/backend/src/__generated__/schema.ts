@@ -617,6 +617,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Display name \u2014 the alias if one was set, otherwise the underlying asset's name.",
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                target: {
+                    description: "Target month-end closing balance the user wants this account to hold. Null when no target is set.",
+                    name: "target",
+                    type: MoneyType
                 }
             };
         }
@@ -1867,6 +1872,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Display name \u2014 alias if set, otherwise the underlying asset's name.",
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                target: {
+                    description: "Target month-end closing balance for the underlying planning account, or null if no target is set. Constant across the year \u2014 the field lives here so a single grid query selecting `accounts.target` and `valueEnd` can drive cell highlighting in one fetch.",
+                    name: "target",
+                    type: MoneyType
                 },
                 transactions: {
                     description: "Transactions (actual + predicted) affecting this account in this month.",
@@ -4197,7 +4207,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 planningAccountAssign: {
-                    description: "Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias.",
+                    description: "Attach a NetWorthCategoryAsset as a planning account, optionally with a display alias and a target month-end closing balance. Pass `target: null` to clear an existing target. The asset's reporting currency is the home currency, so `target.currency` must match it.",
                     name: "planningAccountAssign",
                     type: new GraphQLNonNull(PlanningAccountType),
                     args: {
@@ -4206,10 +4216,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         },
                         assetId: {
                             type: new GraphQLNonNull(GraphQLID)
+                        },
+                        target: {
+                            type: MoneyInputType
                         }
                     },
                     resolve(_source, args) {
-                        return mutationPlanningAccountAssignResolver(args.assetId, args.alias);
+                        return mutationPlanningAccountAssignResolver(args.assetId, args.alias, args.target);
                     }
                 },
                 planningAccountReorder: {
