@@ -1438,7 +1438,7 @@ function CreateTransactionTrigger({
       <PopoverTrigger asChild>
         <IconButton aria-label={meta.label}>{meta.icon}</IconButton>
       </PopoverTrigger>
-      <PopoverContent className="w-80" align="end">
+      <PopoverContent className="w-80 bg-popover/80" align="end">
         {kind === "adhoc" ? (
           <FullTransactionForm
             submitLabel="Add"
