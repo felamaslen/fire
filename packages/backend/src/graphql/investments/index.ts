@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 
-import { eq } from "drizzle-orm";
+import { eq, notExists } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { ID, Int } from "grats";
 
@@ -296,7 +296,20 @@ export async function investments(
   const afterCursor = after ? decodeCursor(after) : null;
   const { key, direction } = parseSortInput(sort);
 
-  const allRows = await db.select().from(Investments);
+  const allRows = await db
+    .select({
+      // Investments with zero transactions overall are surfaced regardless of
+      // the wrapper filter, so a freshly-created investment stays visible
+      // (and thus actionable) before its first transaction is booked.
+      hasNoTransactions: notExists(
+        db
+          .select({ id: InvestmentTransactions.id })
+          .from(InvestmentTransactions)
+          .where(eq(InvestmentTransactions.investmentId, Investments.id)),
+      ).as("hasNoTransactions"),
+      row: Investments,
+    })
+    .from(Investments);
   const rows = filterAssetId
     ? await (async () => {
         const ids = await db
@@ -304,9 +317,11 @@ export async function investments(
           .from(InvestmentTransactions)
           .where(eq(InvestmentTransactions.assetId, filterAssetId));
         const keep = new Set(ids.map((r) => r.id));
-        return allRows.filter((row) => keep.has(row.id));
+        return allRows.flatMap((r) =>
+          keep.has(r.row.id) || r.hasNoTransactions ? [r.row] : [],
+        );
       })()
-    : allRows;
+    : allRows.map((r) => r.row);
 
   // Only load stats for rows when the caller actually needs them to sort.
   const enriched: {

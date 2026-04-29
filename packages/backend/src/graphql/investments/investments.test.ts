@@ -280,6 +280,70 @@ describe("investments query", () => {
     ]);
   });
 
+  it("scopes by wrapper while keeping investments with no transactions visible", async () => {
+    const isaInv = await createStock("InIsa", "ISA");
+    const sippInv = await createStock("InSipp", "SIPP");
+    await createStock("Untouched", "EMPTY");
+    const createWrapper = async (name: string) => {
+      const doc = graphql(`
+        mutation ($name: String!) {
+          netWorthCategoryCreate(
+            input: { asset: { name: $name, type: STOCK } }
+          ) {
+            id
+          }
+        }
+      `);
+      return (await runGql(doc, { name })).netWorthCategoryCreate.id;
+    };
+    const isaAsset = await createWrapper("ISA");
+    const sippAsset = await createWrapper("SIPP");
+    const buy = graphql(`
+      mutation ($id: ID!, $asset: ID!) {
+        investmentTransactionCreate(
+          investmentId: $id
+          assetId: $asset
+          date: "2024-01-01"
+          units: 1
+          price: { amount: 1, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `);
+    await runGql(buy, { id: isaInv, asset: isaAsset });
+    await runGql(buy, { id: sippInv, asset: sippAsset });
+
+    const list = graphql(`
+      query ($filterAssetId: ID) {
+        investments(filterAssetId: $filterAssetId) {
+          edges {
+            node {
+              name
+            }
+          }
+        }
+      }
+    `);
+
+    const all = await runGql(list, { filterAssetId: null });
+    expect(all.investments?.edges.map((e) => e.node.name).sort()).toEqual([
+      "InIsa",
+      "InSipp",
+      "Untouched",
+    ]);
+
+    const isaScoped = await runGql(list, { filterAssetId: isaAsset });
+    expect(isaScoped.investments?.edges.map((e) => e.node.name).sort()).toEqual(
+      ["InIsa", "Untouched"],
+    );
+
+    const sippScoped = await runGql(list, { filterAssetId: sippAsset });
+    expect(
+      sippScoped.investments?.edges.map((e) => e.node.name).sort(),
+    ).toEqual(["InSipp", "Untouched"]);
+  });
+
   it("paginates with first + after", async () => {
     await createStock("A", "AAA");
     await createStock("B", "BBB");
