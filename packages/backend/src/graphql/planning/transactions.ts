@@ -59,9 +59,9 @@ import { computeUKTake } from "./tax";
  * Opaque `PlanningTransaction.id` payload — identifies what a given row on the ledger actually maps back to. Encoded on the wire as hex-encoded JSON so clients treat it as an opaque string, but decodable on the server for routing `transactionUpdate` / `transactionDelete`.
  */
 const txIdSchema = z.discriminatedUnion("kind", [
-  /** Manual `PlanningTransactions` row, from-side (the account paying out). */
+  /** Manual transaction, from-side (the account paying out). */
   z.object({ kind: z.literal("tx"), id: z.string() }),
-  /** Manual `PlanningTransactions` row, to-side (the account receiving, for transfers). */
+  /** Manual transaction, to-side (the account receiving, for transfers). */
   z.object({ kind: z.literal("to"), id: z.string() }),
   /** Payslip gross pay row. */
   z.object({ kind: z.literal("pay"), id: z.string() }),
@@ -80,7 +80,7 @@ const txIdSchema = z.discriminatedUnion("kind", [
     id: z.string(),
     monthId: z.string(),
   }),
-  /** Credit-card payment prediction for a month — `id` is the liability id. `monthId` scopes the virtual row to a specific month; editing materialises a real `PlanningTransactions` row with the liability id set, which then suppresses this prediction for that month. */
+  /** Credit-card payment prediction for a month — `id` is the liability id. `monthId` scopes the virtual row to a specific month; editing materialises a real manual transaction with the liability id set, which then suppresses this prediction for that month. */
   z.object({
     kind: z.literal("liab"),
     id: z.string(),
@@ -226,6 +226,8 @@ export async function transactionCreate(
   liabilityId?: ID | null,
   /** Asset (`NetWorthCategoryAsset.id`, type `STOCK` or `PENSION`) being invested into by this transaction, if any. Only valid for outflows. Mutually exclusive with `liabilityId`. */
   assetId?: ID | null,
+  /** Mark this transaction as a user-authored draft. Provisional rows show up in the planner's balance projections but are treated as "not yet committed" by every "actual money" aggregate. Defaults to `false`. */
+  isProvisional?: boolean | null,
 ): Promise<PlanningTransaction> {
   const { year, date } = monthKey(monthId);
   const { currency, amount: minor } = getMoneyInputFractionalAmount(amount);
@@ -253,6 +255,7 @@ export async function transactionCreate(
       toAccountId: toAccountId ?? null,
       liabilityId: liabilityId ?? null,
       assetId: assetId ?? null,
+      isProvisional: isProvisional ?? false,
     })
     .returning();
   invalidatePlanningTransactionReachable(ctx, {
@@ -262,7 +265,8 @@ export async function transactionCreate(
     id: encodePlanningTransactionId({ kind: "tx", id: row.id }),
     name: row.name,
     amount: Money.fromMinorDenomination(row.amount, row.currency),
-    isProvisional: false,
+    isProjected: false,
+    isProvisional: row.isProvisional,
     isEditable: true,
     toAccountId: row.toAccountId ?? null,
     liabilityId: row.liabilityId ?? null,
@@ -286,7 +290,7 @@ async function assertInvestableAsset(assetId: string): Promise<void> {
 /**
  * Update an existing transaction. The composite `id` determines what's actually rewritten:
  *
- * - `tx:…` / `to:…` — patches the underlying manual `PlanningTransactions` row.
+ * - `tx:…` / `to:…` — patches the underlying manual transaction.
  * - `pay:…` — patches the payslip gross / name.
  * - `adj:…` — patches a payslip adjustment (sign of the existing row is preserved; `amount` is treated as magnitude).
  * - `bill:…` — creates or updates a per-month bill override so this month uses the new amount in place of the predicted value.
@@ -311,6 +315,8 @@ export async function transactionUpdate(
   liabilityId?: ID | null,
   /** New invested-into asset (`NetWorthCategoryAsset.id`, type `STOCK` or `PENSION`). Pass null explicitly to clear. Manual transactions only. Mutually exclusive with `liabilityId`. */
   assetId?: ID | null,
+  /** Toggle the user-authored-draft flag. Manual transactions only. */
+  isProvisional?: boolean | null,
 ): Promise<PlanningTransaction> {
   const { year, date } = monthKey(monthId);
   const parsed = decodePlanningTransactionId(id);
@@ -340,6 +346,7 @@ export async function transactionUpdate(
           ...(toAccountId !== undefined && { toAccountId }),
           ...(liabilityId !== undefined && { liabilityId }),
           ...(assetId !== undefined && { assetId }),
+          ...(isProvisional != null && { isProvisional }),
           updatedAt: new Date(),
         })
         .where(eq(PlanningTransactions.id, parsed.id));
@@ -442,7 +449,8 @@ async function reloadTransaction(
         id: encodePlanningTransactionId(parsed),
         name: row.name,
         amount: Money.fromMinorDenomination(signedMinor, row.currency),
-        isProvisional: false,
+        isProjected: false,
+        isProvisional: row.isProvisional,
         isEditable: fromSide,
         toAccountId: fromSide ? (row.toAccountId ?? null) : null,
         liabilityId: fromSide ? (row.liabilityId ?? null) : null,
@@ -459,7 +467,7 @@ async function reloadTransaction(
         id: encodePlanningTransactionId(parsed),
         name: row.name,
         amount: Money.fromMinorDenomination(row.amountGross, row.currency),
-        isProvisional: false,
+        isProjected: false,
         isEditable: true,
         toAccountId: null,
         liabilityId: null,
@@ -486,7 +494,7 @@ async function reloadTransaction(
           row.adjustment.amount,
           row.payslip.currency,
         ),
-        isProvisional: false,
+        isProjected: false,
         isEditable: true,
         isPayslipDeduction: true,
         toAccountId: null,
@@ -507,7 +515,7 @@ async function reloadTransaction(
         id: encodePlanningTransactionId(parsed),
         name: "",
         amount: Money.fromMinorDenomination(0, "GBP"),
-        isProvisional: true,
+        isProjected: true,
         isEditable: false,
         toAccountId: null,
         liabilityId: null,
@@ -520,7 +528,7 @@ async function reloadTransaction(
 /**
  * Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:
  *
- * - `tx:…` / `to:…` — deletes the `PlanningTransactions` row.
+ * - `tx:…` / `to:…` — deletes the manual transaction.
  * - `pay:…` — deletes the payslip (and its adjustments, via cascade).
  * - `adj:…` — deletes the single adjustment.
  * - `bill:…` — clears any per-month override row for this (bill, month), so the predicted bill takes over again. To cancel a predicted bill for one month, set its amount to zero explicitly via `transactionUpdate` instead of deleting.

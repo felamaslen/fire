@@ -268,9 +268,11 @@ export class PlanningTransaction {
   readonly name: string;
   /** Signed amount — negative for outflows (bills, taxes, transfers out). @gqlField */
   readonly amount: Money;
-  /** True when the transaction is a prediction (e.g. forthcoming bill, predicted salary). @gqlField */
+  /** True when the transaction is an engine-generated prediction (forthcoming bill, predicted salary, projected liability payment, …) rather than something the user has recorded. Distinct from `isProvisional`, which flags a user-authored draft. @gqlField */
+  readonly isProjected: boolean;
+  /** True when the transaction is a user-authored draft — included in the planner's balance projections but treated as "not yet committed" by every "actual money" aggregate. Only ever true on manual transactions; engine-generated projections (`isProjected`) and payslip rows are never provisional. @gqlField */
   readonly isProvisional: boolean;
-  /** True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable. @gqlField */
+  /** True when the transaction can be edited directly; usually `!isProjected`, but the receiving side of a manual transfer is neither projected nor editable. @gqlField */
   readonly isEditable: boolean;
   /** True when the row is a recurring bill (predicted or override). Bills that service a liability also set `liability`; bills without one are generic (utilities, rent, subscriptions, ...). @gqlField */
   readonly isBill: boolean;
@@ -293,7 +295,8 @@ export class PlanningTransaction {
     id: ID;
     name: string;
     amount: Money;
-    isProvisional: boolean;
+    isProjected: boolean;
+    isProvisional?: boolean;
     isEditable: boolean;
     isBill?: boolean;
     isPayslipGross?: boolean;
@@ -307,7 +310,8 @@ export class PlanningTransaction {
     this.id = data.id;
     this.name = data.name;
     this.amount = data.amount;
-    this.isProvisional = data.isProvisional;
+    this.isProjected = data.isProjected;
+    this.isProvisional = data.isProvisional ?? false;
     this.isEditable = data.isEditable;
     this.isBill = data.isBill ?? false;
     this.isPayslipGross = data.isPayslipGross ?? false;

@@ -91,7 +91,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 amount: {
-                    description: "Signed cash amount from the *wrapper's* perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. The underlying `PlanningTransactions` row stores the sign from the cash account's perspective; this resolver flips it so every consumer of `cashContributions` sees the same convention regardless of source.",
+                    description: "Signed cash amount from the wrapper's perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. Every consumer of `cashContributions` sees the same convention regardless of source.",
                     name: "amount",
                     type: new GraphQLNonNull(MoneyType)
                 },
@@ -108,6 +108,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 id: {
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
+                },
+                isProvisional: {
+                    description: "True when the transaction is a user-authored draft \u2014 modelled in the planner's balance projections but not part of the wrapper's actual cash float. Provisional transactions are excluded from `cashContributions` server-side; this field exists so the planning grid can render them with a distinguishing style.",
+                    name: "isProvisional",
+                    type: new GraphQLNonNull(GraphQLBoolean)
                 },
                 name: {
                     name: "name",
@@ -1969,7 +1974,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLBoolean)
                 },
                 isEditable: {
-                    description: "True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable.",
+                    description: "True when the transaction can be edited directly; usually `!isProjected`, but the receiving side of a manual transfer is neither projected nor editable.",
                     name: "isEditable",
                     type: new GraphQLNonNull(GraphQLBoolean)
                 },
@@ -1983,8 +1988,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "isPayslipGross",
                     type: new GraphQLNonNull(GraphQLBoolean)
                 },
+                isProjected: {
+                    description: "True when the transaction is an engine-generated prediction (forthcoming bill, predicted salary, projected liability payment, \u2026) rather than something the user has recorded. Distinct from `isProvisional`, which flags a user-authored draft.",
+                    name: "isProjected",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
                 isProvisional: {
-                    description: "True when the transaction is a prediction (e.g. forthcoming bill, predicted salary).",
+                    description: "True when the transaction is a user-authored draft \u2014 included in the planner's balance projections but treated as \"not yet committed\" by every \"actual money\" aggregate. Only ever true on manual transactions; engine-generated projections (`isProjected`) and payslip rows are never provisional.",
                     name: "isProvisional",
                     type: new GraphQLNonNull(GraphQLBoolean)
                 },
@@ -3704,12 +3714,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "Source cash planning account (`PlanningAccount.id`).",
                             type: new GraphQLNonNull(GraphQLID)
                         },
+                        isProvisional: {
+                            description: "Mark the row as a user-authored draft. Provisional rows are excluded from the wrapper's actual cash float and the `cashContributions` list, but still surface in the planner's balance projections. Defaults to `false`.",
+                            type: GraphQLBoolean
+                        },
                         name: {
                             type: new GraphQLNonNull(GraphQLString)
                         }
                     },
                     resolve(_source, args, context) {
-                        return mutationAssetCashTransactionCreateResolver(context, args.assetId, args.fromAccountId, args.date, args.amount, args.name);
+                        return mutationAssetCashTransactionCreateResolver(context, args.assetId, args.fromAccountId, args.date, args.amount, args.name, args.isProvisional);
                     }
                 },
                 assetCashTransactionDelete: {
@@ -3745,12 +3759,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`.",
                             type: new GraphQLNonNull(GraphQLID)
                         },
+                        isProvisional: {
+                            description: "Toggle the user-authored-draft flag.",
+                            type: GraphQLBoolean
+                        },
                         name: {
                             type: GraphQLString
                         }
                     },
                     resolve(_source, args, context) {
-                        return mutationAssetCashTransactionUpdateResolver(context, args.id, args.date, args.amount, args.name, args.fromAccountId);
+                        return mutationAssetCashTransactionUpdateResolver(context, args.id, args.date, args.amount, args.name, args.fromAccountId, args.isProvisional);
                     }
                 },
                 billCreate: {
@@ -4636,6 +4654,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "Asset (`NetWorthCategoryAsset.id`, type `STOCK` or `PENSION`) being invested into by this transaction, if any. Only valid for outflows. Mutually exclusive with `liabilityId`.",
                             type: GraphQLID
                         },
+                        isProvisional: {
+                            description: "Mark this transaction as a user-authored draft. Provisional rows show up in the planner's balance projections but are treated as \"not yet committed\" by every \"actual money\" aggregate. Defaults to `false`.",
+                            type: GraphQLBoolean
+                        },
                         liabilityId: {
                             description: "Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows. Mutually exclusive with `assetId`.",
                             type: GraphQLID
@@ -4653,11 +4675,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args, context) {
-                        return mutationTransactionCreateResolver(context, args.monthId, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId);
+                        return mutationTransactionCreateResolver(context, args.monthId, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId, args.isProvisional);
                     }
                 },
                 transactionDelete: {
-                    description: "Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:\n\n- `tx:\u2026` / `to:\u2026` \u2014 deletes the `PlanningTransactions` row.\n- `pay:\u2026` \u2014 deletes the payslip (and its adjustments, via cascade).\n- `adj:\u2026` \u2014 deletes the single adjustment.\n- `bill:\u2026` \u2014 clears any per-month override row for this (bill, month), so the predicted bill takes over again. To cancel a predicted bill for one month, set its amount to zero explicitly via `transactionUpdate` instead of deleting.\n- `earn:\u2026` \u2014 inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.\n- `liab:\u2026` \u2014 materialises a zero-amount manual transaction tagged with the liability, which suppresses the credit-card spend prediction for this month while leaving the liability visible in the grid.",
+                    description: "Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:\n\n- `tx:\u2026` / `to:\u2026` \u2014 deletes the manual transaction.\n- `pay:\u2026` \u2014 deletes the payslip (and its adjustments, via cascade).\n- `adj:\u2026` \u2014 deletes the single adjustment.\n- `bill:\u2026` \u2014 clears any per-month override row for this (bill, month), so the predicted bill takes over again. To cancel a predicted bill for one month, set its amount to zero explicitly via `transactionUpdate` instead of deleting.\n- `earn:\u2026` \u2014 inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.\n- `liab:\u2026` \u2014 materialises a zero-amount manual transaction tagged with the liability, which suppresses the credit-card spend prediction for this month while leaving the liability visible in the grid.",
                     name: "transactionDelete",
                     type: new GraphQLNonNull(VoidType),
                     args: {
@@ -4675,7 +4697,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 transactionUpdate: {
-                    description: "Update an existing transaction. The composite `id` determines what's actually rewritten:\n\n- `tx:\u2026` / `to:\u2026` \u2014 patches the underlying manual `PlanningTransactions` row.\n- `pay:\u2026` \u2014 patches the payslip gross / name.\n- `adj:\u2026` \u2014 patches a payslip adjustment (sign of the existing row is preserved; `amount` is treated as magnitude).\n- `bill:\u2026` \u2014 creates or updates a per-month bill override so this month uses the new amount in place of the predicted value.\n- `earn:\u2026` \u2014 materialises this month's earnings prediction as a real payslip (gross + auto-populated tax/NIC/student-loan deductions), then applies the edit to the corresponding payslip line. Future months continue to be predicted from the earnings stream.",
+                    description: "Update an existing transaction. The composite `id` determines what's actually rewritten:\n\n- `tx:\u2026` / `to:\u2026` \u2014 patches the underlying manual transaction.\n- `pay:\u2026` \u2014 patches the payslip gross / name.\n- `adj:\u2026` \u2014 patches a payslip adjustment (sign of the existing row is preserved; `amount` is treated as magnitude).\n- `bill:\u2026` \u2014 creates or updates a per-month bill override so this month uses the new amount in place of the predicted value.\n- `earn:\u2026` \u2014 materialises this month's earnings prediction as a real payslip (gross + auto-populated tax/NIC/student-loan deductions), then applies the edit to the corresponding payslip line. Future months continue to be predicted from the earnings stream.",
                     name: "transactionUpdate",
                     type: new GraphQLNonNull(PlanningTransactionType),
                     args: {
@@ -4695,6 +4717,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "Composite id as returned on `PlanningTransaction.id`.",
                             type: new GraphQLNonNull(GraphQLID)
                         },
+                        isProvisional: {
+                            description: "Toggle the user-authored-draft flag. Manual transactions only.",
+                            type: GraphQLBoolean
+                        },
                         liabilityId: {
                             description: "New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only. Mutually exclusive with `assetId`.",
                             type: GraphQLID
@@ -4712,7 +4738,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args, context) {
-                        return mutationTransactionUpdateResolver(context, args.monthId, args.id, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId);
+                        return mutationTransactionUpdateResolver(context, args.monthId, args.id, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId, args.isProvisional);
                     }
                 }
             };

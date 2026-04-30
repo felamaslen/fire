@@ -1,5 +1,5 @@
 import DataLoader from "dataloader";
-import { eq, inArray, isNotNull, sql, sum } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql, sum } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
@@ -42,6 +42,9 @@ async function fetchContributions(
   // PlanningTransactions.assetId is nullable; the predicate prunes the
   // nulls. The `sql<string>` cast tells Drizzle's result inference that the
   // column is non-nullable inside the union, matching the other branches.
+  // Provisional rows (user-authored drafts) are excluded — they're modelled
+  // in the planner's balance projections but not part of the wrapper's
+  // actual cash float.
   const planning = db
     .select({
       assetId: sql<string>`${PlanningTransactions.assetId}`.as("assetId"),
@@ -49,7 +52,12 @@ async function fetchContributions(
       value: sql<number>`(-${PlanningTransactions.amount})::bigint`.as("value"),
     })
     .from(PlanningTransactions)
-    .where(isNotNull(PlanningTransactions.assetId));
+    .where(
+      and(
+        isNotNull(PlanningTransactions.assetId),
+        eq(PlanningTransactions.isProvisional, false),
+      ),
+    );
 
   const deposits = db
     .select({

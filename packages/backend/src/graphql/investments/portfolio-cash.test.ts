@@ -261,6 +261,41 @@ describe("Portfolio.cash", () => {
     expect(p.cash.amount).toBe(1000 - 50 + 12);
   });
 
+  it("excludes provisional planning transactions from the cash float", async () => {
+    await seedYear();
+    const cash = await createCashAsset("Current");
+    const isa = await createStockAsset("ISA");
+    await assignPlanningAccount(cash);
+
+    // Real contribution: -£500 from cash → +£500 into ISA's cash float.
+    await recordCashTxToAsset(cash, isa, -500, "Real");
+    // Provisional draft (same shape, flagged) must NOT show up in cash.
+    await runGql(
+      graphql(`
+        mutation ($a: ID!, $s: ID!, $amount: MoneyInput!) {
+          transactionCreate(
+            monthId: "apr-2026"
+            amount: $amount
+            name: "Maybe later"
+            accountId: $a
+            assetId: $s
+            isProvisional: true
+          ) {
+            id
+          }
+        }
+      `),
+      {
+        a: cash,
+        s: isa,
+        amount: { amount: -1000, currency: "GBP" },
+      },
+    );
+
+    const p = await queryPortfolio([isa]);
+    expect(p.cash.amount).toBe(500);
+  });
+
   it("clamps a wrapper's cash float at zero when buys exceed deposits", async () => {
     const isa = await createStockAsset("ISA");
     const aapl = await createStock("Apple", "AAPL");

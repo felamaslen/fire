@@ -723,7 +723,7 @@ it("emits a predicted Pension deduction for earnings with net-pay / relief-at-so
                 amount {
                   amount
                 }
-                isProvisional
+                isProjected
               }
             }
           }
@@ -738,7 +738,7 @@ it("emits a predicted Pension deduction for earnings with net-pay / relief-at-so
   );
   expect(pension).toBeDefined();
   expect(pension!.amount.amount).toBeCloseTo(-400, 2);
-  expect(pension!.isProvisional).toBe(true);
+  expect(pension!.isProjected).toBe(true);
 
   // Materialise the month by editing the gross line — the pension row should
   // come across onto the real payslip as an adjustment with the same label.
@@ -772,7 +772,7 @@ it("emits a predicted Pension deduction for earnings with net-pay / relief-at-so
                 amount {
                   amount
                 }
-                isProvisional
+                isProjected
               }
             }
           }
@@ -787,7 +787,7 @@ it("emits a predicted Pension deduction for earnings with net-pay / relief-at-so
     (t) => t.name === "Day job — pension",
   );
   expect(pensionAfter).toBeDefined();
-  expect(pensionAfter!.isProvisional).toBe(false);
+  expect(pensionAfter!.isProjected).toBe(false);
   expect(pensionAfter!.amount.amount).toBeCloseTo(-400, 2);
   // Sanity: after materialisation we should see a real payslip row, not the
   // provisional gross line with the date-suffixed name.

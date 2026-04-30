@@ -43,9 +43,11 @@ export class AssetCashPlanningTransaction {
     private readonly amountMinorCashPov: number,
     private readonly currency_: string,
     private readonly fromAccountId: string,
+    /** True when the transaction is a user-authored draft — modelled in the planner's balance projections but not part of the wrapper's actual cash float. Provisional transactions are excluded from `cashContributions` server-side; this field exists so the planning grid can render them with a distinguishing style. @gqlField */
+    public readonly isProvisional: boolean,
   ) {}
 
-  /** Signed cash amount from the *wrapper's* perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. The underlying `PlanningTransactions` row stores the sign from the cash account's perspective; this resolver flips it so every consumer of `cashContributions` sees the same convention regardless of source. @gqlField */
+  /** Signed cash amount from the wrapper's perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. Every consumer of `cashContributions` sees the same convention regardless of source. @gqlField */
   amount(): Money {
     return Money.fromMinorDenomination(
       -this.amountMinorCashPov,
@@ -140,6 +142,11 @@ export async function loadAssetCashContributionsConnection(
     .where(
       and(
         eq(PlanningTransactions.assetId, assetId),
+        // Provisional rows are user-authored drafts — they sit in the
+        // planner's balance projections but aren't real cash inflows /
+        // outflows yet, so they don't belong on the "actual cash
+        // contributions" feed.
+        eq(PlanningTransactions.isProvisional, false),
         branchCursorPredicate(
           PlanningTransactions.date,
           sql`'tx:' || ${PlanningTransactions.id}::text`,
@@ -169,7 +176,10 @@ export async function loadAssetCashContributionsConnection(
         r.name,
       );
     }
-    // `tx` branch — `accountId` is non-null in this branch.
+    // `tx` branch — `accountId` is non-null in this branch, and the where
+    // clause excludes provisional rows so `isProvisional` is always false
+    // here. We still pass it through explicitly so the constructor stays
+    // truthful if the filter ever changes.
     return new AssetCashPlanningTransaction(
       encodePlanningTransactionId({ kind: "tx", id: r.rowId }),
       r.date,
@@ -177,6 +187,7 @@ export async function loadAssetCashContributionsConnection(
       r.amount,
       r.currency,
       r.accountId!,
+      false,
     );
   });
 
@@ -242,6 +253,7 @@ async function loadCashTx(id: string): Promise<{
   accountId: string;
   assetId: string;
   name: string;
+  isProvisional: boolean;
 }> {
   const [row] = await db
     .select({
@@ -251,6 +263,7 @@ async function loadCashTx(id: string): Promise<{
       accountId: PlanningTransactions.accountId,
       assetId: PlanningTransactions.assetId,
       name: PlanningTransactions.name,
+      isProvisional: PlanningTransactions.isProvisional,
     })
     .from(PlanningTransactions)
     .where(eq(PlanningTransactions.id, id));
@@ -264,6 +277,7 @@ async function loadCashTx(id: string): Promise<{
     accountId: row.accountId,
     assetId: row.assetId,
     name: row.name,
+    isProvisional: row.isProvisional,
   };
 }
 
@@ -274,6 +288,7 @@ function toContribution(row: {
   amount: number;
   currency: string;
   accountId: string;
+  isProvisional: boolean;
 }): AssetCashPlanningTransaction {
   return new AssetCashPlanningTransaction(
     encodePlanningTransactionId({ kind: "tx", id: row.id }),
@@ -282,6 +297,7 @@ function toContribution(row: {
     row.amount,
     row.currency,
     row.accountId,
+    row.isProvisional,
   );
 }
 
@@ -304,6 +320,8 @@ export async function assetCashTransactionCreate(
   /** Wrapper-perspective amount: positive = into the wrapper, negative = out. */
   amount: MoneyInput,
   name: string,
+  /** Mark the row as a user-authored draft. Provisional rows are excluded from the wrapper's actual cash float and the `cashContributions` list, but still surface in the planner's balance projections. Defaults to `false`. */
+  isProvisional?: boolean | null,
 ): Promise<AssetCashPlanningTransaction> {
   await assertAssetIsStockOrPension(assetId);
   await assertCashPlanningAccount(fromAccountId);
@@ -325,6 +343,7 @@ export async function assetCashTransactionCreate(
       name,
       accountId: fromAccountId,
       assetId,
+      isProvisional: isProvisional ?? false,
     })
     .returning();
   invalidateCashTransactionReachable(ctx);
@@ -341,6 +360,8 @@ export async function assetCashTransactionUpdate(
   name?: string | null,
   /** New source cash planning account (`PlanningAccount.id`). */
   fromAccountId?: ID | null,
+  /** Toggle the user-authored-draft flag. */
+  isProvisional?: boolean | null,
 ): Promise<AssetCashPlanningTransaction> {
   const rowId = await decodeTxId(id);
   // Asserts the row exists + is asset-tagged before we patch.
@@ -365,6 +386,9 @@ export async function assetCashTransactionUpdate(
     patch.year = year;
     patch.date = monthAnchored;
   }
+  if (isProvisional != null) {
+    patch.isProvisional = isProvisional;
+  }
 
   if (Object.keys(patch).length > 0) {
     await db
@@ -381,6 +405,7 @@ export async function assetCashTransactionUpdate(
     amount: updated.amount,
     currency: updated.currency,
     accountId: updated.accountId,
+    isProvisional: updated.isProvisional,
   });
 }
 

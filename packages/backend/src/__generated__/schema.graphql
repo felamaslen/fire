@@ -457,7 +457,7 @@ A cash-account → wrapper planning transaction surfaced on the investments page
 """
 type AssetCashPlanningTransaction {
   """
-  Signed cash amount from the *wrapper's* perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. The underlying `PlanningTransactions` row stores the sign from the cash account's perspective; this resolver flips it so every consumer of `cashContributions` sees the same convention regardless of source.
+  Signed cash amount from the wrapper's perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. Every consumer of `cashContributions` sees the same convention regardless of source.
   """
   amount: Money!
   """
@@ -467,6 +467,10 @@ type AssetCashPlanningTransaction {
   """Source cash planning account the contribution flows from / to."""
   fromAccount: PlanningAccount!
   id: ID!
+  """
+  True when the transaction is a user-authored draft — modelled in the planner's balance projections but not part of the wrapper's actual cash float. Provisional transactions are excluded from `cashContributions` server-side; this field exists so the planning grid can render them with a distinguishing style.
+  """
+  isProvisional: Boolean!
   name: String!
 }
 
@@ -861,6 +865,10 @@ type Mutation {
     date: Date!
     """Source cash planning account (`PlanningAccount.id`)."""
     fromAccountId: ID!
+    """
+    Mark the row as a user-authored draft. Provisional rows are excluded from the wrapper's actual cash float and the `cashContributions` list, but still surface in the planner's balance projections. Defaults to `false`.
+    """
+    isProvisional: Boolean
     name: String!
   ): AssetCashPlanningTransaction!
   """Delete a cash transfer."""
@@ -878,6 +886,8 @@ type Mutation {
     fromAccountId: ID
     """Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`."""
     id: ID!
+    """Toggle the user-authored-draft flag."""
+    isProvisional: Boolean
     name: String
   ): AssetCashPlanningTransaction!
   """
@@ -1264,6 +1274,10 @@ type Mutation {
     """
     assetId: ID
     """
+    Mark this transaction as a user-authored draft. Provisional rows show up in the planner's balance projections but are treated as "not yet committed" by every "actual money" aggregate. Defaults to `false`.
+    """
+    isProvisional: Boolean
+    """
     Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows. Mutually exclusive with `assetId`.
     """
     liabilityId: ID
@@ -1278,7 +1292,7 @@ type Mutation {
   """
   Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:
   
-  - `tx:…` / `to:…` — deletes the `PlanningTransactions` row.
+  - `tx:…` / `to:…` — deletes the manual transaction.
   - `pay:…` — deletes the payslip (and its adjustments, via cascade).
   - `adj:…` — deletes the single adjustment.
   - `bill:…` — clears any per-month override row for this (bill, month), so the predicted bill takes over again. To cancel a predicted bill for one month, set its amount to zero explicitly via `transactionUpdate` instead of deleting.
@@ -1294,7 +1308,7 @@ type Mutation {
   """
   Update an existing transaction. The composite `id` determines what's actually rewritten:
   
-  - `tx:…` / `to:…` — patches the underlying manual `PlanningTransactions` row.
+  - `tx:…` / `to:…` — patches the underlying manual transaction.
   - `pay:…` — patches the payslip gross / name.
   - `adj:…` — patches a payslip adjustment (sign of the existing row is preserved; `amount` is treated as magnitude).
   - `bill:…` — creates or updates a per-month bill override so this month uses the new amount in place of the predicted value.
@@ -1313,6 +1327,8 @@ type Mutation {
     assetId: ID
     """Composite id as returned on `PlanningTransaction.id`."""
     id: ID!
+    """Toggle the user-authored-draft flag. Manual transactions only."""
+    isProvisional: Boolean
     """
     New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only. Mutually exclusive with `assetId`.
     """
@@ -2007,7 +2023,7 @@ type PlanningTransaction {
   """
   isBill: Boolean!
   """
-  True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable.
+  True when the transaction can be edited directly; usually `!isProjected`, but the receiving side of a manual transfer is neither projected nor editable.
   """
   isEditable: Boolean!
   """
@@ -2019,7 +2035,11 @@ type PlanningTransaction {
   """
   isPayslipGross: Boolean!
   """
-  True when the transaction is a prediction (e.g. forthcoming bill, predicted salary).
+  True when the transaction is an engine-generated prediction (forthcoming bill, predicted salary, projected liability payment, …) rather than something the user has recorded. Distinct from `isProvisional`, which flags a user-authored draft.
+  """
+  isProjected: Boolean!
+  """
+  True when the transaction is a user-authored draft — included in the planner's balance projections but treated as "not yet committed" by every "actual money" aggregate. Only ever true on manual transactions; engine-generated projections (`isProjected`) and payslip rows are never provisional.
   """
   isProvisional: Boolean!
   """
