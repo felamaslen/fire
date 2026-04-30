@@ -6,6 +6,7 @@ import { graphql } from "@/graphql";
 
 import { createApolloClient } from "../apollo";
 import { getToken } from "../auth/token";
+import { InvalidationsListener } from "../components/invalidations-listener";
 import { NavHeader, NavHeaderDocument } from "../components/nav-header";
 import { QuickAddFab } from "../components/quick-add-fab";
 import { Spinner } from "../components/spinner";
@@ -41,6 +42,7 @@ function RootComponent() {
   const { data } = useQuery(RootDocument, { client: apolloClient });
   return (
     <ApolloProvider client={apolloClient}>
+      {getToken() != null && <InvalidationsListener />}
       <TooltipProvider delayDuration={200}>
         <NavHeader data={data} />
         <div className="pt-8 sm:pt-10">

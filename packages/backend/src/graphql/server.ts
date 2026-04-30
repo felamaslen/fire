@@ -20,6 +20,7 @@ import { type Context, createContext } from "./context";
 import { dateScalar } from "./date";
 import { dateTimeScalar } from "./date-time";
 import { wrapResolversWithSpans } from "./field-spans";
+import { initInvalidations } from "./invalidations";
 import { applySemanticNonNull } from "./semantic-non-null";
 import { traceNamePlugin } from "./trace-name-plugin";
 import { uploadScalar } from "./upload";
@@ -48,6 +49,7 @@ const builtSchema = wrapResolversWithSpans(
   applySemanticNonNull(getSchema({ scalars })),
 );
 const builtNoAuthFields = collectNoAuthFields(builtSchema);
+initInvalidations(builtSchema);
 
 async function buildApollo(): Promise<ApolloServer<Context>> {
   const schema = builtSchema;

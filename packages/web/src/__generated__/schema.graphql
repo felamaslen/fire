@@ -522,6 +522,18 @@ type DemoProgress {
 }
 
 """
+A cache-invalidation event broadcast over the `invalidations` subscription. Names the `Query` fields whose result has gone stale; the client evicts those on `ROOT_QUERY` and any active query selecting them refetches in the background.
+
+Resolvers call `ctx.invalidate({ typename, id })` server-side; `typename` is the resolver-author handle and is mapped (via the schema-derived dependency map) to the `rootFields` carried on the wire — so the client never has to know about typenames or maintain its own typename → field map.
+"""
+type Invalidation {
+  """
+  `Query` field names whose result depends on the invalidated data. The client evicts each on `ROOT_QUERY`; consumers refetch.
+  """
+  rootFields: [String!]!
+}
+
+"""
 A tradable holding — either a listed stock or a fund. `position` gives the aggregate across every wrapper that holds this investment; per-wrapper numbers live on each `wrappers[].position`.
 """
 type Investment {
@@ -1033,7 +1045,7 @@ type Mutation {
   netWorthCategoryUpdate(id: ID!, patch: NetWorthCategoryPatch!): NetWorthCategory!
   """Create a net-worth entry and its values."""
   netWorthCreate(
-    """Exchange rates captured for this entry."""
+    """Exchange rates captured for this entry, or null to skip."""
     currencyRates: [NetWorthCurrencyRateInput!]
     """Any calendar date inside the target month."""
     date: Date!
@@ -2328,6 +2340,10 @@ type Subscription {
   Live progress stream for a `demoLogin` job. Yields `DemoProgress` events as the seed pipeline runs; the final event has `progress === 1` and carries the signed session token. Terminates with an error if the seed fails.
   """
   demoProgress(jobId: ID!): DemoProgress! @noAuth
+  """
+  Stream of cache-invalidation events for the current session. The client subscribes once at boot; mutation resolvers call `ctx.invalidate(...)` to push events here, which the client handler then translates into Apollo cache evictions. The channel is per-session: real sessions share one channel, each demo session has its own.
+  """
+  invalidations: Invalidation!
   """
   Live stream of portfolio + per-investment price updates. Emits the first tick immediately and a fresh one every 30 s while the client stays connected. Each tick clears the request's stats loader so resolvers recompute against the latest Yahoo quote overlay; clients normalise per-investment fields by id, so the row table updates in place without its own poll.
   """

@@ -635,10 +635,11 @@ export async function netWorthCreate(
   /** Any calendar date inside the target month. */
   date: CalendarDate,
   values: NetWorthValueInput[],
-  /** Exchange rates captured for this entry. */
-  currencyRates?: NetWorthCurrencyRateInput[] | null,
+  /** Exchange rates captured for this entry, or null to skip. */
+  currencyRates: NetWorthCurrencyRateInput[] | null,
+  ctx: Context,
 ): Promise<NetWorthEntry> {
-  return withMonthConflictMessage(date, () =>
+  const result = await withMonthConflictMessage(date, () =>
     db.transaction(async (tx) => {
       const [entry] = await tx
         .insert(NetWorthEntries)
@@ -650,6 +651,11 @@ export async function netWorthCreate(
       return NetWorthEntry.load(entry);
     }),
   );
+  // The new entry isn't yet a member of any cached `netWorth(...)`
+  // connection — Apollo can't tell which connection should now contain it.
+  // Typename-only invalidation forces every consumer to refetch.
+  ctx.invalidate({ typename: "NetWorthEntry", id: null });
+  return result;
 }
 
 /**
@@ -721,7 +727,11 @@ async function withMonthConflictMessage<T>(
 }
 
 /** Delete a net-worth entry. Its values are removed along with it. @gqlMutationField */
-export async function netWorthDelete(id: ID): Promise<Void> {
+export async function netWorthDelete(id: ID, ctx: Context): Promise<Void> {
   await db.delete(NetWorthEntries).where(eq(NetWorthEntries.id, id));
+  // The deleted entry leaves a dangling ref in any cached `netWorth(...)`
+  // connection's edges; evicting it triggers Apollo's broadcast, which
+  // re-reads consumers and refetches them when the dangling ref shows up.
+  ctx.invalidate({ typename: "NetWorthEntry", id });
   return VOID;
 }

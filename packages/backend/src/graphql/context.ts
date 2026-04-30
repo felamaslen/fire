@@ -4,6 +4,8 @@ import type { FastifyRequest } from "fastify";
 import { type TokenPayload, verifyToken } from "@/auth/token";
 import { kFastifyRequestSpan } from "@/router";
 
+import { publish } from "./invalidations";
+
 /** Resolved session attached to a request's `Context`. Anonymous requests only see unauth'd fields (those carrying `@noAuth`); every other field throws `UNAUTHENTICATED`. */
 export type Session =
   | { kind: "anon" }
@@ -21,6 +23,11 @@ export class Context {
     /** Top-level `@fastify/otel` `request` span for this HTTP request, if OTel is enabled. Captured at `onRequest` time by `router.ts`; `traceNamePlugin` renames it to the GraphQL operation name so the trace root reads `query Foo` instead of `request`. */
     public readonly requestSpan?: Span,
   ) {}
+
+  /** Broadcast a cache-invalidation event to every subscriber on this session's `invalidations` channel. Mutation resolvers call this after a successful write; the server enriches the event with the `Query` field names whose result depends on `typename` (computed from the schema) before it reaches subscribers. */
+  invalidate(event: { typename: string; id: string | null }): void {
+    publish(this.session, event);
+  }
 }
 
 /** Build a `Context` from a Fastify request. Reads `Authorization: Bearer <token>`; unverifiable / expired tokens resolve to an `anon` session (the auth plugin then rejects the operation unless every selected field is `@noAuth`). */

@@ -132,39 +132,47 @@ export const NetWorthEntryFormCategoriesDocument = graphql(`
   }
 `);
 
-const NetWorthCreateDocument = graphql(`
-  mutation NetWorthCreate(
-    $date: Date!
-    $values: [NetWorthValueInput!]!
-    $currencyRates: [NetWorthCurrencyRateInput!]
-  ) {
-    netWorthCreate(
-      date: $date
-      values: $values
-      currencyRates: $currencyRates
+const NetWorthCreateDocument = graphql(
+  `
+    mutation NetWorthCreate(
+      $date: Date!
+      $values: [NetWorthValueInput!]!
+      $currencyRates: [NetWorthCurrencyRateInput!]
     ) {
-      id
+      netWorthCreate(
+        date: $date
+        values: $values
+        currencyRates: $currencyRates
+      ) {
+        id
+        ...NetWorthEntryForm
+      }
     }
-  }
-`);
+  `,
+  [NetWorthEntryFormDocument],
+);
 
-const NetWorthUpdateDocument = graphql(`
-  mutation NetWorthUpdate(
-    $id: ID!
-    $date: Date
-    $values: [NetWorthValueInput!]
-    $currencyRates: [NetWorthCurrencyRateInput!]
-  ) {
-    netWorthUpdate(
-      id: $id
-      date: $date
-      values: $values
-      currencyRates: $currencyRates
+const NetWorthUpdateDocument = graphql(
+  `
+    mutation NetWorthUpdate(
+      $id: ID!
+      $date: Date
+      $values: [NetWorthValueInput!]
+      $currencyRates: [NetWorthCurrencyRateInput!]
     ) {
-      id
+      netWorthUpdate(
+        id: $id
+        date: $date
+        values: $values
+        currencyRates: $currencyRates
+      ) {
+        id
+        ...NetWorthEntryForm
+      }
     }
-  }
-`);
+  `,
+  [NetWorthEntryFormDocument],
+);
 
 export type EntryFormData = ResultOf<typeof NetWorthEntryFormDocument>;
 

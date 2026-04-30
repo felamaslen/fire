@@ -34,7 +34,6 @@ import {
   readFragment,
   type ResultOf,
 } from "../../graphql";
-import { entriesRefetch } from "./entries";
 
 const AssetRowDocument = graphql(`
   fragment AssetRow on NetWorthCategoryAsset {
@@ -196,8 +195,6 @@ export const Route = createFileRoute("/net-worth/categories")({
   component: NetWorthCategoriesPage,
 });
 
-const refetch = [{ query: NetWorthCategoriesDocument }];
-
 type PlanningAccountOption = NonNullable<
   ResultOf<typeof NetWorthCategoriesDocument>["planningYearCurrent"]
 >["accounts"][number];
@@ -235,11 +232,9 @@ const ASSET_DND_MIME = "application/x-fire-asset-id";
 
 function AssetsSection({ data }: { data: AssetSelection[] }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
   });
   const [updateType] = useMutation(NetWorthCategoryUpdateDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Asset moved"),
   });
   const form = useForm({
@@ -397,7 +392,6 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category deleted"),
   });
 
@@ -541,7 +535,6 @@ function LiabilitiesSection({
   planningAccounts: PlanningAccountOption[];
 }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
   });
   const loanSecurableAssets = assets.filter(
@@ -766,15 +759,16 @@ function LiabilityRow({
   planningAccounts: PlanningAccountOption[];
 }) {
   const liability = readFragment(LiabilityRowDocument, data);
-  // Liability `skip` feeds `NetWorthEntry.totalLiabilities` / `totalNet`, so
-  // any toggle must invalidate every visible entry total — refetch the
-  // entries grid alongside the category list.
+  // The mutation already returns a `NetWorthCategoryLiability`, so Apollo
+  // auto-merges name/type/etc. via the normalised cache. Toggling `skip`
+  // also flips this liability in or out of every entry's
+  // `totalLiabilities` / `totalNet` aggregate; the server publishes a
+  // typename-only `NetWorthEntry` invalidation in that case which the
+  // root-level `InvalidationsListener` translates into a cache eviction.
   const [update] = useMutation(NetWorthCategoryUpdateDocument, {
-    refetchQueries: [...refetch, ...entriesRefetch],
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
-    refetchQueries: [...refetch, ...entriesRefetch],
     onCompleted: () => toast.success("Category deleted"),
   });
 
@@ -941,7 +935,6 @@ function LiabilityRow({
 
 function OptionsSection({ data }: { data: OptionSelection[] }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
   });
   const form = useForm({
@@ -991,7 +984,6 @@ function OptionRow({ data }: { data: FragmentOf<typeof OptionRowDocument> }) {
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category deleted"),
   });
 

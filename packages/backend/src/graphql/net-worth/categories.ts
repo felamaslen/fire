@@ -27,6 +27,7 @@ import {
   NetWorthValues,
 } from "@/db/schema/net-worth";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { buildConnection, type Connection } from "../pagination";
 import { PlanningAccount } from "../planning/index";
@@ -594,6 +595,7 @@ function validateLiabilityInput(input: NetWorthCategoryLiabilityInput): void {
 /** Create a new category (asset, liability, or option). @gqlMutationField */
 export async function netWorthCategoryCreate(
   input: NetWorthCategoryInput,
+  ctx: Context,
 ): Promise<NetWorthCategory> {
   if ("asset" in input) {
     validateAssetGrowthRate(input.asset.type, input.asset.growthRate);
@@ -610,6 +612,7 @@ export async function netWorthCategoryCreate(
         accessibleFrom: input.asset.accessibleFrom ?? null,
       })
       .returning();
+    ctx.invalidate({ typename: "NetWorthCategoryAsset", id: null });
     return NetWorthCategoryAsset.load(row);
   }
   if ("liability" in input) {
@@ -628,12 +631,14 @@ export async function netWorthCategoryCreate(
         skip: input.liability.skip ?? false,
       })
       .returning();
+    ctx.invalidate({ typename: "NetWorthCategoryLiability", id: null });
     return NetWorthCategoryLiability.load(row);
   }
   const [row] = await db
     .insert(NetWorthCategoryOptions)
     .values({ name: input.option.name })
     .returning();
+  ctx.invalidate({ typename: "NetWorthCategoryOption", id: null });
   return NetWorthCategoryOption.load(row);
 }
 
@@ -645,6 +650,7 @@ export async function netWorthCategoryCreate(
 export async function netWorthCategoryUpdate(
   id: ID,
   patch: NetWorthCategoryPatch,
+  ctx: Context,
 ): Promise<NetWorthCategory> {
   if ("asset" in patch) {
     if (
@@ -719,6 +725,16 @@ export async function netWorthCategoryUpdate(
       row.billedFromAccountId === null || row.type === "CREDIT_CARD",
       "billedFromAccountId is only valid when type is CREDIT_CARD",
     );
+    if (patch.liability.skip != null) {
+      // Toggling `skip` flips this liability in or out of two computed
+      // aggregates that the mutation's response shape can't carry: every
+      // `NetWorthEntry`'s `totalLiabilities` / `totalNet`, and every
+      // `NetWorthHistoryPoint`'s `liabilities` / `net`. Each lives on a
+      // different parent type, so we invalidate both — the schema-derived
+      // map handles the typename → `Query` field lookup.
+      ctx.invalidate({ typename: "NetWorthEntry", id: null });
+      ctx.invalidate({ typename: "NetWorthHistoryPoint", id: null });
+    }
     return NetWorthCategoryLiability.load(row);
   }
   const [row] = await db
@@ -736,6 +752,7 @@ export async function netWorthCategoryUpdate(
 /** Delete a category. Fails with a human-readable error if any net-worth value still references it. @gqlMutationField */
 export async function netWorthCategoryDelete(
   ref: NetWorthCategoryRef,
+  ctx: Context,
 ): Promise<Void> {
   if ("asset" in ref) {
     await assertNoDependentValues(
@@ -746,6 +763,7 @@ export async function netWorthCategoryDelete(
     await db
       .delete(NetWorthCategoryAssets)
       .where(eq(NetWorthCategoryAssets.id, ref.asset));
+    ctx.invalidate({ typename: "NetWorthCategoryAsset", id: ref.asset });
   } else if ("liability" in ref) {
     await assertNoDependentValues(
       NetWorthValues.categoryLiabilityId,
@@ -755,6 +773,10 @@ export async function netWorthCategoryDelete(
     await db
       .delete(NetWorthCategoryLiabilities)
       .where(eq(NetWorthCategoryLiabilities.id, ref.liability));
+    ctx.invalidate({
+      typename: "NetWorthCategoryLiability",
+      id: ref.liability,
+    });
   } else {
     await assertNoDependentValues(
       NetWorthValues.categoryOptionId,
@@ -764,6 +786,7 @@ export async function netWorthCategoryDelete(
     await db
       .delete(NetWorthCategoryOptions)
       .where(eq(NetWorthCategoryOptions.id, ref.option));
+    ctx.invalidate({ typename: "NetWorthCategoryOption", id: ref.option });
   }
   return VOID;
 }
