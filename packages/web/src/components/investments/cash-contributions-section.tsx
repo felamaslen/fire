@@ -767,9 +767,10 @@ function PlanningTxDialog({
             {tx ? "Edit cash transfer" : "Add cash transfer"}
           </DialogTitle>
           <DialogDescription>
-            Move cash from one of your planning cash accounts into this wrapper.{" "}
-            <strong>Positive</strong> = deposit into the wrapper;
-            <strong> negative</strong> = withdrawal back to the cash account.
+            Record a cash transfer between one of your planning cash accounts
+            and this wrapper. Use a <strong>positive</strong> amount for a
+            deposit into the wrapper, <strong>negative</strong> for a withdrawal
+            back to the cash account.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
@@ -789,7 +790,7 @@ function PlanningTxDialog({
               required
             />
           </Field>
-          <Field label="From cash account">
+          <Field label="Cash account">
             <Select value={accountId} onValueChange={setAccountId}>
               <SelectTrigger>
                 <SelectValue placeholder="Pick an account" />

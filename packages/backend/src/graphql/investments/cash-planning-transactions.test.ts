@@ -154,6 +154,34 @@ describe("assetCashTransactionCreate", () => {
     });
   });
 
+  it("accepts a negative wrapper-POV amount as a withdrawal back to cash", async () => {
+    await seedYear();
+    const cash = await createCashAsset("Current");
+    const isa = await createStockAsset("ISA");
+    await assignPlanningAccount(cash);
+
+    const data = await runGql(
+      graphql(`
+        mutation ($a: ID!, $f: ID!) {
+          assetCashTransactionCreate(
+            assetId: $a
+            fromAccountId: $f
+            date: "2026-04-15"
+            amount: { amount: -300, currency: "GBP" }
+            name: "Payment to Client"
+          ) {
+            amount {
+              amount
+            }
+          }
+        }
+      `),
+      { a: isa, f: cash },
+    );
+    // Surface the wrapper-POV amount unchanged — withdrawals stay negative.
+    expect(data.assetCashTransactionCreate.amount.amount).toBe(-300);
+  });
+
   it("rejects a non-CASH `fromAccountId`", async () => {
     await seedYear();
     const isa = await createStockAsset("ISA");
