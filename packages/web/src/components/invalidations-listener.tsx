@@ -27,10 +27,6 @@ export function InvalidationsListener() {
   useEffect(() => {
     const event = data?.invalidations;
     if (!event) return;
-    console.log(
-      "invalidate",
-      [...client.getObservableQueries().values()].map((v) => v.query),
-    );
     void client
       .refetchQueries({
         optimistic: true,
