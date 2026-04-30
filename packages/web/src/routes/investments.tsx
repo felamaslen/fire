@@ -162,6 +162,14 @@ const PortfolioFilterOptionsFragment = graphql(`
     name
     type
     isDefunct
+    transferOut {
+      id
+      date
+      assetTo {
+        id
+        name
+      }
+    }
   }
 `);
 
@@ -637,13 +645,17 @@ function InvestmentsPageContent() {
     pageData?.investmentPortfolios?.map((p) =>
       readFragment(PortfolioFilterOptionsFragment, p),
     ) ?? [];
+  const singleSelected =
+    filterAssetIds.length === 1
+      ? (portfolioOptions.find((o) => o.id === filterAssetIds[0]) ?? null)
+      : null;
   const selectedLabel =
     filterAssetIds.length === 0
       ? null
-      : filterAssetIds.length === 1
-        ? (portfolioOptions.find((o) => o.id === filterAssetIds[0])?.name ??
-          null)
+      : singleSelected
+        ? singleSelected.name
         : "Selected portfolios";
+  const transferredOut = singleSelected?.transferOut ?? null;
 
   return (
     <>
@@ -657,6 +669,14 @@ function InvestmentsPageContent() {
           />
         }
       />
+      {transferredOut && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900/40 dark:bg-amber-900/10">
+          This portfolio was transferred to{" "}
+          <strong>{transferredOut.assetTo.name}</strong> on{" "}
+          <span className="tabular-nums">{transferredOut.date}</span>. Holdings,
+          cash, and totals are frozen at the day before the transfer.
+        </div>
+      )}
       <PortfolioSection
         filterAssetIds={filterAssetIds}
         selectedLabel={selectedLabel}
@@ -673,6 +693,7 @@ function InvestmentsPageContent() {
         sort={sort}
         onSortChange={setSort}
         filterAssetIds={filterAssetIds}
+        transferredOut={transferredOut !== null}
       />
     </>
   );
@@ -682,14 +703,22 @@ function InvestmentsList({
   sort,
   onSortChange,
   filterAssetIds,
+  transferredOut,
 }: {
   sort: SortState;
   onSortChange: (next: SortState) => void;
   filterAssetIds: string[];
+  /** When `true`, the selected portfolio has been transferred out — every
+   * investment is treated as sold (`hideSold` is forced on, the toggle is
+   * disabled, and the "New investment" button is disabled). */
+  transferredOut: boolean;
 }) {
   const setSort = (updater: (prev: SortState) => SortState) =>
     onSortChange(updater(sort));
   const [hideSold, setHideSold] = useHideSold();
+  // Transferred-out portfolios force-hide sold investments (every position
+  // is conceptually sold at the transfer date). The toggle becomes a no-op.
+  const effectiveHideSold = transferredOut || hideSold;
 
   // Defer sort / filter changes through `useDeferredValue` so switching
   // suspends the fetch in a non-interrupting pass — the previous rows
@@ -705,12 +734,12 @@ function InvestmentsList({
     deferredFilterAssetIdsKey.length > 0
       ? deferredFilterAssetIdsKey.split(",")
       : null;
-  const deferredHideSold = useDeferredValue(hideSold);
+  const deferredHideSold = useDeferredValue(effectiveHideSold);
   const loading =
     deferredKind !== sort.kind ||
     deferredDir !== sort.dir ||
     deferredFilterAssetIdsKey !== filterAssetIdsKey ||
-    deferredHideSold !== hideSold;
+    deferredHideSold !== effectiveHideSold;
   const { data } = useSuspenseQuery(InvestmentsListDocument, {
     variables: {
       first: 100,
@@ -741,16 +770,30 @@ function InvestmentsList({
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <label className="flex items-center gap-2 text-sm">
+        <label
+          className={cn(
+            "flex items-center gap-2 text-sm",
+            transferredOut && "text-muted-foreground",
+          )}
+        >
           <input
             type="checkbox"
-            checked={hideSold}
+            checked={effectiveHideSold}
+            disabled={transferredOut}
             onChange={(e) => setHideSold(e.target.checked)}
-            className="accent-foreground"
+            className="accent-foreground disabled:opacity-50"
           />
-          Hide sold (zero-unit) investments
+          Hide sold or transferred investments
         </label>
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button
+          onClick={() => setCreateOpen(true)}
+          disabled={transferredOut}
+          title={
+            transferredOut
+              ? "This portfolio has been transferred out — book new transactions on the destination wrapper."
+              : undefined
+          }
+        >
           <Plus className="mr-1 h-4 w-4" /> New investment
         </Button>
       </div>
