@@ -32,6 +32,8 @@ import {
 import { graphql, readFragment, type ResultOf } from "@/graphql";
 import { formatAccountingMoney } from "@/lib/format";
 
+import { TransfersButton } from "./transfers-section";
+
 export const CashContributionsAvailableFragment = graphql(`
   fragment CashContributionsAvailable on Portfolio {
     cash {
@@ -257,10 +259,13 @@ export function CashContributionsSection({ assetId }: { assetId: string }) {
             {cash ? formatAccountingMoney(cash.currency, cash.amount) : "—"}
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-          <Wallet className="mr-1 h-4 w-4" />
-          Manage cash deposits
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+            <Wallet className="mr-1 h-4 w-4" />
+            Manage cash deposits
+          </Button>
+          <TransfersButton assetId={assetId} />
+        </div>
       </div>
       {open && (
         <ManageDialog
