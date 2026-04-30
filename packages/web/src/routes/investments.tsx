@@ -682,6 +682,7 @@ function InvestmentsPageContent() {
         selectedLabel={selectedLabel}
         settings={chart}
         onChange={setChart}
+        transferOut={transferredOut}
         bottomSlot={<AllocationsSection filterAssetIds={filterAssetIds} />}
       />
       {filterAssetIds.length === 1 && (

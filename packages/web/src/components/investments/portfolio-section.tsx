@@ -129,6 +129,7 @@ export function PortfolioSection({
   bottomSlot,
   filterAssetIds,
   selectedLabel,
+  transferOut,
 }: {
   settings: PortfolioChartSettings;
   onChange: (next: PortfolioChartSettings) => void;
@@ -136,6 +137,11 @@ export function PortfolioSection({
   filterAssetIds: string[];
   /** Comma-joined names of the selected portfolios, or `null` when all are selected. Used as the line label in the hover tooltip so the user sees which portfolios they've scoped the chart to. */
   selectedLabel: string | null;
+  /** When the single selected portfolio has an outgoing transfer, render a vertical arrow on the chart at that date pointing to the destination wrapper. */
+  transferOut?: {
+    date: string;
+    assetTo: { name: string };
+  } | null;
 }) {
   const { periodIdx, candleIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
@@ -227,6 +233,7 @@ export function PortfolioSection({
         stack={stack}
         filterAssetIds={filterAssetIds}
         selectedLabel={selectedLabel}
+        transferOut={transferOut ?? null}
       />
       {bottomSlot}
     </section>
@@ -242,6 +249,7 @@ function PortfolioChartLoader({
   stack,
   filterAssetIds,
   selectedLabel,
+  transferOut,
 }: {
   period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
@@ -251,6 +259,10 @@ function PortfolioChartLoader({
   stack: boolean;
   filterAssetIds: string[];
   selectedLabel: string | null;
+  transferOut: {
+    date: string;
+    assetTo: { name: string };
+  } | null;
 }) {
   // `useSuspenseQuery` bubbles its suspend up to the page-level Suspense,
   // so the whole page waits for chart data before painting — no layout
@@ -377,6 +389,32 @@ function PortfolioChartLoader({
       ? new Date(`${initialDateStr}T00:00:00Z`)
       : undefined;
 
+  // Derive a chart annotation at the transfer-out date — only when the chart
+  // has a calendar anchor and the transfer date falls inside the rendered
+  // window. Outside-window transfers are skipped (the chart already ends at
+  // the cap, so the marker would just sit on the right edge with no
+  // information).
+  const annotations =
+    transferOut && initialDate
+      ? (() => {
+          const days = Math.round(
+            (new Date(`${transferOut.date}T00:00:00Z`).getTime() -
+              initialDate.getTime()) /
+              86400000,
+          );
+          return days >= 0
+            ? [
+                {
+                  x: days,
+                  label: transferOut.assetTo.name,
+                  tooltip: `Transferred to ${transferOut.assetTo.name} on ${transferOut.date}`,
+                  direction: "out" as const,
+                },
+              ]
+            : undefined;
+        })()
+      : undefined;
+
   return (
     <div
       className={cn(
@@ -390,6 +428,7 @@ function PortfolioChartLoader({
         currency={portfolio?.currency ?? "GBP"}
         initialDate={initialDate}
         stacked={!deferredCandlestick && deferredStack}
+        annotations={annotations}
         className="w-full"
       />
       {!deferredCandlestick && deferredStack && lines.length > 1 && (

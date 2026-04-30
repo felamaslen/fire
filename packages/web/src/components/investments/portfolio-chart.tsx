@@ -26,6 +26,17 @@ export type CandleSeries = {
   }[];
 };
 
+/** A vertical marker drawn at `x` (days since `initialDate`) with an arrow + label at the top of the plot. Used to flag a transfer-out / transfer-in event. */
+export type ChartAnnotation = {
+  x: number;
+  /** Short label rendered next to the arrow (e.g. the destination wrapper's name). */
+  label: string;
+  /** Optional `<title>` tooltip on the marker. */
+  tooltip?: string;
+  /** Direction the arrow points — `out` for "money left this portfolio" (→), `in` for "money came in" (←). */
+  direction: "out" | "in";
+};
+
 type Props = {
   lines?: LineSeries[];
   candles?: CandleSeries | null;
@@ -42,6 +53,8 @@ type Props = {
    * (series[i].y = its own value + all previous series' values at the same x).
    */
   stacked?: boolean;
+  /** Vertical event markers (transfer date arrows). */
+  annotations?: ChartAnnotation[];
 };
 
 const AXIS_PAD_LEFT = 56;
@@ -76,6 +89,7 @@ export function PortfolioChart({
   currency = "GBP",
   initialDate,
   stacked = false,
+  annotations,
 }: Props) {
   const [hoveredCandle, setHoveredCandle] = useState<number | null>(null);
   const [lineHoverX, setLineHoverX] = useState<number | null>(null);
@@ -567,6 +581,35 @@ export function PortfolioChart({
             </>
           );
         })()}
+      {annotations?.map((a, i) => {
+        const ax = xScale(a.x);
+        const arrow = a.direction === "out" ? "→" : "←";
+        return (
+          <g key={`annot${i}`} pointerEvents="none">
+            <line
+              x1={ax}
+              x2={ax}
+              y1={AXIS_PAD_TOP}
+              y2={height - AXIS_PAD_BOTTOM}
+              stroke="currentColor"
+              className="text-amber-500"
+              strokeOpacity={0.6}
+              strokeDasharray="4 3"
+            >
+              {a.tooltip && <title>{a.tooltip}</title>}
+            </line>
+            <text
+              x={ax - 6}
+              y={AXIS_PAD_TOP + 12}
+              textAnchor="end"
+              className="fill-amber-600 text-[22px] font-medium dark:fill-amber-400 sm:text-[14px] md:text-[12px] lg:text-[11px]"
+            >
+              {a.label} {arrow}
+              {a.tooltip && <title>{a.tooltip}</title>}
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
