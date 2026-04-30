@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 
-import { and, eq, exists, inArray, ne, not, or, sum } from "drizzle-orm";
+import { and, eq, exists, inArray, not, or, sql, sum } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
 
@@ -389,12 +389,18 @@ export async function investments(
           : undefined,
         // A "sold" investment has at least one transaction and a net-zero unit
         // count (scoped to the wrapper when set). Newly-created zero-tx
-        // investments are never classified as sold.
+        // investments are never classified as sold. Units are stored in double
+        // precision so summing buys + sells of fractional shares can leave a
+        // sub-unit residue (e.g. ~1e-13) instead of an exact zero — compare
+        // against a small epsilon, not `= 0`, so those positions still hide.
         filterIsSold === true
-          ? and(hasAnyTransaction, eq(unitsSum, 0))
+          ? and(hasAnyTransaction, sql`abs(coalesce(${unitsSum}, 0)) < 1e-9`)
           : undefined,
         filterIsSold === false
-          ? or(not(hasAnyTransaction), ne(unitsSum, 0))
+          ? or(
+              not(hasAnyTransaction),
+              sql`abs(coalesce(${unitsSum}, 0)) >= 1e-9`,
+            )
           : undefined,
       ),
     );
