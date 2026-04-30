@@ -168,6 +168,18 @@ CREATE TABLE "InvestmentTransactions" (
   CONSTRAINT "InvestmentTransactions_fees_ck" CHECK ("InvestmentTransactions"."fees" >= 0)
 );
 
+CREATE TABLE "InvestmentTransfers" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "assetIdFrom" uuid NOT NULL,
+  "assetIdTo" uuid NOT NULL,
+  "date" date NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentTransfers_assetIdFrom_assetIdTo_ck" CHECK (
+    "InvestmentTransfers"."assetIdFrom" <> "InvestmentTransfers"."assetIdTo"
+  )
+);
+
 CREATE TABLE "Investments" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "name" text NOT NULL,
@@ -600,6 +612,12 @@ ADD CONSTRAINT "InvestmentTransactions_investmentId_Investments_id_fk" FOREIGN K
 ALTER TABLE "InvestmentTransactions"
 ADD CONSTRAINT "InvestmentTransactions_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
+ALTER TABLE "InvestmentTransfers"
+ADD CONSTRAINT "InvestmentTransfers_assetIdFrom_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetIdFrom") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
+
+ALTER TABLE "InvestmentTransfers"
+ADD CONSTRAINT "InvestmentTransfers_assetIdTo_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetIdTo") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
+
 ALTER TABLE "NetWorthCategoryLiabilities"
 ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
 
@@ -706,6 +724,10 @@ CREATE INDEX "InvestmentTransactions_investmentId_idx" ON "InvestmentTransaction
 CREATE INDEX "InvestmentTransactions_assetId_idx" ON "InvestmentTransactions" USING btree ("assetId");
 
 CREATE INDEX "InvestmentTransactions_date" ON "InvestmentTransactions" USING btree ("date");
+
+CREATE UNIQUE INDEX "InvestmentTransfers_assetIdFrom_uq" ON "InvestmentTransfers" USING btree ("assetIdFrom");
+
+CREATE INDEX "InvestmentTransfers_assetIdTo_idx" ON "InvestmentTransfers" USING btree ("assetIdTo");
 
 CREATE UNIQUE INDEX "NetWorthEntries_month_uq" ON "NetWorthEntries" USING btree (date_trunc('month', "date"::timestamp));
 

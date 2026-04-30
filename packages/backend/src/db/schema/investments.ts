@@ -153,6 +153,55 @@ export const investmentDepositsRelations = relations(
   }),
 );
 
+/** Records that all stock holdings (and uninvested cash) of `assetIdFrom` migrated into `assetIdTo` on `date`. At most one transfer out per asset (enforced by the unique index on `assetIdFrom`). Both assets must be `STOCK` or `PENSION` and share the same currency — enforced in the resolver. */
+export const InvestmentTransfers = pgTable(
+  "InvestmentTransfers",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    /** Wrapper the holdings move out of. Unique — an asset can only be transferred out once. */
+    assetIdFrom: uuid("assetIdFrom")
+      .notNull()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
+    /** Wrapper the holdings move into. */
+    assetIdTo: uuid("assetIdTo")
+      .notNull()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
+    date: date("date", { mode: "date" }).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      "InvestmentTransfers_assetIdFrom_assetIdTo_ck",
+      sql`${t.assetIdFrom} <> ${t.assetIdTo}`,
+    ),
+    uniqueIndex("InvestmentTransfers_assetIdFrom_uq").on(t.assetIdFrom),
+    index("InvestmentTransfers_assetIdTo_idx").on(t.assetIdTo),
+  ],
+);
+
+export const investmentTransfersRelations = relations(
+  InvestmentTransfers,
+  ({ one }) => ({
+    assetFrom: one(NetWorthCategoryAssets, {
+      fields: [InvestmentTransfers.assetIdFrom],
+      references: [NetWorthCategoryAssets.id],
+      relationName: "investmentTransfersFrom",
+    }),
+    assetTo: one(NetWorthCategoryAssets, {
+      fields: [InvestmentTransfers.assetIdTo],
+      references: [NetWorthCategoryAssets.id],
+      relationName: "investmentTransfersTo",
+    }),
+  }),
+);
+
 /** Stock-split event: `units_post = units_pre * ratio`. Ratio > 1 = forward split (e.g. `2` for 2-for-1), 0 < ratio < 1 = reverse split. Writes trigger a backfill of `InvestmentPrices.priceAdjusted` for rows dated before this split. */
 export const InvestmentStockSplits = pgTable(
   "InvestmentStockSplits",
