@@ -340,7 +340,6 @@ function WizardWithSnapshot({
   const [create, { loading: creating }] = useMutation(
     QuickNetWorthCreateDocument,
     {
-      refetchQueries: entriesRefetch,
       onCompleted: () => {
         toast.success("Entry added");
         onClose();

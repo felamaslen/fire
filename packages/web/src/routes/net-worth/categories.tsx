@@ -34,7 +34,6 @@ import {
   readFragment,
   type ResultOf,
 } from "../../graphql";
-import { entriesRefetch } from "./entries";
 
 const AssetRowDocument = graphql(`
   fragment AssetRow on NetWorthCategoryAsset {
@@ -196,8 +195,6 @@ export const Route = createFileRoute("/net-worth/categories")({
   component: NetWorthCategoriesPage,
 });
 
-const refetch = [{ query: NetWorthCategoriesDocument }];
-
 type PlanningAccountOption = NonNullable<
   ResultOf<typeof NetWorthCategoriesDocument>["planningYearCurrent"]
 >["accounts"][number];
@@ -235,7 +232,6 @@ const ASSET_DND_MIME = "application/x-fire-asset-id";
 
 function AssetsSection({ data }: { data: AssetSelection[] }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
   });
   const [updateType] = useMutation(NetWorthCategoryUpdateDocument, {
@@ -396,7 +392,6 @@ function AssetRow({ data }: { data: FragmentOf<typeof AssetRowDocument> }) {
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category deleted"),
   });
 
@@ -540,7 +535,6 @@ function LiabilitiesSection({
   planningAccounts: PlanningAccountOption[];
 }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
   });
   const loanSecurableAssets = assets.filter(
@@ -775,7 +769,6 @@ function LiabilityRow({
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
-    refetchQueries: [...refetch, ...entriesRefetch],
     onCompleted: () => toast.success("Category deleted"),
   });
 
@@ -942,7 +935,6 @@ function LiabilityRow({
 
 function OptionsSection({ data }: { data: OptionSelection[] }) {
   const [create, { loading }] = useMutation(NetWorthCategoryCreateDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category created"),
   });
   const form = useForm({
@@ -992,7 +984,6 @@ function OptionRow({ data }: { data: FragmentOf<typeof OptionRowDocument> }) {
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Category deleted"),
   });
 

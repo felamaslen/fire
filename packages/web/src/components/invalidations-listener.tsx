@@ -6,14 +6,13 @@ import { graphql } from "@/graphql";
 const InvalidationsDocument = graphql(`
   subscription Invalidations {
     invalidations {
-      typename
-      id
+      rootFields
     }
   }
 `);
 
 /**
- * App-root listener for the server's `invalidations` subscription. Each event evicts the matching entity (or every entity of a given `typename` when `id` is null) from the Apollo normalised cache; active queries selecting those entries automatically refetch via Apollo's broadcast. Replaces the per-mutation `refetchQueries` plumbing with a single resolver-driven channel.
+ * App-root listener for the server's `invalidations` subscription. Each event names the `Query` field(s) whose result has gone stale. We evict those fields on a *temporary optimistic cache layer* (`optimistic: true`); Apollo observes which active queries' results that layer affected, refetches them, then discards the layer — so the main cache is never modified and `useSuspenseQuery` doesn't re-suspend on a missing field. The typename → field map is computed on the server from the schema, so the client never carries a copy.
  */
 export function InvalidationsListener() {
   const client = useApolloClient();
@@ -28,17 +27,26 @@ export function InvalidationsListener() {
   useEffect(() => {
     const event = data?.invalidations;
     if (!event) return;
-    const cache = client.cache;
-    const { typename, id } = event;
-    if (id != null) {
-      cache.evict({ id: cache.identify({ __typename: typename, id }) });
-    } else {
-      const entries = cache.extract() as Record<string, unknown>;
-      for (const key of Object.keys(entries)) {
-        if (key.startsWith(`${typename}:`)) cache.evict({ id: key });
-      }
-    }
-    cache.gc();
+    console.log(
+      "invalidate",
+      [...client.getObservableQueries().values()].map((v) => v.query),
+    );
+    void client
+      .refetchQueries({
+        optimistic: true,
+        updateCache(cache) {
+          // Evict shadow cache to inform refetchQueries whether it needs to refetch each active query
+          for (const fieldName of event.rootFields) {
+            cache.evict({ id: "ROOT_QUERY", fieldName });
+          }
+        },
+      })
+      .finally(() => {
+        // Evict actual cache for queries which are not currently mounted but have cache
+        for (const fieldName of event.rootFields) {
+          client.cache.evict({ id: "ROOT_QUERY", fieldName });
+        }
+      });
   }, [data, client]);
 
   return null;
