@@ -1,5 +1,5 @@
 import DataLoader from "dataloader";
-import { and, desc, eq, gt, inArray, isNotNull, sql, sum } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql, sum } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
@@ -46,11 +46,10 @@ type SnapshotRow = {
 };
 
 /**
- * Sum of cash contributions and trades per `(assetId, currency, kind)`. With `since` set, only rows strictly after that date are included — used to add the post-snapshot deltas onto the wrapper's last recorded net-worth value. With `since` `null`, the full history is summed (legacy behaviour, used when the user has no `NetWorthEntries` yet). Three branches: `PlanningTransactions` flipped to the wrapper's perspective and `InvestmentDeposits` tagged `C` for contributions, non-DRIP `InvestmentTransactions` as `-round(units × price)` tagged `T` for trades.
+ * Sum of cash contributions and trades per `(assetId, currency, kind)` over the full history. Three branches: `PlanningTransactions` flipped to the wrapper's perspective and `InvestmentDeposits` tagged `C` for contributions, non-DRIP `InvestmentTransactions` as `-round(units × price)` tagged `T` for trades.
  */
 async function fetchFlows(
   assetIds: string[] | null,
-  since: Date | null,
 ): Promise<CashContributionRow[]> {
   const planning = db
     .select({
@@ -64,7 +63,6 @@ async function fetchFlows(
       and(
         isNotNull(PlanningTransactions.assetId),
         eq(PlanningTransactions.isProvisional, false),
-        since ? gt(PlanningTransactions.date, since) : undefined,
       ),
     );
 
@@ -75,8 +73,7 @@ async function fetchFlows(
       value: sql<number>`${InvestmentDeposits.amount}::bigint`.as("value"),
       kind: sql<"C" | "T">`'C'`.as("kind"),
     })
-    .from(InvestmentDeposits)
-    .where(since ? gt(InvestmentDeposits.date, since) : undefined);
+    .from(InvestmentDeposits);
 
   const trades = db
     .select({
@@ -89,12 +86,7 @@ async function fetchFlows(
       kind: sql<"C" | "T">`'T'`.as("kind"),
     })
     .from(InvestmentTransactions)
-    .where(
-      and(
-        eq(InvestmentTransactions.drip, false),
-        since ? gt(InvestmentTransactions.date, since) : undefined,
-      ),
-    );
+    .where(eq(InvestmentTransactions.drip, false));
 
   const flows = unionAll(planning, deposits, trades).as("flows");
 
@@ -167,10 +159,7 @@ async function fetchSnapshotValues(
 }
 
 /**
- * Per-request DataLoader, vended via `contextAwareDataLoader` so each `Context` gets its own instance (and its own cache) — demo and real sessions never share rows. The batch step pre-resolves the union of every requested asset-id set within the batch (with `null` short-circuiting to "no filter"), then either:
- *
- * 1. Anchors on the latest `NetWorthEntries` date (when entries exist). Per asset, the cash float is `(snapshot value at latest entry) + (net flows since latest entry)`. An asset that has no value at the latest entry is considered defunct and yields zero. This treats the recorded net-worth value as ground truth (which silently absorbs ongoing fees, dividends, and price drift) and only re-applies user-tracked deltas after the snapshot.
- * 2. Falls back to summing the full flow history (legacy behaviour) when no `NetWorthEntries` exist yet. In that mode, an asset with no recorded contributions has its trade rows dropped — without a contribution log, sells exceeding buys would otherwise read as phantom available cash from the realised gain alone.
+ * Per-request DataLoader, vended via `contextAwareDataLoader` so each `Context` gets its own instance (and its own cache) — demo and real sessions never share rows. The batch step pre-resolves the union of every requested asset-id set within the batch (with `null` short-circuiting to "no filter"), then sums the wrapper's full flow history (`deposits` + `planning` + `-buys + sells`) but gates each asset on the latest `NetWorthEntries`: an asset whose latest snapshot is missing or zero in every currency is considered defunct and yields zero, regardless of historic cash flows. When no `NetWorthEntries` exist yet, falls back to a contribution-tracked rule (assets without any deposit / planning row drop their trade rows, so sells > buys can't surface phantom cash on their own).
  */
 const cashFloatLoader = contextAwareDataLoader(
   () =>
@@ -186,9 +175,20 @@ const cashFloatLoader = contextAwareDataLoader(
             ];
 
         const latestEntryDate = await fetchLatestEntryDate();
-        const byAsset = await (latestEntryDate === null
-          ? indexLegacy(requestedIds)
-          : indexAnchored(requestedIds, latestEntryDate));
+        const flows = await fetchFlows(requestedIds);
+
+        const tracked = await loadTrackedAssetSet(latestEntryDate, flows);
+
+        const byAsset = new Map<string, Map<string, number>>();
+        for (const r of flows) {
+          if (!tracked(r)) continue;
+          let m = byAsset.get(r.assetId);
+          if (!m) {
+            m = new Map();
+            byAsset.set(r.assetId, m);
+          }
+          m.set(r.currency, (m.get(r.currency) ?? 0) + r.amount);
+        }
 
         return keys.map((key) => {
           const ids =
@@ -211,56 +211,24 @@ const cashFloatLoader = contextAwareDataLoader(
     ),
 );
 
-/** No-snapshot path: sum the full flow history; an asset with no recorded contribution row has its trade rows dropped (otherwise sells > buys read as phantom cash). */
-async function indexLegacy(
-  assetIds: string[] | null,
-): Promise<Map<string, Map<string, number>>> {
-  const rows = await fetchFlows(assetIds, null);
-  const trackedAssets = new Set<string>();
-  for (const r of rows) {
-    if (r.kind === "C") trackedAssets.add(r.assetId);
-  }
-  const byAsset = new Map<string, Map<string, number>>();
-  for (const r of rows) {
-    if (r.kind === "T" && !trackedAssets.has(r.assetId)) continue;
-    let m = byAsset.get(r.assetId);
-    if (!m) {
-      m = new Map();
-      byAsset.set(r.assetId, m);
+/** Build the per-flow-row "should this asset's flows count?" predicate. With a `latestEntryDate`, an asset is tracked iff it has a positive recorded value in that entry (in any currency). Without one, fall back to the contribution-tracked rule — at least one deposit / planning row must exist for the asset, otherwise its trades alone could surface phantom cash. */
+async function loadTrackedAssetSet(
+  latestEntryDate: Date | null,
+  flows: CashContributionRow[],
+): Promise<(row: CashContributionRow) => boolean> {
+  if (latestEntryDate !== null) {
+    const snapshots = await fetchSnapshotValues(latestEntryDate, null);
+    const tracked = new Set<string>();
+    for (const s of snapshots) {
+      if (s.amount > 0) tracked.add(s.assetId);
     }
-    m.set(r.currency, (m.get(r.currency) ?? 0) + r.amount);
+    return (r) => tracked.has(r.assetId);
   }
-  return byAsset;
-}
-
-/** Snapshot-anchored path: per asset, baseline = recorded value at `latestEntryDate`, plus the sum of every flow strictly after that date. Assets missing from the snapshot don't get an entry and are surfaced as zero. */
-async function indexAnchored(
-  assetIds: string[] | null,
-  latestEntryDate: Date,
-): Promise<Map<string, Map<string, number>>> {
-  const [snapshots, flows] = await Promise.all([
-    fetchSnapshotValues(latestEntryDate, assetIds),
-    fetchFlows(assetIds, latestEntryDate),
-  ]);
-  const byAsset = new Map<string, Map<string, number>>();
-  for (const s of snapshots) {
-    let m = byAsset.get(s.assetId);
-    if (!m) {
-      m = new Map();
-      byAsset.set(s.assetId, m);
-    }
-    m.set(s.currency, (m.get(s.currency) ?? 0) + s.amount);
-  }
+  const contributionTracked = new Set<string>();
   for (const r of flows) {
-    // Drop flows for assets the user has marked defunct by omitting them
-    // from the latest snapshot — the snapshot is treated as ground truth,
-    // and ungrounded post-snapshot trades shouldn't surface cash on their
-    // own.
-    if (!byAsset.has(r.assetId)) continue;
-    const m = byAsset.get(r.assetId)!;
-    m.set(r.currency, (m.get(r.currency) ?? 0) + r.amount);
+    if (r.kind === "C") contributionTracked.add(r.assetId);
   }
-  return byAsset;
+  return (r) => r.kind === "C" || contributionTracked.has(r.assetId);
 }
 
 /** Per-currency uninvested cash float for one wrapper. */

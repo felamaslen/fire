@@ -124,7 +124,7 @@ async function setPrice(
 }
 
 async function recordNetWorthEntry(
-  assetValues: { assetId: string; amountMajor: number; currency?: string }[],
+  assetValues: { assetId: string; amountMajor: number }[],
   date: string,
 ): Promise<void> {
   const { db } = await import("@/db");
@@ -139,12 +139,12 @@ async function recordNetWorthEntry(
       .insert(NetWorthValues)
       .values({ entryId: entry.id, categoryAssetId: v.assetId })
       .returning({ id: NetWorthValues.id });
+    // GBP scale = 100 minor units per major. Other currencies aren't
+    // exercised by these tests.
     await db.insert(NetWorthValueAmounts).values({
       valueId: valueRow.id,
-      // GBP scale = 100 minor units per major. Other currencies aren't
-      // exercised by these tests.
       amount: v.amountMajor * 100,
-      currency: v.currency ?? "GBP",
+      currency: "GBP",
     });
   }
 }
@@ -383,33 +383,20 @@ describe("Portfolio.cash", () => {
     expect(onlyA.cash.amount).toBe(100);
   });
 
-  it("anchors on the latest net-worth entry: cash = recorded value + post-entry flows", async () => {
+  it("sums the full flow history when the wrapper has a value at the latest net-worth entry", async () => {
     const isa = await createStockAsset("ISA");
     const aapl = await createStock("Apple", "AAPL");
-    // Pre-snapshot activity: contributions and a buy that should NOT be
-    // double-counted — they're already baked into the recorded value.
-    await recordDeposit(isa, 50_000, "Initial funding"); // dated 2026-04-10
-    await buy(aapl, isa, 1000, 30); // dated 2026-03-01, cost 30,000
-    // Net-worth entry on 2026-04-10 records the wrapper's value as £25,000
-    // (silently absorbing fees, dividends, price drift, etc.).
+    // Wrapper is "active" — has a positive value at the latest entry — so
+    // its full deposit/buy/sell history contributes to available cash.
+    await recordDeposit(isa, 1000, "Funding");
+    await buy(aapl, isa, 50, 5); // -250
     await recordNetWorthEntry(
       [{ assetId: isa, amountMajor: 25_000 }],
       "2026-04-10",
     );
-    // Post-snapshot deposit and buy.
-    const { db } = await import("@/db");
-    const { InvestmentDeposits } = await import("@/db/schema/investments");
-    await db.insert(InvestmentDeposits).values({
-      assetId: isa,
-      date: new Date("2026-04-15"),
-      amount: 100_000, // £1,000 in pence
-      currency: "GBP",
-      name: "Post-snapshot funding",
-    });
 
     const p = await queryPortfolio([isa]);
-    // 25,000 (recorded) + 1,000 (post-snapshot deposit) = 26,000.
-    expect(p.cash.amount).toBe(26_000);
+    expect(p.cash.amount).toBe(750);
   });
 
   it("treats an asset missing from the latest net-worth entry as defunct (zero cash)", async () => {
@@ -430,6 +417,17 @@ describe("Portfolio.cash", () => {
       [{ assetId: otherAsset, amountMajor: 1 }],
       "2026-04-30",
     );
+
+    const p = await queryPortfolio([isa]);
+    expect(p.cash.amount).toBe(0);
+  });
+
+  it("treats a zero recorded value at the latest entry as defunct (zero cash)", async () => {
+    const isa = await createStockAsset("ISA");
+    await recordDeposit(isa, 5000, "Funding");
+    // The wrapper IS in the latest entry, but its value is zero — equivalent
+    // to omitted, per the spec.
+    await recordNetWorthEntry([{ assetId: isa, amountMajor: 0 }], "2026-04-10");
 
     const p = await queryPortfolio([isa]);
     expect(p.cash.amount).toBe(0);
