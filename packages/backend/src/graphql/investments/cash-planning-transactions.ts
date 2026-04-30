@@ -66,15 +66,15 @@ export class AssetCashPlanningTransaction {
   }
 }
 
-/** A net-worth-entry checkpoint surfaced inline in the per-wrapper cash-contributions ledger. Acts as a separator between cash-flow rows: `amount` carries the wrapper's recorded value at the entry, or is `null` to mark the date the wrapper became defunct (the first entry that no longer included it). The cash-float computation anchors on these checkpoints — fees, dividends, and price drift between snapshots are silently absorbed by the next recorded value. @gqlType */
+/** A net-worth-entry checkpoint surfaced inline in the per-wrapper cash-contributions ledger. Acts as a separator between cash-flow rows: `value` carries the wrapper's recorded value at the entry, or is `null` to mark the date the wrapper became defunct (the first entry that no longer included it). The cash-float computation anchors on these checkpoints — fees, dividends, and price drift between snapshots are silently absorbed by the next recorded value. @gqlType */
 export class AssetValueSnapshot {
   constructor(
     /** Composite identifier — either `snapshot:<NetWorthValueAmounts.id>` for a recorded value, or `defunct:<assetId>` for a synthetic defunct marker. @gqlField */
     public readonly id: ID,
     /** Date the snapshot represents — the entry's date for a recorded value, or the date the wrapper first dropped out of an entry for a defunct marker. @gqlField */
     public readonly date: CalendarDate,
-    /** Recorded value at this entry. `null` when this row is the synthetic defunct marker, signalling the wrapper has no active value at the latest entry. @gqlField */
-    public readonly amount: Money | null,
+    /** Recorded value at this entry. `null` when this row is the synthetic defunct marker, signalling the wrapper has no active value at the latest entry. Named `value` (not `amount`) so a `... on AssetValueSnapshot { value }` selection in the same `cashContributions` query as `... on InvestmentDeposit { amount }` doesn't collide on a non-null vs. nullable `amount` field across the union. @gqlField */
+    public readonly value: Money | null,
   ) {}
 }
 

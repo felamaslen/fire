@@ -330,7 +330,7 @@ describe("NetWorthCategoryAsset.cashContributions", () => {
                   }
                   ... on AssetValueSnapshot {
                     date
-                    amount {
+                    value {
                       amount
                     }
                   }
@@ -350,7 +350,7 @@ describe("NetWorthCategoryAsset.cashContributions", () => {
     expect(
       nodes.map((n) =>
         n.__typename === "AssetValueSnapshot"
-          ? `snapshot ${n.date} £${n.amount?.amount}`
+          ? `snapshot ${n.date} £${n.value?.amount}`
           : n.__typename === "InvestmentDeposit"
             ? `deposit ${n.name}`
             : n.__typename,
@@ -406,7 +406,7 @@ describe("NetWorthCategoryAsset.cashContributions", () => {
                   __typename
                   ... on AssetValueSnapshot {
                     date
-                    amount {
+                    value {
                       amount
                     }
                   }
@@ -421,12 +421,12 @@ describe("NetWorthCategoryAsset.cashContributions", () => {
     const nodes =
       data.netWorthCategoryAsset?.cashContributions?.edges.map((e) => e.node) ??
       [];
-    // Defunct marker dated to the first absent entry (2026-04-30, `amount`
+    // Defunct marker dated to the first absent entry (2026-04-30, `value`
     // null), then the two real snapshot rows in date-desc order.
     expect(
       nodes.map((n) =>
         n.__typename === "AssetValueSnapshot"
-          ? `${n.date} ${n.amount === null ? "DEFUNCT" : "£" + n.amount.amount}`
+          ? `${n.date} ${n.value === null ? "DEFUNCT" : "£" + n.value.amount}`
           : n.__typename,
       ),
     ).toEqual(["2026-04-30 DEFUNCT", "2026-03-31 £1100", "2026-02-28 £1000"]);

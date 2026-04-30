@@ -94,7 +94,7 @@ const CashContributionsListDocument = graphql(`
             ... on AssetValueSnapshot {
               id
               date
-              amount {
+              value {
                 amount
                 currency
               }
@@ -448,11 +448,11 @@ function ManageDialog({
                 }
                 if (node.__typename === "AssetValueSnapshot") {
                   const label =
-                    node.amount === null
+                    node.value === null
                       ? `Defunct since ${node.date}`
                       : `Recorded as ${formatAccountingMoney(
-                          node.amount.currency,
-                          node.amount.amount,
+                          node.value.currency,
+                          node.value.amount,
                         )} on ${node.date}`;
                   return (
                     <TableRow
