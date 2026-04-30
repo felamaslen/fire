@@ -848,6 +848,21 @@ type InvestmentTransactionEdge {
 }
 
 """
+Records that all stock holdings (and uninvested cash) of `assetFrom` migrated into `assetTo` on `date`. An asset can be the source of at most one transfer; transferring chains its holdings, cash, and historical transactions through to the destination wrapper for portfolio aggregation.
+"""
+type InvestmentTransfer {
+  """Wrapper the holdings moved out of."""
+  assetFrom: NetWorthCategoryAsset!
+  """Wrapper the holdings moved into."""
+  assetTo: NetWorthCategoryAsset!
+  """
+  Calendar date the holdings moved out of `assetFrom` and into `assetTo`.
+  """
+  date: Date!
+  id: ID!
+}
+
+"""
 One wrapper's slice of an `Investment`. Holdings and stats are on `position`; the wrapper itself is on `asset`.
 """
 type InvestmentWrapper {
@@ -910,6 +925,28 @@ type Mutation {
     isProvisional: Boolean
     name: String
   ): AssetCashPlanningTransaction!
+  """
+  Record that all stock holdings and uninvested cash of `assetIdFrom` migrated into `assetIdTo` on `date`. The source wrapper is treated as fully sold from that date onwards; the destination wrapper inherits the source's transaction and cash history for portfolio aggregation. An asset can be the source of at most one transfer.
+  """
+  assetStockTransferCreate(
+    """
+    Wrapper the holdings move out of. Must be a `STOCK` or `PENSION` net-worth asset.
+    """
+    assetIdFrom: ID!
+    """
+    Wrapper the holdings move into. Must be a `STOCK` or `PENSION` net-worth asset, distinct from `assetIdFrom`.
+    """
+    assetIdTo: ID!
+    date: Date!
+  ): Portfolio!
+  """
+  Delete the outgoing transfer on `assetIdFrom`. Both ids must match the existing transfer. Holdings and cash of `assetIdFrom` are no longer chained into `assetIdTo`.
+  """
+  assetStockTransferDelete(assetIdFrom: ID!, assetIdTo: ID!): Portfolio!
+  """
+  Update the date of an existing transfer. The source and destination wrappers cannot be changed — delete and recreate to repoint a transfer.
+  """
+  assetStockTransferUpdate(assetIdFrom: ID!, date: Date!): Portfolio!
   """
   Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
   """
@@ -1393,6 +1430,14 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   """
   isDefunct: Boolean!
   name: String!
+  """
+  The outgoing transfer for this wrapper, if any — at most one. When set, this wrapper's holdings and cash are treated as fully migrated into the destination wrapper on the transfer date.
+  """
+  transferOut: InvestmentTransfer
+  """
+  Incoming transfers into this wrapper. Each contributes its source wrapper's full transaction and cash history into this one's portfolio aggregation from its `date`.
+  """
+  transfersIn: [InvestmentTransfer!]!
   type: NetWorthAssetType!
 }
 

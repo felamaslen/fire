@@ -28,6 +28,7 @@ import { planningYear as queryPlanningYearResolver, planningYearCurrent as query
 import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResolver } from "./../graphql/investments/portfolio";
 import { retirementSettings as queryRetirementSettingsResolver, retirementSettingsUpdate as mutationRetirementSettingsUpdateResolver } from "./../graphql/retirement";
 import { transactionAssetsFrequent as queryTransactionAssetsFrequentResolver, transactionLiabilitiesFrequent as queryTransactionLiabilitiesFrequentResolver, transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
+import { assetStockTransferCreate as mutationAssetStockTransferCreateResolver, assetStockTransferDelete as mutationAssetStockTransferDeleteResolver, assetStockTransferUpdate as mutationAssetStockTransferUpdateResolver } from "./../graphql/investments/transfers";
 import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
 import { payslipParse as mutationPayslipParseResolver } from "./../graphql/planning/payslip-parse";
@@ -651,6 +652,33 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const InvestmentTransferType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentTransfer",
+        description: "Records that all stock holdings (and uninvested cash) of `assetFrom` migrated into `assetTo` on `date`. An asset can be the source of at most one transfer; transferring chains its holdings, cash, and historical transactions through to the destination wrapper for portfolio aggregation.",
+        fields() {
+            return {
+                assetFrom: {
+                    description: "Wrapper the holdings moved out of.",
+                    name: "assetFrom",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                assetTo: {
+                    description: "Wrapper the holdings moved into.",
+                    name: "assetTo",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                date: {
+                    description: "Calendar date the holdings moved out of `assetFrom` and into `assetTo`.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                }
+            };
+        }
+    });
     const NetWorthAssetTypeType: GraphQLEnumType = new GraphQLEnumType({
         description: "Kind of asset a category represents.",
         name: "NetWorthAssetType",
@@ -748,6 +776,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                transferOut: {
+                    description: "The outgoing transfer for this wrapper, if any \u2014 at most one. When set, this wrapper's holdings and cash are treated as fully migrated into the destination wrapper on the transfer date.",
+                    name: "transferOut",
+                    type: InvestmentTransferType
+                },
+                transfersIn: {
+                    description: "Incoming transfers into this wrapper. Each contributes its source wrapper's full transaction and cash history into this one's portfolio aggregation from its `date`.",
+                    name: "transfersIn",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentTransferType)))
                 },
                 type: {
                     name: "type",
@@ -3810,6 +3848,59 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationAssetCashTransactionUpdateResolver(context, args.id, args.date, args.amount, args.name, args.fromAccountId, args.isProvisional);
                     }
                 },
+                assetStockTransferCreate: {
+                    description: "Record that all stock holdings and uninvested cash of `assetIdFrom` migrated into `assetIdTo` on `date`. The source wrapper is treated as fully sold from that date onwards; the destination wrapper inherits the source's transaction and cash history for portfolio aggregation. An asset can be the source of at most one transfer.",
+                    name: "assetStockTransferCreate",
+                    type: new GraphQLNonNull(PortfolioType),
+                    args: {
+                        assetIdFrom: {
+                            description: "Wrapper the holdings move out of. Must be a `STOCK` or `PENSION` net-worth asset.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        assetIdTo: {
+                            description: "Wrapper the holdings move into. Must be a `STOCK` or `PENSION` net-worth asset, distinct from `assetIdFrom`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        date: {
+                            type: new GraphQLNonNull(DateType)
+                        }
+                    },
+                    resolve(_source, args, context) {
+                        return mutationAssetStockTransferCreateResolver(context, args.assetIdFrom, args.assetIdTo, args.date);
+                    }
+                },
+                assetStockTransferDelete: {
+                    description: "Delete the outgoing transfer on `assetIdFrom`. Both ids must match the existing transfer. Holdings and cash of `assetIdFrom` are no longer chained into `assetIdTo`.",
+                    name: "assetStockTransferDelete",
+                    type: new GraphQLNonNull(PortfolioType),
+                    args: {
+                        assetIdFrom: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        assetIdTo: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args, context) {
+                        return mutationAssetStockTransferDeleteResolver(context, args.assetIdFrom, args.assetIdTo);
+                    }
+                },
+                assetStockTransferUpdate: {
+                    description: "Update the date of an existing transfer. The source and destination wrappers cannot be changed \u2014 delete and recreate to repoint a transfer.",
+                    name: "assetStockTransferUpdate",
+                    type: new GraphQLNonNull(PortfolioType),
+                    args: {
+                        assetIdFrom: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        date: {
+                            type: new GraphQLNonNull(DateType)
+                        }
+                    },
+                    resolve(_source, args, context) {
+                        return mutationAssetStockTransferUpdateResolver(context, args.assetIdFrom, args.date);
+                    }
+                },
                 billCreate: {
                     description: "Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, \u2026) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.",
                     name: "billCreate",
@@ -4926,7 +5017,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }
 const typeNameMap = new Map();

@@ -37,6 +37,11 @@ import {
   type CashContribution,
   loadAssetCashContributionsConnection,
 } from "../investments/cash-planning-transactions";
+import {
+  type InvestmentTransfer,
+  loadInvestmentTransferOutForAsset,
+  loadInvestmentTransfersInForAsset,
+} from "../investments/transfers";
 import { buildConnection, type Connection } from "../pagination";
 import { PlanningAccount } from "../planning/index";
 import { VOID, type Void } from "../void";
@@ -182,6 +187,16 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
   /** True when the wrapper has been recorded in some past `NetWorthEntries` but is missing (or zero) in the latest one — same gate the cash-float computation uses to surface zero "available to invest". A wrapper that's never been recorded yet (e.g. just created) is not defunct. @gqlField */
   async isDefunct(ctx: Context): Promise<boolean> {
     return defunctnessLoader(ctx).load(this.id);
+  }
+
+  /** The outgoing transfer for this wrapper, if any — at most one. When set, this wrapper's holdings and cash are treated as fully migrated into the destination wrapper on the transfer date. @gqlField */
+  async transferOut(): Promise<InvestmentTransfer | null> {
+    return loadInvestmentTransferOutForAsset(this.id);
+  }
+
+  /** Incoming transfers into this wrapper. Each contributes its source wrapper's full transaction and cash history into this one's portfolio aggregation from its `date`. @gqlField */
+  async transfersIn(): Promise<InvestmentTransfer[]> {
+    return loadInvestmentTransfersInForAsset(this.id);
   }
 }
 
