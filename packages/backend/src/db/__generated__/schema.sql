@@ -493,6 +493,7 @@ CREATE TABLE "PlanningTransactions" (
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
   "assetId" uuid,
+  "isProvisional" boolean DEFAULT FALSE NOT NULL,
   CONSTRAINT "PlanningTransactions_accounts_ck" CHECK (
     "PlanningTransactions"."toAccountId" IS NULL
     OR "PlanningTransactions"."accountId" <> "PlanningTransactions"."toAccountId"
