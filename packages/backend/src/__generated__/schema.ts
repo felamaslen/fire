@@ -737,6 +737,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return netWorthCategoryAssetInvestmentAllocationsResolver(source);
                     }
                 },
+                isDefunct: {
+                    description: "True when the wrapper has been recorded in some past `NetWorthEntries` but is missing (or zero) in the latest one \u2014 same gate the cash-float computation uses to surface zero \"available to invest\". A wrapper that's never been recorded yet (e.g. just created) is not defunct.",
+                    name: "isDefunct",
+                    type: new GraphQLNonNull(GraphQLBoolean),
+                    resolve(source, _args, context) {
+                        return source.isDefunct(context);
+                    }
+                },
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)

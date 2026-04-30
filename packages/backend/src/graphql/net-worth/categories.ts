@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 
+import DataLoader from "dataloader";
 import {
   and,
   asc,
@@ -11,6 +12,7 @@ import {
   lt,
   or,
   type SQL,
+  sql,
 } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { GraphQLError } from "graphql";
@@ -24,10 +26,12 @@ import {
   NetWorthCategoryLiabilities,
   netWorthCategoryLiabilityType,
   NetWorthCategoryOptions,
+  NetWorthEntries,
+  NetWorthValueAmounts,
   NetWorthValues,
 } from "@/db/schema/net-worth";
 
-import type { Context } from "../context";
+import { type Context, contextAwareDataLoader } from "../context";
 import type { Date as CalendarDate } from "../date";
 import {
   type CashContribution,
@@ -174,7 +178,46 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
   ): Promise<Connection<CashContribution> | null> {
     return loadAssetCashContributionsConnection(this.id, first, after);
   }
+
+  /** True when the wrapper has been recorded in some past `NetWorthEntries` but is missing (or zero) in the latest one — same gate the cash-float computation uses to surface zero "available to invest". A wrapper that's never been recorded yet (e.g. just created) is not defunct. @gqlField */
+  async isDefunct(ctx: Context): Promise<boolean> {
+    return defunctnessLoader(ctx).load(this.id);
+  }
 }
+
+/** Per-request batched loader for `NetWorthCategoryAsset.isDefunct`. One SQL groups by `categoryAssetId` and reports `(everRecorded, activeInLatest)`; an asset only flips to defunct when it was ever recorded but the latest entry no longer carries a positive value for it. */
+const defunctnessLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, boolean>(async (assetIds) => {
+      const ids = [...assetIds];
+      const rows = await db
+        .select({
+          assetId: sql<string>`${NetWorthValues.categoryAssetId}`.as("assetId"),
+          ever: sql<boolean>`bool_or(true)`.as("ever"),
+          activeInLatest:
+            sql<boolean>`bool_or(${NetWorthEntries.date} = (SELECT MAX(date) FROM "NetWorthEntries") AND ${NetWorthValueAmounts.amount} > 0)`.as(
+              "activeInLatest",
+            ),
+        })
+        .from(NetWorthValues)
+        .innerJoin(
+          NetWorthEntries,
+          eq(NetWorthEntries.id, NetWorthValues.entryId),
+        )
+        .innerJoin(
+          NetWorthValueAmounts,
+          eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
+        )
+        .where(inArray(NetWorthValues.categoryAssetId, ids))
+        .groupBy(NetWorthValues.categoryAssetId);
+      const byId = new Map(rows.map((r) => [r.assetId, r]));
+      return ids.map((id) => {
+        const r = byId.get(id);
+        if (!r) return false; // never recorded → not defunct (just unrecorded)
+        return r.ever && !r.activeInLatest;
+      });
+    }),
+);
 
 /** Look up an asset category by id. Returns `null` when no row matches.
  *

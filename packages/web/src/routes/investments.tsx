@@ -163,6 +163,7 @@ const PortfolioFilterInvestmentFragment = graphql(`
         id
         name
         type
+        isDefunct
       }
     }
   }
@@ -170,16 +171,26 @@ const PortfolioFilterInvestmentFragment = graphql(`
 
 const FILTER_PORTFOLIO_TYPES = new Set(["STOCK", "PENSION"]);
 
+type PortfolioFilterOption = {
+  id: string;
+  name: string;
+  isDefunct: boolean;
+};
+
 function portfolioFilterOptionsFromInvestments(
   investments: FragmentOf<typeof PortfolioFilterInvestmentFragment>[],
-): { id: string; name: string }[] {
-  const seen = new Map<string, { id: string; name: string }>();
+): PortfolioFilterOption[] {
+  const seen = new Map<string, PortfolioFilterOption>();
   for (const ref of investments) {
     const inv = readFragment(PortfolioFilterInvestmentFragment, ref);
     for (const w of inv.wrappers ?? []) {
       if (!FILTER_PORTFOLIO_TYPES.has(w.asset.type)) continue;
       if (!seen.has(w.asset.id)) {
-        seen.set(w.asset.id, { id: w.asset.id, name: w.asset.name });
+        seen.set(w.asset.id, {
+          id: w.asset.id,
+          name: w.asset.name,
+          isDefunct: w.asset.isDefunct,
+        });
       }
     }
   }
@@ -277,7 +288,7 @@ function PortfolioFilterDropdown({
 }: {
   value: string[];
   onChange: (ids: string[]) => void;
-  options: { id: string; name: string }[];
+  options: PortfolioFilterOption[];
 }) {
   const selected = new Set(value);
   const allSelected = value.length === 0;
@@ -287,6 +298,9 @@ function PortfolioFilterDropdown({
       ? (options.find((o) => o.id === value[0])?.name ?? "1 selected")
       : `${value.length} selected`;
 
+  const active = options.filter((o) => !o.isDefunct);
+  const defunct = options.filter((o) => o.isDefunct);
+
   const toggle = (id: string) => {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
@@ -295,6 +309,23 @@ function PortfolioFilterDropdown({
     // so the URL stays clean.
     if (next.size === options.length) onChange([]);
     else onChange([...next]);
+  };
+
+  const renderOption = (o: PortfolioFilterOption) => {
+    const isSelected = !allSelected && selected.has(o.id);
+    return (
+      <button
+        key={o.id}
+        type="button"
+        onClick={() => toggle(o.id)}
+        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+      >
+        <span className="flex h-4 w-4 items-center justify-center">
+          {isSelected && <Check className="h-3.5 w-3.5" />}
+        </span>
+        <span className="truncate">{o.name}</span>
+      </button>
+    );
   };
 
   return (
@@ -322,22 +353,17 @@ function PortfolioFilterDropdown({
             All
           </button>
           <div className="my-1 h-px bg-border" />
-          {options.map((o) => {
-            const isSelected = !allSelected && selected.has(o.id);
-            return (
-              <button
-                key={o.id}
-                type="button"
-                onClick={() => toggle(o.id)}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
-              >
-                <span className="flex h-4 w-4 items-center justify-center">
-                  {isSelected && <Check className="h-3.5 w-3.5" />}
-                </span>
-                <span className="truncate">{o.name}</span>
-              </button>
-            );
-          })}
+          {active.map(renderOption)}
+          {defunct.length > 0 && (
+            <>
+              <div className="my-1 flex items-center gap-2 px-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                <span className="h-px flex-1 bg-border" />
+                Defunct
+                <span className="h-px flex-1 bg-border" />
+              </div>
+              {defunct.map(renderOption)}
+            </>
+          )}
         </PopoverContent>
       </Popover>
     </div>

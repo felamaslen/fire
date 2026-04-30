@@ -1384,6 +1384,10 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.
   """
   investmentAllocations: InvestmentAllocationsResult!
+  """
+  True when the wrapper has been recorded in some past `NetWorthEntries` but is missing (or zero) in the latest one — same gate the cash-float computation uses to surface zero "available to invest". A wrapper that's never been recorded yet (e.g. just created) is not defunct.
+  """
+  isDefunct: Boolean!
   name: String!
   type: NetWorthAssetType!
 }
