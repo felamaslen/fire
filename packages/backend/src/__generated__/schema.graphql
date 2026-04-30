@@ -115,6 +115,11 @@ enum SortDirection {
 }
 
 """
+A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …) or a manual `AssetCashPlanningTransaction` originating in a planning cash account.
+"""
+union CashContribution = AssetCashPlanningTransaction | InvestmentDeposit
+
+"""
 The underlying instrument an `Investment` represents: a listed stock or a fund.
 """
 union InvestmentAsset = InvestmentFund | InvestmentStock
@@ -448,6 +453,24 @@ input PlanningYearTaxRatesUKInput {
 }
 
 """
+A cash-account → wrapper planning transaction surfaced on the investments page. The `id` matches the composite `tx:` identifier returned by the planning grid, so it can be fed straight back into `transactionUpdate` / `transactionDelete` if needed — but the dedicated `assetCashTransaction*` mutations are the supported edit path from this view.
+"""
+type AssetCashPlanningTransaction {
+  """
+  Signed cash amount from the *wrapper's* perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. The underlying `PlanningTransactions` row stores the sign from the cash account's perspective; this resolver flips it so every consumer of `cashContributions` sees the same convention regardless of source.
+  """
+  amount: Money!
+  """
+  Calendar date the transaction is anchored to. Drives the planning month it lives in.
+  """
+  date: Date!
+  """Source cash planning account the contribution flows from / to."""
+  fromAccount: PlanningAccount!
+  id: ID!
+  name: String!
+}
+
+"""
 Result of a successful `login` / `demoLogin`, and the shape of `me` for a valid token. The client just needs to know "am I logged in?" — `token` doubles as both credential and success signal. Session kind / flavour live inside the signed token itself and are re-derived server-side from the `Authorization` header on every request, so there's nothing for the client to track beyond this string.
 """
 type AuthResult {
@@ -459,6 +482,22 @@ type AuthResult {
   Signed token. Real tokens live 30 days; demo tokens live 6 hours. Store in `localStorage` and attach as `Authorization: Bearer <token>`.
   """
   token: String!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type CashContributionConnection {
+  edges: [CashContributionEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type CashContributionEdge {
+  cursor: ID!
+  node: CashContribution!
 }
 
 """Metadata for a currency supported by the server."""
@@ -807,6 +846,40 @@ type Money {
 }
 
 type Mutation {
+  """
+  Create a cash-account → wrapper planning transaction. `amount` is signed from the **wrapper's** perspective: positive = deposit into the wrapper, negative = withdrawal from it. The resolver flips the sign internally before persisting (the underlying `PlanningTransactions` row stores everything from the cash account's perspective).
+  """
+  assetCashTransactionCreate(
+    """
+    Wrapper-perspective amount: positive = into the wrapper, negative = out.
+    """
+    amount: MoneyInput!
+    """
+    Wrapper to credit / debit. Must be a `STOCK` or `PENSION` net-worth asset.
+    """
+    assetId: ID!
+    date: Date!
+    """Source cash planning account (`PlanningAccount.id`)."""
+    fromAccountId: ID!
+    name: String!
+  ): AssetCashPlanningTransaction!
+  """Delete a cash transfer."""
+  assetCashTransactionDelete(
+    """Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`."""
+    id: ID!
+  ): Void!
+  """
+  Partial update for a cash transfer. `amount`, when supplied, is wrapper-POV (positive = into the wrapper). Omitted / null fields are left unchanged.
+  """
+  assetCashTransactionUpdate(
+    amount: MoneyInput
+    date: Date
+    """New source cash planning account (`PlanningAccount.id`)."""
+    fromAccountId: ID
+    """Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`."""
+    id: ID!
+    name: String
+  ): AssetCashPlanningTransaction!
   """
   Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
   """
@@ -1265,6 +1338,10 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   """
   accessibleFrom: Date
   """
+  Paginated, date-desc list of every cash contribution for this wrapper — both external `InvestmentDeposit`s (dividends, tax relief, …) and `AssetCashPlanningTransaction`s originating in a planning cash account, interleaved by date and used to back the "Manage cash deposits" dialog on the investments page.
+  """
+  cashContributions(after: ID, first: Int): CashContributionConnection @semanticNonNull
+  """
   Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.
   """
   growthRate: Float
@@ -1273,10 +1350,6 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.
   """
   investmentAllocations: InvestmentAllocationsResult!
-  """
-  External cash credits / debits booked against this wrapper that don't correspond to a planning transfer or a unit trade — e.g. dividends, broker bonuses, pension tax relief. Newest-first. Only meaningful on `STOCK` / `PENSION` wrappers; an empty list otherwise.
-  """
-  investmentDeposits: [InvestmentDeposit!] @semanticNonNull
   name: String!
   type: NetWorthAssetType!
 }

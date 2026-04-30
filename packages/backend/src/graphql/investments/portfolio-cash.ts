@@ -153,7 +153,7 @@ export async function loadAssetCashFloat(
   return cashFloatLoader(ctx).load({ assetIds: [assetId] });
 }
 
-/** Aggregate uninvested cash across many wrappers (or every `STOCK` / `PENSION` wrapper when `assetIds` is `null`), scoped to a single currency. Returns the total in fractional units of `currency`. */
+/** Aggregate uninvested cash across many wrappers (or every `STOCK` / `PENSION` wrapper when `assetIds` is `null`), scoped to a single currency. Returns the total in fractional units of `currency`, clamped to ≥ 0 — recording cash contributions is optional, and a wrapper with held positions but no contribution log shouldn't surface a negative "available to invest" pulled out of the buy cost. */
 export async function loadPortfolioCashMinor(
   ctx: Context,
   assetIds: string[] | null,
@@ -161,5 +161,6 @@ export async function loadPortfolioCashMinor(
 ): Promise<number> {
   assertCurrencyCode(currency);
   const floats = await cashFloatLoader(ctx).load({ assetIds });
-  return floats.find((f) => f.currency === currency)?.amountMinor ?? 0;
+  const minor = floats.find((f) => f.currency === currency)?.amountMinor ?? 0;
+  return Math.max(0, minor);
 }

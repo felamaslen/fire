@@ -34,6 +34,7 @@ import {
   PlanningYearUKTaxRates,
 } from "@/db/schema/planning";
 
+import type { Context } from "../context";
 import {
   getMoneyInputFractionalAmount,
   Money,
@@ -189,11 +190,29 @@ export async function transactionLiabilitiesFrequent(
 }
 
 /**
+ * Invalidate every cache slice a planning-transaction write can stale: the planning grid (reaches `PlanningTransaction`); plus, when an `assetId` is involved, `Portfolio.cash` / `Portfolio.totalValue` and the wrapper's `cashContributions` connection.
+ *
+ * `cashContributions` lives on `NetWorthCategoryAsset` — an entity type, so the typename→rootFields walker stops there and `AssetCashPlanningTransaction` alone doesn't carry `Query.netWorthCategoryAsset` along with it. The wrapper-typename invalidation is what actually triggers the connection to refetch on the client; the typed `AssetCashPlanningTransaction` invalidation stays as a domain marker and to cover future query fields that surface the type directly.
+ */
+function invalidatePlanningTransactionReachable(
+  ctx: Context,
+  opts: { touchesAsset: boolean },
+): void {
+  ctx.invalidate({ typename: "PlanningTransaction", id: null });
+  if (opts.touchesAsset) {
+    ctx.invalidate({ typename: "AssetCashPlanningTransaction", id: null });
+    ctx.invalidate({ typename: "NetWorthCategoryAsset", id: null });
+    ctx.invalidate({ typename: "Portfolio", id: null });
+  }
+}
+
+/**
  * Record a manual transaction on a planning month. `amount` is signed — negative for outflows (debits `accountId`, optionally credits `toAccountId`) and positive for ad-hoc inflows credited to `accountId` with no source account. A positive amount requires `toAccountId`, `liabilityId`, and `assetId` to be null. An outflow may either pay down a liability OR invest into a stock/pension asset, but not both.
  *
  * @gqlMutationField
  */
 export async function transactionCreate(
+  ctx: Context,
   /** Planning month id, e.g. `"apr-2025"`. */
   monthId: ID,
   /** Signed amount: negative = outflow, positive = ad-hoc inflow. */
@@ -236,6 +255,9 @@ export async function transactionCreate(
       assetId: assetId ?? null,
     })
     .returning();
+  invalidatePlanningTransactionReachable(ctx, {
+    touchesAsset: row.assetId != null,
+  });
   return new PlanningTransaction({
     id: encodePlanningTransactionId({ kind: "tx", id: row.id }),
     name: row.name,
@@ -273,6 +295,7 @@ async function assertInvestableAsset(assetId: string): Promise<void> {
  * @gqlMutationField
  */
 export async function transactionUpdate(
+  ctx: Context,
   /** Planning month id, e.g. `"apr-2025"`. For manual transactions this also re-anchors the transaction to that month. */
   monthId: ID,
   /** Composite id as returned on `PlanningTransaction.id`. */
@@ -393,7 +416,11 @@ export async function transactionUpdate(
       break;
     }
   }
-  return reloadTransaction(parsed);
+  const reloaded = await reloadTransaction(parsed);
+  invalidatePlanningTransactionReachable(ctx, {
+    touchesAsset: reloaded.assetId != null || assetId != null,
+  });
+  return reloaded;
 }
 
 /** Fetch the current `PlanningTransaction` view of a row after an update. Derived kinds (`earn`, `bill`) materialise into concrete payslip / override rows, but we still return the source composite id so the caller's reference stays valid. */
@@ -503,6 +530,7 @@ async function reloadTransaction(
  * @gqlMutationField
  */
 export async function transactionDelete(
+  ctx: Context,
   /** Planning month id, e.g. `"apr-2025"`. */
   monthId: ID,
   /** Composite id as returned on `PlanningTransaction.id`. */
@@ -510,6 +538,17 @@ export async function transactionDelete(
 ): Promise<Void> {
   const { year, date } = monthKey(monthId);
   const parsed = decodePlanningTransactionId(id);
+
+  // Capture asset-tagging *before* the row is gone, so we can route the
+  // post-delete invalidation correctly.
+  let touchesAsset = false;
+  if (parsed.kind === "tx" || parsed.kind === "to") {
+    const [row] = await db
+      .select({ assetId: PlanningTransactions.assetId })
+      .from(PlanningTransactions)
+      .where(eq(PlanningTransactions.id, parsed.id));
+    if (row?.assetId != null) touchesAsset = true;
+  }
 
   switch (parsed.kind) {
     case "tx":
@@ -569,6 +608,7 @@ export async function transactionDelete(
       });
       break;
   }
+  invalidatePlanningTransactionReachable(ctx, { touchesAsset });
   return VOID;
 }
 

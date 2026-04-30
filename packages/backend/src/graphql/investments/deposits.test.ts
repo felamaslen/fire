@@ -69,13 +69,20 @@ async function listDeposits(assetId: string): Promise<
     graphql(`
       query ($id: ID!) {
         netWorthCategoryAsset(id: $id) {
-          investmentDeposits {
-            id
-            date
-            name
-            amount {
-              amount
-              currency
+          cashContributions(first: 100) {
+            edges {
+              node {
+                __typename
+                ... on InvestmentDeposit {
+                  id
+                  date
+                  name
+                  amount {
+                    amount
+                    currency
+                  }
+                }
+              }
             }
           }
         }
@@ -83,7 +90,13 @@ async function listDeposits(assetId: string): Promise<
     `),
     { id: assetId },
   );
-  return data.netWorthCategoryAsset?.investmentDeposits ?? [];
+  const edges = data.netWorthCategoryAsset?.cashContributions?.edges ?? [];
+  // Tests in this file only seed `InvestmentDeposit`s for the asset, so the
+  // unioned `cashContributions` is a deposit-only feed here. Pluck the
+  // deposit-shaped nodes out for assertion.
+  return edges.flatMap((e) =>
+    e.node.__typename === "InvestmentDeposit" ? [e.node] : [],
+  );
 }
 
 describe("investmentDepositCreate", () => {
@@ -294,7 +307,7 @@ describe("investmentDepositDelete", () => {
   });
 });
 
-describe("netWorthCategoryAsset.investmentDeposits", () => {
+describe("netWorthCategoryAsset.cashContributions (deposit edges)", () => {
   it("returns rows newest-first", async () => {
     const assetId = await createAsset("STOCK");
     await createDeposit(assetId, { date: "2026-01-15", name: "Jan" });

@@ -441,7 +441,7 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
           "amount": 6950,
         },
         "totalValue": {
-          "amount": 7150,
+          "amount": 10500,
           "currency": "GBP",
         },
       },
@@ -532,7 +532,7 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
           "amount": 1600,
         },
         "totalValue": {
-          "amount": 1600,
+          "amount": 3000,
         },
       },
       "giaPerInvestment": {
@@ -570,7 +570,7 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
           "amount": 2550,
         },
         "totalValue": {
-          "amount": 2750,
+          "amount": 3000,
         },
       },
       "isaPerInvestment": {
@@ -621,7 +621,7 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
           "amount": 2800,
         },
         "totalValue": {
-          "amount": 2800,
+          "amount": 4500,
         },
       },
       "sippPerInvestment": {

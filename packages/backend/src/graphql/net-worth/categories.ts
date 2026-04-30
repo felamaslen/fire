@@ -30,9 +30,9 @@ import {
 import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import {
-  InvestmentDeposit,
-  loadInvestmentDepositsForAsset,
-} from "../investments/deposits";
+  type CashContribution,
+  loadAssetCashContributionsConnection,
+} from "../investments/cash-planning-transactions";
 import { buildConnection, type Connection } from "../pagination";
 import { PlanningAccount } from "../planning/index";
 import { VOID, type Void } from "../void";
@@ -163,13 +163,16 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
     return (await this.row()).accessibleFrom;
   }
 
-  /** External cash credits / debits booked against this wrapper that don't correspond to a planning transfer or a unit trade — e.g. dividends, broker bonuses, pension tax relief. Newest-first. Only meaningful on `STOCK` / `PENSION` wrappers; an empty list otherwise.
+  /** Paginated, date-desc list of every cash contribution for this wrapper — both external `InvestmentDeposit`s (dividends, tax relief, …) and `AssetCashPlanningTransaction`s originating in a planning cash account, interleaved by date and used to back the "Manage cash deposits" dialog on the investments page.
    *
    * @gqlField
    * @gqlAnnotate semanticNonNull
    */
-  async investmentDeposits(): Promise<InvestmentDeposit[] | null> {
-    return loadInvestmentDepositsForAsset(this.id);
+  async cashContributions(
+    first?: Int | null,
+    after?: ID | null,
+  ): Promise<Connection<CashContribution> | null> {
+    return loadAssetCashContributionsConnection(this.id, first, after);
   }
 }
 

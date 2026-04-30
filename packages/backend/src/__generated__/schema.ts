@@ -7,7 +7,9 @@ import type { GqlScalar } from "grats";
 import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
-import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLString, GraphQLInt, specifiedDirectives, GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLUnionType, defaultFieldResolver, GraphQLBoolean, GraphQLInterfaceType, GraphQLInputObjectType } from "graphql";
+import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLString, GraphQLInt, specifiedDirectives, GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLUnionType, GraphQLBoolean, defaultFieldResolver, GraphQLInterfaceType, GraphQLInputObjectType } from "graphql";
+import { AssetCashPlanningTransaction as AssetCashPlanningTransactionClass, assetCashTransactionCreate as mutationAssetCashTransactionCreateResolver, assetCashTransactionDelete as mutationAssetCashTransactionDeleteResolver, assetCashTransactionUpdate as mutationAssetCashTransactionUpdateResolver } from "./../graphql/investments/cash-planning-transactions";
+import { InvestmentDeposit as InvestmentDepositClass, investmentDepositCreate as mutationInvestmentDepositCreateResolver, investmentDepositDelete as mutationInvestmentDepositDeleteResolver, investmentDepositUpdate as mutationInvestmentDepositUpdateResolver } from "./../graphql/investments/deposits";
 import { investmentAllocationsForAsset as netWorthCategoryAssetInvestmentAllocationsResolver, investmentAllocations as queryInvestmentAllocationsResolver, investmentAllocationsSet as mutationInvestmentAllocationsSetResolver, investmentCashAllocationSet as mutationInvestmentCashAllocationSetResolver } from "./../graphql/investments/allocations";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
 import { cashPosition as queryCashPositionResolver } from "./../graphql/investments/cash-position";
@@ -26,7 +28,6 @@ import { planningYear as queryPlanningYearResolver, planningYearCurrent as query
 import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResolver } from "./../graphql/investments/portfolio";
 import { retirementSettings as queryRetirementSettingsResolver, retirementSettingsUpdate as mutationRetirementSettingsUpdateResolver } from "./../graphql/retirement";
 import { transactionAssetsFrequent as queryTransactionAssetsFrequentResolver, transactionLiabilitiesFrequent as queryTransactionLiabilitiesFrequentResolver, transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
-import { investmentDepositCreate as mutationInvestmentDepositCreateResolver, investmentDepositDelete as mutationInvestmentDepositDeleteResolver, investmentDepositUpdate as mutationInvestmentDepositUpdateResolver } from "./../graphql/investments/deposits";
 import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
 import { payslipParse as mutationPayslipParseResolver } from "./../graphql/planning/payslip-parse";
@@ -82,6 +83,133 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             YEARLY: {
                 value: "YEARLY"
             }
+        }
+    });
+    const AssetCashPlanningTransactionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "AssetCashPlanningTransaction",
+        description: "A cash-account \u2192 wrapper planning transaction surfaced on the investments page. The `id` matches the composite `tx:` identifier returned by the planning grid, so it can be fed straight back into `transactionUpdate` / `transactionDelete` if needed \u2014 but the dedicated `assetCashTransaction*` mutations are the supported edit path from this view.",
+        fields() {
+            return {
+                amount: {
+                    description: "Signed cash amount from the *wrapper's* perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. The underlying `PlanningTransactions` row stores the sign from the cash account's perspective; this resolver flips it so every consumer of `cashContributions` sees the same convention regardless of source.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                date: {
+                    description: "Calendar date the transaction is anchored to. Drives the planning month it lives in.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                fromAccount: {
+                    description: "Source cash planning account the contribution flows from / to.",
+                    name: "fromAccount",
+                    type: new GraphQLNonNull(PlanningAccountType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const InvestmentDepositType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentDeposit",
+        description: "A cash inflow into a wrapper that doesn't originate from a planning cash account \u2014 e.g. dividend income, broker bonus, or pension tax relief credited by HMRC. Combined with planning cash transactions and non-DRIP unit trades to derive the wrapper's uninvested cash float.",
+        fields() {
+            return {
+                amount: {
+                    description: "Signed cash amount. Positive = credit to the wrapper (the common case); negative = a withdrawal that isn't paired with a unit trade.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                asset: {
+                    description: "Wrapper this deposit is booked into.",
+                    name: "asset",
+                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
+                },
+                date: {
+                    description: "Calendar date the cash landed in the wrapper.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    description: "Short label for the deposit (e.g. \"Q2 dividend\", \"Tax relief\").",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const CashContributionType: GraphQLUnionType = new GraphQLUnionType({
+        name: "CashContribution",
+        description: "A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, \u2026) or a manual `AssetCashPlanningTransaction` originating in a planning cash account.",
+        types() {
+            return [AssetCashPlanningTransactionType, InvestmentDepositType];
+        },
+        resolveType
+    });
+    const CashContributionEdgeType: GraphQLObjectType = new GraphQLObjectType({
+        name: "CashContributionEdge",
+        description: "A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.",
+        fields() {
+            return {
+                cursor: {
+                    name: "cursor",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                node: {
+                    name: "node",
+                    type: new GraphQLNonNull(CashContributionType)
+                }
+            };
+        }
+    });
+    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PageInfo",
+        description: "Pagination state for a cursor-paginated connection.",
+        fields() {
+            return {
+                endCursor: {
+                    name: "endCursor",
+                    type: GraphQLID
+                },
+                hasNextPage: {
+                    name: "hasNextPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                hasPreviousPage: {
+                    name: "hasPreviousPage",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                startCursor: {
+                    name: "startCursor",
+                    type: GraphQLID
+                }
+            };
+        }
+    });
+    const CashContributionConnectionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "CashContributionConnection",
+        description: "A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` \u2192 `NetWorthEntryConnection`) are emitted per node type.",
+        fields() {
+            return {
+                edges: {
+                    name: "edges",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(CashContributionEdgeType)))
+                },
+                pageInfo: {
+                    name: "pageInfo",
+                    type: new GraphQLNonNull(PageInfoType)
+                }
+            };
         }
     });
     const InvestmentFundType: GraphQLObjectType = new GraphQLObjectType({
@@ -279,30 +407,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 node: {
                     name: "node",
                     type: new GraphQLNonNull(InvestmentTransactionType)
-                }
-            };
-        }
-    });
-    const PageInfoType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PageInfo",
-        description: "Pagination state for a cursor-paginated connection.",
-        fields() {
-            return {
-                endCursor: {
-                    name: "endCursor",
-                    type: GraphQLID
-                },
-                hasNextPage: {
-                    name: "hasNextPage",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                hasPreviousPage: {
-                    name: "hasPreviousPage",
-                    type: new GraphQLNonNull(GraphQLBoolean)
-                },
-                startCursor: {
-                    name: "startCursor",
-                    type: GraphQLID
                 }
             };
         }
@@ -519,38 +623,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
-    const InvestmentDepositType: GraphQLObjectType = new GraphQLObjectType({
-        name: "InvestmentDeposit",
-        description: "A cash inflow into a wrapper that doesn't originate from a planning cash account \u2014 e.g. dividend income, broker bonus, or pension tax relief credited by HMRC. Combined with planning cash transactions and non-DRIP unit trades to derive the wrapper's uninvested cash float.",
-        fields() {
-            return {
-                amount: {
-                    description: "Signed cash amount. Positive = credit to the wrapper (the common case); negative = a withdrawal that isn't paired with a unit trade.",
-                    name: "amount",
-                    type: new GraphQLNonNull(MoneyType)
-                },
-                asset: {
-                    description: "Wrapper this deposit is booked into.",
-                    name: "asset",
-                    type: new GraphQLNonNull(NetWorthCategoryAssetType)
-                },
-                date: {
-                    description: "Calendar date the cash landed in the wrapper.",
-                    name: "date",
-                    type: new GraphQLNonNull(DateType)
-                },
-                id: {
-                    name: "id",
-                    type: new GraphQLNonNull(GraphQLID)
-                },
-                name: {
-                    description: "Short label for the deposit (e.g. \"Q2 dividend\", \"Tax relief\").",
-                    name: "name",
-                    type: new GraphQLNonNull(GraphQLString)
-                }
-            };
-        }
-    });
     const NetWorthAssetTypeType: GraphQLEnumType = new GraphQLEnumType({
         description: "Kind of asset a category represents.",
         name: "NetWorthAssetType",
@@ -604,6 +676,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "accessibleFrom",
                     type: DateType
                 },
+                cashContributions: {
+                    description: "Paginated, date-desc list of every cash contribution for this wrapper \u2014 both external `InvestmentDeposit`s (dividends, tax relief, \u2026) and `AssetCashPlanningTransaction`s originating in a planning cash account, interleaved by date and used to back the \"Manage cash deposits\" dialog on the investments page.",
+                    name: "cashContributions",
+                    type: CashContributionConnectionType,
+                    args: {
+                        after: {
+                            type: GraphQLID
+                        },
+                        first: {
+                            type: GraphQLInt
+                        }
+                    },
+                    resolve(source, args) {
+                        return assertNonNull(source.cashContributions(args.first, args.after));
+                    }
+                },
                 growthRate: {
                     description: "Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.",
                     name: "growthRate",
@@ -619,14 +707,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(InvestmentAllocationsResultType),
                     resolve(source) {
                         return netWorthCategoryAssetInvestmentAllocationsResolver(source);
-                    }
-                },
-                investmentDeposits: {
-                    description: "External cash credits / debits booked against this wrapper that don't correspond to a planning transfer or a unit trade \u2014 e.g. dividends, broker bonuses, pension tax relief. Newest-first. Only meaningful on `STOCK` / `PENSION` wrappers; an empty list otherwise.",
-                    name: "investmentDeposits",
-                    type: new GraphQLList(new GraphQLNonNull(InvestmentDepositType)),
-                    resolve(source, args, context, info) {
-                        return assertNonNull(defaultFieldResolver(source, args, context, info));
                     }
                 },
                 name: {
@@ -3604,6 +3684,75 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         name: "Mutation",
         fields() {
             return {
+                assetCashTransactionCreate: {
+                    description: "Create a cash-account \u2192 wrapper planning transaction. `amount` is signed from the **wrapper's** perspective: positive = deposit into the wrapper, negative = withdrawal from it. The resolver flips the sign internally before persisting (the underlying `PlanningTransactions` row stores everything from the cash account's perspective).",
+                    name: "assetCashTransactionCreate",
+                    type: new GraphQLNonNull(AssetCashPlanningTransactionType),
+                    args: {
+                        amount: {
+                            description: "Wrapper-perspective amount: positive = into the wrapper, negative = out.",
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
+                        assetId: {
+                            description: "Wrapper to credit / debit. Must be a `STOCK` or `PENSION` net-worth asset.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        date: {
+                            type: new GraphQLNonNull(DateType)
+                        },
+                        fromAccountId: {
+                            description: "Source cash planning account (`PlanningAccount.id`).",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        name: {
+                            type: new GraphQLNonNull(GraphQLString)
+                        }
+                    },
+                    resolve(_source, args, context) {
+                        return mutationAssetCashTransactionCreateResolver(context, args.assetId, args.fromAccountId, args.date, args.amount, args.name);
+                    }
+                },
+                assetCashTransactionDelete: {
+                    description: "Delete a cash transfer.",
+                    name: "assetCashTransactionDelete",
+                    type: new GraphQLNonNull(VoidType),
+                    args: {
+                        id: {
+                            description: "Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        }
+                    },
+                    resolve(_source, args, context) {
+                        return mutationAssetCashTransactionDeleteResolver(context, args.id);
+                    }
+                },
+                assetCashTransactionUpdate: {
+                    description: "Partial update for a cash transfer. `amount`, when supplied, is wrapper-POV (positive = into the wrapper). Omitted / null fields are left unchanged.",
+                    name: "assetCashTransactionUpdate",
+                    type: new GraphQLNonNull(AssetCashPlanningTransactionType),
+                    args: {
+                        amount: {
+                            type: MoneyInputType
+                        },
+                        date: {
+                            type: DateType
+                        },
+                        fromAccountId: {
+                            description: "New source cash planning account (`PlanningAccount.id`).",
+                            type: GraphQLID
+                        },
+                        id: {
+                            description: "Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`.",
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        name: {
+                            type: GraphQLString
+                        }
+                    },
+                    resolve(_source, args, context) {
+                        return mutationAssetCashTransactionUpdateResolver(context, args.id, args.date, args.amount, args.name, args.fromAccountId);
+                    }
+                },
                 billCreate: {
                     description: "Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, \u2026) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.",
                     name: "billCreate",
@@ -3965,8 +4114,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLString)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentDepositCreateResolver(args.assetId, args.date, args.amount, args.name);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentDepositCreateResolver(context, args.assetId, args.date, args.amount, args.name);
                     }
                 },
                 investmentDepositDelete: {
@@ -3978,8 +4127,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLID)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentDepositDeleteResolver(args.id);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentDepositDeleteResolver(context, args.id);
                     }
                 },
                 investmentDepositUpdate: {
@@ -4000,8 +4149,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: GraphQLString
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentDepositUpdateResolver(args.id, args.date, args.amount, args.name);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentDepositUpdateResolver(context, args.id, args.date, args.amount, args.name);
                     }
                 },
                 investmentStockSplitCreate: {
@@ -4503,8 +4652,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: GraphQLID
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationTransactionCreateResolver(args.monthId, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId);
+                    resolve(_source, args, context) {
+                        return mutationTransactionCreateResolver(context, args.monthId, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId);
                     }
                 },
                 transactionDelete: {
@@ -4521,8 +4670,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLID)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationTransactionDeleteResolver(args.monthId, args.id);
+                    resolve(_source, args, context) {
+                        return mutationTransactionDeleteResolver(context, args.monthId, args.id);
                     }
                 },
                 transactionUpdate: {
@@ -4562,8 +4711,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: GraphQLID
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationTransactionUpdateResolver(args.monthId, args.id, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId);
+                    resolve(_source, args, context) {
+                        return mutationTransactionUpdateResolver(context, args.monthId, args.id, args.amount, args.name, args.accountId, args.toAccountId, args.liabilityId, args.assetId);
                     }
                 }
             };
@@ -4712,6 +4861,23 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AuthResultType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
+}
+const typeNameMap = new Map();
+typeNameMap.set(AssetCashPlanningTransactionClass, "AssetCashPlanningTransaction");
+typeNameMap.set(InvestmentDepositClass, "InvestmentDeposit");
+function resolveType(obj: any): string {
+    if (typeof obj.__typename === "string") {
+        return obj.__typename;
+    }
+    let prototype = Object.getPrototypeOf(obj);
+    while (prototype) {
+        const name = typeNameMap.get(prototype.constructor);
+        if (name != null) {
+            return name;
+        }
+        prototype = Object.getPrototypeOf(prototype);
+    }
+    throw new Error("Cannot find type name.");
 }

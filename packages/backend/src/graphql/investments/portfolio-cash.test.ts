@@ -251,10 +251,25 @@ describe("Portfolio.cash", () => {
   it("subtracts non-DRIP buy cost (and credits the float on a sell)", async () => {
     const isa = await createStockAsset("ISA");
     const aapl = await createStock("Apple", "AAPL");
+    // Seed a deposit large enough that the trade math doesn't push cash
+    // below the floor — `Portfolio.cash` clamps at zero so we'd otherwise
+    // lose the sign of the trade contributions.
+    await recordDeposit(isa, 1000, "Funding");
     await buy(aapl, isa, 10, 5); // -50 from float
     await buy(aapl, isa, -2, 6); // +12 back
     const p = await queryPortfolio([isa]);
-    expect(p.cash.amount).toBe(-50 + 12);
+    expect(p.cash.amount).toBe(1000 - 50 + 12);
+  });
+
+  it("clamps a wrapper's cash float at zero when buys exceed deposits", async () => {
+    const isa = await createStockAsset("ISA");
+    const aapl = await createStock("Apple", "AAPL");
+    // No deposits / planning contributions — the unclamped float would be
+    // -£50 from the buy alone. The resolver floors at zero so the wrapper
+    // doesn't surface a negative "available to invest".
+    await buy(aapl, isa, 10, 5);
+    const p = await queryPortfolio([isa]);
+    expect(p.cash.amount).toBe(0);
   });
 
   it("ignores DRIP transactions in the cash float", async () => {
@@ -309,14 +324,19 @@ describe("Portfolio.totalValue / totalGain include cash correctly", () => {
   it("totalValue = held value + cash float", async () => {
     const isa = await createStockAsset("ISA");
     const aapl = await createStock("Apple", "AAPL");
+    // Seed enough deposit that the cash float stays positive — otherwise
+    // the floor at zero hides the trade math we're trying to verify lands
+    // in totalValue.
+    await recordDeposit(isa, 100, "Funding");
     await buy(aapl, isa, 10, 5); // £50 in
     await setPrice(aapl, 600); // 6.00/share
     await recordDeposit(isa, 25, "Dividend");
 
     const p = await queryPortfolio([isa]);
-    // Held: 10 × 6 = 60. Cash float: 25 (deposit) - 50 (buy) = -25. Total: 35.
-    expect(p.totalValue?.amount).toBe(60 - 25);
-    expect(p.cash.amount).toBe(-25);
+    // Held: 10 × 6 = 60. Cash float: 100 (funding) + 25 (dividend) - 50
+    // (buy) = 75. Total: 135.
+    expect(p.totalValue?.amount).toBe(60 + 75);
+    expect(p.cash.amount).toBe(75);
   });
 
   it("totalGain reflects invested-only return (cash deposits don't read as gains)", async () => {

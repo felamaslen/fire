@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { InvestmentDeposits } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import {
   getMoneyInputFractionalAmount,
@@ -14,6 +15,13 @@ import {
 } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
 import { VOID, type Void } from "../void";
+
+/** Invalidate every cache slice an `InvestmentDeposit` write can stale: the wrapper's `cashContributions` connection (lives on `NetWorthCategoryAsset` — an entity, so the typename→rootFields walker stops there and `InvestmentDeposit` alone wouldn't carry `Query.netWorthCategoryAsset` along with it), plus `Portfolio.cash` / `Portfolio.totalValue` (reach `Portfolio`). */
+function invalidateDepositReachable(ctx: Context): void {
+  ctx.invalidate({ typename: "InvestmentDeposit", id: null });
+  ctx.invalidate({ typename: "NetWorthCategoryAsset", id: null });
+  ctx.invalidate({ typename: "Portfolio", id: null });
+}
 
 /** A cash inflow into a wrapper that doesn't originate from a planning cash account — e.g. dividend income, broker bonus, or pension tax relief credited by HMRC. Combined with planning cash transactions and non-DRIP unit trades to derive the wrapper's uninvested cash float. @gqlType */
 export class InvestmentDeposit {
@@ -66,6 +74,7 @@ async function assertAssetIsStockOrPension(assetId: string): Promise<void> {
 
 /** Record an external cash credit (or, with a negative `amount`, a debit) on a wrapper that doesn't correspond to a planning transfer or a unit trade. @gqlMutationField */
 export async function investmentDepositCreate(
+  ctx: Context,
   /** Wrapper to credit. Must be a `STOCK` or `PENSION` net-worth asset. */
   assetId: ID,
   date: CalendarDate,
@@ -81,11 +90,13 @@ export async function investmentDepositCreate(
     .insert(InvestmentDeposits)
     .values({ assetId, date, amount: amountMinor, currency, name })
     .returning();
+  invalidateDepositReachable(ctx);
   return InvestmentDeposit.load(row);
 }
 
 /** Partial update for an `InvestmentDeposit`. Omitted (or `null`) fields are left unchanged. @gqlMutationField */
 export async function investmentDepositUpdate(
+  ctx: Context,
   id: ID,
   date?: CalendarDate | null,
   amount?: MoneyInput | null,
@@ -113,12 +124,17 @@ export async function investmentDepositUpdate(
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(InvestmentDeposits.id, id))
     .returning();
+  invalidateDepositReachable(ctx);
   return InvestmentDeposit.load(row);
 }
 
 /** Delete an `InvestmentDeposit`. @gqlMutationField */
-export async function investmentDepositDelete(id: ID): Promise<Void> {
+export async function investmentDepositDelete(
+  ctx: Context,
+  id: ID,
+): Promise<Void> {
   await db.delete(InvestmentDeposits).where(eq(InvestmentDeposits.id, id));
+  invalidateDepositReachable(ctx);
   return VOID;
 }
 
