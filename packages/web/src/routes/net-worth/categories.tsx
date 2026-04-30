@@ -765,11 +765,13 @@ function LiabilityRow({
   planningAccounts: PlanningAccountOption[];
 }) {
   const liability = readFragment(LiabilityRowDocument, data);
-  // Liability `skip` feeds `NetWorthEntry.totalLiabilities` / `totalNet`, so
-  // any toggle must invalidate every visible entry total — refetch the
-  // entries grid alongside the category list.
+  // The mutation already returns a `NetWorthCategoryLiability`, so Apollo
+  // auto-merges name/type/etc. via the normalised cache. Toggling `skip`
+  // also flips this liability in or out of every entry's
+  // `totalLiabilities` / `totalNet` aggregate; the server publishes a
+  // typename-only `NetWorthEntry` invalidation in that case which the
+  // root-level `InvalidationsListener` translates into a cache eviction.
   const [update] = useMutation(NetWorthCategoryUpdateDocument, {
-    refetchQueries: [...refetch, ...entriesRefetch],
     onCompleted: () => toast.success("Category updated"),
   });
   const [remove] = useMutation(NetWorthCategoryDeleteDocument, {
