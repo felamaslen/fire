@@ -99,6 +99,17 @@ CREATE TABLE "InvestmentAllocations" (
   )
 );
 
+CREATE TABLE "InvestmentDeposits" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "assetId" uuid NOT NULL,
+  "date" date NOT NULL,
+  "amount" bigint NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "name" text NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "InvestmentPrices" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
@@ -571,6 +582,9 @@ ADD CONSTRAINT "InvestmentAllocations_assetId_NetWorthCategoryAssets_id_fk" FORE
 ALTER TABLE "InvestmentAllocations"
 ADD CONSTRAINT "InvestmentAllocations_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
+ALTER TABLE "InvestmentDeposits"
+ADD CONSTRAINT "InvestmentDeposits_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+
 ALTER TABLE "InvestmentPrices"
 ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
@@ -672,6 +686,10 @@ ADD CONSTRAINT "PlanningTransactions_month_fk" FOREIGN KEY ("year", "date") REFE
 
 ALTER TABLE "PlanningYearUKTaxRates"
 ADD CONSTRAINT "PlanningYearUKTaxRates_year_PlanningYears_year_fk" FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year") ON DELETE CASCADE ON UPDATE NO ACTION;
+
+CREATE INDEX "InvestmentDeposits_assetId_idx" ON "InvestmentDeposits" USING btree ("assetId");
+
+CREATE INDEX "InvestmentDeposits_date" ON "InvestmentDeposits" USING btree ("date");
 
 CREATE UNIQUE INDEX "InvestmentPrices_investmentId_date_uq" ON "InvestmentPrices" USING btree ("investmentId", "date");
 

@@ -114,6 +114,45 @@ export const investmentTransactionsRelations = relations(
   }),
 );
 
+/** A cash inflow into a wrapper that does not originate from a planning cash account — e.g. dividend income paid into the wrapper, pension tax relief credited by HMRC, broker bonus. Combined with signed `PlanningTransactions` (cash → wrapper) and non-DRIP `InvestmentTransactions` (units bought / sold) to derive the wrapper's uninvested cash float. */
+export const InvestmentDeposits = pgTable(
+  "InvestmentDeposits",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    /** Wrapper this deposit lands in. Must reference a `STOCK` or `PENSION` asset — enforced in the resolver. */
+    assetId: uuid("assetId")
+      .notNull()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
+    date: date("date", { mode: "date" }).notNull(),
+    /** Signed amount in fractional units of `currency`. Positive = cash credited to the wrapper (the common case — dividend, tax relief). Negative = cash debited from the wrapper without a corresponding `InvestmentTransactions` row. */
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    currency: currencyCode("currency").notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("InvestmentDeposits_assetId_idx").on(t.assetId),
+    index("InvestmentDeposits_date").on(t.date),
+  ],
+);
+
+export const investmentDepositsRelations = relations(
+  InvestmentDeposits,
+  ({ one }) => ({
+    asset: one(NetWorthCategoryAssets, {
+      fields: [InvestmentDeposits.assetId],
+      references: [NetWorthCategoryAssets.id],
+    }),
+  }),
+);
+
 /** Stock-split event: `units_post = units_pre * ratio`. Ratio > 1 = forward split (e.g. `2` for 2-for-1), 0 < ratio < 1 = reverse split. Writes trigger a backfill of `InvestmentPrices.priceAdjusted` for rows dated before this split. */
 export const InvestmentStockSplits = pgTable(
   "InvestmentStockSplits",
