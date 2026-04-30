@@ -503,7 +503,6 @@ CREATE TABLE "PlanningTransactions" (
     OR (
       "PlanningTransactions"."toAccountId" IS NULL
       AND "PlanningTransactions"."liabilityId" IS NULL
-      AND "PlanningTransactions"."assetId" IS NULL
     )
   ),
   CONSTRAINT "PlanningTransactions_liabilityAssetExclusive_ck" CHECK (
