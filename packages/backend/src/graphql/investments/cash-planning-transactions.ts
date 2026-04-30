@@ -1,11 +1,16 @@
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import { GraphQLError } from "graphql";
 import type { ID, Int } from "grats";
 
 import { db } from "@/db";
 import { InvestmentDeposits } from "@/db/schema/investments";
-import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
+import {
+  NetWorthCategoryAssets,
+  NetWorthEntries,
+  NetWorthValueAmounts,
+  NetWorthValues,
+} from "@/db/schema/net-worth";
 import { PlanningTransactions } from "@/db/schema/planning";
 
 import type { Context } from "../context";
@@ -61,12 +66,30 @@ export class AssetCashPlanningTransaction {
   }
 }
 
-/** A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …) or a manual `AssetCashPlanningTransaction` originating in a planning cash account. @gqlUnion */
-export type CashContribution = InvestmentDeposit | AssetCashPlanningTransaction;
+/** A net-worth-entry checkpoint surfaced inline in the per-wrapper cash-contributions ledger. Acts as a separator between cash-flow rows: `amount` carries the wrapper's recorded value at the entry, or is `null` to mark the date the wrapper became defunct (the first entry that no longer included it). The cash-float computation anchors on these checkpoints — fees, dividends, and price drift between snapshots are silently absorbed by the next recorded value. @gqlType */
+export class AssetValueSnapshot {
+  constructor(
+    /** Composite identifier — either `snapshot:<NetWorthValueAmounts.id>` for a recorded value, or `defunct:<assetId>` for a synthetic defunct marker. @gqlField */
+    public readonly id: ID,
+    /** Date the snapshot represents — the entry's date for a recorded value, or the date the wrapper first dropped out of an entry for a defunct marker. @gqlField */
+    public readonly date: CalendarDate,
+    /** Recorded value at this entry. `null` when this row is the synthetic defunct marker, signalling the wrapper has no active value at the latest entry. @gqlField */
+    public readonly amount: Money | null,
+  ) {}
+}
+
+/** A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …), a manual `AssetCashPlanningTransaction` originating in a planning cash account, or an `AssetValueSnapshot` separator surfacing a `NetWorthEntries` checkpoint. @gqlUnion */
+export type CashContribution =
+  | InvestmentDeposit
+  | AssetCashPlanningTransaction
+  | AssetValueSnapshot;
 
 const DEFAULT_PAGE_SIZE = 20;
 
-/** Paginated, date-desc list of every cash contribution for the wrapper — both external deposits and planning cash transfers, interleaved by date. One SQL via `unionAll`: both source tables project to a common shape (with a `kind:rowId` sort key), the cursor's `(date, sortKey)` is applied as a `WHERE` predicate so we never overfetch, and the page is sliced + `LIMIT first + 1` server-side. */
+/** Paginated, date-desc list of every cash contribution for the wrapper — external deposits, planning cash transfers, and `NetWorthEntries` snapshot checkpoints, interleaved by date. One SQL via `unionAll`: each source table projects to a common shape (with a `kind:rowId` sort key), the cursor's `(date, sortKey)` is applied as a `WHERE` predicate so we never overfetch, and the page is sliced + `LIMIT first + 1` server-side.
+ *
+ * On the first page (no cursor), if the wrapper has been recorded historically but is missing from the latest `NetWorthEntries`, a synthetic defunct-marker `AssetValueSnapshot` is prepended at the date of the first entry that omitted it. The marker is never returned on subsequent pages.
+ */
 export async function loadAssetCashContributionsConnection(
   assetId: string,
   first?: Int | null,
@@ -75,10 +98,10 @@ export async function loadAssetCashContributionsConnection(
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const cursor = after ? decodeCursor(after) : null;
 
-  // Two branches with matching projection shape so `unionAll` types align.
+  // Three branches with matching projection shape so `unionAll` types align.
   // `kind` discriminates the source table; `sortKey = kind || ':' || id`
   // (built in SQL) gives a deterministic deep-tie-break that's unique across
-  // both tables.
+  // all three tables.
   //
   // Cursor predicate is pushed *down* into each branch (instead of wrapping
   // the union in an outer `WHERE`) so each branch's predicate touches only
@@ -89,7 +112,10 @@ export async function loadAssetCashContributionsConnection(
   const cursorSortKey = cursor ? cursor.i : null;
 
   function branchCursorPredicate(
-    dateCol: typeof InvestmentDeposits.date | typeof PlanningTransactions.date,
+    dateCol:
+      | typeof InvestmentDeposits.date
+      | typeof PlanningTransactions.date
+      | typeof NetWorthEntries.date,
     sortKeyExpr: ReturnType<typeof sql>,
   ) {
     if (!cursorDate || cursorSortKey == null) return undefined;
@@ -99,9 +125,10 @@ export async function loadAssetCashContributionsConnection(
     );
   }
 
+  type Kind = "deposit" | "tx" | "snapshot";
   const depositsBranch = db
     .select({
-      kind: sql<"deposit" | "tx">`'deposit'`.as("kind"),
+      kind: sql<Kind>`'deposit'`.as("kind"),
       rowId: sql<string>`${InvestmentDeposits.id}::text`.as("rowId"),
       sortKey: sql<string>`'deposit:' || ${InvestmentDeposits.id}::text`.as(
         "sortKey",
@@ -125,7 +152,7 @@ export async function loadAssetCashContributionsConnection(
 
   const txBranch = db
     .select({
-      kind: sql<"deposit" | "tx">`'tx'`.as("kind"),
+      kind: sql<Kind>`'tx'`.as("kind"),
       rowId: sql<string>`${PlanningTransactions.id}::text`.as("rowId"),
       sortKey: sql<string>`'tx:' || ${PlanningTransactions.id}::text`.as(
         "sortKey",
@@ -154,18 +181,56 @@ export async function loadAssetCashContributionsConnection(
       ),
     );
 
-  const contributions = unionAll(depositsBranch, txBranch).as("contributions");
+  const snapshotBranch = db
+    .select({
+      kind: sql<Kind>`'snapshot'`.as("kind"),
+      rowId: sql<string>`${NetWorthValueAmounts.id}::text`.as("rowId"),
+      sortKey: sql<string>`'snapshot:' || ${NetWorthValueAmounts.id}::text`.as(
+        "sortKey",
+      ),
+      date: NetWorthEntries.date,
+      // `name` is unused for snapshot rows; project an empty string so the
+      // branch shape lines up with the deposit / tx branches.
+      name: sql<string>`''`.as("name"),
+      amount: NetWorthValueAmounts.amount,
+      currency: NetWorthValueAmounts.currency,
+      accountId: sql<string | null>`NULL::uuid`.as("accountId"),
+    })
+    .from(NetWorthValues)
+    .innerJoin(
+      NetWorthValueAmounts,
+      eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
+    )
+    .innerJoin(NetWorthEntries, eq(NetWorthEntries.id, NetWorthValues.entryId))
+    .where(
+      and(
+        eq(NetWorthValues.categoryAssetId, assetId),
+        branchCursorPredicate(
+          NetWorthEntries.date,
+          sql`'snapshot:' || ${NetWorthValueAmounts.id}::text`,
+        ),
+      ),
+    );
+
+  const contributions = unionAll(depositsBranch, txBranch, snapshotBranch).as(
+    "contributions",
+  );
+
+  // The synthetic defunct marker (if any) consumes one slot on the first
+  // page only; reduce the SQL limit to keep the total node count at `limit`.
+  const defunct = cursor === null ? await loadDefunctMarker(assetId) : null;
+  const realLimit = defunct ? Math.max(0, limit - 1) : limit;
 
   const rows = await db
     .select()
     .from(contributions)
     .orderBy(desc(contributions.date), desc(contributions.sortKey))
-    .limit(limit + 1);
+    .limit(realLimit + 1);
 
-  const hasNextPage = rows.length > limit;
-  const page = hasNextPage ? rows.slice(0, limit) : rows;
+  const hasNextPage = rows.length > realLimit;
+  const page = hasNextPage ? rows.slice(0, realLimit) : rows;
 
-  const nodes: CashContribution[] = page.map((r) => {
+  const realNodes: CashContribution[] = page.map((r) => {
     if (r.kind === "deposit") {
       return new InvestmentDeposit(
         r.rowId as ID,
@@ -174,6 +239,13 @@ export async function loadAssetCashContributionsConnection(
         r.amount,
         r.currency,
         r.name,
+      );
+    }
+    if (r.kind === "snapshot") {
+      return new AssetValueSnapshot(
+        `snapshot:${r.rowId}` as ID,
+        r.date,
+        Money.fromMinorDenomination(r.amount, r.currency),
       );
     }
     // `tx` branch — `accountId` is non-null in this branch, and the where
@@ -191,10 +263,23 @@ export async function loadAssetCashContributionsConnection(
     );
   });
 
+  const nodes: CashContribution[] = defunct
+    ? [defunct, ...realNodes]
+    : realNodes;
+
   const cursorByNode = new Map<CashContribution, ID>();
+  if (defunct) {
+    // The defunct marker's cursor is never used to paginate — it's only
+    // emitted on the first page. Encode something distinct so the wire
+    // type stays uniform without colliding with any real row.
+    cursorByNode.set(
+      defunct,
+      encodeCursor(new Date(defunct.date).toISOString(), `defunct:${assetId}`),
+    );
+  }
   page.forEach((r, idx) => {
     cursorByNode.set(
-      nodes[idx]!,
+      realNodes[idx]!,
       encodeCursor(r.date.toISOString(), r.sortKey),
     );
   });
@@ -203,6 +288,31 @@ export async function loadAssetCashContributionsConnection(
     (node) => cursorByNode.get(node)!,
     { hasNextPage, hasPreviousPage: cursor != null },
   );
+}
+
+/** Synthetic "defunct since" marker for a wrapper that's been recorded historically but is absent from the latest `NetWorthEntries`. The date is the first entry that no longer included it; `null` amount distinguishes it from a recorded snapshot. Returns `null` when the wrapper either has never been recorded (still pending its first entry) or is still present in the latest entry (active). */
+async function loadDefunctMarker(
+  assetId: string,
+): Promise<AssetValueSnapshot | null> {
+  // Single round-trip: subselect picks the wrapper's most recent recorded
+  // date, the outer `MIN(...)` finds the first entry strictly after that.
+  // When the asset has never been recorded, the subselect is `NULL` and
+  // `> NULL` filters everything out → outer `MIN` is `NULL`, no marker.
+  // When the latest entry still includes the asset, no rows satisfy the
+  // predicate → outer `MIN` is `NULL` again.
+  const lastSeen = db
+    .select({ d: sql<Date | null>`MAX(${NetWorthEntries.date})` })
+    .from(NetWorthValues)
+    .innerJoin(NetWorthEntries, eq(NetWorthEntries.id, NetWorthValues.entryId))
+    .where(eq(NetWorthValues.categoryAssetId, assetId));
+  const [row] = await db
+    .select({ d: NetWorthEntries.date })
+    .from(NetWorthEntries)
+    .where(gt(NetWorthEntries.date, lastSeen))
+    .orderBy(NetWorthEntries.date)
+    .limit(1);
+  if (!row?.d) return null;
+  return new AssetValueSnapshot(`defunct:${assetId}` as ID, row.d, null);
 }
 
 async function assertAssetIsStockOrPension(assetId: string): Promise<void> {

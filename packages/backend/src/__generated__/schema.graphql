@@ -115,9 +115,9 @@ enum SortDirection {
 }
 
 """
-A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …) or a manual `AssetCashPlanningTransaction` originating in a planning cash account.
+A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …), a manual `AssetCashPlanningTransaction` originating in a planning cash account, or an `AssetValueSnapshot` separator surfacing a `NetWorthEntries` checkpoint.
 """
-union CashContribution = AssetCashPlanningTransaction | InvestmentDeposit
+union CashContribution = AssetCashPlanningTransaction | AssetValueSnapshot | InvestmentDeposit
 
 """
 The underlying instrument an `Investment` represents: a listed stock or a fund.
@@ -472,6 +472,24 @@ type AssetCashPlanningTransaction {
   """
   isProvisional: Boolean!
   name: String!
+}
+
+"""
+A net-worth-entry checkpoint surfaced inline in the per-wrapper cash-contributions ledger. Acts as a separator between cash-flow rows: `amount` carries the wrapper's recorded value at the entry, or is `null` to mark the date the wrapper became defunct (the first entry that no longer included it). The cash-float computation anchors on these checkpoints — fees, dividends, and price drift between snapshots are silently absorbed by the next recorded value.
+"""
+type AssetValueSnapshot {
+  """
+  Recorded value at this entry. `null` when this row is the synthetic defunct marker, signalling the wrapper has no active value at the latest entry.
+  """
+  amount: Money
+  """
+  Date the snapshot represents — the entry's date for a recorded value, or the date the wrapper first dropped out of an entry for a defunct marker.
+  """
+  date: Date!
+  """
+  Composite identifier — either `snapshot:<NetWorthValueAmounts.id>` for a recorded value, or `defunct:<assetId>` for a synthetic defunct marker.
+  """
+  id: ID!
 }
 
 """

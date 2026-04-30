@@ -92,9 +92,21 @@ async function listCashContributions(assetId: string): Promise<
     `),
     { id: assetId },
   );
-  return (data.netWorthCategoryAsset?.cashContributions?.edges ?? []).map(
-    (e) => e.node,
-  );
+  return (data.netWorthCategoryAsset?.cashContributions?.edges ?? [])
+    .filter(
+      (e) =>
+        e.node.__typename === "InvestmentDeposit" ||
+        e.node.__typename === "AssetCashPlanningTransaction",
+    )
+    .map(
+      (e) =>
+        e.node as {
+          __typename: string;
+          id: string;
+          name: string;
+          isProvisional?: boolean;
+        },
+    );
 }
 
 describe("assetCashTransactionCreate", () => {
@@ -263,6 +275,161 @@ describe("NetWorthCategoryAsset.cashContributions", () => {
     );
     const rows = await listCashContributions(isa);
     expect(rows.map((r) => r.name)).toEqual(["Real"]);
+  });
+
+  it("interleaves AssetValueSnapshot rows for each net-worth entry that records the wrapper", async () => {
+    const isa = await createStockAsset("ISA");
+    const { db } = await import("@/db");
+    const { InvestmentDeposits } = await import("@/db/schema/investments");
+    const { NetWorthEntries, NetWorthValues, NetWorthValueAmounts } =
+      await import("@/db/schema/net-worth");
+
+    async function recordEntry(date: string, amountMajor: number) {
+      const [entry] = await db
+        .insert(NetWorthEntries)
+        .values({ date: new Date(date) })
+        .returning({ id: NetWorthEntries.id });
+      const [v] = await db
+        .insert(NetWorthValues)
+        .values({ entryId: entry.id, categoryAssetId: isa })
+        .returning({ id: NetWorthValues.id });
+      await db.insert(NetWorthValueAmounts).values({
+        valueId: v.id,
+        amount: amountMajor * 100,
+        currency: "GBP",
+      });
+    }
+
+    await db.insert(InvestmentDeposits).values({
+      assetId: isa,
+      date: new Date("2026-02-15"),
+      amount: 50_000,
+      currency: "GBP",
+      name: "Feb deposit",
+    });
+    await recordEntry("2026-02-28", 600);
+    await db.insert(InvestmentDeposits).values({
+      assetId: isa,
+      date: new Date("2026-03-15"),
+      amount: 30_000,
+      currency: "GBP",
+      name: "Mar deposit",
+    });
+    await recordEntry("2026-03-31", 950);
+
+    const data = await runGql(
+      graphql(`
+        query ($id: ID!) {
+          netWorthCategoryAsset(id: $id) {
+            cashContributions(first: 50) {
+              edges {
+                node {
+                  __typename
+                  ... on InvestmentDeposit {
+                    name
+                  }
+                  ... on AssetValueSnapshot {
+                    date
+                    amount {
+                      amount
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `),
+      { id: isa },
+    );
+    const nodes =
+      data.netWorthCategoryAsset?.cashContributions?.edges.map((e) => e.node) ??
+      [];
+    // Date-desc: snapshot 2026-03-31, deposit 2026-03-15, snapshot 2026-02-28,
+    // deposit 2026-02-15. No defunct marker — wrapper is in the latest entry.
+    expect(
+      nodes.map((n) =>
+        n.__typename === "AssetValueSnapshot"
+          ? `snapshot ${n.date} £${n.amount?.amount}`
+          : n.__typename === "InvestmentDeposit"
+            ? `deposit ${n.name}`
+            : n.__typename,
+      ),
+    ).toEqual([
+      "snapshot 2026-03-31 £950",
+      "deposit Mar deposit",
+      "snapshot 2026-02-28 £600",
+      "deposit Feb deposit",
+    ]);
+  });
+
+  it("prepends a synthetic defunct marker when the latest entry omits the wrapper", async () => {
+    const isa = await createStockAsset("ISA");
+    const other = await createStockAsset("Other");
+    const { db } = await import("@/db");
+    const { NetWorthEntries, NetWorthValues, NetWorthValueAmounts } =
+      await import("@/db/schema/net-worth");
+
+    async function recordEntry(
+      date: string,
+      values: { assetId: string; amountMajor: number }[],
+    ) {
+      const [entry] = await db
+        .insert(NetWorthEntries)
+        .values({ date: new Date(date) })
+        .returning({ id: NetWorthEntries.id });
+      for (const v of values) {
+        const [vr] = await db
+          .insert(NetWorthValues)
+          .values({ entryId: entry.id, categoryAssetId: v.assetId })
+          .returning({ id: NetWorthValues.id });
+        await db.insert(NetWorthValueAmounts).values({
+          valueId: vr.id,
+          amount: v.amountMajor * 100,
+          currency: "GBP",
+        });
+      }
+    }
+
+    // Wrapper is in the Feb entry but missing from the latest (Apr).
+    await recordEntry("2026-02-28", [{ assetId: isa, amountMajor: 1000 }]);
+    await recordEntry("2026-03-31", [{ assetId: isa, amountMajor: 1100 }]);
+    await recordEntry("2026-04-30", [{ assetId: other, amountMajor: 1 }]);
+
+    const data = await runGql(
+      graphql(`
+        query ($id: ID!) {
+          netWorthCategoryAsset(id: $id) {
+            cashContributions(first: 50) {
+              edges {
+                node {
+                  __typename
+                  ... on AssetValueSnapshot {
+                    date
+                    amount {
+                      amount
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `),
+      { id: isa },
+    );
+    const nodes =
+      data.netWorthCategoryAsset?.cashContributions?.edges.map((e) => e.node) ??
+      [];
+    // Defunct marker dated to the first absent entry (2026-04-30, `amount`
+    // null), then the two real snapshot rows in date-desc order.
+    expect(
+      nodes.map((n) =>
+        n.__typename === "AssetValueSnapshot"
+          ? `${n.date} ${n.amount === null ? "DEFUNCT" : "£" + n.amount.amount}`
+          : n.__typename,
+      ),
+    ).toEqual(["2026-04-30 DEFUNCT", "2026-03-31 £1100", "2026-02-28 £1000"]);
   });
 
   it("flipping a row to provisional via update removes it from the list", async () => {
