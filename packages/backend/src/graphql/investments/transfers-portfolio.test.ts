@@ -1,5 +1,8 @@
 import { db } from "@/db";
-import { InvestmentPrices } from "@/db/schema/investments";
+import {
+  InvestmentPrices,
+  InvestmentPricesLive,
+} from "@/db/schema/investments";
 import { graphql, runGql } from "#test/gql";
 
 async function createStock(name: string, code: string): Promise<string> {
@@ -209,6 +212,42 @@ describe("Portfolio dateCap from transferOut", () => {
       filterAssetIdIn: [fromAsset, sibling],
     });
     expect(data.portfolio?.totalValue?.amount).toBe(2250);
+  });
+
+  it("ignores the live quote when capped (totalValue uses the dateCap'd cached price)", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    await setPrice(inv, "2025-03-01", 1200);
+    // A live quote that would otherwise dominate `priceLatest` — both the
+    // live tick and its `previousClose` are far higher than the capped
+    // cached price. We assert the cap wins regardless.
+    await db.insert(InvestmentPricesLive).values({
+      investmentId: inv,
+      refreshedAt: new Date("2025-04-01T12:00:00Z"),
+      date: new Date("2025-04-01T12:00:00Z"),
+      currency: "GBP",
+      price: 9999,
+      pricePreviousClose: 9000,
+    });
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    // skipLive: false explicitly — we want to prove the cap forces live off
+    // even when the caller hasn't asked for it.
+    const data = await runGql(
+      graphql(`
+        query ($filterAssetIdIn: [ID!]) {
+          portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: false) {
+            totalValue {
+              amount
+            }
+          }
+        }
+      `),
+      { filterAssetIdIn: [fromAsset] },
+    );
+    expect(data.portfolio?.totalValue?.amount).toBe(1200);
   });
 
   it("zeros out cash on a transferred-out wrapper", async () => {

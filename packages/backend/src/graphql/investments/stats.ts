@@ -432,9 +432,12 @@ function aggregateKey(
   ctx: SliceContext,
   key: InvestmentStatsFilter,
 ): InvestmentStats {
-  // `dateCap` always implies the live overlay is skipped — live quotes are
-  // "now", not as-of-cap, so they'd corrupt a frozen pre-transfer valuation.
-  const skipLive = !!key.skipLive || !!key.dateCap;
+  // `dateCap` forces the live row out entirely — live quotes are "now"
+  // (and `previousClose` is yesterday's close), neither of which can be
+  // substituted into a frozen pre-transfer valuation. The capped
+  // `priceLatestCached` (price ≤ `dateCap`) is the only price we use.
+  const skipLive = !!key.skipLive;
+  const ignoreLive = !!key.dateCap;
   const matches = selectSlices(ctx, key);
 
   // Sum the raw-aggregate columns directly across every matching slice.
@@ -477,7 +480,9 @@ function aggregateKey(
   for (const [, slices] of perInvestment) {
     const meta = slices[0];
     const invUnits = slices.reduce((a, s) => a + s.unitsHeld, 0);
-    const overlay = overlayLive(meta, skipLive);
+    const overlay = ignoreLive
+      ? { priceLatest: meta.priceLatestCached, live: null }
+      : overlayLive(meta, skipLive);
     // Portfolio-convention totalValue: fully-sold slices contribute 0.
     if (invUnits > 0) {
       if (overlay.priceLatest === null) {
@@ -487,7 +492,7 @@ function aggregateKey(
       }
     }
     // Daily gain requires a held position + a live quote with previousClose.
-    if (!skipLive && invUnits > 0 && overlay.live) {
+    if (!skipLive && !ignoreLive && invUnits > 0 && overlay.live) {
       const prev = overlay.live.previousClosePriceMinor;
       if (prev !== null) {
         dailyGainValueMinor =
@@ -509,7 +514,11 @@ function aggregateKey(
   const metaSource = key.investmentId
     ? (ctx.byInvestment.get(key.investmentId)?.[0] ?? null)
     : null;
-  const overlay = metaSource ? overlayLive(metaSource, skipLive) : null;
+  const overlay = metaSource
+    ? ignoreLive
+      ? { priceLatest: metaSource.priceLatestCached, live: null }
+      : overlayLive(metaSource, skipLive)
+    : null;
 
   return {
     currency: metaSource?.currency ?? null,
