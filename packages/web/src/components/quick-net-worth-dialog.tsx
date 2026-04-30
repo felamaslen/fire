@@ -94,23 +94,27 @@ const QuickNetWorthCreateDocument = graphql(`
   }
 `);
 
-const QuickNetWorthUpdateDocument = graphql(`
-  mutation QuickNetWorthUpdate(
-    $id: ID!
-    $date: Date
-    $values: [NetWorthValueInput!]
-    $currencyRates: [NetWorthCurrencyRateInput!]
-  ) {
-    netWorthUpdate(
-      id: $id
-      date: $date
-      values: $values
-      currencyRates: $currencyRates
+const QuickNetWorthUpdateDocument = graphql(
+  `
+    mutation QuickNetWorthUpdate(
+      $id: ID!
+      $date: Date
+      $values: [NetWorthValueInput!]
+      $currencyRates: [NetWorthCurrencyRateInput!]
     ) {
-      id
+      netWorthUpdate(
+        id: $id
+        date: $date
+        values: $values
+        currencyRates: $currencyRates
+      ) {
+        id
+        ...QuickNetWorthEntry
+      }
     }
-  }
-`);
+  `,
+  [QuickNetWorthEntryDocument],
+);
 
 type EntryFromFragment = ResultOf<typeof QuickNetWorthEntryDocument>;
 

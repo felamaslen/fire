@@ -74,17 +74,21 @@ export const InvestmentCreateDocument = graphql(`
   }
 `);
 
-export const InvestmentUpdateDocument = graphql(`
-  mutation InvestmentUpdate(
-    $id: ID!
-    $name: String
-    $asset: InvestmentAssetInput
-  ) {
-    investmentUpdate(id: $id, name: $name, asset: $asset) {
-      id
+export const InvestmentUpdateDocument = graphql(
+  `
+    mutation InvestmentUpdate(
+      $id: ID!
+      $name: String
+      $asset: InvestmentAssetInput
+    ) {
+      investmentUpdate(id: $id, name: $name, asset: $asset) {
+        id
+        ...InvestmentForm
+      }
     }
-  }
-`);
+  `,
+  [InvestmentFormDocument],
+);
 
 const InvestmentDeleteDocument = graphql(`
   mutation InvestmentDelete($id: ID!) {
@@ -172,10 +176,7 @@ export function InvestmentForm({
     refetchQueries,
     awaitRefetchQueries: true,
   });
-  const [updateFn] = useMutation(InvestmentUpdateDocument, {
-    refetchQueries,
-    awaitRefetchQueries: true,
-  });
+  const [updateFn] = useMutation(InvestmentUpdateDocument);
   const [deleteFn, { loading: deleting }] = useMutation(
     InvestmentDeleteDocument,
     {

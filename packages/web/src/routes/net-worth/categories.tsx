@@ -239,7 +239,6 @@ function AssetsSection({ data }: { data: AssetSelection[] }) {
     onCompleted: () => toast.success("Category created"),
   });
   const [updateType] = useMutation(NetWorthCategoryUpdateDocument, {
-    refetchQueries: refetch,
     onCompleted: () => toast.success("Asset moved"),
   });
   const form = useForm({
