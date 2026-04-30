@@ -29,6 +29,10 @@ import {
 
 import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
+import {
+  InvestmentDeposit,
+  loadInvestmentDepositsForAsset,
+} from "../investments/deposits";
 import { buildConnection, type Connection } from "../pagination";
 import { PlanningAccount } from "../planning/index";
 import { VOID, type Void } from "../void";
@@ -158,6 +162,30 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
   async accessibleFrom(): Promise<CalendarDate | null> {
     return (await this.row()).accessibleFrom;
   }
+
+  /** External cash credits / debits booked against this wrapper that don't correspond to a planning transfer or a unit trade — e.g. dividends, broker bonuses, pension tax relief. Newest-first. Only meaningful on `STOCK` / `PENSION` wrappers; an empty list otherwise.
+   *
+   * @gqlField
+   * @gqlAnnotate semanticNonNull
+   */
+  async investmentDeposits(): Promise<InvestmentDeposit[] | null> {
+    return loadInvestmentDepositsForAsset(this.id);
+  }
+}
+
+/** Look up an asset category by id. Returns `null` when no row matches.
+ *
+ * @gqlQueryField
+ */
+export async function netWorthCategoryAsset(
+  id: ID,
+): Promise<NetWorthCategoryAsset | null> {
+  const [row] = await db
+    .select()
+    .from(NetWorthCategoryAssets)
+    .where(eq(NetWorthCategoryAssets.id, id));
+  if (!row) return null;
+  return NetWorthCategoryAsset.load(row);
 }
 
 /** A reusable bucket for liabilities (credit card, mortgage, personal loan, ...). @gqlType */

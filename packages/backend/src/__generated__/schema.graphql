@@ -618,6 +618,23 @@ type InvestmentConnection {
 }
 
 """
+A cash inflow into a wrapper that doesn't originate from a planning cash account — e.g. dividend income, broker bonus, or pension tax relief credited by HMRC. Combined with planning cash transactions and non-DRIP unit trades to derive the wrapper's uninvested cash float.
+"""
+type InvestmentDeposit {
+  """
+  Signed cash amount. Positive = credit to the wrapper (the common case); negative = a withdrawal that isn't paired with a unit trade.
+  """
+  amount: Money!
+  """Wrapper this deposit is booked into."""
+  asset: NetWorthCategoryAsset!
+  """Calendar date the cash landed in the wrapper."""
+  date: Date!
+  id: ID!
+  """Short label for the deposit (e.g. "Q2 dividend", "Tax relief")."""
+  name: String!
+}
+
+"""
 A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
 """
 type InvestmentEdge {
@@ -962,6 +979,26 @@ type Mutation {
   """
   investmentDelete(id: ID!): Void!
   """
+  Record an external cash credit (or, with a negative `amount`, a debit) on a wrapper that doesn't correspond to a planning transfer or a unit trade.
+  """
+  investmentDepositCreate(
+    """
+    Signed cash amount. Positive = credit to the wrapper; negative = debit.
+    """
+    amount: MoneyInput!
+    """Wrapper to credit. Must be a `STOCK` or `PENSION` net-worth asset."""
+    assetId: ID!
+    date: Date!
+    """Short label for the deposit (e.g. "Q2 dividend")."""
+    name: String!
+  ): InvestmentDeposit!
+  """Delete an `InvestmentDeposit`."""
+  investmentDepositDelete(id: ID!): Void!
+  """
+  Partial update for an `InvestmentDeposit`. Omitted (or `null`) fields are left unchanged.
+  """
+  investmentDepositUpdate(amount: MoneyInput, date: Date, id: ID!, name: String): InvestmentDeposit!
+  """
   Record a stock split on an investment. Historic `unitPriceCached` values are retroactively adjusted.
   """
   investmentStockSplitCreate(
@@ -1236,6 +1273,10 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.
   """
   investmentAllocations: InvestmentAllocationsResult!
+  """
+  External cash credits / debits booked against this wrapper that don't correspond to a planning transfer or a unit trade — e.g. dividends, broker bonuses, pension tax relief. Newest-first. Only meaningful on `STOCK` / `PENSION` wrappers; an empty list otherwise.
+  """
+  investmentDeposits: [InvestmentDeposit!] @semanticNonNull
   name: String!
   type: NetWorthAssetType!
 }
@@ -2007,6 +2048,10 @@ type Portfolio {
     unit: PortfolioCandleUnit!
   ): PortfolioCandlestick
   """
+  Uninvested cash held in the wrapper(s) — the per-wrapper cash float aggregated across the portfolio's `filterAssetIdIn` (or every `STOCK` / `PENSION` wrapper when no asset filter is set), restricted to entries denominated in `currency`. Always zero when the portfolio is scoped to specific investments (cash isn't attributable to an investment). Positive values represent cash available to invest; negative values mean recorded buys exceed recorded inflows.
+  """
+  cash: Money!
+  """
   ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
   """
   currency: String!
@@ -2027,7 +2072,7 @@ type Portfolio {
   """
   investment: Investment
   """
-  Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero.
+  Total return as a fraction of `totalCost`, computed from invested value only (cash float excluded). For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` when `totalCost` is zero.
   """
   percentGain: Float
   """
@@ -2039,11 +2084,11 @@ type Portfolio {
   """
   totalCost: Money!
   """
-  Total return (realised + unrealised) on the filtered portfolio — `totalValue - totalCost`.
+  Total return (realised + unrealised) on the held positions — `(totalValue − cash) − totalCost`. Excludes the cash float so freshly-deposited funds don't read as a gain.
   """
   totalGain: Money
   """
-  Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
+  Current market value of the filtered portfolio — the today-price value of units currently held plus uninvested cash held in the wrapper(s). Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
   """
   totalValue: Money
   """
@@ -2227,6 +2272,8 @@ type Query {
     first: Int
     last: Int
   ): NetWorthCategoryConnection @semanticNonNull
+  """Look up an asset category by id. Returns `null` when no row matches."""
+  netWorthCategoryAsset(id: ID!): NetWorthCategoryAsset
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
   """

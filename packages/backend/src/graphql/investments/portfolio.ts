@@ -21,6 +21,7 @@ import {
 } from "../pagination";
 import { loadCandlestick } from "./candlestick";
 import { Investment } from "./index";
+import { loadPortfolioCashMinor } from "./portfolio-cash";
 import { computePortfolioXirr } from "./portfolio-xirr";
 import {
   type InvestmentStats,
@@ -145,8 +146,22 @@ export class Portfolio {
     return Investment.load(row);
   }
 
-  /** Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline. @gqlField */
+  /** Current market value of the filtered portfolio — the today-price value of units currently held plus uninvested cash held in the wrapper(s). Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline. @gqlField */
   async totalValue(ctx: Context): Promise<Money | null> {
+    const [invested, cash] = await Promise.all([
+      this.totalInvestedMinor(ctx),
+      this.cashMinor(ctx),
+    ]);
+    return Money.fromMinorDenomination(invested + cash, this.currency);
+  }
+
+  /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. */
+  private async cashMinor(ctx: Context): Promise<number> {
+    if (this.filterInvestmentIdIn) return 0;
+    return loadPortfolioCashMinor(ctx, this.filterAssetIdIn, this.currency);
+  }
+
+  private async totalInvestedMinor(ctx: Context): Promise<number> {
     const slices = await this.loadStats(ctx);
     let total = 0;
     for (const s of slices) {
@@ -155,7 +170,13 @@ export class Portfolio {
       // as a zero contribution rather than nulling the whole aggregate.
       if (s.totalValueMinor !== null) total += s.totalValueMinor;
     }
-    return Money.fromMinorDenomination(total, this.currency);
+    return total;
+  }
+
+  /** Uninvested cash held in the wrapper(s) — the per-wrapper cash float aggregated across the portfolio's `filterAssetIdIn` (or every `STOCK` / `PENSION` wrapper when no asset filter is set), restricted to entries denominated in `currency`. Always zero when the portfolio is scoped to specific investments (cash isn't attributable to an investment). Positive values represent cash available to invest; negative values mean recorded buys exceed recorded inflows. @gqlField */
+  async cash(ctx: Context): Promise<Money> {
+    const minor = await this.cashMinor(ctx);
+    return Money.fromMinorDenomination(minor, this.currency);
   }
 
   /** Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes. @gqlField */
@@ -166,25 +187,21 @@ export class Portfolio {
     return Money.fromMinorDenomination(total, this.currency);
   }
 
-  /** Total return (realised + unrealised) on the filtered portfolio — `totalValue - totalCost`. @gqlField */
+  /** Total return (realised + unrealised) on the held positions — `(totalValue − cash) − totalCost`. Excludes the cash float so freshly-deposited funds don't read as a gain. @gqlField */
   async totalGain(ctx: Context): Promise<Money | null> {
-    const value = await this.totalValue(ctx);
-    if (value === null) return null;
+    const invested = await this.totalInvestedMinor(ctx);
     const cost = await this.totalCost(ctx);
-    const diffMajor = value.amount - cost.amount;
-    return Money.fromMinorDenomination(
-      Math.round(diffMajor * 10 ** this.scale),
-      this.currency,
-    );
+    const costMinor = Math.round(cost.amount * 10 ** this.scale);
+    return Money.fromMinorDenomination(invested - costMinor, this.currency);
   }
 
-  /** Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero. @gqlField */
+  /** Total return as a fraction of `totalCost`, computed from invested value only (cash float excluded). For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` when `totalCost` is zero. @gqlField */
   async percentGain(ctx: Context): Promise<Float | null> {
-    const value = await this.totalValue(ctx);
-    if (value === null) return null;
+    const invested = await this.totalInvestedMinor(ctx);
     const cost = await this.totalCost(ctx);
-    if (cost.amount === 0) return null;
-    return ((value.amount - cost.amount) / cost.amount) as Float;
+    const costMinor = Math.round(cost.amount * 10 ** this.scale);
+    if (costMinor === 0) return null;
+    return ((invested - costMinor) / costMinor) as Float;
   }
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
