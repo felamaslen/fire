@@ -286,7 +286,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 units: {
                     description: "Units acquired via dividend reinvestments.",
                     name: "units",
-                    type: new GraphQLNonNull(GraphQLInt)
+                    type: new GraphQLNonNull(GraphQLFloat)
                 },
                 value: {
                     description: "Current market value of the reinvested units. `null` until at least one price is known.",
@@ -349,7 +349,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 units: {
                     description: "Net units held.",
                     name: "units",
-                    type: new GraphQLNonNull(GraphQLInt)
+                    type: new GraphQLNonNull(GraphQLFloat)
                 }
             };
         }
@@ -416,9 +416,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(MoneyType)
                 },
                 units: {
-                    description: "Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.",
+                    description: "Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells. Fractional units are supported.",
                     name: "units",
-                    type: new GraphQLNonNull(GraphQLInt)
+                    type: new GraphQLNonNull(GraphQLFloat)
                 }
             };
         }
@@ -3209,9 +3209,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: MoneyInputType
                 },
                 units: {
-                    description: "Signed number of units traded. Positive = buy / DRIP, negative = sell.",
+                    description: "Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported.",
                     name: "units",
-                    type: new GraphQLNonNull(GraphQLInt)
+                    type: new GraphQLNonNull(GraphQLFloat)
                 }
             };
         }
@@ -4296,8 +4296,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: MoneyInputType
                         },
                         units: {
-                            description: "Signed number of units traded. Positive = buy / DRIP, negative = sell.",
-                            type: new GraphQLNonNull(GraphQLInt)
+                            description: "Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported.",
+                            type: new GraphQLNonNull(GraphQLFloat)
                         }
                     },
                     resolve(_source, args) {
@@ -4344,7 +4344,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: MoneyInputType
                         },
                         units: {
-                            type: GraphQLInt
+                            type: GraphQLFloat
                         }
                     },
                     resolve(_source, args) {

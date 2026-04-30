@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 
 import { and, eq, exists, inArray, ne, not, or, sum } from "drizzle-orm";
 import { GraphQLError } from "graphql";
-import type { ID, Int } from "grats";
+import type { Float, ID, Int } from "grats";
 
 import { db, runInTransaction } from "@/db";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
@@ -216,8 +216,8 @@ export type InvestmentInitialTransactionInput = {
   assetId: ID;
   /** Calendar date the trade was executed. */
   date: CalendarDate;
-  /** Signed number of units traded. Positive = buy / DRIP, negative = sell. */
-  units: Int;
+  /** Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported. */
+  units: Float;
   /** Unit price at execution. */
   price: MoneyInput;
   /** Taxes paid on the trade. Defaults to 0. */

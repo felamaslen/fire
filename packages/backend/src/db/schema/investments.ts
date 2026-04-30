@@ -70,8 +70,8 @@ export const InvestmentTransactions = pgTable(
     assetId: uuid("assetId")
       .notNull()
       .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
-    /** Signed integer number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are not supported. */
-    units: bigint("units", { mode: "number" }).notNull(),
+    /** Signed number of units traded. Positive = buy / DRIP, negative = sell. Floating-point — fractional units are supported (broker DRIP / fractional-share platforms commonly book non-integer counts). */
+    units: doublePrecision("units").notNull(),
     /** Unit price at execution, in fractional units of `currency` (e.g. pence for GBP). Floating-point — sub-penny tick sizes are expected. */
     price: doublePrecision("price").notNull(),
     /** Taxes paid, in fractional units of `currency`. Non-negative. */

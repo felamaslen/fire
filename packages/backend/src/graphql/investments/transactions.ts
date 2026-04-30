@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 
 import { and, asc, desc, eq, lt, or } from "drizzle-orm";
 import { GraphQLError } from "graphql";
-import type { ID, Int } from "grats";
+import type { Float, ID, Int } from "grats";
 
 import { db } from "@/db";
 import {
@@ -36,8 +36,8 @@ export class InvestmentTransaction {
     public readonly id: ID,
     private readonly investmentId: string,
     private readonly assetId: string,
-    /** Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells. @gqlField */
-    public readonly units: Int,
+    /** Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells. Fractional units are supported. @gqlField */
+    public readonly units: Float,
     private readonly priceMinor: number,
     private readonly taxesMinor: number,
     private readonly feesMinor: number,
@@ -55,7 +55,7 @@ export class InvestmentTransaction {
       row.id as ID,
       row.investmentId,
       row.assetId,
-      row.units as Int,
+      row.units as Float,
       row.price,
       row.taxes,
       row.fees,
@@ -134,8 +134,8 @@ export async function investmentTransactionCreate(
   assetId: ID,
   /** Calendar date the trade was executed. */
   date: CalendarDate,
-  /** Signed number of units traded. Positive = buy / DRIP, negative = sell. */
-  units: Int,
+  /** Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported. */
+  units: Float,
   /** Unit price at execution. Must match the investment's currency. */
   price: MoneyInput,
   /** Taxes paid on the trade. Must match the investment's currency. Defaults to 0. */
@@ -215,7 +215,7 @@ export async function investmentTransactionUpdate(
   id: ID,
   assetId?: ID | null,
   date?: CalendarDate | null,
-  units?: Int | null,
+  units?: Float | null,
   price?: MoneyInput | null,
   taxes?: MoneyInput | null,
   fees?: MoneyInput | null,

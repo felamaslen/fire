@@ -212,7 +212,7 @@ const InvestmentTransactionCreateDocument = graphql(`
     $investmentId: ID!
     $assetId: ID!
     $date: Date!
-    $units: Int!
+    $units: Float!
     $price: MoneyInput!
     $taxes: MoneyInput
     $fees: MoneyInput
@@ -238,7 +238,7 @@ const InvestmentTransactionUpdateDocument = graphql(`
     $id: ID!
     $assetId: ID
     $date: Date
-    $units: Int
+    $units: Float
     $price: MoneyInput
     $taxes: MoneyInput
     $fees: MoneyInput
@@ -734,7 +734,7 @@ function TransactionForm({
               id: existing.id,
               assetId: value.assetId,
               date: value.date,
-              units: Math.trunc(value.units),
+              units: value.units,
               price: { amount: Number(value.priceAmount), currency },
               taxes: { amount: Number(value.taxesAmount), currency },
               fees: { amount: Number(value.feesAmount), currency },
@@ -748,7 +748,7 @@ function TransactionForm({
               investmentId,
               assetId: value.assetId,
               date: value.date,
-              units: Math.trunc(value.units),
+              units: value.units,
               price: { amount: Number(value.priceAmount), currency },
               taxes: { amount: Number(value.taxesAmount), currency },
               fees: { amount: Number(value.feesAmount), currency },
@@ -841,7 +841,7 @@ function TransactionForm({
             <Label>Units (sell = negative)</Label>
             <Input
               type="number"
-              step="1"
+              step="any"
               value={field.state.value}
               onChange={(e) => field.handleChange(Number(e.target.value))}
             />

@@ -90,7 +90,7 @@ const loadAdjustedUnits = contextAwareDataLoader(
                     sql`${InvestmentStockSplits.date} > ${InvestmentTransactions.date}`,
                   ),
                 )})
-            )), 1))::int`.as("unitsAdjusted"),
+            )), 1))::double precision`.as("unitsAdjusted"),
       })
       .from(InvestmentTransactions)
       .where(

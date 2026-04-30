@@ -102,7 +102,7 @@ const loadOne = async (
             (t.units * coalesce(exp(
               (select sum(ln(ss.ratio)) from "InvestmentStockSplits" ss
                where ss."investmentId" = t."investmentId" and ss.date > t.date)
-            ), 1))::int as "unitsAdjusted"
+            ), 1))::double precision as "unitsAdjusted"
           from "InvestmentTransactions" t
           where t.currency = ${currency}
           ${assetFilter}

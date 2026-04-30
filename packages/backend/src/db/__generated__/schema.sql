@@ -154,7 +154,7 @@ CREATE TABLE "InvestmentTransactions" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
   "assetId" uuid NOT NULL,
-  "units" bigint NOT NULL,
+  "units" double precision NOT NULL,
   "price" double precision NOT NULL,
   "taxes" bigint DEFAULT 0 NOT NULL,
   "fees" bigint DEFAULT 0 NOT NULL,

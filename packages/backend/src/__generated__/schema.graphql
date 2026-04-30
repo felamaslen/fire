@@ -181,8 +181,10 @@ input InvestmentInitialTransactionInput {
   price: MoneyInput!
   """Taxes paid on the trade. Defaults to 0."""
   taxes: MoneyInput
-  """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
-  units: Int!
+  """
+  Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported.
+  """
+  units: Float!
 }
 
 """
@@ -752,7 +754,7 @@ type InvestmentPosition {
   """
   totalValue: Money
   """Net units held."""
-  units: Int!
+  units: Float!
 }
 
 """
@@ -778,7 +780,7 @@ type InvestmentReinvested {
   """
   cost: Money!
   """Units acquired via dividend reinvestments."""
-  units: Int!
+  units: Float!
   """
   Current market value of the reinvested units. `null` until at least one price is known.
   """
@@ -824,9 +826,9 @@ type InvestmentTransaction {
   """Taxes paid on the trade."""
   taxes: Money!
   """
-  Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.
+  Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells. Fractional units are supported.
   """
-  units: Int!
+  units: Float!
 }
 
 """
@@ -1142,15 +1144,17 @@ type Mutation {
     Taxes paid on the trade. Must match the investment's currency. Defaults to 0.
     """
     taxes: MoneyInput
-    """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
-    units: Int!
+    """
+    Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported.
+    """
+    units: Float!
   ): InvestmentTransaction!
   """Delete a transaction."""
   investmentTransactionDelete(id: ID!): Void!
   """
   Partial update to a transaction. Omitted / null fields are left unchanged.
   """
-  investmentTransactionUpdate(assetId: ID, date: Date, drip: Boolean, fees: MoneyInput, id: ID!, price: MoneyInput, taxes: MoneyInput, units: Int): InvestmentTransaction!
+  investmentTransactionUpdate(assetId: ID, date: Date, drip: Boolean, fees: MoneyInput, id: ID!, price: MoneyInput, taxes: MoneyInput, units: Float): InvestmentTransaction!
   """
   Partially update an investment. Omitted (or `null`) fields are left unchanged.
   """
