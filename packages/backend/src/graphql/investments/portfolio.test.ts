@@ -138,8 +138,12 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
-    expect(data.portfolio?.totalValue?.amount).toBe(10 * 6 + 5 * 12);
+    // totalValue = held (120) + cash float (-100 from buys with no offsetting
+    // deposits) = 20.
+    expect(data.portfolio?.totalValue?.amount).toBe(10 * 6 + 5 * 12 - 100);
     expect(data.portfolio?.totalCost?.amount).toBe(10 * 5 + 5 * 10);
+    // Gain is invested-only: 120 (held) − 100 (cost) = 20. Cash float is
+    // excluded so deposits / buys-without-deposits don't read as gains.
     expect(data.portfolio?.totalGain?.amount).toBe(20);
     expect(data.portfolio?.percentGain).toBeCloseTo(20 / 100);
   });
@@ -168,8 +172,10 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
-    // Held value: 6 × £8 = £48. totalCost: net in (50 − 28) = £22.
-    expect(data.portfolio?.totalValue?.amount).toBeCloseTo(48);
+    // Held value: 6 × £8 = £48. totalCost: net in (50 − 28) = £22. Cash float
+    // mirrors that net: -£50 buy + £28 sell = -£22. So
+    // totalValue = held + cash = 48 − 22 = 26, totalGain = held − cost = 26.
+    expect(data.portfolio?.totalValue?.amount).toBeCloseTo(48 - 22);
     expect(data.portfolio?.totalCost?.amount).toBeCloseTo(22);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(26);
   });
@@ -197,8 +203,10 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
-    expect(data.portfolio?.totalValue?.amount).toBe(0);
-    // Net in: 50 − 70 = −20. totalValue − totalCost = 0 − (−20) = +20 realised.
+    // No held units, but the realised £20 surfaces as the wrapper's cash
+    // float (50 buy → -50; 70 sell → +70; net +20). totalGain stays held −
+    // cost = 0 − (−20) = +20.
+    expect(data.portfolio?.totalValue?.amount).toBe(20);
     expect(data.portfolio?.totalCost?.amount).toBeCloseTo(-20);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(20);
   });
@@ -234,7 +242,9 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
-    expect(data.portfolio?.totalValue?.amount).toBeCloseTo(5000);
+    // Cash float = -£5,000 (the buy) cancels the held value, so totalValue
+    // = 0 even though both held and cost are £5,000. totalGain still = 0.
+    expect(data.portfolio?.totalValue?.amount).toBeCloseTo(0);
     expect(data.portfolio?.totalCost?.amount).toBeCloseTo(5000);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(0);
   });
@@ -305,9 +315,10 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const onlyISA = await runGql(doc, { assetIds: [isa] });
-    expect(onlyISA.portfolio?.totalValue?.amount).toBe(10 * 6);
+    // ISA: held 60, cash -50 (buy) → 10. SIPP: held 18, cash -15 → 3.
+    expect(onlyISA.portfolio?.totalValue?.amount).toBe(10 * 6 - 10 * 5);
     const onlySIPP = await runGql(doc, { assetIds: [sipp] });
-    expect(onlySIPP.portfolio?.totalValue?.amount).toBe(3 * 6);
+    expect(onlySIPP.portfolio?.totalValue?.amount).toBe(3 * 6 - 3 * 5);
   });
 });
 
