@@ -24,7 +24,10 @@ import {
   AllocationsSectionInvestmentFragment,
   AllocationsSectionPortfolioFragment,
 } from "@/components/investments/allocations-section";
-import { CashContributionsSection } from "@/components/investments/cash-contributions-section";
+import {
+  CashContributionsAvailableFragment,
+  CashContributionsSection,
+} from "@/components/investments/cash-contributions-section";
 import {
   InvestmentForm,
   InvestmentFormDocument,
@@ -220,6 +223,7 @@ const InvestmentsPageDocument = graphql(
       portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: $skipLive) {
         ...PortfolioHeadline
         ...PortfolioChartPortfolio
+        ...CashContributionsAvailable
       }
       allocationsPortfolio: portfolio(filterAssetIdIn: $filterAssetIdIn) {
         ...AllocationsSectionPortfolio
@@ -259,6 +263,7 @@ const InvestmentsPageDocument = graphql(
     InvestmentFormDocument,
     PortfolioHeadlineFragment,
     PortfolioChartPortfolioFragment,
+    CashContributionsAvailableFragment,
     AllocationsSectionInvestmentFragment,
     AllocationsSectionPortfolioFragment,
     PortfolioFilterInvestmentFragment,

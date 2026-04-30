@@ -29,23 +29,35 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { graphql, type ResultOf } from "@/graphql";
+import { graphql, readFragment, type ResultOf } from "@/graphql";
 import { formatAccountingMoney } from "@/lib/format";
 
-const CashContributionsAvailableDocument = graphql(`
-  query CashContributionsAvailable($assetId: ID!) {
-    netWorthCategoryAsset(id: $assetId) {
-      id
-      name
-    }
-    portfolio(filterAssetIdIn: [$assetId]) {
-      cash {
-        amount
-        currency
-      }
+export const CashContributionsAvailableFragment = graphql(`
+  fragment CashContributionsAvailable on Portfolio {
+    cash {
+      amount
+      currency
     }
   }
 `);
+
+// Pinned to `skipLive: true` so this query targets the same `Portfolio`
+// normalised entity the route's `InvestmentsPageDocument` prewarms (which
+// also runs with `skipLive: true`). When the initial `filter-portfolio-id`
+// matches `assetId`, the prewarm satisfies this query from cache without
+// hitting the network. On filter change, the route's query stays frozen on
+// the initial vars while this one re-fires to track the current asset.
+const CashContributionsAvailableDocument = graphql(
+  `
+    query CashContributionsAvailable($assetId: ID!) {
+      portfolio(filterAssetIdIn: [$assetId], skipLive: true) {
+        id
+        ...CashContributionsAvailable
+      }
+    }
+  `,
+  [CashContributionsAvailableFragment],
+);
 
 const CashContributionsListDocument = graphql(`
   query CashContributionsList($assetId: ID!, $first: Int, $after: ID) {
@@ -222,7 +234,9 @@ export function CashContributionsSection({ assetId }: { assetId: string }) {
   const { data } = useQuery(CashContributionsAvailableDocument, {
     variables: { assetId },
   });
-  const cash = data?.portfolio?.cash ?? null;
+  const cash = data?.portfolio
+    ? readFragment(CashContributionsAvailableFragment, data.portfolio).cash
+    : null;
   const [open, setOpen] = useState(false);
 
   return (
