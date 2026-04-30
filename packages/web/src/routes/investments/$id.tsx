@@ -633,8 +633,11 @@ function TransactionsSection({
                 onClick={() => onEdit(t)}
                 className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
               >
-                <span className="min-w-0 truncate text-sm tabular-nums">
-                  {t.date}
+                <span className="flex min-w-0 items-baseline gap-2 text-sm">
+                  <span className="tabular-nums">{t.date}</span>
+                  <span className="truncate text-muted-foreground">
+                    {t.asset.name}
+                  </span>
                 </span>
                 <span className="shrink-0 text-sm tabular-nums">
                   <span className="hidden text-muted-foreground sm:inline">
