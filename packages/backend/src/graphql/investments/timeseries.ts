@@ -32,10 +32,12 @@ type TimeseriesKey = LoadInvestmentsByKeyFilter & {
   length: number;
   /** When `false`, the last point's `y` is overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB value is returned. Does not affect the SQL — only the overlay. */
   skipLive: boolean;
+  /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), only `InvestmentTransactions` with `date <= dateCap` contribute, and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
+  dateCap?: string;
 };
 
 const cacheKeyFn = (key: TimeseriesKey): string =>
-  `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}`;
+  `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}`;
 
 const MAX_POINTS = 300;
 
@@ -66,11 +68,14 @@ export const loadInvestmentsByKeyConditions = (
  * Retrieves unit-delta chain for each investment in the given set (or all, if no filters given). This can be used to compute historical holding values.
  */
 const loadAdjustedUnits = contextAwareDataLoader(
-  async (_ctx: Context, keys: readonly LoadInvestmentsByKeyFilter[]) => {
+  async (_ctx: Context, keys: readonly TimeseriesKey[]) => {
     const { whereAssetId, whereInvestmentId } =
       loadInvestmentsByKeyConditions(keys);
     // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
     const currency = HOME_CURRENCY;
+    // Keys are grouped by `dateCap` upstream (in `loadTimeseries`), so every
+    // key in this batch shares the same cap.
+    const dateCap = keys[0]?.dateCap;
 
     return await db
       .select({
@@ -98,6 +103,9 @@ const loadAdjustedUnits = contextAwareDataLoader(
           eq(InvestmentTransactions.currency, currency),
           whereAssetId,
           whereInvestmentId(InvestmentTransactions),
+          dateCap
+            ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
+            : undefined,
         ),
       )
       .orderBy(asc(InvestmentTransactions.date));
@@ -121,19 +129,26 @@ export const loadTimeseries = contextAwareDataLoader(
         //
         // If separate X axes are required, then requests should be made in separate microtasks, to avoid batching.
 
-        // Explicitly forbid batch-loading time series with differing periods:
+        // Explicitly forbid batch-loading time series with differing periods
+        // or differing `dateCap` (the SQL anchors `now` to one value):
         assert(
           keys.every(
             (k, _i, array) =>
-              k.period === array[0].period && k.length === array[0].length,
+              k.period === array[0].period &&
+              k.length === array[0].length &&
+              (k.dateCap ?? null) === (array[0].dateCap ?? null),
           ),
-          "Cannot batch-load timeseries with different periods",
+          "Cannot batch-load timeseries with different periods or dateCaps",
         );
 
         // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
         const currency = HOME_CURRENCY;
 
-        const now = formatISO(new Date(), { representation: "date" });
+        // When `dateCap` is set, anchor the upper bound of the date series at
+        // the cap instead of "today" — the chart freezes on the day before
+        // the transfer.
+        const now =
+          keys[0].dateCap ?? formatISO(new Date(), { representation: "date" });
 
         // Earliest transaction in the filter scope — anchors the series at
         // the first-cached-price boundary for all periods. For `ALL`, this is
@@ -366,12 +381,15 @@ export const loadTimeseries = contextAwareDataLoader(
         // — the empty `yBy*` maps already yield a null series per key below.
         if (pricesAdjRows.length > 0) bufferPrices(cursorPrices - 1);
 
-        // Fetch today's live-overlaid portfolio total per non-skipLive key.
-        // The last x is today's date by construction (union in the `dates`
-        // CTE), so we just substitute that point's y rather than appending.
+        // Fetch today's live-overlaid portfolio total per non-skipLive,
+        // non-capped key. The last x is today's date by construction (union
+        // in the `dates` CTE), so we just substitute that point's y rather
+        // than appending. With `dateCap` the last x is the cap itself and
+        // the live overlay is meaningless (and `loadInvestmentStats` would
+        // also strip it), so we skip the substitution.
         const liveByKeyIndex = await Promise.all(
           keys.map((key) =>
-            key.skipLive
+            key.skipLive || key.dateCap
               ? Promise.resolve(null)
               : loadInvestmentStats(ctx, {
                   currency,

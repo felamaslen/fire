@@ -23,6 +23,8 @@ type CandlestickKey = {
   max: number;
   /** When `false`, the last bucket's `valueEnd` / `valueMax` / `valueMin` are overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB result is returned. Does not affect the SQL — only the overlay. */
   skipLive: boolean;
+  /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), only `InvestmentTransactions` with `date <= dateCap` contribute, and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
+  dateCap?: string;
 };
 
 const cacheKeyFn = (key: CandlestickKey): string => {
@@ -30,7 +32,7 @@ const cacheKeyFn = (key: CandlestickKey): string => {
     key.assetIds && key.assetIds.length > 0
       ? [...key.assetIds].sort().join(",")
       : "";
-  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}`;
+  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}`;
 };
 
 /**
@@ -70,7 +72,12 @@ const loadOne = async (
           sql`, `,
         )})`
       : sql``;
-  const now = formatISO(new Date(), { representation: "date" });
+  const txDateCapFilter = key.dateCap
+    ? sql`and t.date <= ${key.dateCap}::date`
+    : sql``;
+  // When `dateCap` is set, anchor `now` (the rightmost edge of the series)
+  // at the cap so the chart freezes on the day before the transfer.
+  const now = key.dateCap ?? formatISO(new Date(), { representation: "date" });
 
   // `u_tx` / `u` are MATERIALIZED so (a) the stock-split scalar subquery runs
   // once per transaction (~hundreds) rather than once per (bucket × price) pair
@@ -106,6 +113,7 @@ const loadOne = async (
           from "InvestmentTransactions" t
           where t.currency = ${currency}
           ${assetFilter}
+          ${txDateCapFilter}
         ),
         u as materialized (
           select
@@ -159,8 +167,9 @@ const loadOne = async (
   // the chart tracks intraday movement. `valueEnd` jumps to the live total;
   // `valueMin` / `valueMax` expand only when live breaches the bucket's
   // historical range. `valueStart` is the bucket's first-date value and stays
-  // untouched.
-  if (!key.skipLive) {
+  // untouched. With `dateCap`, the series is frozen pre-transfer — no live
+  // overlay.
+  if (!key.skipLive && !key.dateCap) {
     const s = await loadInvestmentStats(ctx, {
       currency,
       assetIds:

@@ -294,6 +294,46 @@ describe("Portfolio dateCap from transferOut", () => {
     expect(data.portfolio?.xirr).toBeGreaterThan(0);
   });
 
+  it("ends the timeseries chart at dateCap (no points after the transfer)", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    await setPrice(inv, "2025-01-15", 1000);
+    await setPrice(inv, "2025-03-01", 1200);
+    await setPrice(inv, "2025-04-01", 1500);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    const data = await runGql(
+      graphql(`
+        query ($filterAssetIdIn: [ID!]) {
+          portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: false) {
+            timeseries(period: ALL) {
+              initialDate
+              points {
+                x
+                y
+              }
+            }
+          }
+        }
+      `),
+      { filterAssetIdIn: [fromAsset] },
+    );
+    const series = data.portfolio?.timeseries;
+    expect(series).not.toBeNull();
+    // The last point's y should reflect the dateCap'd valuation (£12 ×
+    // 100 = £1200), not anything later (the £15 price is past the cap).
+    const last = series!.points.at(-1)!;
+    expect(last.y).toBe(1200);
+    // And the series shouldn't extend past 2025-03-14 (= dateCap). With
+    // `initialDate` 2025-01-15, that's 58 days.
+    const initial = new Date(series!.initialDate);
+    const lastDateMs = initial.getTime() + last.x * 86400000;
+    const lastIso = new Date(lastDateMs).toISOString().slice(0, 10);
+    expect(lastIso <= "2025-03-14").toBe(true);
+  });
+
   it("does not cap a sibling portfolio without a transfer-out", async () => {
     const fromAsset = await createAsset("Old ISA");
     const toAsset = await createAsset("New ISA");
