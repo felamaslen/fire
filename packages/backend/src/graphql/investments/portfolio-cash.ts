@@ -1,5 +1,5 @@
 import DataLoader from "dataloader";
-import { and, eq, inArray, isNotNull, sql, sum } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, sql, sum } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
@@ -7,6 +7,11 @@ import {
   InvestmentDeposits,
   InvestmentTransactions,
 } from "@/db/schema/investments";
+import {
+  NetWorthEntries,
+  NetWorthValueAmounts,
+  NetWorthValues,
+} from "@/db/schema/net-worth";
 import { PlanningTransactions } from "@/db/schema/planning";
 
 import { type Context, contextAwareDataLoader } from "../context";
@@ -34,18 +39,19 @@ type CashContributionRow = {
   amount: number;
 };
 
+type SnapshotRow = {
+  assetId: string;
+  currency: string;
+  amount: number;
+};
+
 /**
- * Run the unioned aggregation that backs the loader. One SQL: three branches (`PlanningTransactions` flipped to the wrapper's perspective and `InvestmentDeposits` tagged `C` for contributions, non-DRIP `InvestmentTransactions` as `-round(units × price)` tagged `T` for trades), unioned and grouped per `(assetId, currency, kind)`. The `kind` split lets the loader drop trade rows for any asset that has zero recorded contributions — otherwise a wrapper whose sells exceed its buys would surface phantom cash from the realised gain alone.
+ * Sum of cash contributions and trades per `(assetId, currency, kind)`. With `since` set, only rows strictly after that date are included — used to add the post-snapshot deltas onto the wrapper's last recorded net-worth value. With `since` `null`, the full history is summed (legacy behaviour, used when the user has no `NetWorthEntries` yet). Three branches: `PlanningTransactions` flipped to the wrapper's perspective and `InvestmentDeposits` tagged `C` for contributions, non-DRIP `InvestmentTransactions` as `-round(units × price)` tagged `T` for trades.
  */
-async function fetchContributions(
+async function fetchFlows(
   assetIds: string[] | null,
+  since: Date | null,
 ): Promise<CashContributionRow[]> {
-  // PlanningTransactions.assetId is nullable; the predicate prunes the
-  // nulls. The `sql<string>` cast tells Drizzle's result inference that the
-  // column is non-nullable inside the union, matching the other branches.
-  // Provisional rows (user-authored drafts) are excluded — they're modelled
-  // in the planner's balance projections but not part of the wrapper's
-  // actual cash float.
   const planning = db
     .select({
       assetId: sql<string>`${PlanningTransactions.assetId}`.as("assetId"),
@@ -58,6 +64,7 @@ async function fetchContributions(
       and(
         isNotNull(PlanningTransactions.assetId),
         eq(PlanningTransactions.isProvisional, false),
+        since ? gt(PlanningTransactions.date, since) : undefined,
       ),
     );
 
@@ -68,7 +75,8 @@ async function fetchContributions(
       value: sql<number>`${InvestmentDeposits.amount}::bigint`.as("value"),
       kind: sql<"C" | "T">`'C'`.as("kind"),
     })
-    .from(InvestmentDeposits);
+    .from(InvestmentDeposits)
+    .where(since ? gt(InvestmentDeposits.date, since) : undefined);
 
   const trades = db
     .select({
@@ -81,24 +89,25 @@ async function fetchContributions(
       kind: sql<"C" | "T">`'T'`.as("kind"),
     })
     .from(InvestmentTransactions)
-    .where(eq(InvestmentTransactions.drip, false));
+    .where(
+      and(
+        eq(InvestmentTransactions.drip, false),
+        since ? gt(InvestmentTransactions.date, since) : undefined,
+      ),
+    );
 
-  const contributions = unionAll(planning, deposits, trades).as(
-    "contributions",
-  );
+  const flows = unionAll(planning, deposits, trades).as("flows");
 
   const rows = await db
     .select({
-      assetId: contributions.assetId,
-      currency: contributions.currency,
-      kind: contributions.kind,
-      amount: sum(contributions.value).mapWith(Number).as("amount"),
+      assetId: flows.assetId,
+      currency: flows.currency,
+      kind: flows.kind,
+      amount: sum(flows.value).mapWith(Number).as("amount"),
     })
-    .from(contributions)
-    .where(
-      assetIds === null ? undefined : inArray(contributions.assetId, assetIds),
-    )
-    .groupBy(contributions.assetId, contributions.currency, contributions.kind);
+    .from(flows)
+    .where(assetIds === null ? undefined : inArray(flows.assetId, assetIds))
+    .groupBy(flows.assetId, flows.currency, flows.kind);
 
   return rows.map((r) => ({
     assetId: r.assetId,
@@ -108,8 +117,60 @@ async function fetchContributions(
   }));
 }
 
+/** Latest `NetWorthEntries.date`, or `null` when no entries exist yet. The cash float anchors on this date — a wrapper's recorded value at the latest entry plus net flows since is taken to absorb the effect of fees, dividends, and price drift between snapshots. */
+async function fetchLatestEntryDate(): Promise<Date | null> {
+  const [row] = await db
+    .select({ d: NetWorthEntries.date })
+    .from(NetWorthEntries)
+    .orderBy(desc(NetWorthEntries.date))
+    .limit(1);
+  return row?.d ?? null;
+}
+
+/** Per-(assetId, currency) recorded value at `date`. Assets missing from the entry don't appear in the result — the loader treats their absence as "defunct" (zero cash float). */
+async function fetchSnapshotValues(
+  date: Date,
+  assetIds: string[] | null,
+): Promise<SnapshotRow[]> {
+  const rows = await db
+    .select({
+      assetId: NetWorthValues.categoryAssetId,
+      currency: NetWorthValueAmounts.currency,
+      amount: NetWorthValueAmounts.amount,
+    })
+    .from(NetWorthValues)
+    .innerJoin(
+      NetWorthValueAmounts,
+      eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
+    )
+    .innerJoin(NetWorthEntries, eq(NetWorthEntries.id, NetWorthValues.entryId))
+    .where(
+      and(
+        eq(NetWorthEntries.date, date),
+        isNotNull(NetWorthValues.categoryAssetId),
+        assetIds === null
+          ? undefined
+          : inArray(NetWorthValues.categoryAssetId, assetIds),
+      ),
+    );
+  return rows.flatMap((r) =>
+    r.assetId === null
+      ? []
+      : [
+          {
+            assetId: r.assetId,
+            currency: r.currency,
+            amount: Number(r.amount),
+          },
+        ],
+  );
+}
+
 /**
- * Per-request DataLoader, vended via `contextAwareDataLoader` so each `Context` gets its own instance (and its own cache) — demo and real sessions never share rows. The batch step pre-resolves the union of every requested asset-id set within the batch (with `null` short-circuiting to "no filter"), runs the unioned aggregation once, then projects the per-(assetId, currency) totals back into one `AssetCashFloat[]` per key.
+ * Per-request DataLoader, vended via `contextAwareDataLoader` so each `Context` gets its own instance (and its own cache) — demo and real sessions never share rows. The batch step pre-resolves the union of every requested asset-id set within the batch (with `null` short-circuiting to "no filter"), then either:
+ *
+ * 1. Anchors on the latest `NetWorthEntries` date (when entries exist). Per asset, the cash float is `(snapshot value at latest entry) + (net flows since latest entry)`. An asset that has no value at the latest entry is considered defunct and yields zero. This treats the recorded net-worth value as ground truth (which silently absorbs ongoing fees, dividends, and price drift) and only re-applies user-tracked deltas after the snapshot.
+ * 2. Falls back to summing the full flow history (legacy behaviour) when no `NetWorthEntries` exist yet. In that mode, an asset with no recorded contributions has its trade rows dropped — without a contribution log, sells exceeding buys would otherwise read as phantom available cash from the realised gain alone.
  */
 const cashFloatLoader = contextAwareDataLoader(
   () =>
@@ -124,33 +185,10 @@ const cashFloatLoader = contextAwareDataLoader(
               ),
             ];
 
-        const rows = await fetchContributions(requestedIds);
-
-        // An asset is "contribution-tracked" if it has at least one deposit
-        // or non-provisional planning row. For untracked assets we drop the
-        // trade rows entirely — without a contribution log, trades are
-        // internal cash⇄securities movements and can't be the sole source
-        // of a wrapper's available cash. Otherwise a fully-sold wrapper with
-        // realised gains would surface that gain as phantom "available to
-        // invest", even though the user never logged the matching deposit
-        // (and may have withdrawn the proceeds).
-        const trackedAssets = new Set<string>();
-        for (const r of rows) {
-          if (r.kind === "C") trackedAssets.add(r.assetId);
-        }
-
-        // Index per (assetId → per-currency sum) so each key's aggregation is
-        // a simple lookup over its own asset set.
-        const byAsset = new Map<string, Map<string, number>>();
-        for (const r of rows) {
-          if (r.kind === "T" && !trackedAssets.has(r.assetId)) continue;
-          let m = byAsset.get(r.assetId);
-          if (!m) {
-            m = new Map();
-            byAsset.set(r.assetId, m);
-          }
-          m.set(r.currency, (m.get(r.currency) ?? 0) + r.amount);
-        }
+        const latestEntryDate = await fetchLatestEntryDate();
+        const byAsset = await (latestEntryDate === null
+          ? indexLegacy(requestedIds)
+          : indexAnchored(requestedIds, latestEntryDate));
 
         return keys.map((key) => {
           const ids =
@@ -172,6 +210,58 @@ const cashFloatLoader = contextAwareDataLoader(
       { cacheKeyFn },
     ),
 );
+
+/** No-snapshot path: sum the full flow history; an asset with no recorded contribution row has its trade rows dropped (otherwise sells > buys read as phantom cash). */
+async function indexLegacy(
+  assetIds: string[] | null,
+): Promise<Map<string, Map<string, number>>> {
+  const rows = await fetchFlows(assetIds, null);
+  const trackedAssets = new Set<string>();
+  for (const r of rows) {
+    if (r.kind === "C") trackedAssets.add(r.assetId);
+  }
+  const byAsset = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    if (r.kind === "T" && !trackedAssets.has(r.assetId)) continue;
+    let m = byAsset.get(r.assetId);
+    if (!m) {
+      m = new Map();
+      byAsset.set(r.assetId, m);
+    }
+    m.set(r.currency, (m.get(r.currency) ?? 0) + r.amount);
+  }
+  return byAsset;
+}
+
+/** Snapshot-anchored path: per asset, baseline = recorded value at `latestEntryDate`, plus the sum of every flow strictly after that date. Assets missing from the snapshot don't get an entry and are surfaced as zero. */
+async function indexAnchored(
+  assetIds: string[] | null,
+  latestEntryDate: Date,
+): Promise<Map<string, Map<string, number>>> {
+  const [snapshots, flows] = await Promise.all([
+    fetchSnapshotValues(latestEntryDate, assetIds),
+    fetchFlows(assetIds, latestEntryDate),
+  ]);
+  const byAsset = new Map<string, Map<string, number>>();
+  for (const s of snapshots) {
+    let m = byAsset.get(s.assetId);
+    if (!m) {
+      m = new Map();
+      byAsset.set(s.assetId, m);
+    }
+    m.set(s.currency, (m.get(s.currency) ?? 0) + s.amount);
+  }
+  for (const r of flows) {
+    // Drop flows for assets the user has marked defunct by omitting them
+    // from the latest snapshot — the snapshot is treated as ground truth,
+    // and ungrounded post-snapshot trades shouldn't surface cash on their
+    // own.
+    if (!byAsset.has(r.assetId)) continue;
+    const m = byAsset.get(r.assetId)!;
+    m.set(r.currency, (m.get(r.currency) ?? 0) + r.amount);
+  }
+  return byAsset;
+}
 
 /** Per-currency uninvested cash float for one wrapper. */
 export async function loadAssetCashFloat(
