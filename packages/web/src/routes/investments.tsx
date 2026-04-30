@@ -24,6 +24,7 @@ import {
   AllocationsSectionInvestmentFragment,
   AllocationsSectionPortfolioFragment,
 } from "@/components/investments/allocations-section";
+import { CashContributionsSection } from "@/components/investments/cash-contributions-section";
 import {
   InvestmentForm,
   InvestmentFormDocument,
@@ -647,6 +648,11 @@ function InvestmentsPageContent() {
         onChange={setChart}
         bottomSlot={<AllocationsSection filterAssetIds={filterAssetIds} />}
       />
+      {filterAssetIds.length === 1 && (
+        <Suspense fallback={<Spinner />}>
+          <CashContributionsSection assetId={filterAssetIds[0]!} />
+        </Suspense>
+      )}
       <InvestmentsList
         sort={sort}
         onSortChange={setSort}

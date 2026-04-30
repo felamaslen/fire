@@ -115,6 +115,11 @@ enum SortDirection {
 }
 
 """
+A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …) or a manual `AssetCashPlanningTransaction` originating in a planning cash account.
+"""
+union CashContribution = AssetCashPlanningTransaction | InvestmentDeposit
+
+"""
 The underlying instrument an `Investment` represents: a listed stock or a fund.
 """
 union InvestmentAsset = InvestmentFund | InvestmentStock
@@ -448,6 +453,24 @@ input PlanningYearTaxRatesUKInput {
 }
 
 """
+A cash-account → wrapper planning transaction surfaced on the investments page. The `id` matches the composite `tx:` identifier returned by the planning grid, so it can be fed straight back into `transactionUpdate` / `transactionDelete` if needed — but the dedicated `assetCashTransaction*` mutations are the supported edit path from this view.
+"""
+type AssetCashPlanningTransaction {
+  """
+  Signed cash amount from the *wrapper's* perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. The underlying `PlanningTransactions` row stores the sign from the cash account's perspective; this resolver flips it so every consumer of `cashContributions` sees the same convention regardless of source.
+  """
+  amount: Money!
+  """
+  Calendar date the transaction is anchored to. Drives the planning month it lives in.
+  """
+  date: Date!
+  """Source cash planning account the contribution flows from / to."""
+  fromAccount: PlanningAccount!
+  id: ID!
+  name: String!
+}
+
+"""
 Result of a successful `login` / `demoLogin`, and the shape of `me` for a valid token. The client just needs to know "am I logged in?" — `token` doubles as both credential and success signal. Session kind / flavour live inside the signed token itself and are re-derived server-side from the `Authorization` header on every request, so there's nothing for the client to track beyond this string.
 """
 type AuthResult {
@@ -459,6 +482,22 @@ type AuthResult {
   Signed token. Real tokens live 30 days; demo tokens live 6 hours. Store in `localStorage` and attach as `Authorization: Bearer <token>`.
   """
   token: String!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type CashContributionConnection {
+  edges: [CashContributionEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type CashContributionEdge {
+  cursor: ID!
+  node: CashContribution!
 }
 
 """Metadata for a currency supported by the server."""
@@ -615,6 +654,23 @@ A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEnt
 type InvestmentConnection {
   edges: [InvestmentEdge!]!
   pageInfo: PageInfo!
+}
+
+"""
+A cash inflow into a wrapper that doesn't originate from a planning cash account — e.g. dividend income, broker bonus, or pension tax relief credited by HMRC. Combined with planning cash transactions and non-DRIP unit trades to derive the wrapper's uninvested cash float.
+"""
+type InvestmentDeposit {
+  """
+  Signed cash amount. Positive = credit to the wrapper (the common case); negative = a withdrawal that isn't paired with a unit trade.
+  """
+  amount: Money!
+  """Wrapper this deposit is booked into."""
+  asset: NetWorthCategoryAsset!
+  """Calendar date the cash landed in the wrapper."""
+  date: Date!
+  id: ID!
+  """Short label for the deposit (e.g. "Q2 dividend", "Tax relief")."""
+  name: String!
 }
 
 """
@@ -791,6 +847,40 @@ type Money {
 
 type Mutation {
   """
+  Create a cash-account → wrapper planning transaction. `amount` is signed from the **wrapper's** perspective: positive = deposit into the wrapper, negative = withdrawal from it. The resolver flips the sign internally before persisting (the underlying `PlanningTransactions` row stores everything from the cash account's perspective).
+  """
+  assetCashTransactionCreate(
+    """
+    Wrapper-perspective amount: positive = into the wrapper, negative = out.
+    """
+    amount: MoneyInput!
+    """
+    Wrapper to credit / debit. Must be a `STOCK` or `PENSION` net-worth asset.
+    """
+    assetId: ID!
+    date: Date!
+    """Source cash planning account (`PlanningAccount.id`)."""
+    fromAccountId: ID!
+    name: String!
+  ): AssetCashPlanningTransaction!
+  """Delete a cash transfer."""
+  assetCashTransactionDelete(
+    """Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`."""
+    id: ID!
+  ): Void!
+  """
+  Partial update for a cash transfer. `amount`, when supplied, is wrapper-POV (positive = into the wrapper). Omitted / null fields are left unchanged.
+  """
+  assetCashTransactionUpdate(
+    amount: MoneyInput
+    date: Date
+    """New source cash planning account (`PlanningAccount.id`)."""
+    fromAccountId: ID
+    """Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`."""
+    id: ID!
+    name: String
+  ): AssetCashPlanningTransaction!
+  """
   Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
   """
   billCreate(
@@ -961,6 +1051,26 @@ type Mutation {
   Delete an investment and all its transactions, stock splits, and prices.
   """
   investmentDelete(id: ID!): Void!
+  """
+  Record an external cash credit (or, with a negative `amount`, a debit) on a wrapper that doesn't correspond to a planning transfer or a unit trade.
+  """
+  investmentDepositCreate(
+    """
+    Signed cash amount. Positive = credit to the wrapper; negative = debit.
+    """
+    amount: MoneyInput!
+    """Wrapper to credit. Must be a `STOCK` or `PENSION` net-worth asset."""
+    assetId: ID!
+    date: Date!
+    """Short label for the deposit (e.g. "Q2 dividend")."""
+    name: String!
+  ): InvestmentDeposit!
+  """Delete an `InvestmentDeposit`."""
+  investmentDepositDelete(id: ID!): Void!
+  """
+  Partial update for an `InvestmentDeposit`. Omitted (or `null`) fields are left unchanged.
+  """
+  investmentDepositUpdate(amount: MoneyInput, date: Date, id: ID!, name: String): InvestmentDeposit!
   """
   Record a stock split on an investment. Historic `unitPriceCached` values are retroactively adjusted.
   """
@@ -1227,6 +1337,10 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   Calendar date from which the pot can be drawn down (e.g. UK pension access age). Only meaningful for `PENSION` assets; null means "accessible now". The retirement forecast skips drawdown on this pot until the date is reached.
   """
   accessibleFrom: Date
+  """
+  Paginated, date-desc list of every cash contribution for this wrapper — both external `InvestmentDeposit`s (dividends, tax relief, …) and `AssetCashPlanningTransaction`s originating in a planning cash account, interleaved by date and used to back the "Manage cash deposits" dialog on the investments page.
+  """
+  cashContributions(after: ID, first: Int): CashContributionConnection @semanticNonNull
   """
   Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.
   """
@@ -2007,6 +2121,10 @@ type Portfolio {
     unit: PortfolioCandleUnit!
   ): PortfolioCandlestick
   """
+  Uninvested cash held in the wrapper(s) — the per-wrapper cash float aggregated across the portfolio's `filterAssetIdIn` (or every `STOCK` / `PENSION` wrapper when no asset filter is set), restricted to entries denominated in `currency`. Always zero when the portfolio is scoped to specific investments (cash isn't attributable to an investment). Positive values represent cash available to invest; negative values mean recorded buys exceed recorded inflows.
+  """
+  cash: Money!
+  """
   ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
   """
   currency: String!
@@ -2027,7 +2145,7 @@ type Portfolio {
   """
   investment: Investment
   """
-  Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero.
+  Total return as a fraction of `totalCost`, computed from invested value only (cash float excluded). For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` when `totalCost` is zero.
   """
   percentGain: Float
   """
@@ -2039,11 +2157,11 @@ type Portfolio {
   """
   totalCost: Money!
   """
-  Total return (realised + unrealised) on the filtered portfolio — `totalValue - totalCost`.
+  Total return (realised + unrealised) on the held positions — `(totalValue − cash) − totalCost`. Excludes the cash float so freshly-deposited funds don't read as a gain.
   """
   totalGain: Money
   """
-  Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
+  Current market value of the filtered portfolio — the today-price value of units currently held plus uninvested cash held in the wrapper(s). Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
   """
   totalValue: Money
   """
@@ -2227,6 +2345,8 @@ type Query {
     first: Int
     last: Int
   ): NetWorthCategoryConnection @semanticNonNull
+  """Look up an asset category by id. Returns `null` when no row matches."""
+  netWorthCategoryAsset(id: ID!): NetWorthCategoryAsset
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
   """
