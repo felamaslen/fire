@@ -2349,6 +2349,10 @@ type Query {
     assetId: ID
   ): InvestmentAllocationsResult @semanticNonNull
   """
+  Every wrapper (a `STOCK` or `PENSION` `NetWorthCategoryAsset`) that has at least one `InvestmentTransaction` booked against it, ordered with `STOCK` wrappers before `PENSION`s and alphabetically by `name` within each group. Drives the portfolio switcher on the investments page.
+  """
+  investmentPortfolios: [NetWorthCategoryAsset!] @semanticNonNull
+  """
   Paginated list of investments, sorted by the requested key. Computed sorts (`value`, `gainAbs`, `gainPercent`) use current cached values; cursors are only stable while those values don't change.
   """
   investments(

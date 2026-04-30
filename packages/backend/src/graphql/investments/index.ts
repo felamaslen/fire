@@ -6,11 +6,13 @@ import type { ID, Int } from "grats";
 
 import { db, runInTransaction } from "@/db";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
+import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
 import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import type { DateTime } from "../date-time";
 import { assertCurrencyCode, Money, type MoneyInput } from "../money";
+import { NetWorthCategoryAsset } from "../net-worth/categories";
 import {
   buildConnection,
   type Connection,
@@ -457,4 +459,29 @@ export async function investments(
     },
     { hasNextPage, hasPreviousPage: afterCursor != null },
   );
+}
+
+/** Every wrapper (a `STOCK` or `PENSION` `NetWorthCategoryAsset`) that has at least one `InvestmentTransaction` booked against it, ordered with `STOCK` wrappers before `PENSION`s and alphabetically by `name` within each group. Drives the portfolio switcher on the investments page.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function investmentPortfolios(): Promise<
+  NetWorthCategoryAsset[] | null
+> {
+  const rows = await db
+    .selectDistinct({ row: NetWorthCategoryAssets })
+    .from(NetWorthCategoryAssets)
+    .innerJoin(
+      InvestmentTransactions,
+      eq(InvestmentTransactions.assetId, NetWorthCategoryAssets.id),
+    )
+    .where(inArray(NetWorthCategoryAssets.type, ["STOCK", "PENSION"]));
+  // Custom order: STOCK before PENSION, then by name. SQL DISTINCT can't
+  // express the priority cleanly without a CASE, so sort in JS.
+  rows.sort((a, b) => {
+    if (a.row.type !== b.row.type) return a.row.type === "STOCK" ? -1 : 1;
+    return a.row.name.localeCompare(b.row.name);
+  });
+  return rows.map((r) => NetWorthCategoryAsset.load(r.row));
 }

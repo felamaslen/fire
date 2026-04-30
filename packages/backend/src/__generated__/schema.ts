@@ -17,7 +17,7 @@ import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrency
 import { currencyExchangeRates as queryCurrencyExchangeRatesResolver } from "./../graphql/fx-rates";
 import { demos as queryDemosResolver, me as queryMeResolver, demoLogin as mutationDemoLoginResolver, login as mutationLoginResolver, logout as mutationLogoutResolver, demoProgress as subscriptionDemoProgressResolver } from "./../graphql/auth";
 import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
-import { investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
+import { investmentPortfolios as queryInvestmentPortfoliosResolver, investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, amountHome as netWorthValueAmountHomeResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, loans as netWorthEntryLoansResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryAsset as queryNetWorthCategoryAssetResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
 import { netWorthForecast as queryNetWorthForecastResolver } from "./../graphql/net-worth/forecast";
@@ -2697,6 +2697,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryInvestmentAllocationsResolver(args.assetId));
+                    }
+                },
+                investmentPortfolios: {
+                    description: "Every wrapper (a `STOCK` or `PENSION` `NetWorthCategoryAsset`) that has at least one `InvestmentTransaction` booked against it, ordered with `STOCK` wrappers before `PENSION`s and alphabetically by `name` within each group. Drives the portfolio switcher on the investments page.",
+                    name: "investmentPortfolios",
+                    type: new GraphQLList(new GraphQLNonNull(NetWorthCategoryAssetType)),
+                    resolve() {
+                        return assertNonNull(queryInvestmentPortfoliosResolver());
                     }
                 },
                 investments: {

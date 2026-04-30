@@ -155,47 +155,16 @@ export const InvestmentsListDocument = graphql(
   [InvestmentRowDocument, InvestmentFormDocument],
 );
 
-const PortfolioFilterInvestmentFragment = graphql(`
-  fragment PortfolioFilterInvestment on Investment {
+const PortfolioFilterOptionsFragment = graphql(`
+  fragment PortfolioFilterOptions on NetWorthCategoryAsset {
     id
-    wrappers {
-      asset {
-        id
-        name
-        type
-        isDefunct
-      }
-    }
+    name
+    type
+    isDefunct
   }
 `);
 
-const FILTER_PORTFOLIO_TYPES = new Set(["STOCK", "PENSION"]);
-
-type PortfolioFilterOption = {
-  id: string;
-  name: string;
-  isDefunct: boolean;
-};
-
-function portfolioFilterOptionsFromInvestments(
-  investments: FragmentOf<typeof PortfolioFilterInvestmentFragment>[],
-): PortfolioFilterOption[] {
-  const seen = new Map<string, PortfolioFilterOption>();
-  for (const ref of investments) {
-    const inv = readFragment(PortfolioFilterInvestmentFragment, ref);
-    for (const w of inv.wrappers ?? []) {
-      if (!FILTER_PORTFOLIO_TYPES.has(w.asset.type)) continue;
-      if (!seen.has(w.asset.id)) {
-        seen.set(w.asset.id, {
-          id: w.asset.id,
-          name: w.asset.name,
-          isDefunct: w.asset.isDefunct,
-        });
-      }
-    }
-  }
-  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
+type PortfolioFilterOption = ResultOf<typeof PortfolioFilterOptionsFragment>;
 
 // Combined document fired once on initial page load — prewarms the Apollo
 // cache so each child's own `useQuery` renders synchronously without a
@@ -239,11 +208,13 @@ const InvestmentsPageDocument = graphql(
       allocationsPortfolio: portfolio(filterAssetIdIn: $filterAssetIdIn) {
         ...AllocationsSectionPortfolio
       }
-      portfolioFilterInvestments: investments(first: 1000) {
+      investmentPortfolios {
+        ...PortfolioFilterOptions
+      }
+      allocationsInvestments: investments(first: 1000) {
         edges {
           node {
             id
-            ...PortfolioFilterInvestment
             ...AllocationsSectionInvestment
           }
         }
@@ -277,7 +248,7 @@ const InvestmentsPageDocument = graphql(
     CashContributionsAvailableFragment,
     AllocationsSectionInvestmentFragment,
     AllocationsSectionPortfolioFragment,
-    PortfolioFilterInvestmentFragment,
+    PortfolioFilterOptionsFragment,
   ],
 );
 
@@ -649,9 +620,10 @@ function InvestmentsPageContent() {
   const { data: pageData } = useQuery(InvestmentsPageDocument, {
     variables: initialVars,
   });
-  const portfolioOptions = portfolioFilterOptionsFromInvestments(
-    pageData?.portfolioFilterInvestments?.edges.map((e) => e.node) ?? [],
-  );
+  const portfolioOptions: PortfolioFilterOption[] =
+    pageData?.investmentPortfolios?.map((p) =>
+      readFragment(PortfolioFilterOptionsFragment, p),
+    ) ?? [];
   const selectedLabel =
     filterAssetIds.length === 0
       ? null
