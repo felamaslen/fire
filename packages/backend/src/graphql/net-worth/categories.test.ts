@@ -61,14 +61,13 @@ it("toggling NetWorthCategoryLiability.skip publishes a NetWorthEntry invalidati
     onConnected = r;
   });
   const iter = sse.iterate<{
-    invalidations: { typename: string; id: string | null };
+    invalidations: { rootFields: string[] };
   }>(
     {
       query: gql`
         subscription {
           invalidations {
-            typename
-            id
+            rootFields
           }
         }
       `,
@@ -94,11 +93,41 @@ it("toggling NetWorthCategoryLiability.skip publishes a NetWorthEntry invalidati
       skip: true,
     });
 
-    const next = await iter.next();
-    expect(next.done).toBe(false);
-    expect(next.value?.data).toEqual({
-      invalidations: { typename: "NetWorthEntry", id: null },
-    });
+    // The create publishes its own invalidation first (`netWorthCategories`
+    // connection); the skip-toggle fires two events — one for the
+    // `NetWorthEntry` totals and one for the `NetWorthHistoryPoint`
+    // history-point aggregates, which live on different parent types and
+    // therefore map to different `Query` fields. Consume events until we've
+    // seen both.
+    const expected = new Set(["netWorth", "netWorthHistory"]);
+    const events: { rootFields: string[] }[] = [];
+    while (expected.size > 0) {
+      const next = await iter.next();
+      expect(next.done).toBe(false);
+      const e = next.value?.data?.invalidations;
+      if (!e) continue;
+      const matched = e.rootFields.find((f: any) => expected.has(f));
+      if (matched) {
+        events.push(e);
+        expected.delete(matched);
+      }
+    }
+    expect(events).toMatchInlineSnapshot(`
+      [
+        {
+          "rootFields": [
+            "netWorth",
+            "netWorthEntry",
+          ],
+        },
+        {
+          "rootFields": [
+            "netWorthForecast",
+            "netWorthHistory",
+          ],
+        },
+      ]
+    `);
   } finally {
     await iter.return?.();
     sse.dispose();

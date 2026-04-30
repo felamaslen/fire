@@ -4089,8 +4089,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(NetWorthCategoryInputType)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationNetWorthCategoryCreateResolver(args.input);
+                    resolve(_source, args, context) {
+                        return mutationNetWorthCategoryCreateResolver(args.input, context);
                     }
                 },
                 netWorthCategoryDelete: {
@@ -4102,8 +4102,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(NetWorthCategoryRefType)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationNetWorthCategoryDeleteResolver(args.ref);
+                    resolve(_source, args, context) {
+                        return mutationNetWorthCategoryDeleteResolver(args.ref, context);
                     }
                 },
                 netWorthCategoryUpdate: {
@@ -4128,7 +4128,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(NetWorthEntryType),
                     args: {
                         currencyRates: {
-                            description: "Exchange rates captured for this entry.",
+                            description: "Exchange rates captured for this entry, or null to skip.",
                             type: new GraphQLList(new GraphQLNonNull(NetWorthCurrencyRateInputType))
                         },
                         date: {
@@ -4139,8 +4139,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthValueInputType)))
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationNetWorthCreateResolver(args.date, args.values, args.currencyRates);
+                    resolve(_source, args, context) {
+                        return mutationNetWorthCreateResolver(args.date, args.values, args.currencyRates, context);
                     }
                 },
                 netWorthDelete: {
@@ -4152,8 +4152,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLID)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationNetWorthDeleteResolver(args.id);
+                    resolve(_source, args, context) {
+                        return mutationNetWorthDeleteResolver(args.id, context);
                     }
                 },
                 netWorthUpdate: {
@@ -4472,18 +4472,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const InvalidationType: GraphQLObjectType = new GraphQLObjectType({
         name: "Invalidation",
-        description: "A cache-invalidation event broadcast over the `invalidations` subscription. Tells the client to evict an entity (or every entity of a given type) from its normalised cache so subsequent reads refetch from the server.",
+        description: "A cache-invalidation event broadcast over the `invalidations` subscription. Names the `Query` fields whose result has gone stale; the client evicts those on `ROOT_QUERY` and any active query selecting them refetches in the background.\n\nResolvers call `ctx.invalidate({ typename, id })` server-side; `typename` is the resolver-author handle and is mapped (via the schema-derived dependency map) to the `rootFields` carried on the wire \u2014 so the client never has to know about typenames or maintain its own typename \u2192 field map.",
         fields() {
             return {
-                id: {
-                    description: "Specific entity id to invalidate, or null to invalidate every cached entity of this `typename` (used for creates / deletes / aggregate types where the affected list isn't addressable).",
-                    name: "id",
-                    type: GraphQLID
-                },
-                typename: {
-                    description: "GraphQL type name to invalidate (e.g. `\"NetWorthEntry\"`). The client evicts cache entries keyed by this `__typename`.",
-                    name: "typename",
-                    type: new GraphQLNonNull(GraphQLString)
+                rootFields: {
+                    description: "`Query` field names whose result depends on the invalidated data. The client evicts each on `ROOT_QUERY`; consumers refetch.",
+                    name: "rootFields",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))
                 }
             };
         }

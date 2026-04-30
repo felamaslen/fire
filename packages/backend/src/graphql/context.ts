@@ -4,7 +4,7 @@ import type { FastifyRequest } from "fastify";
 import { type TokenPayload, verifyToken } from "@/auth/token";
 import { kFastifyRequestSpan } from "@/router";
 
-import { type Invalidation, publish } from "./invalidations";
+import { publish } from "./invalidations";
 
 /** Resolved session attached to a request's `Context`. Anonymous requests only see unauth'd fields (those carrying `@noAuth`); every other field throws `UNAUTHENTICATED`. */
 export type Session =
@@ -24,8 +24,8 @@ export class Context {
     public readonly requestSpan?: Span,
   ) {}
 
-  /** Broadcast a cache-invalidation event to every subscriber on this session's `invalidations` channel. Mutation resolvers call this after a successful write so connected clients evict the affected entries from their normalised cache. */
-  invalidate(event: Invalidation): void {
+  /** Broadcast a cache-invalidation event to every subscriber on this session's `invalidations` channel. Mutation resolvers call this after a successful write; the server enriches the event with the `Query` field names whose result depends on `typename` (computed from the schema) before it reaches subscribers. */
+  invalidate(event: { typename: string; id: string | null }): void {
     publish(this.session, event);
   }
 }
