@@ -83,6 +83,8 @@ export type InvestmentStatsFilter = {
   assetIds?: string[];
   currency?: string;
   skipLive?: boolean;
+  /** Optional ISO-`YYYY-MM-DD` cap. When set, only `InvestmentTransactions` with `date <= dateCap` are aggregated, and `priceLatest` is the most recent `InvestmentPrices` row with `date <= dateCap` (live-quote overlay is skipped). Used to value a transferred-out wrapper as of the day before its transfer. */
+  dateCap?: string;
 };
 
 /**
@@ -119,8 +121,25 @@ const getLoader = contextAwareDataLoader(
   () =>
     new DataLoader<InvestmentStatsFilter, InvestmentStats, string>(
       async (keys) => {
-        const sliceCtx = await fetchSlices(keys);
-        return keys.map((k) => aggregateKey(sliceCtx, k));
+        // Group by dateCap so each batch hits one SQL whose `WHERE` /
+        // `latestPrices` shape matches the cap. Without grouping, mixing
+        // capped and uncapped keys would corrupt the per-key aggregates.
+        const byCap = new Map<string, InvestmentStatsFilter[]>();
+        for (const k of keys) {
+          const id = k.dateCap ?? "";
+          const list = byCap.get(id) ?? [];
+          list.push(k);
+          byCap.set(id, list);
+        }
+        const sliceCtxByCap = new Map<string, SliceContext>();
+        await Promise.all(
+          [...byCap.entries()].map(async ([id, group]) => {
+            sliceCtxByCap.set(id, await fetchSlices(group));
+          }),
+        );
+        return keys.map((k) =>
+          aggregateKey(sliceCtxByCap.get(k.dateCap ?? "")!, k),
+        );
       },
       { cacheKeyFn },
     ),
@@ -128,7 +147,7 @@ const getLoader = contextAwareDataLoader(
 
 function cacheKeyFn(k: InvestmentStatsFilter): string {
   const assetIds = k.assetIds ? [...k.assetIds].sort().join(",") : "";
-  return `${k.investmentId ?? ""}|${assetIds}|${k.currency ?? ""}|${k.skipLive ? "1" : "0"}`;
+  return `${k.investmentId ?? ""}|${assetIds}|${k.currency ?? ""}|${k.skipLive ? "1" : "0"}|${k.dateCap ?? ""}`;
 }
 
 type SliceRow = {
@@ -166,6 +185,9 @@ type SliceContext = {
 async function fetchSlices(
   keys: ReadonlyArray<InvestmentStatsFilter>,
 ): Promise<SliceContext> {
+  // Every key in the batch shares the same `dateCap` (see the loader's
+  // grouping), so we read it from the first key.
+  const dateCap = keys[0]?.dateCap;
   // Tighten the SQL's scan to the union of the batch's filters — but only on
   // dimensions *every* key constrains. A single key that drops a dimension
   // (e.g. `{assetId: A}` without `investmentId`) would be answered wrongly
@@ -224,30 +246,58 @@ async function fetchSlices(
           assetIds
             ? inArray(InvestmentTransactions.assetId, assetIds)
             : undefined,
+          dateCap
+            ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
+            : undefined,
         ),
       )
       .groupBy(InvestmentTransactions.id),
   );
 
-  // `latestPrices` — one row per investment (or zero if no history yet), via
-  // the partial unique index on `(investmentId, isLatest)` added in migration
-  // `0024`. Scoped to the batch's investment filter when all keys pin one.
-  const latestPrices = db
-    .select({
-      investmentId: InvestmentPrices.investmentId,
-      priceAdjusted: InvestmentPrices.priceAdjusted,
-      createdAt: InvestmentPrices.createdAt,
-    })
-    .from(InvestmentPrices)
-    .where(
-      and(
-        eq(InvestmentPrices.isLatest, true),
-        investmentIds
-          ? inArray(InvestmentPrices.investmentId, investmentIds)
-          : undefined,
-      ),
-    )
-    .as("latestPrices");
+  // `latestPrices` — one row per investment (or zero if no history yet). When
+  // uncapped, hits the partial unique index on `(investmentId, isLatest)`
+  // (migration `0024`). When `dateCap` is set, picks the price row with the
+  // greatest `date` ≤ `dateCap` per investmentId — used to value a
+  // transferred-out wrapper as of its frozen pre-transfer state.
+  const latestPrices = (
+    dateCap
+      ? db
+          .select({
+            investmentId: InvestmentPrices.investmentId,
+            priceAdjusted: InvestmentPrices.priceAdjusted,
+            createdAt: InvestmentPrices.createdAt,
+          })
+          .from(InvestmentPrices)
+          .where(
+            and(
+              sql`${InvestmentPrices.date} <= ${dateCap}::date`,
+              investmentIds
+                ? inArray(InvestmentPrices.investmentId, investmentIds)
+                : undefined,
+              sql`NOT EXISTS (
+                SELECT 1 FROM ${InvestmentPrices} p2
+                WHERE p2."investmentId" = ${InvestmentPrices.investmentId}
+                  AND p2.date <= ${dateCap}::date
+                  AND p2.date > ${InvestmentPrices.date}
+              )`,
+            ),
+          )
+      : db
+          .select({
+            investmentId: InvestmentPrices.investmentId,
+            priceAdjusted: InvestmentPrices.priceAdjusted,
+            createdAt: InvestmentPrices.createdAt,
+          })
+          .from(InvestmentPrices)
+          .where(
+            and(
+              eq(InvestmentPrices.isLatest, true),
+              investmentIds
+                ? inArray(InvestmentPrices.investmentId, investmentIds)
+                : undefined,
+            ),
+          )
+  ).as("latestPrices");
 
   // Outer aggregation: one row per `(investmentId, assetId)` slice. The
   // `LEFT JOIN` from `Investments` keeps a row even for investments with no
@@ -382,7 +432,9 @@ function aggregateKey(
   ctx: SliceContext,
   key: InvestmentStatsFilter,
 ): InvestmentStats {
-  const skipLive = !!key.skipLive;
+  // `dateCap` always implies the live overlay is skipped — live quotes are
+  // "now", not as-of-cap, so they'd corrupt a frozen pre-transfer valuation.
+  const skipLive = !!key.skipLive || !!key.dateCap;
   const matches = selectSlices(ctx, key);
 
   // Sum the raw-aggregate columns directly across every matching slice.

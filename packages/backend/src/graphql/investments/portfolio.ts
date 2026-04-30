@@ -29,6 +29,7 @@ import {
   loadInvestmentStats,
 } from "./stats";
 import { loadTimeseries } from "./timeseries";
+import { loadInvestmentTransferOutForAsset } from "./transfers";
 
 /** Anchoring period for `Portfolio.timeseries`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
 export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD" | "ALL";
@@ -103,6 +104,8 @@ type Filters = {
 
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
+  private dateCapPromise: Promise<string | null> | null = null;
+
   constructor(
     /** ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers. @gqlField */
     public readonly currency: string,
@@ -111,6 +114,25 @@ export class Portfolio {
     /** When `true`, every live-quote-sensitive field on this instance — `totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*` — falls back to the most recent cached close instead of the live intraday price. One portfolio-wide switch so the client can pin "end-of-last-trading-day" numbers across the whole dashboard without toggling each field. */
     private readonly skipLive: boolean = false,
   ) {}
+
+  /** Resolve the valuation date-cap for this `Portfolio`: when scoped to exactly one wrapper that has an outgoing `InvestmentTransfer`, holdings are valued as of the day before the transfer (so the headline numbers freeze on the pre-transfer state). Returns `null` for every other shape — multi-asset, all-asset, single-asset-without-transfer, single-investment slices. Memoised per-instance. */
+  private async loadDateCap(): Promise<string | null> {
+    this.dateCapPromise ??= (async () => {
+      if (!this.filterAssetIdIn || this.filterAssetIdIn.length !== 1) {
+        return null;
+      }
+      const transfer = await loadInvestmentTransferOutForAsset(
+        this.filterAssetIdIn[0],
+      );
+      if (!transfer) return null;
+      // Cap to the day before the transfer — on the transfer date itself the
+      // wrapper is empty.
+      const d = new Date(transfer.date as unknown as Date);
+      d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10);
+    })();
+    return this.dateCapPromise;
+  }
 
   /** Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities — otherwise Apollo would merge them and the first response's values would be clobbered by the second. @gqlField */
   get id(): ID {
@@ -261,9 +283,11 @@ export class Portfolio {
   private async loadStats(ctx: Context): Promise<InvestmentStats[]> {
     const assets = this.filterAssetIdIn;
     const investments = this.filterInvestmentIdIn;
+    const dateCap = await this.loadDateCap();
     const base = {
       currency: this.currency,
       skipLive: this.skipLive,
+      ...(dateCap ? { dateCap } : {}),
     } satisfies InvestmentStatsFilter;
     const keys: InvestmentStatsFilter[] = [];
     if (assets && investments) {
@@ -288,6 +312,7 @@ export class Portfolio {
   async allocations(ctx: Context): Promise<PortfolioAllocation[]> {
     const investmentIds = await loadInvestmentIdsInScope(this.filters);
     if (investmentIds.length === 0) return [];
+    const dateCap = await this.loadDateCap();
     const perInvestment = await Promise.all(
       investmentIds.map(async (investmentId) => {
         const stats = await loadInvestmentStats(ctx, {
@@ -295,6 +320,7 @@ export class Portfolio {
           assetIds: this.filterAssetIdIn ?? undefined,
           currency: this.currency,
           skipLive: this.skipLive,
+          ...(dateCap ? { dateCap } : {}),
         });
         return { investmentId, value: stats.totalValueMinor ?? 0 };
       }),
