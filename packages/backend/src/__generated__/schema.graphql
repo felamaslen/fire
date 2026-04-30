@@ -522,6 +522,20 @@ type DemoProgress {
 }
 
 """
+A cache-invalidation event broadcast over the `invalidations` subscription. Tells the client to evict an entity (or every entity of a given type) from its normalised cache so subsequent reads refetch from the server.
+"""
+type Invalidation {
+  """
+  Specific entity id to invalidate, or null to invalidate every cached entity of this `typename` (used for creates / deletes / aggregate types where the affected list isn't addressable).
+  """
+  id: ID
+  """
+  GraphQL type name to invalidate (e.g. `"NetWorthEntry"`). The client evicts cache entries keyed by this `__typename`.
+  """
+  typename: String!
+}
+
+"""
 A tradable holding — either a listed stock or a fund. `position` gives the aggregate across every wrapper that holds this investment; per-wrapper numbers live on each `wrappers[].position`.
 """
 type Investment {
@@ -2328,6 +2342,10 @@ type Subscription {
   Live progress stream for a `demoLogin` job. Yields `DemoProgress` events as the seed pipeline runs; the final event has `progress === 1` and carries the signed session token. Terminates with an error if the seed fails.
   """
   demoProgress(jobId: ID!): DemoProgress! @noAuth
+  """
+  Stream of cache-invalidation events for the current session. The client subscribes once at boot; mutation resolvers call `ctx.invalidate(...)` to push events here, which the client handler then translates into Apollo cache evictions. The channel is per-session: real sessions share one channel, each demo session has its own.
+  """
+  invalidations: Invalidation!
   """
   Live stream of portfolio + per-investment price updates. Emits the first tick immediately and a fresh one every 30 s while the client stays connected. Each tick clears the request's stats loader so resolvers recompute against the latest Yahoo quote overlay; clients normalise per-investment fields by id, so the row table updates in place without its own poll.
   """

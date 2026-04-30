@@ -27,6 +27,7 @@ import {
   NetWorthValues,
 } from "@/db/schema/net-worth";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { buildConnection, type Connection } from "../pagination";
 import { PlanningAccount } from "../planning/index";
@@ -645,6 +646,7 @@ export async function netWorthCategoryCreate(
 export async function netWorthCategoryUpdate(
   id: ID,
   patch: NetWorthCategoryPatch,
+  ctx: Context,
 ): Promise<NetWorthCategory> {
   if ("asset" in patch) {
     if (
@@ -719,6 +721,14 @@ export async function netWorthCategoryUpdate(
       row.billedFromAccountId === null || row.type === "CREDIT_CARD",
       "billedFromAccountId is only valid when type is CREDIT_CARD",
     );
+    if (patch.liability.skip != null) {
+      // Toggling `skip` flips this liability in or out of every entry's
+      // `totalLiabilities` / `totalNet` aggregate — those derived fields are
+      // not on the mutation's response shape, so the cache merge can't
+      // refresh them. Invalidate every cached `NetWorthEntry`; active
+      // queries selecting any entry-level total then refetch.
+      ctx.invalidate({ typename: "NetWorthEntry", id: null });
+    }
     return NetWorthCategoryLiability.load(row);
   }
   const [row] = await db
