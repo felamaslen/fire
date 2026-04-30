@@ -91,6 +91,14 @@ const CashContributionsListDocument = graphql(`
                 name
               }
             }
+            ... on AssetValueSnapshot {
+              id
+              date
+              amount {
+                amount
+                currency
+              }
+            }
           }
         }
         pageInfo {
@@ -434,6 +442,28 @@ function ManageDialog({
                             }
                           />
                         </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
+                if (node.__typename === "AssetValueSnapshot") {
+                  const label =
+                    node.amount === null
+                      ? `Defunct since ${node.date}`
+                      : `Recorded as ${formatAccountingMoney(
+                          node.amount.currency,
+                          node.amount.amount,
+                        )} on ${node.date}`;
+                  return (
+                    <TableRow
+                      key={node.id}
+                      className="bg-muted/30 hover:bg-muted/40"
+                    >
+                      <TableCell
+                        colSpan={5}
+                        className="text-center text-xs uppercase tracking-wide text-muted-foreground"
+                      >
+                        — {label} —
                       </TableCell>
                     </TableRow>
                   );

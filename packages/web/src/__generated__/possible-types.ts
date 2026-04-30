@@ -2,6 +2,7 @@
 export const possibleTypes: Record<string, string[]> = {
   "CashContribution": [
     "AssetCashPlanningTransaction",
+    "AssetValueSnapshot",
     "InvestmentDeposit"
   ],
   "InvestmentAsset": [
