@@ -44,6 +44,7 @@ import {
 import { NavHeaderTitle } from "@/components/nav-header";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -272,30 +273,42 @@ function PortfolioFilterDropdown({
   const active = options.filter((o) => !o.isDefunct);
   const defunct = options.filter((o) => o.isDefunct);
 
-  const toggle = (id: string) => {
-    const next = new Set(selected);
+  // Click on the checkbox: toggle that option's inclusion in the current
+  // multi-selection. Click anywhere else on the row: collapse to "only this
+  // one selected".
+  const toggleInclusion = (id: string) => {
+    const next = new Set(allSelected ? options.map((o) => o.id) : selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    // Selecting every option is equivalent to "All" — collapse back to empty
-    // so the URL stays clean.
-    if (next.size === options.length) onChange([]);
+    if (next.size === 0 || next.size === options.length) onChange([]);
     else onChange([...next]);
   };
+  const selectOnly = (id: string) => onChange([id]);
 
   const renderOption = (o: PortfolioFilterOption) => {
-    const isSelected = !allSelected && selected.has(o.id);
+    const isSelected = allSelected || selected.has(o.id);
     return (
-      <button
+      <div
         key={o.id}
-        type="button"
-        onClick={() => toggle(o.id)}
-        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+        role="button"
+        tabIndex={0}
+        onClick={() => selectOnly(o.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            selectOnly(o.id);
+          }
+        }}
+        className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
       >
-        <span className="flex h-4 w-4 items-center justify-center">
-          {isSelected && <Check className="h-3.5 w-3.5" />}
-        </span>
+        <Checkbox
+          checked={isSelected}
+          onClick={(e) => e.stopPropagation()}
+          onCheckedChange={() => toggleInclusion(o.id)}
+          aria-label={`Toggle ${o.name}`}
+        />
         <span className="truncate">{o.name}</span>
-      </button>
+      </div>
     );
   };
 
