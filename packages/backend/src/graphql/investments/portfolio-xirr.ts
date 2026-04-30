@@ -21,6 +21,8 @@ export type PortfolioXirrFilter = {
   investmentIds: readonly string[] | null;
   /** When `true`, the terminal flow uses the most recent cached close instead of the live intraday quote. */
   skipLive: boolean;
+  /** ISO-`YYYY-MM-DD` cap, when set: drop transactions with `date > dateCap`, value the terminal flow as of `dateCap` (not "now"). Used for transferred-out wrappers. */
+  dateCap?: string;
 };
 
 /**
@@ -28,15 +30,21 @@ export type PortfolioXirrFilter = {
  */
 export async function computePortfolioXirr(
   ctx: Context,
-  { currency, assetIds, investmentIds, skipLive }: PortfolioXirrFilter,
+  { currency, assetIds, investmentIds, skipLive, dateCap }: PortfolioXirrFilter,
 ): Promise<number | null> {
   // Fire stats (live terminal value) and tx history in parallel — they're
   // independent. Both go through per-`Context` DataLoaders so concurrent
   // calls (e.g. one per portfolio wrapper from the forecast loader)
   // coalesce into one SQL each rather than fanning out to N round-trips.
-  const txKeys = expandTxKeys({ currency, assetIds, investmentIds });
+  const txKeys = expandTxKeys({ currency, assetIds, investmentIds, dateCap });
   const [todayValueMinor, txGroups] = await Promise.all([
-    loadTodayValueMinor(ctx, { currency, assetIds, investmentIds, skipLive }),
+    loadTodayValueMinor(ctx, {
+      currency,
+      assetIds,
+      investmentIds,
+      skipLive,
+      dateCap,
+    }),
     Promise.all(txKeys.map((k) => getTxLoader(ctx).load(k))),
   ]);
   if (todayValueMinor === null) return null;
@@ -52,7 +60,12 @@ export async function computePortfolioXirr(
     amount: -t.units * t.price,
   }));
   if (todayValueMinor > 0) {
-    flows.push({ date: new Date(), amount: todayValueMinor });
+    // Terminal flow at `dateCap` (frozen pre-transfer) when capped, "now"
+    // otherwise.
+    const terminalDate = dateCap
+      ? new Date(`${dateCap}T00:00:00Z`)
+      : new Date();
+    flows.push({ date: terminalDate, amount: todayValueMinor });
   }
   return solveXirr(flows);
 }
@@ -62,14 +75,13 @@ export async function computePortfolioXirr(
  */
 async function loadTodayValueMinor(
   ctx: Context,
-  {
-    currency,
-    assetIds,
-    investmentIds,
-    skipLive,
-  }: Omit<PortfolioXirrFilter, "skipLive"> & { skipLive: boolean },
+  { currency, assetIds, investmentIds, skipLive, dateCap }: PortfolioXirrFilter,
 ): Promise<number | null> {
-  const base = { currency, skipLive } satisfies InvestmentStatsFilter;
+  const base = {
+    currency,
+    skipLive,
+    ...(dateCap ? { dateCap } : {}),
+  } satisfies InvestmentStatsFilter;
   const keys: InvestmentStatsFilter[] = [];
   if (assetIds && investmentIds) {
     for (const assetId of assetIds) {
@@ -102,6 +114,7 @@ type TxKey = {
   currency: string;
   assetId: string | null;
   investmentId: string | null;
+  dateCap?: string;
 };
 
 /** Tx row fields needed for XIRR. */
@@ -109,26 +122,30 @@ type TxRow = { date: Date; units: number; price: number };
 
 /** Expand a filter into the cartesian product of `(currency, assetId|null, investmentId|null)` keys — one per tx group the caller wants. */
 function expandTxKeys(
-  f: Pick<PortfolioXirrFilter, "currency" | "assetIds" | "investmentIds">,
+  f: Pick<
+    PortfolioXirrFilter,
+    "currency" | "assetIds" | "investmentIds" | "dateCap"
+  >,
 ): TxKey[] {
-  const { currency, assetIds, investmentIds } = f;
+  const { currency, assetIds, investmentIds, dateCap } = f;
+  const cap = dateCap ? { dateCap } : {};
   const out: TxKey[] = [];
   if (assetIds && investmentIds) {
     for (const a of assetIds) {
       for (const i of investmentIds) {
-        out.push({ currency, assetId: a, investmentId: i });
+        out.push({ currency, assetId: a, investmentId: i, ...cap });
       }
     }
   } else if (assetIds) {
     for (const a of assetIds) {
-      out.push({ currency, assetId: a, investmentId: null });
+      out.push({ currency, assetId: a, investmentId: null, ...cap });
     }
   } else if (investmentIds) {
     for (const i of investmentIds) {
-      out.push({ currency, assetId: null, investmentId: i });
+      out.push({ currency, assetId: null, investmentId: i, ...cap });
     }
   } else {
-    out.push({ currency, assetId: null, investmentId: null });
+    out.push({ currency, assetId: null, investmentId: null, ...cap });
   }
   return out;
 }
@@ -144,15 +161,32 @@ const getTxLoader = contextAwareDataLoader(
   () =>
     new DataLoader<TxKey, TxRow[], string>(
       async (keys) => {
-        const rows = await fetchTxRows(keys);
-        return keys.map((k) => filterRowsForKey(rows, k));
+        // Group keys by `dateCap` so each batch issues one SQL whose `WHERE`
+        // shape matches the cap. Mixing capped + uncapped corrupts per-key
+        // results.
+        const byCap = new Map<string, TxKey[]>();
+        for (const k of keys) {
+          const id = k.dateCap ?? "";
+          const list = byCap.get(id) ?? [];
+          list.push(k);
+          byCap.set(id, list);
+        }
+        const rowsByCap = new Map<string, FetchedRow[]>();
+        await Promise.all(
+          [...byCap.entries()].map(async ([id, group]) => {
+            rowsByCap.set(id, await fetchTxRows(group));
+          }),
+        );
+        return keys.map((k) =>
+          filterRowsForKey(rowsByCap.get(k.dateCap ?? "") ?? [], k),
+        );
       },
       { cacheKeyFn: txCacheKey },
     ),
 );
 
 function txCacheKey(k: TxKey): string {
-  return `${k.currency}|${k.assetId ?? ""}|${k.investmentId ?? ""}`;
+  return `${k.currency}|${k.assetId ?? ""}|${k.investmentId ?? ""}|${k.dateCap ?? ""}`;
 }
 
 type FetchedRow = TxRow & {
@@ -162,6 +196,9 @@ type FetchedRow = TxRow & {
 };
 
 async function fetchTxRows(keys: ReadonlyArray<TxKey>): Promise<FetchedRow[]> {
+  // Every key in the batch shares the same `dateCap` (see the loader's
+  // grouping), so we read it from the first key.
+  const dateCap = keys[0]?.dateCap;
   const currencies = [...new Set(keys.map((k) => k.currency))];
   const assetIdSet = keys.every((k) => k.assetId !== null)
     ? [...new Set(keys.map((k) => k.assetId as string))]
@@ -178,6 +215,9 @@ async function fetchTxRows(keys: ReadonlyArray<TxKey>): Promise<FetchedRow[]> {
     conditions.push(
       inArray(InvestmentTransactions.investmentId, investmentIdSet),
     );
+  }
+  if (dateCap) {
+    conditions.push(sql`${InvestmentTransactions.date} <= ${dateCap}::date`);
   }
   return db
     .select({

@@ -177,9 +177,10 @@ export class Portfolio {
     return Money.fromMinorDenomination(invested + cash, this.currency);
   }
 
-  /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. */
+  /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. */
   private async cashMinor(ctx: Context): Promise<number> {
     if (this.filterInvestmentIdIn) return 0;
+    if (await this.loadDateCap()) return 0;
     return loadPortfolioCashMinor(ctx, this.filterAssetIdIn, this.currency);
   }
 
@@ -228,11 +229,13 @@ export class Portfolio {
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
   async xirr(ctx: Context): Promise<Float | null> {
+    const dateCap = await this.loadDateCap();
     return (await computePortfolioXirr(ctx, {
       currency: this.currency,
       assetIds: this.filterAssetIdIn,
       investmentIds: this.filterInvestmentIdIn,
       skipLive: this.skipLive,
+      ...(dateCap ? { dateCap } : {}),
     })) as Float | null;
   }
 
