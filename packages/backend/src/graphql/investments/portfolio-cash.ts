@@ -30,11 +30,12 @@ function cacheKeyFn(key: CashKey): string {
 type CashContributionRow = {
   assetId: string;
   currency: string;
+  kind: "C" | "T";
   amount: number;
 };
 
 /**
- * Run the unioned aggregation that backs the loader. One SQL: three contribution branches (`PlanningTransactions` flipped to the wrapper's perspective, `InvestmentDeposits` straight through, non-DRIP `InvestmentTransactions` as `-round(units × price)`), unioned and grouped per `(assetId, currency)`.
+ * Run the unioned aggregation that backs the loader. One SQL: three branches (`PlanningTransactions` flipped to the wrapper's perspective and `InvestmentDeposits` tagged `C` for contributions, non-DRIP `InvestmentTransactions` as `-round(units × price)` tagged `T` for trades), unioned and grouped per `(assetId, currency, kind)`. The `kind` split lets the loader drop trade rows for any asset that has zero recorded contributions — otherwise a wrapper whose sells exceed its buys would surface phantom cash from the realised gain alone.
  */
 async function fetchContributions(
   assetIds: string[] | null,
@@ -50,6 +51,7 @@ async function fetchContributions(
       assetId: sql<string>`${PlanningTransactions.assetId}`.as("assetId"),
       currency: PlanningTransactions.currency,
       value: sql<number>`(-${PlanningTransactions.amount})::bigint`.as("value"),
+      kind: sql<"C" | "T">`'C'`.as("kind"),
     })
     .from(PlanningTransactions)
     .where(
@@ -64,6 +66,7 @@ async function fetchContributions(
       assetId: InvestmentDeposits.assetId,
       currency: InvestmentDeposits.currency,
       value: sql<number>`${InvestmentDeposits.amount}::bigint`.as("value"),
+      kind: sql<"C" | "T">`'C'`.as("kind"),
     })
     .from(InvestmentDeposits);
 
@@ -75,6 +78,7 @@ async function fetchContributions(
         sql<number>`(-ROUND(${InvestmentTransactions.units} * ${InvestmentTransactions.price}))::bigint`.as(
           "value",
         ),
+      kind: sql<"C" | "T">`'T'`.as("kind"),
     })
     .from(InvestmentTransactions)
     .where(eq(InvestmentTransactions.drip, false));
@@ -87,17 +91,19 @@ async function fetchContributions(
     .select({
       assetId: contributions.assetId,
       currency: contributions.currency,
+      kind: contributions.kind,
       amount: sum(contributions.value).mapWith(Number).as("amount"),
     })
     .from(contributions)
     .where(
       assetIds === null ? undefined : inArray(contributions.assetId, assetIds),
     )
-    .groupBy(contributions.assetId, contributions.currency);
+    .groupBy(contributions.assetId, contributions.currency, contributions.kind);
 
   return rows.map((r) => ({
     assetId: r.assetId,
     currency: r.currency,
+    kind: r.kind,
     amount: r.amount,
   }));
 }
@@ -120,10 +126,24 @@ const cashFloatLoader = contextAwareDataLoader(
 
         const rows = await fetchContributions(requestedIds);
 
+        // An asset is "contribution-tracked" if it has at least one deposit
+        // or non-provisional planning row. For untracked assets we drop the
+        // trade rows entirely — without a contribution log, trades are
+        // internal cash⇄securities movements and can't be the sole source
+        // of a wrapper's available cash. Otherwise a fully-sold wrapper with
+        // realised gains would surface that gain as phantom "available to
+        // invest", even though the user never logged the matching deposit
+        // (and may have withdrawn the proceeds).
+        const trackedAssets = new Set<string>();
+        for (const r of rows) {
+          if (r.kind === "C") trackedAssets.add(r.assetId);
+        }
+
         // Index per (assetId → per-currency sum) so each key's aggregation is
         // a simple lookup over its own asset set.
         const byAsset = new Map<string, Map<string, number>>();
         for (const r of rows) {
+          if (r.kind === "T" && !trackedAssets.has(r.assetId)) continue;
           let m = byAsset.get(r.assetId);
           if (!m) {
             m = new Map();

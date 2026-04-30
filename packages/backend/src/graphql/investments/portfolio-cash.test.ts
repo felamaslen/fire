@@ -307,6 +307,19 @@ describe("Portfolio.cash", () => {
     expect(p.cash.amount).toBe(0);
   });
 
+  it("zeroes a wrapper's cash float when sells exceed buys but no contributions are logged", async () => {
+    const isa = await createStockAsset("ISA");
+    const aapl = await createStock("Apple", "AAPL");
+    // No deposits / planning contributions. Without a contribution log,
+    // trades are internal cash⇄securities movements — the realised gain
+    // from selling for more than was paid mustn't surface as available
+    // cash, since we don't know whether the proceeds were withdrawn.
+    await buy(aapl, isa, 10, 5); // bought £50
+    await buy(aapl, isa, -10, 8); // sold £80 — net +£30
+    const p = await queryPortfolio([isa]);
+    expect(p.cash.amount).toBe(0);
+  });
+
   it("ignores DRIP transactions in the cash float", async () => {
     const isa = await createStockAsset("ISA");
     const aapl = await createStock("Apple", "AAPL");
