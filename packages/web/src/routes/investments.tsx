@@ -171,6 +171,14 @@ const PortfolioFilterOptionsFragment = graphql(`
         name
       }
     }
+    transfersIn {
+      id
+      date
+      assetFrom {
+        id
+        name
+      }
+    }
   }
 `);
 
@@ -657,6 +665,7 @@ function InvestmentsPageContent() {
         ? singleSelected.name
         : "Selected portfolios";
   const transferredOut = singleSelected?.transferOut ?? null;
+  const transfersIn = singleSelected?.transfersIn ?? [];
 
   return (
     <>
@@ -684,6 +693,7 @@ function InvestmentsPageContent() {
         settings={chart}
         onChange={setChart}
         transferOut={transferredOut}
+        transfersIn={transfersIn}
         bottomSlot={
           <AllocationsSection
             filterAssetIds={filterAssetIds}
