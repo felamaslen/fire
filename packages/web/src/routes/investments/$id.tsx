@@ -212,7 +212,7 @@ const InvestmentTransactionCreateDocument = graphql(`
     $investmentId: ID!
     $assetId: ID!
     $date: Date!
-    $units: Int!
+    $units: Float!
     $price: MoneyInput!
     $taxes: MoneyInput
     $fees: MoneyInput
@@ -238,7 +238,7 @@ const InvestmentTransactionUpdateDocument = graphql(`
     $id: ID!
     $assetId: ID
     $date: Date
-    $units: Int
+    $units: Float
     $price: MoneyInput
     $taxes: MoneyInput
     $fees: MoneyInput
@@ -633,8 +633,11 @@ function TransactionsSection({
                 onClick={() => onEdit(t)}
                 className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
               >
-                <span className="min-w-0 truncate text-sm tabular-nums">
-                  {t.date}
+                <span className="flex min-w-0 items-baseline gap-2 text-sm">
+                  <span className="tabular-nums">{t.date}</span>
+                  <span className="truncate text-muted-foreground">
+                    {t.asset.name}
+                  </span>
                 </span>
                 <span className="shrink-0 text-sm tabular-nums">
                   <span className="hidden text-muted-foreground sm:inline">
@@ -734,7 +737,7 @@ function TransactionForm({
               id: existing.id,
               assetId: value.assetId,
               date: value.date,
-              units: Math.trunc(value.units),
+              units: value.units,
               price: { amount: Number(value.priceAmount), currency },
               taxes: { amount: Number(value.taxesAmount), currency },
               fees: { amount: Number(value.feesAmount), currency },
@@ -748,7 +751,7 @@ function TransactionForm({
               investmentId,
               assetId: value.assetId,
               date: value.date,
-              units: Math.trunc(value.units),
+              units: value.units,
               price: { amount: Number(value.priceAmount), currency },
               taxes: { amount: Number(value.taxesAmount), currency },
               fees: { amount: Number(value.feesAmount), currency },
@@ -841,7 +844,7 @@ function TransactionForm({
             <Label>Units (sell = negative)</Label>
             <Input
               type="number"
-              step="1"
+              step="any"
               value={field.state.value}
               onChange={(e) => field.handleChange(Number(e.target.value))}
             />

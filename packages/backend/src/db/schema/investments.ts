@@ -70,8 +70,8 @@ export const InvestmentTransactions = pgTable(
     assetId: uuid("assetId")
       .notNull()
       .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
-    /** Signed integer number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are not supported. */
-    units: bigint("units", { mode: "number" }).notNull(),
+    /** Signed number of units traded. Positive = buy / DRIP, negative = sell. Floating-point — fractional units are supported (broker DRIP / fractional-share platforms commonly book non-integer counts). */
+    units: doublePrecision("units").notNull(),
     /** Unit price at execution, in fractional units of `currency` (e.g. pence for GBP). Floating-point — sub-penny tick sizes are expected. */
     price: doublePrecision("price").notNull(),
     /** Taxes paid, in fractional units of `currency`. Non-negative. */
@@ -110,6 +110,94 @@ export const investmentTransactionsRelations = relations(
     asset: one(NetWorthCategoryAssets, {
       fields: [InvestmentTransactions.assetId],
       references: [NetWorthCategoryAssets.id],
+    }),
+  }),
+);
+
+/** A cash inflow into a wrapper that does not originate from a planning cash account — e.g. dividend income paid into the wrapper, pension tax relief credited by HMRC, broker bonus. Combined with signed `PlanningTransactions` (cash → wrapper) and non-DRIP `InvestmentTransactions` (units bought / sold) to derive the wrapper's uninvested cash float. */
+export const InvestmentDeposits = pgTable(
+  "InvestmentDeposits",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    /** Wrapper this deposit lands in. Must reference a `STOCK` or `PENSION` asset — enforced in the resolver. */
+    assetId: uuid("assetId")
+      .notNull()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
+    date: date("date", { mode: "date" }).notNull(),
+    /** Signed amount in fractional units of `currency`. Positive = cash credited to the wrapper (the common case — dividend, tax relief). Negative = cash debited from the wrapper without a corresponding `InvestmentTransactions` row. */
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    currency: currencyCode("currency").notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("InvestmentDeposits_assetId_idx").on(t.assetId),
+    index("InvestmentDeposits_date").on(t.date),
+  ],
+);
+
+export const investmentDepositsRelations = relations(
+  InvestmentDeposits,
+  ({ one }) => ({
+    asset: one(NetWorthCategoryAssets, {
+      fields: [InvestmentDeposits.assetId],
+      references: [NetWorthCategoryAssets.id],
+    }),
+  }),
+);
+
+/** Records that all stock holdings (and uninvested cash) of `assetIdFrom` migrated into `assetIdTo` on `date`. At most one transfer out per asset (enforced by the unique index on `assetIdFrom`). Both assets must be `STOCK` or `PENSION` and share the same currency — enforced in the resolver. */
+export const InvestmentTransfers = pgTable(
+  "InvestmentTransfers",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    /** Wrapper the holdings move out of. Unique — an asset can only be transferred out once. */
+    assetIdFrom: uuid("assetIdFrom")
+      .notNull()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
+    /** Wrapper the holdings move into. */
+    assetIdTo: uuid("assetIdTo")
+      .notNull()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "restrict" }),
+    date: date("date", { mode: "date" }).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      "InvestmentTransfers_assetIdFrom_assetIdTo_ck",
+      sql`${t.assetIdFrom} <> ${t.assetIdTo}`,
+    ),
+    uniqueIndex("InvestmentTransfers_assetIdFrom_uq").on(t.assetIdFrom),
+    index("InvestmentTransfers_assetIdTo_idx").on(t.assetIdTo),
+  ],
+);
+
+export const investmentTransfersRelations = relations(
+  InvestmentTransfers,
+  ({ one }) => ({
+    assetFrom: one(NetWorthCategoryAssets, {
+      fields: [InvestmentTransfers.assetIdFrom],
+      references: [NetWorthCategoryAssets.id],
+      relationName: "investmentTransfersFrom",
+    }),
+    assetTo: one(NetWorthCategoryAssets, {
+      fields: [InvestmentTransfers.assetIdTo],
+      references: [NetWorthCategoryAssets.id],
+      relationName: "investmentTransfersTo",
     }),
   }),
 );

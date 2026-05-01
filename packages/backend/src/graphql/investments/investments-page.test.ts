@@ -60,7 +60,7 @@ async function tx(
       $investmentId: ID!
       $assetId: ID!
       $date: Date!
-      $units: Int!
+      $units: Float!
       $priceAmount: Float!
     ) {
       investmentTransactionCreate(
@@ -99,6 +99,83 @@ async function setPrices(
   for (const [date, price] of series) {
     await setPrice(investmentId, date, price);
   }
+}
+
+async function createCashAsset(name: string): Promise<string> {
+  const data = await runGql(
+    graphql(`
+      mutation ($name: String!) {
+        netWorthCategoryCreate(input: { asset: { name: $name, type: CASH } }) {
+          id
+        }
+      }
+    `),
+    { name },
+  );
+  return data.netWorthCategoryCreate.id;
+}
+
+async function assignPlanningAccount(assetId: string): Promise<void> {
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        planningAccountAssign(assetId: $id, alias: null) {
+          id
+        }
+      }
+    `),
+    { id: assetId },
+  );
+}
+
+async function seedYear(year: string): Promise<void> {
+  await runGql(
+    graphql(`
+      mutation ($y: ID!) {
+        planningYearSet(year: $y) {
+          id
+        }
+      }
+    `),
+    { y: year },
+  );
+}
+
+async function depositToWrapper(
+  monthId: string,
+  cashAccountId: string,
+  wrapperId: string,
+  cashAmount: number,
+  name: string,
+): Promise<void> {
+  await runGql(
+    graphql(`
+      mutation (
+        $monthId: ID!
+        $cashAccountId: ID!
+        $wrapperId: ID!
+        $amount: MoneyInput!
+        $name: String!
+      ) {
+        transactionCreate(
+          monthId: $monthId
+          accountId: $cashAccountId
+          assetId: $wrapperId
+          amount: $amount
+          name: $name
+        ) {
+          id
+        }
+      }
+    `),
+    {
+      monthId,
+      cashAccountId,
+      wrapperId,
+      amount: { amount: cashAmount, currency: "GBP" },
+      name,
+    },
+  );
 }
 
 async function setSplit(
@@ -157,6 +234,15 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
   // BRK — GIA only, fully sold.
   await tx(brk, gia, "2025-07-01", 3, 400);
   await tx(brk, gia, "2025-12-15", -3, 600);
+
+  // Planning cash deposit into the ISA wrapper: -£200 from the cash account
+  // (negative is the cash-account POV) = +£200 of uninvested cash float
+  // sitting in the ISA. Lifts the ISA's `totalValue` (+ rolls into the
+  // aggregate) but leaves `totalGain` untouched, since cash isn't a gain.
+  const current = await createCashAsset("Current");
+  await assignPlanningAccount(current);
+  await seedYear("2026");
+  await depositToWrapper("apr-2026", current, isa, -200, "April ISA contrib");
 
   // Daily prices leading up to `TEST_NOW` (2026-04-18) for each held
   // investment. `InvestmentPrices.price` is in the currency's minor

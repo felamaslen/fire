@@ -21,6 +21,7 @@ import {
 } from "../pagination";
 import { loadCandlestick } from "./candlestick";
 import { Investment } from "./index";
+import { loadPortfolioCashMinor } from "./portfolio-cash";
 import { computePortfolioXirr } from "./portfolio-xirr";
 import {
   type InvestmentStats,
@@ -28,6 +29,10 @@ import {
   loadInvestmentStats,
 } from "./stats";
 import { loadTimeseries } from "./timeseries";
+import {
+  loadInvestmentTransferInScopesForAsset,
+  loadInvestmentTransferOutScopeForAsset,
+} from "./transfers";
 
 /** Anchoring period for `Portfolio.timeseries`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
 export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD" | "ALL";
@@ -98,10 +103,88 @@ type Filters = {
   filterAssetIdIn: string[] | null;
   filterInvestmentIdIn: string[] | null;
   currency: string;
+  /** Additional asset ids to include via inbound transfers (sources of `transfersIn` on the destination). When the destination is the only filter, an investment that's only held in a source still counts as in-scope. */
+  extraAssetIds?: readonly string[];
 };
+
+/** Resolved transfer-aware view of `Portfolio.filterAssetIdIn`:
+ *
+ * - `effectiveAssetIds`: the user's filter with any asset whose outgoing transfer destination is also in the filter dropped (e.g. `[src, dest]` collapses to `[dest]` so the source's pre-transfer history flows through `dest`'s extras instead of contributing its own series and double-counting).
+ * - `extrasByAsset`: for each surviving asset, every inbound transfer's source folded in (capped at the day before the transfer). Sources may include the dropped assets — that's the whole point of dropping them.
+ * - `dateCap`: only set when `effectiveAssetIds` resolves to a single transferred-out wrapper whose destination is *not* in the user's filter (the standalone defunct-portfolio view); the wrapper is valued as of the day before the transfer.
+ */
+type EffectiveFilter = {
+  effectiveAssetIds: string[] | null;
+  extrasByAsset: Map<
+    string,
+    ReadonlyArray<{ assetId: string; dateCap: string }>
+  >;
+  dateCap: string | null;
+};
+
+/** Per-asset cap for wrappers that have been wound down — every `(investmentId)` position now nets to zero. The cap lands one day before the *first sell of the closing sell-down sequence* (i.e. the earliest sell that comes after the last buy in the wrapper), not just one day before the final closing tx. That way the last chart bucket shows the wrapper at its pre-wind-down value rather than partway through the closing sells. Wrappers with at least one open position aren't returned. */
+export async function loadAssetSoldOutCaps(
+  assetIds: readonly string[],
+  currency: string,
+): Promise<Map<string, string>> {
+  if (assetIds.length === 0) return new Map();
+  const rows = await db.execute<{ assetId: string; capDate: string }>(sql`
+    WITH tx_adj AS (
+      SELECT
+        "InvestmentTransactions"."assetId",
+        "InvestmentTransactions"."investmentId",
+        "InvestmentTransactions".date,
+        "InvestmentTransactions".units AS units_raw,
+        "InvestmentTransactions".units * COALESCE(EXP((
+          SELECT SUM(LN(s.ratio))
+          FROM "InvestmentStockSplits" s
+          WHERE s."investmentId" = "InvestmentTransactions"."investmentId"
+            AND s.date > "InvestmentTransactions".date
+        )), 1) AS adj_units
+      FROM "InvestmentTransactions"
+      WHERE ${inArray(InvestmentTransactions.assetId, [...assetIds])}
+        AND "InvestmentTransactions".currency = ${currency}
+    ),
+    per_pos AS (
+      SELECT "assetId", "investmentId", SUM(adj_units) AS net
+      FROM tx_adj
+      GROUP BY "assetId", "investmentId"
+    ),
+    sold_out AS (
+      SELECT "assetId"
+      FROM per_pos
+      GROUP BY "assetId"
+      HAVING BOOL_AND(ABS(net) < 1e-9)
+    ),
+    last_buy AS (
+      SELECT "assetId", MAX(date) AS d
+      FROM tx_adj
+      WHERE units_raw > 0
+      GROUP BY "assetId"
+    )
+    SELECT
+      s."assetId" AS "assetId",
+      ((
+        SELECT MIN(t.date)
+        FROM tx_adj t
+        WHERE t."assetId" = s."assetId"
+          AND t.units_raw < 0
+          AND (lb.d IS NULL OR t.date > lb.d)
+      ) - INTERVAL '1 day')::date::text AS "capDate"
+    FROM sold_out s
+    LEFT JOIN last_buy lb ON lb."assetId" = s."assetId"
+  `);
+  const out = new Map<string, string>();
+  for (const r of rows.rows ?? rows) {
+    if (r.capDate) out.set(r.assetId, r.capDate);
+  }
+  return out;
+}
 
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
+  private effectiveFilterPromise: Promise<EffectiveFilter> | null = null;
+
   constructor(
     /** ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers. @gqlField */
     public readonly currency: string,
@@ -110,6 +193,98 @@ export class Portfolio {
     /** When `true`, every live-quote-sensitive field on this instance — `totalValue`, `totalGain`, `percentGain`, `xirr`, `dailyGain*` — falls back to the most recent cached close instead of the live intraday price. One portfolio-wide switch so the client can pin "end-of-last-trading-day" numbers across the whole dashboard without toggling each field. */
     private readonly skipLive: boolean = false,
   ) {}
+
+  /** Resolve the transfer-aware filter for this `Portfolio` (see `EffectiveFilter`). Memoised per-instance. */
+  private async loadEffectiveFilter(): Promise<EffectiveFilter> {
+    this.effectiveFilterPromise ??= (async () => {
+      const filter = this.filterAssetIdIn;
+      if (!filter || filter.length === 0) {
+        return {
+          effectiveAssetIds: null,
+          extrasByAsset: new Map(),
+          dateCap: null,
+        };
+      }
+      const filterSet = new Set(filter);
+      const outgoing = await Promise.all(
+        filter.map((id) => loadInvestmentTransferOutScopeForAsset(id)),
+      );
+      // Drop any asset whose outgoing-transfer destination is also in the
+      // filter — its pre-transfer history will flow through the destination's
+      // extras, so keeping it would double-count.
+      const effective: string[] = [];
+      for (let i = 0; i < filter.length; i++) {
+        const t = outgoing[i];
+        if (t && filterSet.has(t.assetIdTo)) continue;
+        effective.push(filter[i]);
+      }
+      const dayBefore = (date: Date | string): string => {
+        const d = new Date(date as unknown as Date);
+        d.setUTCDate(d.getUTCDate() - 1);
+        return d.toISOString().slice(0, 10);
+      };
+      const extrasByAsset = new Map<
+        string,
+        ReadonlyArray<{ assetId: string; dateCap: string }>
+      >();
+      await Promise.all(
+        effective.map(async (assetId) => {
+          const incoming =
+            await loadInvestmentTransferInScopesForAsset(assetId);
+          if (incoming.length === 0) return;
+          extrasByAsset.set(
+            assetId,
+            incoming.map((t) => ({
+              assetId: t.assetIdFrom,
+              dateCap: dayBefore(t.date),
+            })),
+          );
+        }),
+      );
+      // Per-asset "defunct cap": either an outgoing transfer (cap =
+      // transferDate − 1, by construction the destination isn't in the
+      // filter) or an entirely sold-out wrapper (every position netted to
+      // zero). When *every* effective asset has a cap, freeze the chart at
+      // the latest such date so it ends on the last day with non-zero
+      // holdings instead of dragging zero candles to today.
+      const soldOutCaps = await loadAssetSoldOutCaps(effective, this.currency);
+      const perAssetCap = (assetId: string): string | null => {
+        const t = outgoing[filter.indexOf(assetId)];
+        if (t) return dayBefore(t.date);
+        return soldOutCaps.get(assetId) ?? null;
+      };
+      let dateCap: string | null = null;
+      if (effective.length >= 1) {
+        const caps = effective.flatMap((id) => {
+          const c = perAssetCap(id);
+          return c ? [c] : [];
+        });
+        if (caps.length === effective.length) {
+          dateCap = caps.reduce((acc, d) => (d > acc ? d : acc));
+        }
+      }
+      return { effectiveAssetIds: effective, extrasByAsset, dateCap };
+    })();
+    return this.effectiveFilterPromise;
+  }
+
+  /** Backwards-compat wrapper: union of all per-asset extras under `loadEffectiveFilter`. Used by single-stats-call resolvers (cash, allocations, scope-resolution helpers) that take one `extraScopes` shape. Per-asset resolvers should consume `extrasByAsset` directly. */
+  private async loadExtraScopesUnion(): Promise<
+    ReadonlyArray<{ assetId: string; dateCap: string }>
+  > {
+    const { extrasByAsset } = await this.loadEffectiveFilter();
+    const seen = new Set<string>();
+    const out: { assetId: string; dateCap: string }[] = [];
+    for (const list of extrasByAsset.values()) {
+      for (const e of list) {
+        const key = `${e.assetId}@${e.dateCap}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(e);
+      }
+    }
+    return out;
+  }
 
   /** Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities — otherwise Apollo would merge them and the first response's values would be clobbered by the second. @gqlField */
   get id(): ID {
@@ -122,11 +297,18 @@ export class Portfolio {
     return `portfolio:${this.currency}:${assets}:${investments}:${this.skipLive ? "cached" : "live"}` as ID;
   }
 
-  private get filters(): Filters {
+  private async filtersWithExtras(): Promise<Filters> {
+    const { effectiveAssetIds, extrasByAsset } =
+      await this.loadEffectiveFilter();
+    const extraAssetIds = new Set<string>();
+    for (const list of extrasByAsset.values()) {
+      for (const e of list) extraAssetIds.add(e.assetId);
+    }
     return {
-      filterAssetIdIn: this.filterAssetIdIn,
+      filterAssetIdIn: effectiveAssetIds,
       filterInvestmentIdIn: this.filterInvestmentIdIn,
       currency: this.currency,
+      extraAssetIds: [...extraAssetIds],
     };
   }
 
@@ -145,8 +327,27 @@ export class Portfolio {
     return Investment.load(row);
   }
 
-  /** Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline. @gqlField */
+  /** Current market value of the held positions in the filtered portfolio — `Σ unitsHeld_in_filter × priceLatest_investment`. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) — a holdings + cash combined number conflates investment performance with deposit timing. @gqlField */
   async totalValue(ctx: Context): Promise<Money | null> {
+    const invested = await this.totalInvestedMinor(ctx);
+    return Money.fromMinorDenomination(invested, this.currency);
+  }
+
+  /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. A transferred-into wrapper folds in each source's pre-transfer cash flows. */
+  private async cashMinor(ctx: Context): Promise<number> {
+    if (this.filterInvestmentIdIn) return 0;
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    if (dateCap) return 0;
+    const extraScopes = await this.loadExtraScopesUnion();
+    return loadPortfolioCashMinor(
+      ctx,
+      effectiveAssetIds,
+      this.currency,
+      extraScopes,
+    );
+  }
+
+  private async totalInvestedMinor(ctx: Context): Promise<number> {
     const slices = await this.loadStats(ctx);
     let total = 0;
     for (const s of slices) {
@@ -155,7 +356,13 @@ export class Portfolio {
       // as a zero contribution rather than nulling the whole aggregate.
       if (s.totalValueMinor !== null) total += s.totalValueMinor;
     }
-    return Money.fromMinorDenomination(total, this.currency);
+    return total;
+  }
+
+  /** Uninvested cash held in the wrapper(s) — the per-wrapper cash float aggregated across the portfolio's `filterAssetIdIn` (or every `STOCK` / `PENSION` wrapper when no asset filter is set), restricted to entries denominated in `currency`. Always zero when the portfolio is scoped to specific investments (cash isn't attributable to an investment). Positive values represent cash available to invest; negative values mean recorded buys exceed recorded inflows. @gqlField */
+  async cash(ctx: Context): Promise<Money> {
+    const minor = await this.cashMinor(ctx);
+    return Money.fromMinorDenomination(minor, this.currency);
   }
 
   /** Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes. @gqlField */
@@ -166,34 +373,34 @@ export class Portfolio {
     return Money.fromMinorDenomination(total, this.currency);
   }
 
-  /** Total return (realised + unrealised) on the filtered portfolio — `totalValue - totalCost`. @gqlField */
+  /** Total return (realised + unrealised) on the held positions — `totalValue − totalCost`. `totalValue` already excludes cash, so freshly-deposited funds don't read as a gain. @gqlField */
   async totalGain(ctx: Context): Promise<Money | null> {
-    const value = await this.totalValue(ctx);
-    if (value === null) return null;
+    const invested = await this.totalInvestedMinor(ctx);
     const cost = await this.totalCost(ctx);
-    const diffMajor = value.amount - cost.amount;
-    return Money.fromMinorDenomination(
-      Math.round(diffMajor * 10 ** this.scale),
-      this.currency,
-    );
+    const costMinor = Math.round(cost.amount * 10 ** this.scale);
+    return Money.fromMinorDenomination(invested - costMinor, this.currency);
   }
 
-  /** Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero. @gqlField */
+  /** Total return as a fraction of `totalCost`, computed from invested value only (cash float excluded). For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` when `totalCost` is zero. @gqlField */
   async percentGain(ctx: Context): Promise<Float | null> {
-    const value = await this.totalValue(ctx);
-    if (value === null) return null;
+    const invested = await this.totalInvestedMinor(ctx);
     const cost = await this.totalCost(ctx);
-    if (cost.amount === 0) return null;
-    return ((value.amount - cost.amount) / cost.amount) as Float;
+    const costMinor = Math.round(cost.amount * 10 ** this.scale);
+    if (costMinor === 0) return null;
+    return ((invested - costMinor) / costMinor) as Float;
   }
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
   async xirr(ctx: Context): Promise<Float | null> {
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    const extraScopes = await this.loadExtraScopesUnion();
     return (await computePortfolioXirr(ctx, {
       currency: this.currency,
-      assetIds: this.filterAssetIdIn,
+      assetIds: effectiveAssetIds,
       investmentIds: this.filterInvestmentIdIn,
       skipLive: this.skipLive,
+      ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     })) as Float | null;
   }
 
@@ -242,42 +449,58 @@ export class Portfolio {
    * request touches.
    */
   private async loadStats(ctx: Context): Promise<InvestmentStats[]> {
-    const assets = this.filterAssetIdIn;
+    const { effectiveAssetIds, extrasByAsset, dateCap } =
+      await this.loadEffectiveFilter();
     const investments = this.filterInvestmentIdIn;
-    const base = {
+    const baseCommon = {
       currency: this.currency,
       skipLive: this.skipLive,
     } satisfies InvestmentStatsFilter;
+    const perAsset = (assetId: string): InvestmentStatsFilter => {
+      const extras = extrasByAsset.get(assetId);
+      return {
+        ...baseCommon,
+        assetIds: [assetId],
+        ...(dateCap ? { dateCap } : {}),
+        ...(extras && extras.length > 0 ? { extraScopes: extras } : {}),
+      };
+    };
     const keys: InvestmentStatsFilter[] = [];
-    if (assets && investments) {
-      for (const assetId of assets) {
+    if (effectiveAssetIds && investments) {
+      for (const assetId of effectiveAssetIds) {
         for (const investmentId of investments) {
-          keys.push({ ...base, assetIds: [assetId], investmentId });
+          keys.push({ ...perAsset(assetId), investmentId });
         }
       }
-    } else if (assets) {
-      for (const assetId of assets) keys.push({ ...base, assetIds: [assetId] });
+    } else if (effectiveAssetIds) {
+      for (const assetId of effectiveAssetIds) keys.push(perAsset(assetId));
     } else if (investments) {
       for (const investmentId of investments) {
-        keys.push({ ...base, investmentId });
+        keys.push({ ...baseCommon, investmentId });
       }
     } else {
-      keys.push(base);
+      keys.push(baseCommon);
     }
     return Promise.all(keys.map((k) => loadInvestmentStats(ctx, k)));
   }
 
   /** Per-investment breakdown of the filtered portfolio's current market value, expressed as fractions in `[0, 1]` that sum to `1`. Each entry pairs an investment with its share. Investments that contribute zero value (no holdings, fully sold, or missing a price) are excluded; the remaining fractions are renormalised over those that do contribute. Returns an empty array when the portfolio has no positive value. @gqlField */
   async allocations(ctx: Context): Promise<PortfolioAllocation[]> {
-    const investmentIds = await loadInvestmentIdsInScope(this.filters);
+    const investmentIds = await loadInvestmentIdsInScope(
+      await this.filtersWithExtras(),
+    );
     if (investmentIds.length === 0) return [];
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    const extraScopes = await this.loadExtraScopesUnion();
     const perInvestment = await Promise.all(
       investmentIds.map(async (investmentId) => {
         const stats = await loadInvestmentStats(ctx, {
           investmentId,
-          assetIds: this.filterAssetIdIn ?? undefined,
+          assetIds: effectiveAssetIds ?? undefined,
           currency: this.currency,
           skipLive: this.skipLive,
+          ...(dateCap ? { dateCap } : {}),
+          ...(extraScopes.length > 0 ? { extraScopes } : {}),
         });
         return { investmentId, value: stats.totalValueMinor ?? 0 };
       }),
@@ -300,10 +523,20 @@ export class Portfolio {
     length?: Int | null,
   ): Promise<PortfolioTimeseries | null> {
     const loader = loadTimeseries(ctx);
-    const options = {
+    const { effectiveAssetIds, extrasByAsset, dateCap } =
+      await this.loadEffectiveFilter();
+    const baseOptions = {
       period,
       length: length ?? 1,
       skipLive: this.skipLive,
+      ...(dateCap ? { dateCap } : {}),
+    };
+    const optionsForAsset = (assetId: string) => {
+      const extras = extrasByAsset.get(assetId);
+      return {
+        ...baseOptions,
+        ...(extras && extras.length > 0 ? { extraScopes: extras } : {}),
+      };
     };
     const combineSeries = (all: (PortfolioTimeseries | null | Error)[]) => {
       const series = all.filter(isNonNullish);
@@ -320,13 +553,13 @@ export class Portfolio {
         })),
       };
     };
-    if (this.filterAssetIdIn) {
+    if (effectiveAssetIds) {
       if (this.filterInvestmentIdIn) {
         return combineSeries(
           await loader.loadMany(
             this.filterInvestmentIdIn.flatMap((investmentId) =>
-              this.filterAssetIdIn!.map((assetId) => ({
-                ...options,
+              effectiveAssetIds.map((assetId) => ({
+                ...optionsForAsset(assetId),
                 investmentId,
                 assetId,
               })),
@@ -336,8 +569,8 @@ export class Portfolio {
       }
       return combineSeries(
         await loader.loadMany(
-          this.filterAssetIdIn!.map((assetId) => ({
-            ...options,
+          effectiveAssetIds.map((assetId) => ({
+            ...optionsForAsset(assetId),
             assetId,
           })),
         ),
@@ -346,14 +579,14 @@ export class Portfolio {
     if (this.filterInvestmentIdIn) {
       return combineSeries(
         await loader.loadMany(
-          this.filterInvestmentIdIn!.map((investmentId) => ({
-            ...options,
+          this.filterInvestmentIdIn.map((investmentId) => ({
+            ...baseOptions,
             investmentId,
           })),
         ),
       );
     }
-    return loader.load(options);
+    return loader.load(baseOptions);
   }
 
   /** Candlestick buckets of portfolio total over the requested period. @gqlField */
@@ -372,12 +605,16 @@ export class Portfolio {
       !this.filterInvestmentIdIn,
       "Portfolio.candlestick does not support filtering by investment ID",
     );
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    const extraScopes = await this.loadExtraScopesUnion();
     return loadCandlestick(ctx).load({
       unit,
       length,
       max,
-      assetIds: this.filterAssetIdIn ?? undefined,
+      assetIds: effectiveAssetIds ?? undefined,
       skipLive: this.skipLive,
+      ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
   }
 }
@@ -397,6 +634,10 @@ async function loadInvestmentIdsInScope(filters: Filters): Promise<string[]> {
     conditions.push(inArray(Investments.id, filters.filterInvestmentIdIn));
   }
   if (filters.filterAssetIdIn && filters.filterAssetIdIn.length > 0) {
+    const eligibleAssetIds = [
+      ...filters.filterAssetIdIn,
+      ...(filters.extraAssetIds ?? []),
+    ];
     conditions.push(
       exists(
         db
@@ -405,7 +646,7 @@ async function loadInvestmentIdsInScope(filters: Filters): Promise<string[]> {
           .where(
             and(
               eq(InvestmentTransactions.investmentId, Investments.id),
-              inArray(InvestmentTransactions.assetId, filters.filterAssetIdIn),
+              inArray(InvestmentTransactions.assetId, eligibleAssetIds),
             ),
           ),
       ),

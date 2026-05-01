@@ -28,6 +28,7 @@ import {
 } from "@/db/schema/planning";
 
 import type { Context } from "../graphql/context";
+import { effectiveAssetFilter } from "../graphql/investments/effective-filter";
 import { computePortfolioXirr } from "../graphql/investments/portfolio-xirr";
 import {
   buildRateToHome,
@@ -135,11 +136,20 @@ export async function loadForecastInputs(
   const xirrByAsset = new Map<string, number | null>();
   await Promise.all(
     portfolioCategoryIds.map(async (assetId) => {
+      // Match `Portfolio.xirr` exactly: resolve the same effective filter
+      // (transferred-out → `dateCap`; transferred-into → `extraScopes`
+      // folding the source's pre-transfer flows) so a transferred-into
+      // wrapper's forecast IRR includes its inherited history rather than
+      // starting from the transfer date.
+      const { effectiveAssetIds, extraScopes, dateCap } =
+        await effectiveAssetFilter(ctx, [assetId]);
       const xirr = await computePortfolioXirr(ctx, {
         currency: HOME_CURRENCY,
-        assetIds: [assetId],
+        assetIds: effectiveAssetIds,
         investmentIds: null,
         skipLive: true,
+        ...(dateCap ? { dateCap } : {}),
+        ...(extraScopes.length > 0 ? { extraScopes } : {}),
       });
       xirrByAsset.set(assetId, xirr);
     }),

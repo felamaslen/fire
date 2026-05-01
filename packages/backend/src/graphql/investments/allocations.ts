@@ -1,5 +1,5 @@
 import DataLoader from "dataloader";
-import { eq, inArray, ne, sql, sum } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { Float, ID } from "grats";
 
@@ -12,12 +12,14 @@ import {
 } from "@/db/schema/investments";
 import { AppSettings } from "@/db/schema/settings";
 
+import type { Context } from "../context";
 import {
   getMoneyInputFractionalAmount,
   Money,
   type MoneyInput,
 } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
+import { effectiveAssetFilter } from "./effective-filter";
 import { Investment } from "./index";
 
 const ALLOCATION_SUM_EPSILON = 1e-9;
@@ -71,25 +73,61 @@ export type InvestmentAllocationInput = {
   allocation: Float;
 };
 
-async function loadActiveInvestmentIds(assetId: string): Promise<Set<string>> {
-  const rows = await db
-    .select({
-      investmentId: InvestmentTransactions.investmentId,
-      units: sum(InvestmentTransactions.units).as("units"),
-    })
-    .from(InvestmentTransactions)
-    .where(eq(InvestmentTransactions.assetId, assetId))
-    .groupBy(InvestmentTransactions.investmentId)
-    .having(ne(sql`SUM(${InvestmentTransactions.units})`, 0));
-  return new Set(rows.map((r) => r.investmentId));
+async function loadActiveInvestmentIds(
+  ctx: Context,
+  assetId: string,
+): Promise<Set<string>> {
+  // Use the wrapper's *effective* scope — the wrapper's own txs plus any
+  // inbound-transfer source's pre-cap history — so a transferred-into
+  // wrapper sees the merged unit count. Without the fold, an investment
+  // that the user transferred in then sold to zero in this wrapper reads
+  // as a negative net (the closing sells without their matching inflow)
+  // and appears as "active", forcing the user to allocate to it even
+  // though they hold zero units. With the fold the net resolves to 0
+  // and the investment correctly drops out of the required allocation
+  // set.
+  const { extraScopes } = await effectiveAssetFilter(ctx, [assetId]);
+  const branches = [
+    eq(InvestmentTransactions.assetId, assetId),
+    ...extraScopes.map((s) =>
+      and(
+        eq(InvestmentTransactions.assetId, s.assetId),
+        sql`${InvestmentTransactions.date} <= ${s.dateCap}::date`,
+      ),
+    ),
+  ];
+  const where =
+    branches.length === 1 ? branches[0] : sql.join(branches, sql` OR `);
+  const rows = await db.execute<{ investmentId: string }>(sql`
+    WITH tx_adj AS (
+      SELECT
+        "InvestmentTransactions"."investmentId",
+        "InvestmentTransactions".units * COALESCE(EXP((
+          SELECT SUM(LN(s.ratio))
+          FROM "InvestmentStockSplits" s
+          WHERE s."investmentId" = "InvestmentTransactions"."investmentId"
+            AND s.date > "InvestmentTransactions".date
+        )), 1) AS adj_units
+      FROM "InvestmentTransactions"
+      WHERE ${where}
+    )
+    SELECT "investmentId"
+    FROM tx_adj
+    GROUP BY "investmentId"
+    HAVING ABS(SUM(adj_units)) > 1e-9
+  `);
+  const list = rows.rows ?? rows;
+  return new Set(list.map((r) => r.investmentId));
 }
 
-/** Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to exactly 1. @gqlMutationField */
+/** Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to ~1 (post-rounding). Submitted fractions are rounded to the nearest 1% (2dp) before persisting; any residual rounding drift is absorbed by the largest allocation so the saved set still sums to exactly 1. @gqlMutationField */
 export async function investmentAllocationsSet(
+  ctx: Context,
   /** Wrapper (`STOCK` or `PENSION` net-worth asset) whose allocations are being set. */
   assetId: ID,
   allocations: InvestmentAllocationInput[],
 ): Promise<InvestmentAllocationsResult> {
+  // Validate raw input + dedupe.
   const submitted = new Map<string, number>();
   for (const entry of allocations) {
     if (submitted.has(entry.investmentId)) {
@@ -104,14 +142,47 @@ export async function investmentAllocationsSet(
     }
     submitted.set(entry.investmentId, entry.allocation);
   }
-  const total = [...submitted.values()].reduce((a, b) => a + b, 0);
-  if (Math.abs(total - 1) > ALLOCATION_SUM_EPSILON) {
+
+  // Pre-round-sum check: catch genuinely-wrong inputs (e.g. user submits
+  // [0.3, 0.3]). 5% tolerance is enough headroom that 2dp-quantised input
+  // sums always pass while plainly broken inputs still get rejected.
+  const rawTotal = [...submitted.values()].reduce((a, b) => a + b, 0);
+  if (Math.abs(rawTotal - 1) > 0.05) {
     throw new GraphQLError(
-      `Allocations must sum to 1, got ${total.toFixed(6)}`,
+      `Allocations must sum to 1, got ${rawTotal.toFixed(6)}`,
     );
   }
 
-  const active = await loadActiveInvestmentIds(assetId);
+  // Round each to nearest 1% (2dp). Reject anything that rounds to zero —
+  // an "I don't want to hold this" signal should be sent by omitting the
+  // entry, not submitting `< 0.005`.
+  const rounded = new Map<string, number>();
+  for (const [id, v] of submitted) {
+    const r = Math.round(v * 100) / 100;
+    if (r <= 0) {
+      throw new GraphQLError(
+        `Allocation for investment ${id} rounds to 0 — minimum is 1%`,
+      );
+    }
+    rounded.set(id, r);
+  }
+  // Each rounded value is a multiple of 0.01, so `drift` is too — adding
+  // it to one entry preserves the 2dp invariant exactly.
+  const roundedSum = [...rounded.values()].reduce((a, b) => a + b, 0);
+  const drift = 1 - roundedSum;
+  if (Math.abs(drift) > ALLOCATION_SUM_EPSILON) {
+    let maxId: string | null = null;
+    let maxValue = -Infinity;
+    for (const [id, v] of rounded) {
+      if (v > maxValue) {
+        maxId = id;
+        maxValue = v;
+      }
+    }
+    if (maxId) rounded.set(maxId, maxValue + drift);
+  }
+
+  const active = await loadActiveInvestmentIds(ctx, assetId);
   const submittedIds = new Set(submitted.keys());
   const missing = [...active].filter((id) => !submittedIds.has(id));
   const extra = [...submittedIds].filter((id) => !active.has(id));
@@ -130,9 +201,9 @@ export async function investmentAllocationsSet(
     await tx
       .delete(InvestmentAllocations)
       .where(eq(InvestmentAllocations.assetId, assetId));
-    if (submitted.size > 0) {
+    if (rounded.size > 0) {
       await tx.insert(InvestmentAllocations).values(
-        [...submitted.entries()].map(([investmentId, allocation]) => ({
+        [...rounded.entries()].map(([investmentId, allocation]) => ({
           assetId,
           investmentId,
           allocation,

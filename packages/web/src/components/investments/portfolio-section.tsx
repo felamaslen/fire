@@ -129,6 +129,8 @@ export function PortfolioSection({
   bottomSlot,
   filterAssetIds,
   selectedLabel,
+  transferOut,
+  transfersIn,
 }: {
   settings: PortfolioChartSettings;
   onChange: (next: PortfolioChartSettings) => void;
@@ -136,6 +138,16 @@ export function PortfolioSection({
   filterAssetIds: string[];
   /** Comma-joined names of the selected portfolios, or `null` when all are selected. Used as the line label in the hover tooltip so the user sees which portfolios they've scoped the chart to. */
   selectedLabel: string | null;
+  /** When the single selected portfolio has an outgoing transfer, render a vertical arrow on the chart at that date pointing to the destination wrapper. */
+  transferOut?: {
+    date: string;
+    assetTo: { name: string };
+  } | null;
+  /** Each inbound transfer adds an arrow at the transfer date and tints the pre-transfer segment of the chart light-grey (since that history comes from a different wrapper). */
+  transfersIn?: ReadonlyArray<{
+    date: string;
+    assetFrom: { name: string };
+  }>;
 }) {
   const { periodIdx, candleIdx, mode, stack } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
@@ -227,6 +239,8 @@ export function PortfolioSection({
         stack={stack}
         filterAssetIds={filterAssetIds}
         selectedLabel={selectedLabel}
+        transferOut={transferOut ?? null}
+        transfersIn={transfersIn ?? []}
       />
       {bottomSlot}
     </section>
@@ -242,6 +256,8 @@ function PortfolioChartLoader({
   stack,
   filterAssetIds,
   selectedLabel,
+  transferOut,
+  transfersIn,
 }: {
   period: "YEAR" | "MONTH" | "YTD" | "ALL";
   length: number | null;
@@ -251,6 +267,14 @@ function PortfolioChartLoader({
   stack: boolean;
   filterAssetIds: string[];
   selectedLabel: string | null;
+  transferOut: {
+    date: string;
+    assetTo: { name: string };
+  } | null;
+  transfersIn: ReadonlyArray<{
+    date: string;
+    assetFrom: { name: string };
+  }>;
 }) {
   // `useSuspenseQuery` bubbles its suspend up to the page-level Suspense,
   // so the whole page waits for chart data before painting — no layout
@@ -335,20 +359,93 @@ function PortfolioChartLoader({
       initialDate: s.initialDate,
     }));
 
+  // Earliest inbound transfer date (when the wrapper has multiple sources,
+  // we colour everything before *any* transfer as inbound — there's no clean
+  // way to pick which source a particular pre-transfer point came from).
+  const earliestTransferIn =
+    transfersIn.length > 0
+      ? transfersIn
+          .map((t) => t.date)
+          .reduce((a, b) => (a < b ? a : b), "9999-99-99")
+      : null;
+
   const { lines, stackInitialDate } = deferredStack
     ? stackLines(perInvestmentSeries)
-    : {
-        lines: portfolio?.timeseries
-          ? [
-              {
+    : (() => {
+        if (!portfolio?.timeseries) {
+          return { lines: [], stackInitialDate: null };
+        }
+        const seriesPoints = portfolio.timeseries.points;
+        const seriesInitial = portfolio.timeseries.initialDate;
+        // Single-source pre-transfer split: render points before the
+        // transfer date in light-grey ("inherited from {source}") and
+        // post-transfer points in the normal accent colour.
+        if (earliestTransferIn) {
+          const seriesInitialDate = new Date(`${seriesInitial}T00:00:00Z`);
+          const transferDays = Math.round(
+            (new Date(`${earliestTransferIn}T00:00:00Z`).getTime() -
+              seriesInitialDate.getTime()) /
+              86400000,
+          );
+          // Drop the split if the transfer pre-dates the series (no
+          // pre-transfer history would render anyway).
+          if (transferDays > 0) {
+            // Find the index of the last sample at-or-before the transfer
+            // date. Sample dates from the backend may not land exactly on
+            // `transferDays`, so we anchor `post` at that same index — the
+            // two segments share a point, and the purple line picks up
+            // visually flush with where the grey line ended (rather than
+            // jumping over a gap to the next sample).
+            let splitIdx = -1;
+            for (let i = 0; i < seriesPoints.length; i++) {
+              if (seriesPoints[i].x <= transferDays) splitIdx = i;
+              else break;
+            }
+            const pre =
+              splitIdx >= 0 ? seriesPoints.slice(0, splitIdx + 1) : [];
+            const post =
+              splitIdx >= 0 ? seriesPoints.slice(splitIdx) : seriesPoints;
+            const split: {
+              label: string;
+              color: string;
+              points: typeof seriesPoints;
+            }[] = [];
+            if (pre.length > 0) {
+              // Generic "Pre-transfer" label rather than the source's name —
+              // the grey segment may also include the destination's own
+              // pre-transfer activity, so naming a single source is
+              // misleading. The transfer-in arrow / yellow header already
+              // surface which source(s) flowed in.
+              split.push({
+                label: "Pre-transfer",
+                color: "#9ca3af",
+                points: pre,
+              });
+            }
+            if (post.length > 0) {
+              split.push({
                 label: selectedLabel ?? "Portfolio",
                 color: "#6366f1",
-                points: portfolio.timeseries.points,
-              },
-            ]
-          : [],
-        stackInitialDate: portfolio?.timeseries?.initialDate ?? null,
-      };
+                points: post,
+              });
+            }
+            return {
+              lines: split,
+              stackInitialDate: seriesInitial,
+            };
+          }
+        }
+        return {
+          lines: [
+            {
+              label: selectedLabel ?? "Portfolio",
+              color: "#6366f1",
+              points: seriesPoints,
+            },
+          ],
+          stackInitialDate: seriesInitial,
+        };
+      })();
 
   // Pass the full (x0, x1) bucket span through so the chart can place each
   // candle along the shared time axis instead of evenly distributing them
@@ -377,6 +474,49 @@ function PortfolioChartLoader({
       ? new Date(`${initialDateStr}T00:00:00Z`)
       : undefined;
 
+  // Derive a chart annotation at the transfer-out date — only when the chart
+  // has a calendar anchor and the transfer date falls inside the rendered
+  // window. Outside-window transfers are skipped (the chart already ends at
+  // the cap, so the marker would just sit on the right edge with no
+  // information).
+  const annotations = (() => {
+    if (!initialDate) return undefined;
+    const out: {
+      x: number;
+      label: string;
+      tooltip: string;
+      direction: "in" | "out";
+    }[] = [];
+    const dayOffset = (date: string) =>
+      Math.round(
+        (new Date(`${date}T00:00:00Z`).getTime() - initialDate.getTime()) /
+          86400000,
+      );
+    if (transferOut) {
+      const days = dayOffset(transferOut.date);
+      if (days >= 0) {
+        out.push({
+          x: days,
+          label: transferOut.assetTo.name,
+          tooltip: `Transferred to ${transferOut.assetTo.name} on ${transferOut.date}`,
+          direction: "out",
+        });
+      }
+    }
+    for (const t of transfersIn) {
+      const days = dayOffset(t.date);
+      if (days >= 0) {
+        out.push({
+          x: days,
+          label: t.assetFrom.name,
+          tooltip: `Transferred in from ${t.assetFrom.name} on ${t.date}`,
+          direction: "in",
+        });
+      }
+    }
+    return out.length > 0 ? out : undefined;
+  })();
+
   return (
     <div
       className={cn(
@@ -390,6 +530,7 @@ function PortfolioChartLoader({
         currency={portfolio?.currency ?? "GBP"}
         initialDate={initialDate}
         stacked={!deferredCandlestick && deferredStack}
+        annotations={annotations}
         className="w-full"
       />
       {!deferredCandlestick && deferredStack && lines.length > 1 && (

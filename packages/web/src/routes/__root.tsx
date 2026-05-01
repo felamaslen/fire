@@ -45,7 +45,11 @@ function RootComponent() {
       {getToken() != null && <InvalidationsListener />}
       <TooltipProvider delayDuration={200}>
         <NavHeader data={data} />
-        <div className="pt-8 sm:pt-10">
+        {/* `pb-16` = the floating add button's height (h-14 = 56px) + 8px,
+            so the last row of any page list isn't covered by the FAB.
+            (The FAB itself sits `bottom-4` / `sm:bottom-6` above the
+            viewport edge, giving an extra 8-16px of visual gap.) */}
+        <div className="pt-8 pb-16 sm:pt-10">
           <Suspense fallback={<Spinner />}>
             <Outlet />
           </Suspense>

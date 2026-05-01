@@ -81,7 +81,12 @@ async function buy(
   priceAmount: number,
 ): Promise<void> {
   const doc = graphql(`
-    mutation ($investmentId: ID!, $assetId: ID!, $units: Int!, $price: Float!) {
+    mutation (
+      $investmentId: ID!
+      $assetId: ID!
+      $units: Float!
+      $price: Float!
+    ) {
       investmentTransactionCreate(
         investmentId: $investmentId
         assetId: $assetId

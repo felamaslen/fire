@@ -1,4 +1,4 @@
-import { useQuery, useSuspenseQuery } from "@apollo/client/react";
+import { useSuspenseQuery } from "@apollo/client/react";
 import {
   createFileRoute,
   Outlet,
@@ -25,6 +25,10 @@ import {
   AllocationsSectionPortfolioFragment,
 } from "@/components/investments/allocations-section";
 import {
+  CashContributionsAvailableFragment,
+  CashContributionsSection,
+} from "@/components/investments/cash-contributions-section";
+import {
   InvestmentForm,
   InvestmentFormDocument,
 } from "@/components/investments/investment-form";
@@ -40,6 +44,7 @@ import {
 import { NavHeaderTitle } from "@/components/nav-header";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -90,11 +95,12 @@ const InvestmentRowDocument = graphql(
           url
         }
       }
-      unitPriceCached {
+      unitPriceCached(filterAssetIdIn: $filterAssetIdIn) {
         ...Figure
       }
-      unitPriceCachedAt
-      unitPriceLatest {
+      unitPriceCachedAt(filterAssetIdIn: $filterAssetIdIn)
+      unitPriceCachedDate(filterAssetIdIn: $filterAssetIdIn)
+      unitPriceLatest(filterAssetIdIn: $filterAssetIdIn) {
         price {
           ...Figure
         }
@@ -151,36 +157,33 @@ export const InvestmentsListDocument = graphql(
   [InvestmentRowDocument, InvestmentFormDocument],
 );
 
-const PortfolioFilterInvestmentFragment = graphql(`
-  fragment PortfolioFilterInvestment on Investment {
+const PortfolioFilterOptionsFragment = graphql(`
+  fragment PortfolioFilterOptions on NetWorthCategoryAsset {
     id
-    wrappers {
-      asset {
+    name
+    type
+    isDefunct
+    transferOut {
+      id
+      date
+      assetTo {
         id
         name
-        type
       }
     }
+    transfersIn {
+      id
+      date
+      assetFrom {
+        id
+        name
+      }
+    }
+    soldOutOn
   }
 `);
 
-const FILTER_PORTFOLIO_TYPES = new Set(["STOCK", "PENSION"]);
-
-function portfolioFilterOptionsFromInvestments(
-  investments: FragmentOf<typeof PortfolioFilterInvestmentFragment>[],
-): { id: string; name: string }[] {
-  const seen = new Map<string, { id: string; name: string }>();
-  for (const ref of investments) {
-    const inv = readFragment(PortfolioFilterInvestmentFragment, ref);
-    for (const w of inv.wrappers ?? []) {
-      if (!FILTER_PORTFOLIO_TYPES.has(w.asset.type)) continue;
-      if (!seen.has(w.asset.id)) {
-        seen.set(w.asset.id, { id: w.asset.id, name: w.asset.name });
-      }
-    }
-  }
-  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
+type PortfolioFilterOption = ResultOf<typeof PortfolioFilterOptionsFragment>;
 
 // Combined document fired once on initial page load — prewarms the Apollo
 // cache so each child's own `useQuery` renders synchronously without a
@@ -219,15 +222,18 @@ const InvestmentsPageDocument = graphql(
       portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: $skipLive) {
         ...PortfolioHeadline
         ...PortfolioChartPortfolio
+        ...CashContributionsAvailable
       }
       allocationsPortfolio: portfolio(filterAssetIdIn: $filterAssetIdIn) {
         ...AllocationsSectionPortfolio
       }
-      portfolioFilterInvestments: investments(first: 1000) {
+      investmentPortfolios {
+        ...PortfolioFilterOptions
+      }
+      allocationsInvestments: investments(first: 1000) {
         edges {
           node {
             id
-            ...PortfolioFilterInvestment
             ...AllocationsSectionInvestment
           }
         }
@@ -258,9 +264,10 @@ const InvestmentsPageDocument = graphql(
     InvestmentFormDocument,
     PortfolioHeadlineFragment,
     PortfolioChartPortfolioFragment,
+    CashContributionsAvailableFragment,
     AllocationsSectionInvestmentFragment,
     AllocationsSectionPortfolioFragment,
-    PortfolioFilterInvestmentFragment,
+    PortfolioFilterOptionsFragment,
   ],
 );
 
@@ -271,7 +278,7 @@ function PortfolioFilterDropdown({
 }: {
   value: string[];
   onChange: (ids: string[]) => void;
-  options: { id: string; name: string }[];
+  options: PortfolioFilterOption[];
 }) {
   const selected = new Set(value);
   const allSelected = value.length === 0;
@@ -281,14 +288,46 @@ function PortfolioFilterDropdown({
       ? (options.find((o) => o.id === value[0])?.name ?? "1 selected")
       : `${value.length} selected`;
 
-  const toggle = (id: string) => {
-    const next = new Set(selected);
+  const active = options.filter((o) => !o.isDefunct);
+  const defunct = options.filter((o) => o.isDefunct);
+
+  // Click on the checkbox: toggle that option's inclusion in the current
+  // multi-selection. Click anywhere else on the row: collapse to "only this
+  // one selected".
+  const toggleInclusion = (id: string) => {
+    const next = new Set(allSelected ? options.map((o) => o.id) : selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    // Selecting every option is equivalent to "All" — collapse back to empty
-    // so the URL stays clean.
-    if (next.size === options.length) onChange([]);
+    if (next.size === 0 || next.size === options.length) onChange([]);
     else onChange([...next]);
+  };
+  const selectOnly = (id: string) => onChange([id]);
+
+  const renderOption = (o: PortfolioFilterOption) => {
+    const isSelected = allSelected || selected.has(o.id);
+    return (
+      <div
+        key={o.id}
+        role="button"
+        tabIndex={0}
+        onClick={() => selectOnly(o.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            selectOnly(o.id);
+          }
+        }}
+        className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+      >
+        <Checkbox
+          checked={isSelected}
+          onClick={(e) => e.stopPropagation()}
+          onCheckedChange={() => toggleInclusion(o.id)}
+          aria-label={`Toggle ${o.name}`}
+        />
+        <span className="truncate">{o.name}</span>
+      </div>
+    );
   };
 
   return (
@@ -316,22 +355,17 @@ function PortfolioFilterDropdown({
             All
           </button>
           <div className="my-1 h-px bg-border" />
-          {options.map((o) => {
-            const isSelected = !allSelected && selected.has(o.id);
-            return (
-              <button
-                key={o.id}
-                type="button"
-                onClick={() => toggle(o.id)}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
-              >
-                <span className="flex h-4 w-4 items-center justify-center">
-                  {isSelected && <Check className="h-3.5 w-3.5" />}
-                </span>
-                <span className="truncate">{o.name}</span>
-              </button>
-            );
-          })}
+          {active.map(renderOption)}
+          {defunct.length > 0 && (
+            <>
+              <div className="my-1 flex items-center gap-2 px-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                <span className="h-px flex-1 bg-border" />
+                Defunct
+                <span className="h-px flex-1 bg-border" />
+              </div>
+              {defunct.map(renderOption)}
+            </>
+          )}
         </PopoverContent>
       </Popover>
     </div>
@@ -607,26 +641,29 @@ function InvestmentsPageContent() {
       filterIsSold: loadHideSold() ? false : null,
     };
   });
-  // Fire-and-forget prewarm. The page never reads this query's `data` —
-  // it only exists to populate the cache so each child's own `useQuery` /
-  // `useSuspenseQuery` resolves synchronously. We deliberately don't
-  // `useSuspenseQuery` here: under React 18 + Apollo's queryRef lifecycle
-  // we were seeing the same operation fire twice on initial load (also in
-  // production), and a non-suspending fetch sidesteps that entirely while
-  // still warming the cache before any child mounts and reads it.
-  const { data: pageData } = useQuery(InvestmentsPageDocument, {
+  const { data: pageData } = useSuspenseQuery(InvestmentsPageDocument, {
     variables: initialVars,
   });
-  const portfolioOptions = portfolioFilterOptionsFromInvestments(
-    pageData?.portfolioFilterInvestments?.edges.map((e) => e.node) ?? [],
-  );
+  const portfolioOptions: PortfolioFilterOption[] =
+    pageData?.investmentPortfolios?.map((p) =>
+      readFragment(PortfolioFilterOptionsFragment, p),
+    ) ?? [];
+  const singleSelected =
+    filterAssetIds.length === 1
+      ? (portfolioOptions.find((o) => o.id === filterAssetIds[0]) ?? null)
+      : null;
   const selectedLabel =
     filterAssetIds.length === 0
       ? null
-      : filterAssetIds.length === 1
-        ? (portfolioOptions.find((o) => o.id === filterAssetIds[0])?.name ??
-          null)
+      : singleSelected
+        ? singleSelected.name
         : "Selected portfolios";
+  const transferredOut = singleSelected?.transferOut ?? null;
+  const transfersIn = singleSelected?.transfersIn ?? [];
+  // Mutually exclusive with `transferredOut` — the backend resolver gates
+  // `soldOutOn` on having no outgoing transfer, so we never show both.
+  const soldOutOn = singleSelected?.soldOutOn ?? null;
+  const isDefunct = transferredOut !== null || soldOutOn !== null;
 
   return (
     <>
@@ -640,17 +677,45 @@ function InvestmentsPageContent() {
           />
         }
       />
+      {transferredOut && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900/40 dark:bg-amber-900/10">
+          This portfolio was transferred to{" "}
+          <strong>{transferredOut.assetTo.name}</strong> on{" "}
+          <span className="tabular-nums">{transferredOut.date}</span>. Holdings,
+          cash, and totals are frozen at the day before the transfer.
+        </div>
+      )}
+      {soldOutOn && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900/40 dark:bg-amber-900/10">
+          This portfolio was sold out on{" "}
+          <span className="tabular-nums">{soldOutOn}</span>. Holdings, cash, and
+          totals are frozen at the day before the wind-down began.
+        </div>
+      )}
       <PortfolioSection
         filterAssetIds={filterAssetIds}
         selectedLabel={selectedLabel}
         settings={chart}
         onChange={setChart}
-        bottomSlot={<AllocationsSection filterAssetIds={filterAssetIds} />}
+        transferOut={transferredOut}
+        transfersIn={transfersIn}
+        bottomSlot={
+          <AllocationsSection
+            filterAssetIds={filterAssetIds}
+            transferredOut={isDefunct}
+          />
+        }
       />
+      {filterAssetIds.length === 1 && (
+        <Suspense fallback={<Spinner />}>
+          <CashContributionsSection assetId={filterAssetIds[0]!} />
+        </Suspense>
+      )}
       <InvestmentsList
         sort={sort}
         onSortChange={setSort}
         filterAssetIds={filterAssetIds}
+        transferredOut={isDefunct}
       />
     </>
   );
@@ -660,10 +725,15 @@ function InvestmentsList({
   sort,
   onSortChange,
   filterAssetIds,
+  transferredOut,
 }: {
   sort: SortState;
   onSortChange: (next: SortState) => void;
   filterAssetIds: string[];
+  /** When `true`, the selected portfolio has been transferred out — every
+   * investment is treated as sold (`hideSold` is forced on, the toggle is
+   * disabled, and the "New investment" button is disabled). */
+  transferredOut: boolean;
 }) {
   const setSort = (updater: (prev: SortState) => SortState) =>
     onSortChange(updater(sort));
@@ -726,9 +796,17 @@ function InvestmentsList({
             onChange={(e) => setHideSold(e.target.checked)}
             className="accent-foreground"
           />
-          Hide sold (zero-unit) investments
+          Hide sold or transferred investments
         </label>
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button
+          onClick={() => setCreateOpen(true)}
+          disabled={transferredOut}
+          title={
+            transferredOut
+              ? "This portfolio has been transferred out — book new transactions on the destination wrapper."
+              : undefined
+          }
+        >
           <Plus className="mr-1 h-4 w-4" /> New investment
         </Button>
       </div>
@@ -897,6 +975,7 @@ function UnitPrice({
   live,
   cached,
   cachedAt,
+  cachedDate,
   prefix,
 }: {
   live: {
@@ -906,6 +985,8 @@ function UnitPrice({
   } | null;
   cached: FragmentOf<typeof FigureDocument> | null;
   cachedAt: string | null;
+  /** Calendar date the cached quote applies to (e.g. "2025-03-14"), distinct from `cachedAt` (DB-row creation time). */
+  cachedDate: string | null;
   prefix?: string;
 }) {
   const priceFragment = live?.price ?? cached;
@@ -950,7 +1031,18 @@ function UnitPrice({
                 <span>{new Date(live.tickAt).toLocaleString("en-GB")}</span>
               </div>
             ) : (
-              <>Recorded {new Date(refreshedAt).toLocaleString("en-GB")}</>
+              <div className="grid grid-cols-[auto_auto] gap-x-2">
+                <span className="text-muted-foreground">Cached</span>
+                <span>{new Date(refreshedAt).toLocaleString("en-GB")}</span>
+                {cachedDate && (
+                  <>
+                    <span className="text-muted-foreground">Quote date</span>
+                    <span>
+                      {new Date(cachedDate).toLocaleDateString("en-GB")}
+                    </span>
+                  </>
+                )}
+              </div>
             )}
           </TooltipContent>
         </Tooltip>
@@ -1054,6 +1146,7 @@ function InvestmentRow({
               live={inv.unitPriceLatest}
               cached={inv.unitPriceCached}
               cachedAt={inv.unitPriceCachedAt}
+              cachedDate={inv.unitPriceCachedDate}
               prefix="@ "
             />
           </span>
@@ -1064,6 +1157,7 @@ function InvestmentRow({
           live={inv.unitPriceLatest}
           cached={inv.unitPriceCached}
           cachedAt={inv.unitPriceCachedAt}
+          cachedDate={inv.unitPriceCachedDate}
         />
       </TableCell>
       <TableCell className="text-right align-middle sm:hidden">

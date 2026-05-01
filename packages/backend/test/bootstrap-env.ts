@@ -1,5 +1,12 @@
 import path from "node:path";
 
+// Pin the process timezone so date-only columns roundtrip consistently:
+// node-postgres reads `date` columns as JS `Date` at local-midnight, and
+// without an explicit TZ a BST host returns "2026-04-10" as a Date pointing
+// at "2026-04-09T23:00:00Z", which then collides with itself when written
+// back as a comparison literal.
+process.env.TZ = "UTC";
+
 // Must load before any import that triggers `@/env` parsing — namespaces the
 // uploads bucket per vitest worker so parallel runs don't stomp on each other.
 const workerId =

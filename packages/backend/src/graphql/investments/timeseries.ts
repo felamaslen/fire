@@ -2,7 +2,19 @@ import assert from "node:assert";
 
 import DataLoader from "dataloader";
 import { differenceInDays, formatISO } from "date-fns";
-import { and, asc, desc, eq, inArray, lte, min, sql, sum } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  lte,
+  min,
+  or,
+  type SQL,
+  sql,
+  sum,
+} from "drizzle-orm";
 import type { PgColumn, PgSelectBase } from "drizzle-orm/pg-core";
 
 import { HOME_CURRENCY } from "@/config";
@@ -32,10 +44,28 @@ type TimeseriesKey = LoadInvestmentsByKeyFilter & {
   length: number;
   /** When `false`, the last point's `y` is overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB value is returned. Does not affect the SQL — only the overlay. */
   skipLive: boolean;
+  /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), only `InvestmentTransactions` with `date <= dateCap` contribute, and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
+  dateCap?: string;
+  /** Additional asset scopes to fold in, each with its own per-scope cap — used to render a transferred-into wrapper that inherits the source's pre-transfer holdings. Each entry adds `(assetId = entry.assetId AND date <= entry.dateCap)` to the transactions filter, OR-combined with the main scope. The `priceLatest` overlay is unaffected (the destination is live). Empty / omitted = no extra scope. */
+  extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
+const extraScopesFingerprint = (
+  scopes: ReadonlyArray<{ assetId: string; dateCap: string }> | undefined,
+): string =>
+  scopes
+    ? [...scopes]
+        .sort((a, b) =>
+          a.assetId === b.assetId
+            ? a.dateCap.localeCompare(b.dateCap)
+            : a.assetId.localeCompare(b.assetId),
+        )
+        .map((s) => `${s.assetId}@${s.dateCap}`)
+        .join(",")
+    : "";
+
 const cacheKeyFn = (key: TimeseriesKey): string =>
-  `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}`;
+  `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}|${extraScopesFingerprint(key.extraScopes)}`;
 
 const MAX_POINTS = 300;
 
@@ -62,15 +92,69 @@ export const loadInvestmentsByKeyConditions = (
   return { whereAssetId, whereInvestmentId };
 };
 
+/** Union every key's per-asset cap requirement (main `assetId` + each `extraScopes` entry) into a single OR-combined `txInScope` predicate. The same asset appearing across keys with conflicting caps would have the looser branch silently dominate downstream per-asset accumulation, so we hard-fail on that — none of the in-tree callers can hit it. Returns `undefined` when at least one key wants every asset (no filter), in which case only the batch-level `dateCap` (if any) constrains. */
+function unionedTxInScope(
+  keys: readonly TimeseriesKey[],
+  dateCap: string | undefined,
+): SQL | undefined {
+  const capByAsset = new Map<string, string | null>();
+  let anyKeyUnconstrained = false;
+  const recordCap = (assetId: string, cap: string | null) => {
+    const prev = capByAsset.get(assetId);
+    assert(
+      prev === undefined || prev === cap,
+      `Asset ${assetId} batched with conflicting timeseries caps: ${prev ?? "<none>"} vs ${cap ?? "<none>"}`,
+    );
+    capByAsset.set(assetId, cap);
+  };
+  for (const k of keys) {
+    const extras = k.extraScopes ?? [];
+    if (k.assetId === undefined && extras.length === 0) {
+      anyKeyUnconstrained = true;
+      continue;
+    }
+    if (k.assetId !== undefined) recordCap(k.assetId, k.dateCap ?? null);
+    for (const s of extras) recordCap(s.assetId, s.dateCap);
+  }
+  if (anyKeyUnconstrained || capByAsset.size === 0) {
+    return dateCap
+      ? lte(InvestmentTransactions.date, sql`${dateCap}::date`)
+      : undefined;
+  }
+  // Group by cap so all assets sharing a cap collapse into a single
+  // `assetId in (…)` branch instead of one branch per asset.
+  const byCap = new Map<string | null, string[]>();
+  for (const [assetId, cap] of capByAsset) {
+    const list = byCap.get(cap) ?? [];
+    list.push(assetId);
+    byCap.set(cap, list);
+  }
+  const branches = [...byCap.entries()].map(([cap, ids]) =>
+    cap === null
+      ? inArray(InvestmentTransactions.assetId, ids)
+      : and(
+          inArray(InvestmentTransactions.assetId, ids),
+          lte(InvestmentTransactions.date, sql`${cap}::date`),
+        ),
+  );
+  return branches.length === 1 ? branches[0] : or(...branches);
+}
+
 /**
  * Retrieves unit-delta chain for each investment in the given set (or all, if no filters given). This can be used to compute historical holding values.
  */
 const loadAdjustedUnits = contextAwareDataLoader(
-  async (_ctx: Context, keys: readonly LoadInvestmentsByKeyFilter[]) => {
-    const { whereAssetId, whereInvestmentId } =
-      loadInvestmentsByKeyConditions(keys);
+  async (_ctx: Context, keys: readonly TimeseriesKey[]) => {
+    const { whereInvestmentId } = loadInvestmentsByKeyConditions(keys);
     // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
     const currency = HOME_CURRENCY;
+    // Keys are grouped by `(period, length, dateCap)` upstream (see the
+    // assertion in `loadTimeseries`); `extraScopes` may differ per key
+    // (a transferred-into destination key folds in its source, a sibling
+    // unrelated-asset key doesn't), so the SQL scope is the union across
+    // every key's main + extras requirements.
+    const dateCap = keys[0]?.dateCap;
+    const txInScope = unionedTxInScope(keys, dateCap);
 
     return await db
       .select({
@@ -90,14 +174,14 @@ const loadAdjustedUnits = contextAwareDataLoader(
                     sql`${InvestmentStockSplits.date} > ${InvestmentTransactions.date}`,
                   ),
                 )})
-            )), 1))::int`.as("unitsAdjusted"),
+            )), 1))::double precision`.as("unitsAdjusted"),
       })
       .from(InvestmentTransactions)
       .where(
         and(
           eq(InvestmentTransactions.currency, currency),
-          whereAssetId,
           whereInvestmentId(InvestmentTransactions),
+          txInScope,
         ),
       )
       .orderBy(asc(InvestmentTransactions.date));
@@ -121,19 +205,47 @@ export const loadTimeseries = contextAwareDataLoader(
         //
         // If separate X axes are required, then requests should be made in separate microtasks, to avoid batching.
 
-        // Explicitly forbid batch-loading time series with differing periods:
+        // Forbid batch-loading time series with differing periods or
+        // `dateCap` (the SQL anchors `now` to one cap, and the date series
+        // CTE is single-shape per batch). `extraScopes` *may* differ
+        // per-key — `unionedTxInScope` reconciles them by OR-combining
+        // every key's per-asset cap requirements.
         assert(
           keys.every(
             (k, _i, array) =>
-              k.period === array[0].period && k.length === array[0].length,
+              k.period === array[0].period &&
+              k.length === array[0].length &&
+              (k.dateCap ?? null) === (array[0].dateCap ?? null),
           ),
-          "Cannot batch-load timeseries with different periods",
+          "Cannot batch-load timeseries with different periods or dateCaps",
         );
 
         // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
         const currency = HOME_CURRENCY;
 
-        const now = formatISO(new Date(), { representation: "date" });
+        // When `dateCap` is set, anchor the upper bound of the date series at
+        // the cap instead of "today" — the chart freezes on the day before
+        // the transfer.
+        const now =
+          keys[0].dateCap ?? formatISO(new Date(), { representation: "date" });
+
+        // Asset scope for `firstTxDate` — broaden to include every key's
+        // `extraScopes` source assets so the series can anchor on the
+        // earliest pre-transfer tx (otherwise a transferred-into wrapper's
+        // chart would start at the transfer date, not at the source's
+        // first buy).
+        const allAssetIds = (() => {
+          const allHaveAsset = keys.every((k) => k.assetId !== undefined);
+          const main = allHaveAsset
+            ? [...new Set(keys.map((k) => k.assetId as string))]
+            : null;
+          const extras = new Set<string>();
+          for (const k of keys) {
+            for (const s of k.extraScopes ?? []) extras.add(s.assetId);
+          }
+          if (!main && extras.size === 0) return null;
+          return [...new Set([...(main ?? []), ...extras])];
+        })();
 
         // Earliest transaction in the filter scope — anchors the series at
         // the first-cached-price boundary for all periods. For `ALL`, this is
@@ -147,7 +259,9 @@ export const loadTimeseries = contextAwareDataLoader(
           .where(
             and(
               eq(InvestmentTransactions.currency, currency),
-              whereAssetId,
+              allAssetIds
+                ? inArray(InvestmentTransactions.assetId, allAssetIds)
+                : whereAssetId,
               whereInvestmentId(InvestmentTransactions),
             ),
           );
@@ -366,30 +480,56 @@ export const loadTimeseries = contextAwareDataLoader(
         // — the empty `yBy*` maps already yield a null series per key below.
         if (pricesAdjRows.length > 0) bufferPrices(cursorPrices - 1);
 
-        // Fetch today's live-overlaid portfolio total per non-skipLive key.
-        // The last x is today's date by construction (union in the `dates`
-        // CTE), so we just substitute that point's y rather than appending.
+        // Fetch today's live-overlaid portfolio total per non-skipLive,
+        // non-capped key. The last x is today's date by construction (union
+        // in the `dates` CTE), so we just substitute that point's y rather
+        // than appending. With `dateCap` the last x is the cap itself and
+        // the live overlay is meaningless (and `loadInvestmentStats` would
+        // also strip it), so we skip the substitution.
         const liveByKeyIndex = await Promise.all(
           keys.map((key) =>
-            key.skipLive
+            key.skipLive || key.dateCap
               ? Promise.resolve(null)
               : loadInvestmentStats(ctx, {
                   currency,
                   assetIds: key.assetId ? [key.assetId] : undefined,
                   investmentId: key.investmentId,
                   skipLive: false,
+                  ...(key.extraScopes && key.extraScopes.length > 0
+                    ? { extraScopes: key.extraScopes }
+                    : {}),
                 }).then((s) => s.totalValueMinor),
           ),
         );
 
         return keys.map<PortfolioTimeseries | null>((key, keyIndex) => {
+          // Sum across the main `assetId` plus any `extraScopes` source
+          // assets — for a transferred-into wrapper, the chart line should
+          // reflect the combined value (main asset's own + each source's
+          // pre-transfer holdings).
+          const sumSeriesByAsset = (
+            assetIds: string[],
+          ): number[] | undefined => {
+            const series = assetIds
+              .map((id) => yByAsset.get(id))
+              .filter((s): s is number[] => Array.isArray(s));
+            if (series.length === 0) return undefined;
+            return series[0].map((_, i) =>
+              series.reduce((a, s) => a + (s[i] ?? 0), 0),
+            );
+          };
           const y = (() => {
             const { assetId, investmentId } = key;
+            const extraAssetIds = (key.extraScopes ?? []).map((s) => s.assetId);
             if (assetId) {
               if (investmentId) {
+                // Per-investment + per-asset slice — extras would require a
+                // matching `(investmentId|extraAsset)` lookup. None of the
+                // current callers combine `investmentId` with `extraScopes`,
+                // so we keep the simple single-asset fallback.
                 return yByBoth.get(`${investmentId}|${assetId}`);
               }
-              return yByAsset.get(assetId);
+              return sumSeriesByAsset([assetId, ...extraAssetIds]);
             }
             if (investmentId) {
               return yByInvestment.get(investmentId);

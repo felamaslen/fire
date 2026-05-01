@@ -23,6 +23,10 @@ type CandlestickKey = {
   max: number;
   /** When `false`, the last bucket's `valueEnd` / `valueMax` / `valueMin` are overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB result is returned. Does not affect the SQL — only the overlay. */
   skipLive: boolean;
+  /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), only `InvestmentTransactions` with `date <= dateCap` contribute, and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
+  dateCap?: string;
+  /** Additional asset scopes to fold in, each with its own per-scope cap — used to render a transferred-into wrapper that inherits the source's pre-transfer holdings. */
+  extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
 const cacheKeyFn = (key: CandlestickKey): string => {
@@ -30,7 +34,17 @@ const cacheKeyFn = (key: CandlestickKey): string => {
     key.assetIds && key.assetIds.length > 0
       ? [...key.assetIds].sort().join(",")
       : "";
-  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}`;
+  const extra = key.extraScopes
+    ? [...key.extraScopes]
+        .sort((a, b) =>
+          a.assetId === b.assetId
+            ? a.dateCap.localeCompare(b.dateCap)
+            : a.assetId.localeCompare(b.assetId),
+        )
+        .map((s) => `${s.assetId}@${s.dateCap}`)
+        .join(",")
+    : "";
+  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}|${extra}`;
 };
 
 /**
@@ -63,14 +77,36 @@ const loadOne = async (
   const unit = sql.raw(key.unit.toLowerCase());
   const windowLen = sql.raw(String(key.length * key.max));
   const step = sql.raw(String(key.length));
-  const assetFilter =
-    key.assetIds && key.assetIds.length > 0
-      ? sql`and t."assetId" in (${sql.join(
-          key.assetIds.map((id) => sql`${id}`),
+  // OR-combined asset+date scope: (mainAssetIds capped by `dateCap`) OR
+  // each extraScope. When neither is set this collapses to "no filter".
+  const txScopeFilter = (() => {
+    const mainAssetIds = key.assetIds ?? [];
+    const extraScopes = key.extraScopes ?? [];
+    if (mainAssetIds.length === 0 && extraScopes.length === 0) {
+      return key.dateCap ? sql`and t.date <= ${key.dateCap}::date` : sql``;
+    }
+    const branches: ReturnType<typeof sql>[] = [];
+    if (mainAssetIds.length > 0) {
+      const dateClause = key.dateCap
+        ? sql` AND t.date <= ${key.dateCap}::date`
+        : sql``;
+      branches.push(
+        sql`(t."assetId" in (${sql.join(
+          mainAssetIds.map((id) => sql`${id}`),
           sql`, `,
-        )})`
-      : sql``;
-  const now = formatISO(new Date(), { representation: "date" });
+        )})${dateClause})`,
+      );
+    }
+    for (const s of extraScopes) {
+      branches.push(
+        sql`(t."assetId" = ${s.assetId} AND t.date <= ${s.dateCap}::date)`,
+      );
+    }
+    return sql`and (${sql.join(branches, sql` OR `)})`;
+  })();
+  // When `dateCap` is set, anchor `now` (the rightmost edge of the series)
+  // at the cap so the chart freezes on the day before the transfer.
+  const now = key.dateCap ?? formatISO(new Date(), { representation: "date" });
 
   // `u_tx` / `u` are MATERIALIZED so (a) the stock-split scalar subquery runs
   // once per transaction (~hundreds) rather than once per (bucket × price) pair
@@ -102,10 +138,10 @@ const loadOne = async (
             (t.units * coalesce(exp(
               (select sum(ln(ss.ratio)) from "InvestmentStockSplits" ss
                where ss."investmentId" = t."investmentId" and ss.date > t.date)
-            ), 1))::int as "unitsAdjusted"
+            ), 1))::double precision as "unitsAdjusted"
           from "InvestmentTransactions" t
           where t.currency = ${currency}
-          ${assetFilter}
+          ${txScopeFilter}
         ),
         u as materialized (
           select
@@ -159,13 +195,21 @@ const loadOne = async (
   // the chart tracks intraday movement. `valueEnd` jumps to the live total;
   // `valueMin` / `valueMax` expand only when live breaches the bucket's
   // historical range. `valueStart` is the bucket's first-date value and stays
-  // untouched.
-  if (!key.skipLive) {
+  // untouched. With `dateCap`, the series is frozen pre-transfer — no live
+  // overlay.
+  if (!key.skipLive && !key.dateCap) {
     const s = await loadInvestmentStats(ctx, {
       currency,
       assetIds:
         key.assetIds && key.assetIds.length > 0 ? key.assetIds : undefined,
       skipLive: false,
+      // Fold any inbound-transfer sources into the live overlay too —
+      // otherwise the last candle's `valueEnd` collapses to "main asset
+      // only", producing a spurious red candle when the rest of the
+      // series included folded source holdings.
+      ...(key.extraScopes && key.extraScopes.length > 0
+        ? { extraScopes: key.extraScopes }
+        : {}),
     });
     const liveTotal: number | null = s.totalValueMinor;
     if (liveTotal !== null) {

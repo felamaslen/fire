@@ -233,7 +233,7 @@ describe("investments query", () => {
       return (await runGql(doc, {})).netWorthCategoryCreate.id;
     })();
     const buy = graphql(`
-      mutation ($id: ID!, $asset: ID!, $units: Int!, $price: Float!) {
+      mutation ($id: ID!, $asset: ID!, $units: Float!, $price: Float!) {
         investmentTransactionCreate(
           investmentId: $id
           assetId: $asset
@@ -302,7 +302,7 @@ describe("investments query", () => {
     const sippAsset = await createWrapper("SIPP");
     const giaAsset = await createWrapper("GIA");
     const trade = graphql(`
-      mutation ($id: ID!, $asset: ID!, $units: Int!) {
+      mutation ($id: ID!, $asset: ID!, $units: Float!) {
         investmentTransactionCreate(
           investmentId: $id
           assetId: $asset

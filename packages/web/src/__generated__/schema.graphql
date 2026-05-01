@@ -115,6 +115,11 @@ enum SortDirection {
 }
 
 """
+A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …), a manual `AssetCashPlanningTransaction` originating in a planning cash account, or an `AssetValueSnapshot` separator surfacing a `NetWorthEntries` checkpoint.
+"""
+union CashContribution = AssetCashPlanningTransaction | AssetValueSnapshot | InvestmentDeposit
+
+"""
 The underlying instrument an `Investment` represents: a listed stock or a fund.
 """
 union InvestmentAsset = InvestmentFund | InvestmentStock
@@ -176,8 +181,10 @@ input InvestmentInitialTransactionInput {
   price: MoneyInput!
   """Taxes paid on the trade. Defaults to 0."""
   taxes: MoneyInput
-  """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
-  units: Int!
+  """
+  Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported.
+  """
+  units: Float!
 }
 
 """
@@ -448,6 +455,46 @@ input PlanningYearTaxRatesUKInput {
 }
 
 """
+A cash-account → wrapper planning transaction surfaced on the investments page. The `id` matches the composite `tx:` identifier returned by the planning grid, so it can be fed straight back into `transactionUpdate` / `transactionDelete` if needed — but the dedicated `assetCashTransaction*` mutations are the supported edit path from this view.
+"""
+type AssetCashPlanningTransaction {
+  """
+  Signed cash amount from the wrapper's perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. Every consumer of `cashContributions` sees the same convention regardless of source.
+  """
+  amount: Money!
+  """
+  Calendar date the transaction is anchored to. Drives the planning month it lives in.
+  """
+  date: Date!
+  """Source cash planning account the contribution flows from / to."""
+  fromAccount: PlanningAccount!
+  id: ID!
+  """
+  True when the transaction is a user-authored draft — modelled in the planner's balance projections but not part of the wrapper's actual cash float. Provisional transactions are excluded from `cashContributions` server-side; this field exists so the planning grid can render them with a distinguishing style.
+  """
+  isProvisional: Boolean!
+  name: String!
+}
+
+"""
+A net-worth-entry checkpoint surfaced inline in the per-wrapper cash-contributions ledger. Acts as a separator between cash-flow rows: `value` carries the wrapper's recorded value at the entry, or is `null` to mark the date the wrapper became defunct (the first entry that no longer included it). The cash-float computation anchors on these checkpoints — fees, dividends, and price drift between snapshots are silently absorbed by the next recorded value.
+"""
+type AssetValueSnapshot {
+  """
+  Date the snapshot represents — the entry's date for a recorded value, or the date the wrapper first dropped out of an entry for a defunct marker.
+  """
+  date: Date!
+  """
+  Composite identifier — either `snapshot:<NetWorthValueAmounts.id>` for a recorded value, or `defunct:<assetId>` for a synthetic defunct marker.
+  """
+  id: ID!
+  """
+  Recorded value at this entry. `null` when this row is the synthetic defunct marker, signalling the wrapper has no active value at the latest entry. Named `value` (not `amount`) so a `... on AssetValueSnapshot { value }` selection in the same `cashContributions` query as `... on InvestmentDeposit { amount }` doesn't collide on a non-null vs. nullable `amount` field across the union.
+  """
+  value: Money
+}
+
+"""
 Result of a successful `login` / `demoLogin`, and the shape of `me` for a valid token. The client just needs to know "am I logged in?" — `token` doubles as both credential and success signal. Session kind / flavour live inside the signed token itself and are re-derived server-side from the `Authorization` header on every request, so there's nothing for the client to track beyond this string.
 """
 type AuthResult {
@@ -459,6 +506,22 @@ type AuthResult {
   Signed token. Real tokens live 30 days; demo tokens live 6 hours. Store in `localStorage` and attach as `Authorization: Bearer <token>`.
   """
   token: String!
+}
+
+"""
+A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEntry>` → `NetWorthEntryConnection`) are emitted per node type.
+"""
+type CashContributionConnection {
+  edges: [CashContributionEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+A single entry inside a `Connection`. Carries its own `cursor` so clients can resume pagination from any row.
+"""
+type CashContributionEdge {
+  cursor: ID!
+  node: CashContribution!
 }
 
 """Metadata for a currency supported by the server."""
@@ -546,7 +609,7 @@ type Investment {
   id: ID!
   name: String!
   """
-  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty).
+  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). When `filterAssetIdIn` resolves to a single transferred-out wrapper, holdings are frozen at the day before the transfer. When it resolves to a single transferred-into wrapper, each source's pre-transfer transactions are folded into the result.
   """
   position(
     """
@@ -570,17 +633,41 @@ type Investment {
     first: Int
   ): InvestmentTransactionConnection @semanticNonNull
   """
-  Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.
+  Most recent split-adjusted unit price known for this investment. When `filterAssetIdIn` resolves to a single transferred-out wrapper, the price is frozen at the most recent quote on or before the day of the transfer (the live overlay is skipped). `null` if no qualifying prices have been recorded yet.
   """
-  unitPriceCached: Money
+  unitPriceCached(
+    """
+    When set and non-empty, used to derive a frozen-pre-transfer view: a single transferred-out wrapper caps the price at its transfer date. Has no other effect on the price itself (which is investment-level).
+    """
+    filterAssetIdIn: [ID!]
+  ): Money
   """
-  When the most recent cached unit price was first recorded for this investment. `null` if no prices have been recorded yet.
+  When the most recent cached unit price was first recorded for this investment (DB-row creation timestamp). `null` if no prices have been recorded yet.
   """
-  unitPriceCachedAt: DateTime
+  unitPriceCachedAt(
+    """
+    When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`).
+    """
+    filterAssetIdIn: [ID!]
+  ): DateTime
   """
-  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.
+  Calendar date the most recent cached unit price applies to — i.e. the trading day the close price represents, distinct from when it was first stored (`unitPriceCachedAt`). When the wrapper filter resolves to a transferred-out wrapper, returns the date of the most recent quote on or before the day of the transfer. `null` if no prices have been recorded yet.
   """
-  unitPriceLatest: InvestmentPriceLatest
+  unitPriceCachedDate(
+    """
+    When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`).
+    """
+    filterAssetIdIn: [ID!]
+  ): Date
+  """
+  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, when no quote is available, or when `filterAssetIdIn` resolves to a single transferred-out wrapper (a frozen pre-transfer view never reads the live tick). The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.
+  """
+  unitPriceLatest(
+    """
+    When set and non-empty, used to suppress the live overlay for transferred-out wrappers (see `unitPriceCached`).
+    """
+    filterAssetIdIn: [ID!]
+  ): InvestmentPriceLatest
   """
   Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.
   """
@@ -615,6 +702,23 @@ A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEnt
 type InvestmentConnection {
   edges: [InvestmentEdge!]!
   pageInfo: PageInfo!
+}
+
+"""
+A cash inflow into a wrapper that doesn't originate from a planning cash account — e.g. dividend income, broker bonus, or pension tax relief credited by HMRC. Combined with planning cash transactions and non-DRIP unit trades to derive the wrapper's uninvested cash float.
+"""
+type InvestmentDeposit {
+  """
+  Signed cash amount. Positive = credit to the wrapper (the common case); negative = a withdrawal that isn't paired with a unit trade.
+  """
+  amount: Money!
+  """Wrapper this deposit is booked into."""
+  asset: NetWorthCategoryAsset!
+  """Calendar date the cash landed in the wrapper."""
+  date: Date!
+  id: ID!
+  """Short label for the deposit (e.g. "Q2 dividend", "Tax relief")."""
+  name: String!
 }
 
 """
@@ -674,7 +778,7 @@ type InvestmentPosition {
   """
   totalValue: Money
   """Net units held."""
-  units: Int!
+  units: Float!
 }
 
 """
@@ -700,7 +804,7 @@ type InvestmentReinvested {
   """
   cost: Money!
   """Units acquired via dividend reinvestments."""
-  units: Int!
+  units: Float!
   """
   Current market value of the reinvested units. `null` until at least one price is known.
   """
@@ -746,9 +850,9 @@ type InvestmentTransaction {
   """Taxes paid on the trade."""
   taxes: Money!
   """
-  Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells.
+  Signed number of units traded. Positive for buys and dividend reinvestments, negative for sells. Fractional units are supported.
   """
-  units: Int!
+  units: Float!
 }
 
 """
@@ -765,6 +869,21 @@ A single entry inside a `Connection`. Carries its own `cursor` so clients can re
 type InvestmentTransactionEdge {
   cursor: ID!
   node: InvestmentTransaction!
+}
+
+"""
+Records that all stock holdings (and uninvested cash) of `assetFrom` migrated into `assetTo` on `date`. An asset can be the source of at most one transfer; transferring chains its holdings, cash, and historical transactions through to the destination wrapper for portfolio aggregation.
+"""
+type InvestmentTransfer {
+  """Wrapper the holdings moved out of."""
+  assetFrom: NetWorthCategoryAsset!
+  """Wrapper the holdings moved into."""
+  assetTo: NetWorthCategoryAsset!
+  """
+  Calendar date the holdings moved out of `assetFrom` and into `assetTo`.
+  """
+  date: Date!
+  id: ID!
 }
 
 """
@@ -790,6 +909,68 @@ type Money {
 }
 
 type Mutation {
+  """
+  Create a cash-account → wrapper planning transaction. `amount` is signed from the **wrapper's** perspective: positive = deposit into the wrapper, negative = withdrawal from it. The resolver flips the sign internally before persisting (the underlying `PlanningTransactions` row stores everything from the cash account's perspective).
+  """
+  assetCashTransactionCreate(
+    """
+    Wrapper-perspective amount: positive = into the wrapper, negative = out.
+    """
+    amount: MoneyInput!
+    """
+    Wrapper to credit / debit. Must be a `STOCK` or `PENSION` net-worth asset.
+    """
+    assetId: ID!
+    date: Date!
+    """Source cash planning account (`PlanningAccount.id`)."""
+    fromAccountId: ID!
+    """
+    Mark the row as a user-authored draft. Provisional rows are excluded from the wrapper's actual cash float and the `cashContributions` list, but still surface in the planner's balance projections. Defaults to `false`.
+    """
+    isProvisional: Boolean
+    name: String!
+  ): AssetCashPlanningTransaction!
+  """Delete a cash transfer."""
+  assetCashTransactionDelete(
+    """Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`."""
+    id: ID!
+  ): Void!
+  """
+  Partial update for a cash transfer. `amount`, when supplied, is wrapper-POV (positive = into the wrapper). Omitted / null fields are left unchanged.
+  """
+  assetCashTransactionUpdate(
+    amount: MoneyInput
+    date: Date
+    """New source cash planning account (`PlanningAccount.id`)."""
+    fromAccountId: ID
+    """Composite `tx:` id as returned on `AssetCashPlanningTransaction.id`."""
+    id: ID!
+    """Toggle the user-authored-draft flag."""
+    isProvisional: Boolean
+    name: String
+  ): AssetCashPlanningTransaction!
+  """
+  Record that all stock holdings and uninvested cash of `assetIdFrom` migrated into `assetIdTo` on `date`. The source wrapper is treated as fully sold from that date onwards; the destination wrapper inherits the source's transaction and cash history for portfolio aggregation. An asset can be the source of at most one transfer.
+  """
+  assetStockTransferCreate(
+    """
+    Wrapper the holdings move out of. Must be a `STOCK` or `PENSION` net-worth asset.
+    """
+    assetIdFrom: ID!
+    """
+    Wrapper the holdings move into. Must be a `STOCK` or `PENSION` net-worth asset, distinct from `assetIdFrom`.
+    """
+    assetIdTo: ID!
+    date: Date!
+  ): Portfolio!
+  """
+  Delete the outgoing transfer on `assetIdFrom`. Both ids must match the existing transfer. Holdings and cash of `assetIdFrom` are no longer chained into `assetIdTo`.
+  """
+  assetStockTransferDelete(assetIdFrom: ID!, assetIdTo: ID!): Portfolio!
+  """
+  Update the date of an existing transfer. The source and destination wrappers cannot be changed — delete and recreate to repoint a transfer.
+  """
+  assetStockTransferUpdate(assetIdFrom: ID!, date: Date!): Portfolio!
   """
   Register a recurring bill (subscription, utility, rent, mortgage direct debit, credit-card statement, …) that should project forward into future months' balances as a provisional outgoing transaction. Every month the bill's cadence fires, the planner deducts `amount` from the `fromAccountId`'s projected balance; once an actual transaction is recorded against that month the provisional figure is replaced.
   """
@@ -962,6 +1143,26 @@ type Mutation {
   """
   investmentDelete(id: ID!): Void!
   """
+  Record an external cash credit (or, with a negative `amount`, a debit) on a wrapper that doesn't correspond to a planning transfer or a unit trade.
+  """
+  investmentDepositCreate(
+    """
+    Signed cash amount. Positive = credit to the wrapper; negative = debit.
+    """
+    amount: MoneyInput!
+    """Wrapper to credit. Must be a `STOCK` or `PENSION` net-worth asset."""
+    assetId: ID!
+    date: Date!
+    """Short label for the deposit (e.g. "Q2 dividend")."""
+    name: String!
+  ): InvestmentDeposit!
+  """Delete an `InvestmentDeposit`."""
+  investmentDepositDelete(id: ID!): Void!
+  """
+  Partial update for an `InvestmentDeposit`. Omitted (or `null`) fields are left unchanged.
+  """
+  investmentDepositUpdate(amount: MoneyInput, date: Date, id: ID!, name: String): InvestmentDeposit!
+  """
   Record a stock split on an investment. Historic `unitPriceCached` values are retroactively adjusted.
   """
   investmentStockSplitCreate(
@@ -1004,15 +1205,17 @@ type Mutation {
     Taxes paid on the trade. Must match the investment's currency. Defaults to 0.
     """
     taxes: MoneyInput
-    """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
-    units: Int!
+    """
+    Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported.
+    """
+    units: Float!
   ): InvestmentTransaction!
   """Delete a transaction."""
   investmentTransactionDelete(id: ID!): Void!
   """
   Partial update to a transaction. Omitted / null fields are left unchanged.
   """
-  investmentTransactionUpdate(assetId: ID, date: Date, drip: Boolean, fees: MoneyInput, id: ID!, price: MoneyInput, taxes: MoneyInput, units: Int): InvestmentTransaction!
+  investmentTransactionUpdate(assetId: ID, date: Date, drip: Boolean, fees: MoneyInput, id: ID!, price: MoneyInput, taxes: MoneyInput, units: Float): InvestmentTransaction!
   """
   Partially update an investment. Omitted (or `null`) fields are left unchanged.
   """
@@ -1154,6 +1357,10 @@ type Mutation {
     """
     assetId: ID
     """
+    Mark this transaction as a user-authored draft. Provisional rows show up in the planner's balance projections but are treated as "not yet committed" by every "actual money" aggregate. Defaults to `false`.
+    """
+    isProvisional: Boolean
+    """
     Liability (`NetWorthCategoryLiability.id`) being paid down by this transaction, if any. Only valid for outflows. Mutually exclusive with `assetId`.
     """
     liabilityId: ID
@@ -1168,7 +1375,7 @@ type Mutation {
   """
   Delete a transaction. For derived transactions we can't literally delete the row (it doesn't exist yet); instead we record the suppression:
   
-  - `tx:…` / `to:…` — deletes the `PlanningTransactions` row.
+  - `tx:…` / `to:…` — deletes the manual transaction.
   - `pay:…` — deletes the payslip (and its adjustments, via cascade).
   - `adj:…` — deletes the single adjustment.
   - `bill:…` — clears any per-month override row for this (bill, month), so the predicted bill takes over again. To cancel a predicted bill for one month, set its amount to zero explicitly via `transactionUpdate` instead of deleting.
@@ -1184,7 +1391,7 @@ type Mutation {
   """
   Update an existing transaction. The composite `id` determines what's actually rewritten:
   
-  - `tx:…` / `to:…` — patches the underlying manual `PlanningTransactions` row.
+  - `tx:…` / `to:…` — patches the underlying manual transaction.
   - `pay:…` — patches the payslip gross / name.
   - `adj:…` — patches a payslip adjustment (sign of the existing row is preserved; `amount` is treated as magnitude).
   - `bill:…` — creates or updates a per-month bill override so this month uses the new amount in place of the predicted value.
@@ -1203,6 +1410,8 @@ type Mutation {
     assetId: ID
     """Composite id as returned on `PlanningTransaction.id`."""
     id: ID!
+    """Toggle the user-authored-draft flag. Manual transactions only."""
+    isProvisional: Boolean
     """
     New serviced liability (`NetWorthCategoryLiability.id`). Pass null explicitly to clear. Manual transactions only. Mutually exclusive with `assetId`.
     """
@@ -1228,6 +1437,10 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   """
   accessibleFrom: Date
   """
+  Paginated, date-desc list of every cash contribution for this wrapper — both external `InvestmentDeposit`s (dividends, tax relief, …) and `AssetCashPlanningTransaction`s originating in a planning cash account, interleaved by date and used to back the "Manage cash deposits" dialog on the investments page.
+  """
+  cashContributions(after: ID, first: Int): CashContributionConnection @semanticNonNull
+  """
   Assumed annual growth rate as a percentage (e.g. 3 for +3%/year). Negative for depreciation. Used by the net-worth forecast. Only set on `PROPERTY` and `VEHICLE`; null means no extrapolation.
   """
   growthRate: Float
@@ -1236,7 +1449,23 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   Per-investment allocations configured for this wrapper plus the portfolio-wide cash target.
   """
   investmentAllocations: InvestmentAllocationsResult!
+  """
+  True when the wrapper has been recorded in some past `NetWorthEntries` but is missing (or zero) in the latest one — same gate the cash-float computation uses to surface zero "available to invest". A wrapper that's never been recorded yet (e.g. just created) is not defunct.
+  """
+  isDefunct: Boolean!
   name: String!
+  """
+  Date the wrapper was fully sold out — every position's net split-adjusted units is zero, the wrapper has at least one transaction, and there is no `transferOut` (otherwise that takes precedence as the "defunct" reason). The date is the last transaction in the wrapper, i.e. the closing sell that brought everything to zero. `null` for any wrapper that still holds units, has no transactions, or has been transferred out.
+  """
+  soldOutOn: Date
+  """
+  The outgoing transfer for this wrapper, if any — at most one. When set, this wrapper's holdings and cash are treated as fully migrated into the destination wrapper on the transfer date.
+  """
+  transferOut: InvestmentTransfer
+  """
+  Incoming transfers into this wrapper. Each contributes its source wrapper's full transaction and cash history into this one's portfolio aggregation from its `date`.
+  """
+  transfersIn: [InvestmentTransfer!]!
   type: NetWorthAssetType!
 }
 
@@ -1893,7 +2122,7 @@ type PlanningTransaction {
   """
   isBill: Boolean!
   """
-  True when the transaction can be edited directly; usually `!isProvisional`, but derived transfers (the `to`-side of a manual transaction) are neither provisional nor editable.
+  True when the transaction can be edited directly; usually `!isProjected`, but the receiving side of a manual transfer is neither projected nor editable.
   """
   isEditable: Boolean!
   """
@@ -1905,7 +2134,11 @@ type PlanningTransaction {
   """
   isPayslipGross: Boolean!
   """
-  True when the transaction is a prediction (e.g. forthcoming bill, predicted salary).
+  True when the transaction is an engine-generated prediction (forthcoming bill, predicted salary, projected liability payment, …) rather than something the user has recorded. Distinct from `isProvisional`, which flags a user-authored draft.
+  """
+  isProjected: Boolean!
+  """
+  True when the transaction is a user-authored draft — included in the planner's balance projections but treated as "not yet committed" by every "actual money" aggregate. Only ever true on manual transactions; engine-generated projections (`isProjected`) and payslip rows are never provisional.
   """
   isProvisional: Boolean!
   """
@@ -2007,6 +2240,10 @@ type Portfolio {
     unit: PortfolioCandleUnit!
   ): PortfolioCandlestick
   """
+  Uninvested cash held in the wrapper(s) — the per-wrapper cash float aggregated across the portfolio's `filterAssetIdIn` (or every `STOCK` / `PENSION` wrapper when no asset filter is set), restricted to entries denominated in `currency`. Always zero when the portfolio is scoped to specific investments (cash isn't attributable to an investment). Positive values represent cash available to invest; negative values mean recorded buys exceed recorded inflows.
+  """
+  cash: Money!
+  """
   ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
   """
   currency: String!
@@ -2027,7 +2264,7 @@ type Portfolio {
   """
   investment: Investment
   """
-  Total return as a fraction of `totalCost`. For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` if `totalValue` is unknown or `totalCost` is zero.
+  Total return as a fraction of `totalCost`, computed from invested value only (cash float excluded). For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` when `totalCost` is zero.
   """
   percentGain: Float
   """
@@ -2039,11 +2276,11 @@ type Portfolio {
   """
   totalCost: Money!
   """
-  Total return (realised + unrealised) on the filtered portfolio — `totalValue - totalCost`.
+  Total return (realised + unrealised) on the held positions — `(totalValue − cash) − totalCost`. Excludes the cash float so freshly-deposited funds don't read as a gain.
   """
   totalGain: Money
   """
-  Current market value of the filtered portfolio — the today-price value of units currently held. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
+  Current market value of the filtered portfolio — the today-price value of units currently held plus uninvested cash held in the wrapper(s). Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
   """
   totalValue: Money
   """
@@ -2189,12 +2426,16 @@ type Query {
     assetId: ID
   ): InvestmentAllocationsResult @semanticNonNull
   """
+  Every wrapper (a `STOCK` or `PENSION` `NetWorthCategoryAsset`) that has at least one `InvestmentTransaction` booked against it, ordered with `STOCK` wrappers before `PENSION`s and alphabetically by `name` within each group. Drives the portfolio switcher on the investments page.
+  """
+  investmentPortfolios: [NetWorthCategoryAsset!] @semanticNonNull
+  """
   Paginated list of investments, sorted by the requested key. Computed sorts (`value`, `gainAbs`, `gainPercent`) use current cached values; cursors are only stable while those values don't change.
   """
   investments(
     after: ID
     """
-    When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers.
+    When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers. When the filter resolves to a single transferred-out wrapper, predicates and sort keys are evaluated at the day before the transfer (so a position that's still held then is not classified as sold).
     """
     filterAssetIdIn: [ID!]
     """
@@ -2227,6 +2468,8 @@ type Query {
     first: Int
     last: Int
   ): NetWorthCategoryConnection @semanticNonNull
+  """Look up an asset category by id. Returns `null` when no row matches."""
+  netWorthCategoryAsset(id: ID!): NetWorthCategoryAsset
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
   """

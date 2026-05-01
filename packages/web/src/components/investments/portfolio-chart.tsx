@@ -26,6 +26,17 @@ export type CandleSeries = {
   }[];
 };
 
+/** A vertical marker drawn at `x` (days since `initialDate`) with an arrow + label at the top of the plot. Used to flag a transfer-out / transfer-in event. */
+export type ChartAnnotation = {
+  x: number;
+  /** Short label rendered next to the arrow (e.g. the destination wrapper's name). */
+  label: string;
+  /** Optional `<title>` tooltip on the marker. */
+  tooltip?: string;
+  /** Direction the arrow points — `out` for "money left this portfolio" (→), `in` for "money came in" (←). */
+  direction: "out" | "in";
+};
+
 type Props = {
   lines?: LineSeries[];
   candles?: CandleSeries | null;
@@ -42,6 +53,8 @@ type Props = {
    * (series[i].y = its own value + all previous series' values at the same x).
    */
   stacked?: boolean;
+  /** Vertical event markers (transfer date arrows). */
+  annotations?: ChartAnnotation[];
 };
 
 const AXIS_PAD_LEFT = 56;
@@ -76,6 +89,7 @@ export function PortfolioChart({
   currency = "GBP",
   initialDate,
   stacked = false,
+  annotations,
 }: Props) {
   const [hoveredCandle, setHoveredCandle] = useState<number | null>(null);
   const [lineHoverX, setLineHoverX] = useState<number | null>(null);
@@ -421,10 +435,14 @@ export function PortfolioChart({
         lines.length > 0 &&
         !stacked &&
         (() => {
-          const primary = lines[0].points;
+          // Snap to the nearest point across every line, not just the
+          // first. Otherwise a multi-segment chart (e.g. pre-transfer +
+          // post-transfer) would always pin the cursor to the first
+          // segment's endpoint, losing hover on the rest.
+          const allPoints = lines.flatMap((l) => l.points);
           const snapped =
-            lineHoverX !== null && primary.length > 0
-              ? findClosestPoint(primary, lineHoverX)
+            lineHoverX !== null && allPoints.length > 0
+              ? findClosestPoint(allPoints, lineHoverX)
               : null;
           const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
           return (
@@ -449,14 +467,25 @@ export function PortfolioChart({
               {snapped &&
                 (() => {
                   const cx = xScale(snapped.x);
-                  const perLine = lines.map((l) => ({
-                    label: l.label,
-                    color: l.color,
-                    point:
-                      l.points.length > 0
-                        ? findClosestPoint(l.points, snapped.x)
-                        : null,
-                  }));
+                  // Only include a line in the tooltip when the snapped x
+                  // falls within that line's own x-range. Without this, a
+                  // chart with two segments (e.g. pre-transfer grey + post-
+                  // transfer accent) would render a stale dot for the other
+                  // segment at its end-point regardless of where the cursor
+                  // is.
+                  const perLine = lines.flatMap((l) => {
+                    if (l.points.length === 0) return [];
+                    const minX = l.points[0].x;
+                    const maxX = l.points[l.points.length - 1].x;
+                    if (snapped.x < minX || snapped.x > maxX) return [];
+                    return [
+                      {
+                        label: l.label,
+                        color: l.color,
+                        point: findClosestPoint(l.points, snapped.x),
+                      },
+                    ];
+                  });
                   const rowH = 14;
                   const headerH = 18;
                   const padY = 8;
@@ -567,6 +596,50 @@ export function PortfolioChart({
             </>
           );
         })()}
+      {annotations?.map((a, i) => {
+        const ax = xScale(a.x);
+        // Default: label sits to the LEFT of the marker (so an outbound
+        // marker at the right edge of the chart doesn't overflow). Flip to
+        // the RIGHT when there's less than ~140px of room to the left —
+        // typical for an inbound marker near the start of the series.
+        const minLabelRoom = 140;
+        const labelLeft = ax - AXIS_PAD_LEFT >= minLabelRoom;
+        const labelX = labelLeft ? ax - 6 : ax + 6;
+        const textAnchor = labelLeft ? "end" : "start";
+        const arrowGlyph = a.direction === "out" ? "→" : "←";
+        // Always show the arrow on the side of the label that points
+        // toward the marker line — `out`: from the asset → into the chart
+        // (arrow ON the marker side), `in`: arrow points toward the asset
+        // (away from the marker).
+        const labelText = labelLeft
+          ? `${a.label} ${arrowGlyph}`
+          : `${arrowGlyph} ${a.label}`;
+        return (
+          <g key={`annot${i}`} pointerEvents="none">
+            <line
+              x1={ax}
+              x2={ax}
+              y1={AXIS_PAD_TOP}
+              y2={height - AXIS_PAD_BOTTOM}
+              stroke="currentColor"
+              className="text-amber-500"
+              strokeOpacity={0.6}
+              strokeDasharray="4 3"
+            >
+              {a.tooltip && <title>{a.tooltip}</title>}
+            </line>
+            <text
+              x={labelX}
+              y={AXIS_PAD_TOP + 12}
+              textAnchor={textAnchor}
+              className="fill-amber-600 text-[22px] font-medium dark:fill-amber-400 sm:text-[14px] md:text-[12px] lg:text-[11px]"
+            >
+              {labelText}
+              {a.tooltip && <title>{a.tooltip}</title>}
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 }

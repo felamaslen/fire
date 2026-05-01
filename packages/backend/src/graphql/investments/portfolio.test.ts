@@ -45,7 +45,7 @@ async function buy(
       $investmentId: ID!
       $assetId: ID!
       $date: Date!
-      $units: Int!
+      $units: Float!
       $priceAmount: Float!
       $currency: String!
     ) {
@@ -138,8 +138,15 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
+    // totalValue = held (120) + cash float. The unclamped cash here is
+    // -100 (buys with no offsetting deposits), but `Portfolio.cash` floors
+    // at zero — recording cash contributions is optional, and a wrapper with
+    // held positions but no contribution log shouldn't surface a negative
+    // "available to invest" pulled out of the buy cost.
     expect(data.portfolio?.totalValue?.amount).toBe(10 * 6 + 5 * 12);
     expect(data.portfolio?.totalCost?.amount).toBe(10 * 5 + 5 * 10);
+    // Gain is invested-only: 120 (held) − 100 (cost) = 20. Cash float is
+    // excluded so deposits / buys-without-deposits don't read as gains.
     expect(data.portfolio?.totalGain?.amount).toBe(20);
     expect(data.portfolio?.percentGain).toBeCloseTo(20 / 100);
   });
@@ -168,7 +175,9 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
-    // Held value: 6 × £8 = £48. totalCost: net in (50 − 28) = £22.
+    // Held value: 6 × £8 = £48. totalCost: net in (50 − 28) = £22. Cash float
+    // would be -£22 (buys minus the partial sell, no deposits) but is
+    // floored at zero, so totalValue = 48 + 0. totalGain = held − cost = 26.
     expect(data.portfolio?.totalValue?.amount).toBeCloseTo(48);
     expect(data.portfolio?.totalCost?.amount).toBeCloseTo(22);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(26);
@@ -197,8 +206,13 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
+    // Held = 0. Cash float would be +£20 from the realised gain, but with
+    // no deposit / planning contributions the wrapper isn't
+    // contribution-tracked (see `portfolio-cash` test of the same shape),
+    // so cash is gated to 0 — the realised proceeds may have been
+    // withdrawn. `totalGain` still surfaces the realised £20 via the
+    // negative `totalCost`.
     expect(data.portfolio?.totalValue?.amount).toBe(0);
-    // Net in: 50 − 70 = −20. totalValue − totalCost = 0 − (−20) = +20 realised.
     expect(data.portfolio?.totalCost?.amount).toBeCloseTo(-20);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(20);
   });
@@ -234,6 +248,8 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
+    // Cash float would be -£5,000 (the buy with no deposit) but floors at
+    // zero, so totalValue is just the held value. totalGain still = 0.
     expect(data.portfolio?.totalValue?.amount).toBeCloseTo(5000);
     expect(data.portfolio?.totalCost?.amount).toBeCloseTo(5000);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(0);
@@ -305,6 +321,8 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const onlyISA = await runGql(doc, { assetIds: [isa] });
+    // Per-wrapper: cash floats are -£50 (ISA) / -£15 (SIPP) but floor at
+    // zero, so totalValue is just the held value in each.
     expect(onlyISA.portfolio?.totalValue?.amount).toBe(10 * 6);
     const onlySIPP = await runGql(doc, { assetIds: [sipp] });
     expect(onlySIPP.portfolio?.totalValue?.amount).toBe(3 * 6);

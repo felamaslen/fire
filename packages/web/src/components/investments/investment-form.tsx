@@ -218,7 +218,7 @@ export function InvestmentForm({
                     {
                       assetId: value.txAssetId,
                       date: value.txDate,
-                      units: Math.trunc(value.txUnits),
+                      units: value.txUnits,
                       price: {
                         amount: Number(value.txPriceAmount),
                         currency: value.currency,
@@ -398,7 +398,7 @@ export function InvestmentForm({
                         <Label>Units (sell = negative)</Label>
                         <Input
                           type="number"
-                          step="1"
+                          step="any"
                           value={field.state.value}
                           onChange={(e) =>
                             field.handleChange(Number(e.target.value))

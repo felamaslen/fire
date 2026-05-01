@@ -128,7 +128,7 @@ async function aprilTransactions(year = "2025"): Promise<string> {
                 amount {
                   amount
                 }
-                isProvisional
+                isProjected
                 isEditable
               }
             }
@@ -143,7 +143,7 @@ async function aprilTransactions(year = "2025"): Promise<string> {
     a.transactions.map((t) => [
       t.name,
       t.amount.amount,
-      t.isProvisional ? "predicted" : "actual",
+      t.isProjected ? "predicted" : "actual",
       t.isEditable ? "editable" : "locked",
       shortenId(t.id),
     ]),

@@ -122,7 +122,7 @@ async function monthsFor(year: string) {
               amount {
                 amount
               }
-              isProvisional
+              isProjected
               isEditable
             }
           }
@@ -180,7 +180,7 @@ function transactionTable(
             m.id,
             tx.name,
             tx.amount.amount,
-            tx.isProvisional,
+            tx.isProjected,
             tx.isEditable,
           ]),
         ),

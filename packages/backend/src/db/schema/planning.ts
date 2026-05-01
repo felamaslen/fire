@@ -451,6 +451,8 @@ export const PlanningTransactions = pgTable(
     assetId: uuid("assetId").references(() => NetWorthCategoryAssets.id, {
       onDelete: "restrict",
     }),
+    /** When true, the row is a manually-authored *plan* — modelled in the planner (so balance projections see it) but excluded from anything that represents real money: the `Portfolio.cash` float, the wrapper's `cashContributions` connection, and any other "actual cash position" aggregate. Distinct from the engine-computed projections (predicted bills / payslips), which the GraphQL layer surfaces as `isProjected`. */
+    isProvisional: boolean("isProvisional").notNull().default(false),
   },
   (t) => [
     foreignKey({
@@ -465,7 +467,7 @@ export const PlanningTransactions = pgTable(
     check(
       "PlanningTransactions_inflow_ck",
       sql`${t.amount} <= 0
-           OR (${t.toAccountId} IS NULL AND ${t.liabilityId} IS NULL AND ${t.assetId} IS NULL)`,
+           OR (${t.toAccountId} IS NULL AND ${t.liabilityId} IS NULL)`,
     ),
     check(
       "PlanningTransactions_liabilityAssetExclusive_ck",

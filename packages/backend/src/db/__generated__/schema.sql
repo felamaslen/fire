@@ -99,6 +99,17 @@ CREATE TABLE "InvestmentAllocations" (
   )
 );
 
+CREATE TABLE "InvestmentDeposits" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "assetId" uuid NOT NULL,
+  "date" date NOT NULL,
+  "amount" bigint NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "name" text NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "InvestmentPrices" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
@@ -143,7 +154,7 @@ CREATE TABLE "InvestmentTransactions" (
   "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
   "investmentId" uuid NOT NULL,
   "assetId" uuid NOT NULL,
-  "units" bigint NOT NULL,
+  "units" double precision NOT NULL,
   "price" double precision NOT NULL,
   "taxes" bigint DEFAULT 0 NOT NULL,
   "fees" bigint DEFAULT 0 NOT NULL,
@@ -155,6 +166,18 @@ CREATE TABLE "InvestmentTransactions" (
   CONSTRAINT "InvestmentTransactions_price_ck" CHECK ("InvestmentTransactions"."price" >= 0),
   CONSTRAINT "InvestmentTransactions_taxes_ck" CHECK ("InvestmentTransactions"."taxes" >= 0),
   CONSTRAINT "InvestmentTransactions_fees_ck" CHECK ("InvestmentTransactions"."fees" >= 0)
+);
+
+CREATE TABLE "InvestmentTransfers" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "assetIdFrom" uuid NOT NULL,
+  "assetIdTo" uuid NOT NULL,
+  "date" date NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "InvestmentTransfers_assetIdFrom_assetIdTo_ck" CHECK (
+    "InvestmentTransfers"."assetIdFrom" <> "InvestmentTransfers"."assetIdTo"
+  )
 );
 
 CREATE TABLE "Investments" (
@@ -482,6 +505,7 @@ CREATE TABLE "PlanningTransactions" (
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
   "assetId" uuid,
+  "isProvisional" boolean DEFAULT FALSE NOT NULL,
   CONSTRAINT "PlanningTransactions_accounts_ck" CHECK (
     "PlanningTransactions"."toAccountId" IS NULL
     OR "PlanningTransactions"."accountId" <> "PlanningTransactions"."toAccountId"
@@ -491,7 +515,6 @@ CREATE TABLE "PlanningTransactions" (
     OR (
       "PlanningTransactions"."toAccountId" IS NULL
       AND "PlanningTransactions"."liabilityId" IS NULL
-      AND "PlanningTransactions"."assetId" IS NULL
     )
   ),
   CONSTRAINT "PlanningTransactions_liabilityAssetExclusive_ck" CHECK (
@@ -571,6 +594,9 @@ ADD CONSTRAINT "InvestmentAllocations_assetId_NetWorthCategoryAssets_id_fk" FORE
 ALTER TABLE "InvestmentAllocations"
 ADD CONSTRAINT "InvestmentAllocations_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
+ALTER TABLE "InvestmentDeposits"
+ADD CONSTRAINT "InvestmentDeposits_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+
 ALTER TABLE "InvestmentPrices"
 ADD CONSTRAINT "InvestmentPrices_investmentId_Investments_id_fk" FOREIGN KEY ("investmentId") REFERENCES "public"."Investments" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
@@ -585,6 +611,12 @@ ADD CONSTRAINT "InvestmentTransactions_investmentId_Investments_id_fk" FOREIGN K
 
 ALTER TABLE "InvestmentTransactions"
 ADD CONSTRAINT "InvestmentTransactions_assetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
+
+ALTER TABLE "InvestmentTransfers"
+ADD CONSTRAINT "InvestmentTransfers_assetIdFrom_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetIdFrom") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
+
+ALTER TABLE "InvestmentTransfers"
+ADD CONSTRAINT "InvestmentTransfers_assetIdTo_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("assetIdTo") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
 
 ALTER TABLE "NetWorthCategoryLiabilities"
 ADD CONSTRAINT "NetWorthCategoryLiabilities_categoryAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("categoryAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
@@ -673,6 +705,10 @@ ADD CONSTRAINT "PlanningTransactions_month_fk" FOREIGN KEY ("year", "date") REFE
 ALTER TABLE "PlanningYearUKTaxRates"
 ADD CONSTRAINT "PlanningYearUKTaxRates_year_PlanningYears_year_fk" FOREIGN KEY ("year") REFERENCES "public"."PlanningYears" ("year") ON DELETE CASCADE ON UPDATE NO ACTION;
 
+CREATE INDEX "InvestmentDeposits_assetId_idx" ON "InvestmentDeposits" USING btree ("assetId");
+
+CREATE INDEX "InvestmentDeposits_date" ON "InvestmentDeposits" USING btree ("date");
+
 CREATE UNIQUE INDEX "InvestmentPrices_investmentId_date_uq" ON "InvestmentPrices" USING btree ("investmentId", "date");
 
 CREATE INDEX "InvestmentPrices_date" ON "InvestmentPrices" USING btree ("date");
@@ -688,6 +724,10 @@ CREATE INDEX "InvestmentTransactions_investmentId_idx" ON "InvestmentTransaction
 CREATE INDEX "InvestmentTransactions_assetId_idx" ON "InvestmentTransactions" USING btree ("assetId");
 
 CREATE INDEX "InvestmentTransactions_date" ON "InvestmentTransactions" USING btree ("date");
+
+CREATE UNIQUE INDEX "InvestmentTransfers_assetIdFrom_uq" ON "InvestmentTransfers" USING btree ("assetIdFrom");
+
+CREATE INDEX "InvestmentTransfers_assetIdTo_idx" ON "InvestmentTransfers" USING btree ("assetIdTo");
 
 CREATE UNIQUE INDEX "NetWorthEntries_month_uq" ON "NetWorthEntries" USING btree (date_trunc('month', "date"::timestamp));
 

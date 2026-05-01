@@ -40,6 +40,7 @@ import { Figure, FigureDocument } from "@/components/figure";
 import { NavHeaderActions, NavHeaderTitle } from "@/components/nav-header";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -92,6 +93,7 @@ const PlanningTransactionRowDocument = graphql(
     fragment PlanningTransactionRow on PlanningTransaction {
       id
       name
+      isProjected
       isProvisional
       isEditable
       isBill
@@ -242,6 +244,7 @@ const TransactionCreateDocument = graphql(`
     $toAccountId: ID
     $liabilityId: ID
     $assetId: ID
+    $isProvisional: Boolean
   ) {
     transactionCreate(
       monthId: $monthId
@@ -251,6 +254,7 @@ const TransactionCreateDocument = graphql(`
       toAccountId: $toAccountId
       liabilityId: $liabilityId
       assetId: $assetId
+      isProvisional: $isProvisional
     ) {
       id
     }
@@ -266,6 +270,7 @@ const TransactionUpdateDocument = graphql(`
     $toAccountId: ID
     $liabilityId: ID
     $assetId: ID
+    $isProvisional: Boolean
   ) {
     transactionUpdate(
       monthId: $monthId
@@ -275,6 +280,7 @@ const TransactionUpdateDocument = graphql(`
       toAccountId: $toAccountId
       liabilityId: $liabilityId
       assetId: $assetId
+      isProvisional: $isProvisional
     ) {
       id
     }
@@ -1076,6 +1082,7 @@ function TransactionRow({
         toAccountId: patch.toAccountId,
         liabilityId: patch.liabilityId,
         assetId: patch.assetId,
+        isProvisional: patch.isProvisional,
       },
     });
     toast.success("Saved");
@@ -1101,7 +1108,14 @@ function TransactionRow({
   const rowBody = (
     <>
       <TransactionKindIcon tx={tx} />
-      <span className="flex-1 truncate">{tx.name}</span>
+      <span className="flex-1 truncate">
+        {tx.name}
+        {tx.isProvisional && (
+          <span className="ml-1.5 rounded-sm border border-amber-500/60 bg-amber-500/10 px-1 py-px align-baseline text-[9px] font-medium tracking-wide text-amber-700 uppercase">
+            Provisional
+          </span>
+        )}
+      </span>
       <AmountCell
         tx={tx}
         monoRight={monoRight}
@@ -1115,7 +1129,15 @@ function TransactionRow({
     tx.isEditable
       ? "cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:bg-accent/40"
       : "cursor-default",
-    tx.isProvisional && "italic text-muted-foreground",
+    // Engine-generated projections (predicted bills, payslips, …) read as
+    // muted italic — the existing convention.
+    tx.isProjected && "italic text-muted-foreground",
+    // User-authored *provisional* rows are real DB rows but drafts. Distinct
+    // from both projected (italic + muted) and actual (plain): a dashed
+    // accent stripe down the left edge plus a small tag in the row body, so
+    // the row stays full-weight legible (you'll likely come back and
+    // commit / delete it).
+    tx.isProvisional && "border-l-2 border-dashed border-amber-500 pl-[0.4rem]",
     // Indent payslip deductions so they read as children of the gross row
     // rendered immediately above them.
     tx.isPayslipDeduction && "pl-4",
@@ -1186,6 +1208,7 @@ function TransactionRow({
               toAccountId: tx.toAccount?.id ?? null,
               liabilityId: tx.liability?.id ?? null,
               assetId: tx.asset?.id ?? null,
+              isProvisional: tx.isProvisional,
             }}
             accounts={accounts}
             liabilities={liabilities}
@@ -1446,6 +1469,7 @@ function CreateTransactionTrigger({
         toAccountId: v.toAccountId,
         liabilityId: v.liabilityId,
         assetId: v.assetId,
+        isProvisional: v.isProvisional,
       },
     });
     toast.success("Transaction added");
@@ -1511,6 +1535,7 @@ type FullFormValues = {
   toAccountId: string | null;
   liabilityId: string | null;
   assetId: string | null;
+  isProvisional: boolean;
 };
 
 const NONE = "__none__" as const;
@@ -1554,6 +1579,9 @@ function FullTransactionForm({
     initial?.liabilityId ?? NONE,
   );
   const [assetId, setAssetId] = useState<string>(initial?.assetId ?? NONE);
+  const [isProvisional, setIsProvisional] = useState<boolean>(
+    initial?.isProvisional ?? false,
+  );
 
   const hasTarget =
     toAccountId !== NONE || liabilityId !== NONE || assetId !== NONE;
@@ -1575,6 +1603,7 @@ function FullTransactionForm({
       toAccountId: toAccountId === NONE ? null : toAccountId,
       liabilityId: liabilityId === NONE ? null : liabilityId,
       assetId: assetId === NONE ? null : assetId,
+      isProvisional,
     });
   };
 
@@ -1748,6 +1777,21 @@ function FullTransactionForm({
           </SelectContent>
         </Select>
       </div>
+      <label className="flex items-start gap-2 text-sm">
+        <Checkbox
+          checked={isProvisional}
+          onCheckedChange={(c) => setIsProvisional(c === true)}
+          disabled={readOnly}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="font-medium">Provisional</span>
+          <span className="ml-1 text-xs text-muted-foreground">
+            — draft only. Counts in the planner's balance projections but
+            doesn't show up in actual-money aggregates.
+          </span>
+        </span>
+      </label>
       <div className="flex items-center justify-end gap-2">
         {onDelete && (
           <Button

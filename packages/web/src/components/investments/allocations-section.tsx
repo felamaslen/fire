@@ -72,6 +72,14 @@ export const AllocationsSectionPortfolioFragment = graphql(`
         }
       }
     }
+    cash {
+      amount
+      currency
+    }
+    totalValue {
+      amount
+      currency
+    }
   }
 `);
 
@@ -215,8 +223,12 @@ function seedAllocations(
 
 export function AllocationsSection({
   filterAssetIds,
+  transferredOut = false,
 }: {
   filterAssetIds: string[];
+  /** When `true`, the selected wrapper has been transferred out — the bar
+   * renders in flat grey with no drag handles and no target overlay. */
+  transferredOut?: boolean;
 }) {
   const filterAssetId = filterAssetIds.length === 1 ? filterAssetIds[0]! : null;
   const filterAssetIdIn = filterAssetIds.length > 0 ? filterAssetIds : null;
@@ -241,10 +253,10 @@ export function AllocationsSection({
     ? (allBuckets.find((b) => b.assetId === filterAssetId) ?? null)
     : null;
 
-  // ACTUAL segments come straight from the BE-computed per-investment fractions
-  // for the current filter. The server already excludes cash and renormalises
-  // over investments that contribute, so we only translate `Investment` →
-  // label / colour for rendering.
+  // ACTUAL segments come straight from the BE-computed per-investment
+  // fractions for the current filter. The server's `allocations` already sum
+  // to 1 over invested holdings; cash sits outside this bar (it's surfaced
+  // in the headline and the cash-contributions section instead).
   const actualSegments = useMemo<AllocationSegment[]>(() => {
     const portfolio = data?.portfolio
       ? readFragment(AllocationsSectionPortfolioFragment, data.portfolio)
@@ -288,10 +300,7 @@ export function AllocationsSection({
   // fraction) so the two stacked bars line up segment-for-segment instead of
   // the editable bar reshuffling alphabetically.
   const targetSegments: AllocationSegment[] = bucket
-    ? actualSegments.map((s) => ({
-        ...s,
-        value: draft.get(s.id) ?? 0,
-      }))
+    ? actualSegments.map((s) => ({ ...s, value: draft.get(s.id) ?? 0 }))
     : actualSegments;
 
   // Drag flow. The snapshot captures the pre-drag map so a sequence of small
@@ -434,7 +443,30 @@ export function AllocationsSection({
     if (!bucket) setPendingDraft(null);
   }, [bucket]);
 
-  const editable = bucket != null;
+  const editable = bucket != null && !transferredOut;
+
+  // Transferred-out wrappers render a single, flat-grey actual bar — no
+  // target overlay, no drag handles. The wrapper is frozen pre-transfer, so
+  // there's nothing meaningful to set.
+  if (transferredOut) {
+    const greySegments = actualSegments.map((s, i) => ({
+      ...s,
+      // Alternate two muted shades so segment boundaries stay legible
+      // without re-introducing per-investment colour.
+      color: i % 2 === 0 ? "#9ca3af" : "#6b7280",
+      label: "",
+      title: "",
+    }));
+    return (
+      <section className="absolute inset-x-0 bottom-0">
+        <AllocationBar
+          segments={greySegments}
+          compact
+          className="h-7 rounded-none rounded-b-lg opacity-70"
+        />
+      </section>
+    );
+  }
 
   return (
     <section

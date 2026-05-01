@@ -1,16 +1,28 @@
 import { strict as assert } from "node:assert";
 
-import { and, eq, exists, inArray, ne, not, or, sum } from "drizzle-orm";
+import {
+  and,
+  eq,
+  exists,
+  inArray,
+  not,
+  or,
+  type SQL,
+  sql,
+  sum,
+} from "drizzle-orm";
 import { GraphQLError } from "graphql";
-import type { ID, Int } from "grats";
+import type { Float, ID, Int } from "grats";
 
 import { db, runInTransaction } from "@/db";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
+import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
 import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import type { DateTime } from "../date-time";
 import { assertCurrencyCode, Money, type MoneyInput } from "../money";
+import { NetWorthCategoryAsset } from "../net-worth/categories";
 import {
   buildConnection,
   type Connection,
@@ -18,6 +30,7 @@ import {
   encodeCursor,
 } from "../pagination";
 import { VOID, type Void } from "../void";
+import { effectiveAssetFilter } from "./effective-filter";
 import {
   InvestmentPosition,
   InvestmentWrapper,
@@ -34,6 +47,10 @@ import {
   loadInvestmentTransactions,
   loadInvestmentTransactionsConnection,
 } from "./transactions";
+
+// `effectiveAssetFilter` is re-exported from `./effective-filter` for
+// existing call sites; the module owns the DataLoader cache.
+export { effectiveAssetFilter } from "./effective-filter";
 
 /** The real-time unit price of a stock investment. `tickAt` is the time of the price tick reported by the upstream provider; `capturedAt` is the wall-clock time we last refreshed it. @gqlType */
 export class InvestmentPriceLatest {
@@ -130,22 +147,58 @@ export class Investment {
     return loadInvestmentStockSplits(this.id);
   }
 
-  /** Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet. @gqlField */
-  async unitPriceCached(ctx: Context): Promise<Money | null> {
-    const s = await loadInvestmentStats(ctx, { investmentId: this.id });
+  /** Most recent split-adjusted unit price known for this investment. When `filterAssetIdIn` resolves to a single transferred-out wrapper, the price is frozen at the most recent quote on or before the day of the transfer (the live overlay is skipped). `null` if no qualifying prices have been recorded yet. @gqlField */
+  async unitPriceCached(
+    ctx: Context,
+    /** When set and non-empty, used to derive a frozen-pre-transfer view: a single transferred-out wrapper caps the price at its transfer date. Has no other effect on the price itself (which is investment-level). */
+    filterAssetIdIn?: ID[] | null,
+  ): Promise<Money | null> {
+    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
+    const s = await loadInvestmentStats(ctx, {
+      investmentId: this.id,
+      ...(dateCap ? { dateCap } : {}),
+    });
     if (s.priceLatest === null || s.currency === null) return null;
     return Money.fromMinorDenomination(s.priceLatest, s.currency);
   }
 
-  /** When the most recent cached unit price was first recorded for this investment. `null` if no prices have been recorded yet. @gqlField */
-  async unitPriceCachedAt(ctx: Context): Promise<DateTime | null> {
-    const s = await loadInvestmentStats(ctx, { investmentId: this.id });
+  /** When the most recent cached unit price was first recorded for this investment (DB-row creation timestamp). `null` if no prices have been recorded yet. @gqlField */
+  async unitPriceCachedAt(
+    ctx: Context,
+    /** When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`). */
+    filterAssetIdIn?: ID[] | null,
+  ): Promise<DateTime | null> {
+    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
+    const s = await loadInvestmentStats(ctx, {
+      investmentId: this.id,
+      ...(dateCap ? { dateCap } : {}),
+    });
     return (s.priceLatestCachedAt as DateTime | null) ?? null;
   }
 
-  /** Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request. @gqlField */
-  async unitPriceLatest(ctx: Context): Promise<InvestmentPriceLatest | null> {
+  /** Calendar date the most recent cached unit price applies to — i.e. the trading day the close price represents, distinct from when it was first stored (`unitPriceCachedAt`). When the wrapper filter resolves to a transferred-out wrapper, returns the date of the most recent quote on or before the day of the transfer. `null` if no prices have been recorded yet. @gqlField */
+  async unitPriceCachedDate(
+    ctx: Context,
+    /** When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`). */
+    filterAssetIdIn?: ID[] | null,
+  ): Promise<CalendarDate | null> {
+    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
+    const s = await loadInvestmentStats(ctx, {
+      investmentId: this.id,
+      ...(dateCap ? { dateCap } : {}),
+    });
+    return s.priceLatestCachedDate ?? null;
+  }
+
+  /** Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, when no quote is available, or when `filterAssetIdIn` resolves to a single transferred-out wrapper (a frozen pre-transfer view never reads the live tick). The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request. @gqlField */
+  async unitPriceLatest(
+    ctx: Context,
+    /** When set and non-empty, used to suppress the live overlay for transferred-out wrappers (see `unitPriceCached`). */
+    filterAssetIdIn?: ID[] | null,
+  ): Promise<InvestmentPriceLatest | null> {
     if (!(this.asset instanceof InvestmentStock)) return null;
+    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
+    if (dateCap) return null;
     const s = await loadInvestmentStats(ctx, { investmentId: this.id });
     if (!s.live) return null;
     return new InvestmentPriceLatest(
@@ -155,18 +208,22 @@ export class Investment {
     );
   }
 
-  /** Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). @gqlField */
+  /** Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). When `filterAssetIdIn` resolves to a single transferred-out wrapper, holdings are frozen at the day before the transfer. When it resolves to a single transferred-into wrapper, each source's pre-transfer transactions are folded into the result. @gqlField */
   async position(
     ctx: Context,
     /** When set and non-empty, scopes the position to the union of these wrappers. */
     filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPosition> {
+    const { effectiveAssetIds, extraScopes, dateCap } =
+      await effectiveAssetFilter(ctx, filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       assetIds:
-        filterAssetIdIn && filterAssetIdIn.length > 0
-          ? (filterAssetIdIn as string[])
+        effectiveAssetIds && effectiveAssetIds.length > 0
+          ? effectiveAssetIds
           : undefined,
+      ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
     return new InvestmentPosition(s);
   }
@@ -214,8 +271,8 @@ export type InvestmentInitialTransactionInput = {
   assetId: ID;
   /** Calendar date the trade was executed. */
   date: CalendarDate;
-  /** Signed number of units traded. Positive = buy / DRIP, negative = sell. */
-  units: Int;
+  /** Signed number of units traded. Positive = buy / DRIP, negative = sell. Fractional units are supported. */
+  units: Float;
   /** Unit price at execution. */
   price: MoneyInput;
   /** Taxes paid on the trade. Defaults to 0. */
@@ -327,40 +384,68 @@ export async function investments(
   first?: Int | null,
   after?: ID | null,
   sort?: InvestmentSort | null,
-  /** When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers. */
+  /** When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers. When the filter resolves to a single transferred-out wrapper, predicates and sort keys are evaluated at the day before the transfer (so a position that's still held then is not classified as sold). */
   filterAssetIdIn?: ID[] | null,
   /** Filter on whether the investment is fully sold — i.e. has at least one transaction but a net-zero unit count (scoped to `filterAssetIdIn` when set and non-empty). `false` excludes sold investments, `true` keeps only sold ones, `null` / omitted applies no filter. Investments with no transactions are never considered sold. */
   filterIsSold?: boolean | null,
 ): Promise<Connection<Investment> | null> {
+  const {
+    effectiveAssetIds,
+    extraScopes,
+    dateCap: dateCapIso,
+  } = await effectiveAssetFilter(ctx, filterAssetIdIn);
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const afterCursor = after ? decodeCursor(after) : null;
   const { key, direction } = parseSortInput(sort);
   const wrapperFilter =
-    filterAssetIdIn && filterAssetIdIn.length > 0
-      ? (filterAssetIdIn as string[])
+    effectiveAssetIds && effectiveAssetIds.length > 0
+      ? effectiveAssetIds
       : null;
 
-  // Net units across all transactions for `Investments.id`, scoped to
-  // `wrapperFilter` when set. Returns `NULL` for investments with no
-  // matching transactions, which is treated as "not sold" below.
+  // SQL `WHERE` predicate that selects transactions in scope: the main
+  // wrapper(s) (capped by `dateCapIso` when set) OR each `extraScope`'s
+  // source asset capped at its transfer date. Mirrors `loadInvestmentStats`
+  // so the per-investment "is this investment in scope?" check sees the
+  // same rows the stats loader aggregates.
+  const txInScope = (() => {
+    if (!wrapperFilter && extraScopes.length === 0) return undefined;
+    const branches: SQL[] = [];
+    if (wrapperFilter) {
+      const dateClause = dateCapIso
+        ? sql` AND ${InvestmentTransactions.date} <= ${dateCapIso}::date`
+        : sql``;
+      branches.push(
+        sql`(${inArray(InvestmentTransactions.assetId, wrapperFilter)}${dateClause})`,
+      );
+    }
+    for (const s of extraScopes) {
+      branches.push(
+        sql`(${InvestmentTransactions.assetId} = ${s.assetId} AND ${InvestmentTransactions.date} <= ${s.dateCap}::date)`,
+      );
+    }
+    return sql`(${sql.join(branches, sql` OR `)})`;
+  })();
+
+  // Net units across all transactions for `Investments.id` in the scope
+  // computed above. Returns `NULL` for investments with no matching
+  // transactions, which is treated as "not sold" below.
   const unitsSum = db
     .select({ s: sum(InvestmentTransactions.units) })
     .from(InvestmentTransactions)
     .where(
-      and(
-        eq(InvestmentTransactions.investmentId, Investments.id),
-        wrapperFilter
-          ? inArray(InvestmentTransactions.assetId, wrapperFilter)
-          : undefined,
-      ),
+      and(eq(InvestmentTransactions.investmentId, Investments.id), txInScope),
     );
+  // `hasAnyTransaction` deliberately ignores `dateCapIso` / `extraScopes`.
+  // Its sole purpose is to spare freshly-created, zero-tx investments from
+  // being filtered out of the wrapper-scoped view. Capping it would
+  // falsely surface investments whose only txs are out-of-scope.
   const hasAnyTransaction = exists(
     db
       .select({ id: InvestmentTransactions.id })
       .from(InvestmentTransactions)
       .where(eq(InvestmentTransactions.investmentId, Investments.id)),
   );
-  const hasTransactionInWrapper = wrapperFilter
+  const hasTransactionInWrapper = txInScope
     ? exists(
         db
           .select({ id: InvestmentTransactions.id })
@@ -368,7 +453,7 @@ export async function investments(
           .where(
             and(
               eq(InvestmentTransactions.investmentId, Investments.id),
-              inArray(InvestmentTransactions.assetId, wrapperFilter),
+              txInScope,
             ),
           ),
       )
@@ -387,12 +472,29 @@ export async function investments(
           : undefined,
         // A "sold" investment has at least one transaction and a net-zero unit
         // count (scoped to the wrapper when set). Newly-created zero-tx
-        // investments are never classified as sold.
+        // investments are never classified as sold. Units are stored in double
+        // precision so summing buys + sells of fractional shares can leave a
+        // sub-unit residue (e.g. ~1e-13) instead of an exact zero — compare
+        // against a small epsilon, not `= 0`, so those positions still hide.
+        //
+        // When the effective scope is defunct (`dateCapIso` set: every
+        // selected wrapper is either transferred out or fully sold), treat
+        // every in-scope investment as sold regardless of its pre-cap units.
+        // Pre-cap holdings on a defunct wrapper aren't currently held — they
+        // exist only to keep the frozen chart / totals meaningful — so the
+        // hide-sold toggle should still hide them.
         filterIsSold === true
-          ? and(hasAnyTransaction, eq(unitsSum, 0))
+          ? dateCapIso
+            ? hasTransactionInWrapper
+            : and(hasAnyTransaction, sql`abs(coalesce(${unitsSum}, 0)) < 1e-9`)
           : undefined,
         filterIsSold === false
-          ? or(not(hasAnyTransaction), ne(unitsSum, 0))
+          ? dateCapIso
+            ? not(hasTransactionInWrapper ?? sql`false`)
+            : or(
+                not(hasAnyTransaction),
+                sql`abs(coalesce(${unitsSum}, 0)) >= 1e-9`,
+              )
           : undefined,
       ),
     );
@@ -414,6 +516,8 @@ export async function investments(
             const s = await loadInvestmentStats(ctx, {
               investmentId: row.id,
               assetIds: wrapperFilter ?? undefined,
+              ...(dateCapIso ? { dateCap: dateCapIso } : {}),
+              ...(extraScopes.length > 0 ? { extraScopes } : {}),
             });
             const totalValue = s.totalValueMinor;
             const totalGain =
@@ -457,4 +561,29 @@ export async function investments(
     },
     { hasNextPage, hasPreviousPage: afterCursor != null },
   );
+}
+
+/** Every wrapper (a `STOCK` or `PENSION` `NetWorthCategoryAsset`) that has at least one `InvestmentTransaction` booked against it, ordered with `STOCK` wrappers before `PENSION`s and alphabetically by `name` within each group. Drives the portfolio switcher on the investments page.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function investmentPortfolios(): Promise<
+  NetWorthCategoryAsset[] | null
+> {
+  const rows = await db
+    .selectDistinct({ row: NetWorthCategoryAssets })
+    .from(NetWorthCategoryAssets)
+    .innerJoin(
+      InvestmentTransactions,
+      eq(InvestmentTransactions.assetId, NetWorthCategoryAssets.id),
+    )
+    .where(inArray(NetWorthCategoryAssets.type, ["STOCK", "PENSION"]));
+  // Custom order: STOCK before PENSION, then by name. SQL DISTINCT can't
+  // express the priority cleanly without a CASE, so sort in JS.
+  rows.sort((a, b) => {
+    if (a.row.type !== b.row.type) return a.row.type === "STOCK" ? -1 : 1;
+    return a.row.name.localeCompare(b.row.name);
+  });
+  return rows.map((r) => NetWorthCategoryAsset.load(r.row));
 }

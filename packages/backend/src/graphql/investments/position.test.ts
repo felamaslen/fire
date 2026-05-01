@@ -41,7 +41,7 @@ async function buy(
       $investmentId: ID!
       $assetId: ID!
       $date: Date!
-      $units: Int!
+      $units: Float!
       $priceAmount: Float!
       $taxesAmount: Float!
       $feesAmount: Float!

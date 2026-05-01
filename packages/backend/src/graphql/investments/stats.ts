@@ -33,6 +33,8 @@ export type InvestmentStats = {
   priceLatest: number | null;
   /** When the latest cached `InvestmentPrices` row for this investment was created. `null` for multi-investment slices, or when no price history exists yet. */
   priceLatestCachedAt: Date | null;
+  /** Calendar date the latest cached `InvestmentPrices` row applies to (i.e. `InvestmentPrices.date`, not the row's DB-creation timestamp). Useful in tooltips to show what *day* the cached price represents — distinct from when we first stored it. `null` for multi-investment slices, or when no price history exists yet. */
+  priceLatestCachedDate: Date | null;
 
   /** Net split-adjusted units matching the slice. Meaningful per-investment; across investments it's a meaningless sum (leave to callers that know the slice is single-investment). */
   unitsHeld: number;
@@ -83,6 +85,10 @@ export type InvestmentStatsFilter = {
   assetIds?: string[];
   currency?: string;
   skipLive?: boolean;
+  /** Optional ISO-`YYYY-MM-DD` cap. When set, only `InvestmentTransactions` with `date <= dateCap` are aggregated, and `priceLatest` is the most recent `InvestmentPrices` row with `date <= dateCap` (live-quote overlay is skipped). Used to value a transferred-out wrapper as of the day before its transfer. */
+  dateCap?: string;
+  /** Additional asset scopes to fold in, each with its own capped date — used to render a transferred-into wrapper that inherits the source's pre-transfer transaction history. Each entry adds `(assetId = entry.assetId AND date <= entry.dateCap)` to the transactions filter, OR-combined with the main scope. `priceLatest` is unaffected (it stays "now" — the destination is live). Empty / omitted = no extra scope. */
+  extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
 /**
@@ -119,8 +125,38 @@ const getLoader = contextAwareDataLoader(
   () =>
     new DataLoader<InvestmentStatsFilter, InvestmentStats, string>(
       async (keys) => {
-        const sliceCtx = await fetchSlices(keys);
-        return keys.map((k) => aggregateKey(sliceCtx, k));
+        // Group by `(dateCap, extraScopes)` so each batch hits one SQL whose
+        // `WHERE` shape and `latestPrices` selection match. Mixing different
+        // shapes would corrupt the per-key aggregates.
+        const groupId = (k: InvestmentStatsFilter) => {
+          const extra = k.extraScopes
+            ? [...k.extraScopes]
+                .sort((a, b) =>
+                  a.assetId === b.assetId
+                    ? a.dateCap.localeCompare(b.dateCap)
+                    : a.assetId.localeCompare(b.assetId),
+                )
+                .map((s) => `${s.assetId}@${s.dateCap}`)
+                .join(",")
+            : "";
+          return `${k.dateCap ?? ""}|${extra}`;
+        };
+        const byGroup = new Map<string, InvestmentStatsFilter[]>();
+        for (const k of keys) {
+          const id = groupId(k);
+          const list = byGroup.get(id) ?? [];
+          list.push(k);
+          byGroup.set(id, list);
+        }
+        const sliceCtxByGroup = new Map<string, SliceContext>();
+        await Promise.all(
+          [...byGroup.entries()].map(async ([id, group]) => {
+            sliceCtxByGroup.set(id, await fetchSlices(group));
+          }),
+        );
+        return keys.map((k) =>
+          aggregateKey(sliceCtxByGroup.get(groupId(k))!, k),
+        );
       },
       { cacheKeyFn },
     ),
@@ -128,7 +164,17 @@ const getLoader = contextAwareDataLoader(
 
 function cacheKeyFn(k: InvestmentStatsFilter): string {
   const assetIds = k.assetIds ? [...k.assetIds].sort().join(",") : "";
-  return `${k.investmentId ?? ""}|${assetIds}|${k.currency ?? ""}|${k.skipLive ? "1" : "0"}`;
+  const extra = k.extraScopes
+    ? [...k.extraScopes]
+        .sort((a, b) =>
+          a.assetId === b.assetId
+            ? a.dateCap.localeCompare(b.dateCap)
+            : a.assetId.localeCompare(b.assetId),
+        )
+        .map((s) => `${s.assetId}@${s.dateCap}`)
+        .join(",")
+    : "";
+  return `${k.investmentId ?? ""}|${assetIds}|${k.currency ?? ""}|${k.skipLive ? "1" : "0"}|${k.dateCap ?? ""}|${extra}`;
 }
 
 type SliceRow = {
@@ -139,6 +185,9 @@ type SliceRow = {
   stockCode: string | null;
   priceLatestCached: number | null;
   priceLatestCachedAt: Date | null;
+  /** Calendar date the cached price applies to. Postgres returns the `date`
+   * column through the `sql` template as the raw `YYYY-MM-DD` string. */
+  priceLatestCachedDate: string | null;
   unitsHeld: number;
   unitsPriceSum: number;
   buyCostSum: number;
@@ -166,6 +215,10 @@ type SliceContext = {
 async function fetchSlices(
   keys: ReadonlyArray<InvestmentStatsFilter>,
 ): Promise<SliceContext> {
+  // Every key in the batch shares the same `(dateCap, extraScopes)` (see
+  // the loader's grouping), so we read them from the first key.
+  const dateCap = keys[0]?.dateCap;
+  const extraScopes = keys[0]?.extraScopes ?? [];
   // Tighten the SQL's scan to the union of the batch's filters — but only on
   // dimensions *every* key constrains. A single key that drops a dimension
   // (e.g. `{assetId: A}` without `investmentId`) would be answered wrongly
@@ -177,8 +230,9 @@ async function fetchSlices(
   // Asset narrowing: only valid when *every* key constrains the asset
   // dimension via a non-empty `assetIds` set. Union the per-key sets into
   // the SQL filter. A single key that drops it would force the whole batch
-  // to scan unfiltered.
-  const assetIds = keys.every((k) => k.assetIds && k.assetIds.length > 0)
+  // to scan unfiltered. `extraScopes` (when set) also broadens the union —
+  // those source-asset rows must come back too.
+  const mainAssetIdSet = keys.every((k) => k.assetIds && k.assetIds.length > 0)
     ? [...new Set(keys.flatMap((k) => k.assetIds ?? []))]
     : null;
   const currencies = keys.every((k) => k.currency !== undefined)
@@ -221,33 +275,98 @@ async function fetchSlices(
           investmentIds
             ? inArray(InvestmentTransactions.investmentId, investmentIds)
             : undefined,
-          assetIds
-            ? inArray(InvestmentTransactions.assetId, assetIds)
-            : undefined,
+          // Asset+date predicate: when extraScopes are present, OR-combine
+          // the main scope (mainAssetIds capped by `dateCap`, if set) with
+          // each extra scope (its `assetId` capped by its own `dateCap`).
+          // Without extraScopes this collapses back to the simple "main
+          // assets, optional date cap" filter.
+          (() => {
+            const mainAssetIds = mainAssetIdSet;
+            if (!mainAssetIds && extraScopes.length === 0) {
+              return dateCap
+                ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
+                : undefined;
+            }
+            if (extraScopes.length === 0) {
+              // Common path — single-scope query collapses to the existing
+              // shape so we keep using `inArray` (which renders the param
+              // list as the planner expects).
+              return and(
+                mainAssetIds
+                  ? inArray(InvestmentTransactions.assetId, mainAssetIds)
+                  : undefined,
+                dateCap
+                  ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
+                  : undefined,
+              );
+            }
+            const branches: ReturnType<typeof sql>[] = [];
+            if (mainAssetIds && mainAssetIds.length > 0) {
+              const dateClause = dateCap
+                ? sql` AND ${InvestmentTransactions.date} <= ${dateCap}::date`
+                : sql``;
+              branches.push(
+                sql`(${inArray(InvestmentTransactions.assetId, mainAssetIds)}${dateClause})`,
+              );
+            }
+            for (const s of extraScopes) {
+              branches.push(
+                sql`(${InvestmentTransactions.assetId} = ${s.assetId} AND ${InvestmentTransactions.date} <= ${s.dateCap}::date)`,
+              );
+            }
+            return sql`(${sql.join(branches, sql` OR `)})`;
+          })(),
         ),
       )
       .groupBy(InvestmentTransactions.id),
   );
 
-  // `latestPrices` — one row per investment (or zero if no history yet), via
-  // the partial unique index on `(investmentId, isLatest)` added in migration
-  // `0024`. Scoped to the batch's investment filter when all keys pin one.
-  const latestPrices = db
-    .select({
-      investmentId: InvestmentPrices.investmentId,
-      priceAdjusted: InvestmentPrices.priceAdjusted,
-      createdAt: InvestmentPrices.createdAt,
-    })
-    .from(InvestmentPrices)
-    .where(
-      and(
-        eq(InvestmentPrices.isLatest, true),
-        investmentIds
-          ? inArray(InvestmentPrices.investmentId, investmentIds)
-          : undefined,
-      ),
-    )
-    .as("latestPrices");
+  // `latestPrices` — one row per investment (or zero if no history yet). When
+  // uncapped, hits the partial unique index on `(investmentId, isLatest)`
+  // (migration `0024`). When `dateCap` is set, picks the price row with the
+  // greatest `date` ≤ `dateCap` per investmentId — used to value a
+  // transferred-out wrapper as of its frozen pre-transfer state.
+  const latestPrices = (
+    dateCap
+      ? db
+          .select({
+            investmentId: InvestmentPrices.investmentId,
+            priceAdjusted: InvestmentPrices.priceAdjusted,
+            createdAt: InvestmentPrices.createdAt,
+            date: InvestmentPrices.date,
+          })
+          .from(InvestmentPrices)
+          .where(
+            and(
+              sql`${InvestmentPrices.date} <= ${dateCap}::date`,
+              investmentIds
+                ? inArray(InvestmentPrices.investmentId, investmentIds)
+                : undefined,
+              sql`NOT EXISTS (
+                SELECT 1 FROM ${InvestmentPrices} p2
+                WHERE p2."investmentId" = ${InvestmentPrices.investmentId}
+                  AND p2.date <= ${dateCap}::date
+                  AND p2.date > ${InvestmentPrices.date}
+              )`,
+            ),
+          )
+      : db
+          .select({
+            investmentId: InvestmentPrices.investmentId,
+            priceAdjusted: InvestmentPrices.priceAdjusted,
+            createdAt: InvestmentPrices.createdAt,
+            date: InvestmentPrices.date,
+          })
+          .from(InvestmentPrices)
+          .where(
+            and(
+              eq(InvestmentPrices.isLatest, true),
+              investmentIds
+                ? inArray(InvestmentPrices.investmentId, investmentIds)
+                : undefined,
+            ),
+          )
+  ).as("latestPrices");
 
   // Outer aggregation: one row per `(investmentId, assetId)` slice. The
   // `LEFT JOIN` from `Investments` keeps a row even for investments with no
@@ -262,6 +381,9 @@ async function fetchSlices(
       stockCode: Investments.stockCode,
       priceLatestCached: latestPrices.priceAdjusted,
       priceLatestCachedAt: latestPrices.createdAt,
+      priceLatestCachedDate: sql<string | null>`${latestPrices.date}`.as(
+        "priceLatestCachedDate",
+      ),
       livePrice: InvestmentPricesLive.price,
       livePricePreviousClose: InvestmentPricesLive.pricePreviousClose,
       liveCurrency: InvestmentPricesLive.currency,
@@ -322,6 +444,7 @@ async function fetchSlices(
       Investments.stockCode,
       latestPrices.priceAdjusted,
       latestPrices.createdAt,
+      latestPrices.date,
       InvestmentPricesLive.price,
       InvestmentPricesLive.pricePreviousClose,
       InvestmentPricesLive.currency,
@@ -382,7 +505,12 @@ function aggregateKey(
   ctx: SliceContext,
   key: InvestmentStatsFilter,
 ): InvestmentStats {
+  // `dateCap` forces the live row out entirely — live quotes are "now"
+  // (and `previousClose` is yesterday's close), neither of which can be
+  // substituted into a frozen pre-transfer valuation. The capped
+  // `priceLatestCached` (price ≤ `dateCap`) is the only price we use.
   const skipLive = !!key.skipLive;
+  const ignoreLive = !!key.dateCap;
   const matches = selectSlices(ctx, key);
 
   // Sum the raw-aggregate columns directly across every matching slice.
@@ -425,7 +553,9 @@ function aggregateKey(
   for (const [, slices] of perInvestment) {
     const meta = slices[0];
     const invUnits = slices.reduce((a, s) => a + s.unitsHeld, 0);
-    const overlay = overlayLive(meta, skipLive);
+    const overlay = ignoreLive
+      ? { priceLatest: meta.priceLatestCached, live: null }
+      : overlayLive(meta, skipLive);
     // Portfolio-convention totalValue: fully-sold slices contribute 0.
     if (invUnits > 0) {
       if (overlay.priceLatest === null) {
@@ -435,7 +565,7 @@ function aggregateKey(
       }
     }
     // Daily gain requires a held position + a live quote with previousClose.
-    if (!skipLive && invUnits > 0 && overlay.live) {
+    if (!skipLive && !ignoreLive && invUnits > 0 && overlay.live) {
       const prev = overlay.live.previousClosePriceMinor;
       if (prev !== null) {
         dailyGainValueMinor =
@@ -457,13 +587,20 @@ function aggregateKey(
   const metaSource = key.investmentId
     ? (ctx.byInvestment.get(key.investmentId)?.[0] ?? null)
     : null;
-  const overlay = metaSource ? overlayLive(metaSource, skipLive) : null;
+  const overlay = metaSource
+    ? ignoreLive
+      ? { priceLatest: metaSource.priceLatestCached, live: null }
+      : overlayLive(metaSource, skipLive)
+    : null;
 
   return {
     currency: metaSource?.currency ?? null,
     stockCode: metaSource?.stockCode ?? null,
     priceLatest: overlay?.priceLatest ?? null,
     priceLatestCachedAt: metaSource?.priceLatestCachedAt ?? null,
+    priceLatestCachedDate: metaSource?.priceLatestCachedDate
+      ? new Date(metaSource.priceLatestCachedDate)
+      : null,
     unitsHeld,
     unitsPriceSum,
     buyCostSum,
@@ -483,17 +620,32 @@ function selectSlices(
   ctx: SliceContext,
   key: InvestmentStatsFilter,
 ): SliceRow[] {
+  // Asset narrowing: extraScopes' asset rows must also be in scope (their
+  // pre-cap rows have already been folded into the SQL aggregates by
+  // `fetchSlices`).
+  const baseAssets =
+    key.assetIds && key.assetIds.length > 0 ? key.assetIds : [];
+  const extraAssets = key.extraScopes
+    ? key.extraScopes.map((s) => s.assetId)
+    : [];
   const assetSet =
-    key.assetIds && key.assetIds.length > 0 ? new Set(key.assetIds) : null;
+    baseAssets.length + extraAssets.length > 0
+      ? new Set<string>([...baseAssets, ...extraAssets])
+      : null;
   let candidates: SliceRow[];
   if (key.investmentId && assetSet && assetSet.size === 1) {
-    const [assetId] = key.assetIds as string[];
+    const [assetId] = [...assetSet];
     const r = ctx.byBoth.get(`${key.investmentId}|${assetId}`);
     candidates = r ? [r] : [];
   } else if (key.investmentId) {
     candidates = ctx.byInvestment.get(key.investmentId) ?? [];
+    if (assetSet) {
+      candidates = candidates.filter(
+        (r) => r.assetId !== null && assetSet.has(r.assetId),
+      );
+    }
   } else if (assetSet && assetSet.size === 1) {
-    const [assetId] = key.assetIds as string[];
+    const [assetId] = [...assetSet];
     candidates = ctx.byAsset.get(assetId) ?? [];
   } else {
     // No narrowing hit → every row (including the "no transactions"
