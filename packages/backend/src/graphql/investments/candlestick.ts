@@ -25,6 +25,8 @@ type CandlestickKey = {
   skipLive: boolean;
   /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), only `InvestmentTransactions` with `date <= dateCap` contribute, and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
   dateCap?: string;
+  /** Additional asset scopes to fold in, each with its own per-scope cap — used to render a transferred-into wrapper that inherits the source's pre-transfer holdings. */
+  extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
 const cacheKeyFn = (key: CandlestickKey): string => {
@@ -32,7 +34,17 @@ const cacheKeyFn = (key: CandlestickKey): string => {
     key.assetIds && key.assetIds.length > 0
       ? [...key.assetIds].sort().join(",")
       : "";
-  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}`;
+  const extra = key.extraScopes
+    ? [...key.extraScopes]
+        .sort((a, b) =>
+          a.assetId === b.assetId
+            ? a.dateCap.localeCompare(b.dateCap)
+            : a.assetId.localeCompare(b.assetId),
+        )
+        .map((s) => `${s.assetId}@${s.dateCap}`)
+        .join(",")
+    : "";
+  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}|${extra}`;
 };
 
 /**
@@ -65,16 +77,33 @@ const loadOne = async (
   const unit = sql.raw(key.unit.toLowerCase());
   const windowLen = sql.raw(String(key.length * key.max));
   const step = sql.raw(String(key.length));
-  const assetFilter =
-    key.assetIds && key.assetIds.length > 0
-      ? sql`and t."assetId" in (${sql.join(
-          key.assetIds.map((id) => sql`${id}`),
+  // OR-combined asset+date scope: (mainAssetIds capped by `dateCap`) OR
+  // each extraScope. When neither is set this collapses to "no filter".
+  const txScopeFilter = (() => {
+    const mainAssetIds = key.assetIds ?? [];
+    const extraScopes = key.extraScopes ?? [];
+    if (mainAssetIds.length === 0 && extraScopes.length === 0) {
+      return key.dateCap ? sql`and t.date <= ${key.dateCap}::date` : sql``;
+    }
+    const branches: ReturnType<typeof sql>[] = [];
+    if (mainAssetIds.length > 0) {
+      const dateClause = key.dateCap
+        ? sql` AND t.date <= ${key.dateCap}::date`
+        : sql``;
+      branches.push(
+        sql`(t."assetId" in (${sql.join(
+          mainAssetIds.map((id) => sql`${id}`),
           sql`, `,
-        )})`
-      : sql``;
-  const txDateCapFilter = key.dateCap
-    ? sql`and t.date <= ${key.dateCap}::date`
-    : sql``;
+        )})${dateClause})`,
+      );
+    }
+    for (const s of extraScopes) {
+      branches.push(
+        sql`(t."assetId" = ${s.assetId} AND t.date <= ${s.dateCap}::date)`,
+      );
+    }
+    return sql`and (${sql.join(branches, sql` OR `)})`;
+  })();
   // When `dateCap` is set, anchor `now` (the rightmost edge of the series)
   // at the cap so the chart freezes on the day before the transfer.
   const now = key.dateCap ?? formatISO(new Date(), { representation: "date" });
@@ -112,8 +141,7 @@ const loadOne = async (
             ), 1))::double precision as "unitsAdjusted"
           from "InvestmentTransactions" t
           where t.currency = ${currency}
-          ${assetFilter}
-          ${txDateCapFilter}
+          ${txScopeFilter}
         ),
         u as materialized (
           select

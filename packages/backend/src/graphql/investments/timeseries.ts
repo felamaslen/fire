@@ -2,7 +2,18 @@ import assert from "node:assert";
 
 import DataLoader from "dataloader";
 import { differenceInDays, formatISO } from "date-fns";
-import { and, asc, desc, eq, inArray, lte, min, sql, sum } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  lte,
+  min,
+  type SQL,
+  sql,
+  sum,
+} from "drizzle-orm";
 import type { PgColumn, PgSelectBase } from "drizzle-orm/pg-core";
 
 import { HOME_CURRENCY } from "@/config";
@@ -34,10 +45,26 @@ type TimeseriesKey = LoadInvestmentsByKeyFilter & {
   skipLive: boolean;
   /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), only `InvestmentTransactions` with `date <= dateCap` contribute, and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
   dateCap?: string;
+  /** Additional asset scopes to fold in, each with its own per-scope cap — used to render a transferred-into wrapper that inherits the source's pre-transfer holdings. Each entry adds `(assetId = entry.assetId AND date <= entry.dateCap)` to the transactions filter, OR-combined with the main scope. The `priceLatest` overlay is unaffected (the destination is live). Empty / omitted = no extra scope. */
+  extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
+const extraScopesFingerprint = (
+  scopes: ReadonlyArray<{ assetId: string; dateCap: string }> | undefined,
+): string =>
+  scopes
+    ? [...scopes]
+        .sort((a, b) =>
+          a.assetId === b.assetId
+            ? a.dateCap.localeCompare(b.dateCap)
+            : a.assetId.localeCompare(b.assetId),
+        )
+        .map((s) => `${s.assetId}@${s.dateCap}`)
+        .join(",")
+    : "";
+
 const cacheKeyFn = (key: TimeseriesKey): string =>
-  `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}`;
+  `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}|${extraScopesFingerprint(key.extraScopes)}`;
 
 const MAX_POINTS = 300;
 
@@ -69,13 +96,53 @@ export const loadInvestmentsByKeyConditions = (
  */
 const loadAdjustedUnits = contextAwareDataLoader(
   async (_ctx: Context, keys: readonly TimeseriesKey[]) => {
-    const { whereAssetId, whereInvestmentId } =
-      loadInvestmentsByKeyConditions(keys);
+    const { whereInvestmentId } = loadInvestmentsByKeyConditions(keys);
     // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
     const currency = HOME_CURRENCY;
-    // Keys are grouped by `dateCap` upstream (in `loadTimeseries`), so every
-    // key in this batch shares the same cap.
+    // Keys are grouped by `(dateCap, extraScopes)` upstream (see the
+    // assertion in `loadTimeseries`), so every key in this batch shares
+    // the same cap + extras.
     const dateCap = keys[0]?.dateCap;
+    const extraScopes = keys[0]?.extraScopes ?? [];
+    // OR-combined asset+date predicate: (mainAssetIds capped by `dateCap`)
+    // OR each extraScope. When no asset filter / extras are present this
+    // collapses back to the simple "main assets, optional date cap" form.
+    const txInScope = (() => {
+      const allHaveAsset = keys.every((k) => k.assetId !== undefined);
+      const mainAssetIds = allHaveAsset
+        ? [...new Set(keys.map((k) => k.assetId as string))]
+        : null;
+      if (!mainAssetIds && extraScopes.length === 0) {
+        return dateCap
+          ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
+          : undefined;
+      }
+      if (extraScopes.length === 0) {
+        return and(
+          mainAssetIds
+            ? inArray(InvestmentTransactions.assetId, mainAssetIds)
+            : undefined,
+          dateCap
+            ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
+            : undefined,
+        );
+      }
+      const branches: SQL[] = [];
+      if (mainAssetIds && mainAssetIds.length > 0) {
+        const dateClause = dateCap
+          ? sql` AND ${InvestmentTransactions.date} <= ${dateCap}::date`
+          : sql``;
+        branches.push(
+          sql`(${inArray(InvestmentTransactions.assetId, mainAssetIds)}${dateClause})`,
+        );
+      }
+      for (const s of extraScopes) {
+        branches.push(
+          sql`(${InvestmentTransactions.assetId} = ${s.assetId} AND ${InvestmentTransactions.date} <= ${s.dateCap}::date)`,
+        );
+      }
+      return sql`(${sql.join(branches, sql` OR `)})`;
+    })();
 
     return await db
       .select({
@@ -101,11 +168,8 @@ const loadAdjustedUnits = contextAwareDataLoader(
       .where(
         and(
           eq(InvestmentTransactions.currency, currency),
-          whereAssetId,
           whereInvestmentId(InvestmentTransactions),
-          dateCap
-            ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
-            : undefined,
+          txInScope,
         ),
       )
       .orderBy(asc(InvestmentTransactions.date));
@@ -129,16 +193,19 @@ export const loadTimeseries = contextAwareDataLoader(
         //
         // If separate X axes are required, then requests should be made in separate microtasks, to avoid batching.
 
-        // Explicitly forbid batch-loading time series with differing periods
-        // or differing `dateCap` (the SQL anchors `now` to one value):
+        // Explicitly forbid batch-loading time series with differing periods,
+        // `dateCap`, or `extraScopes` (the SQL anchors `now` and the asset
+        // scope to one shape):
         assert(
           keys.every(
             (k, _i, array) =>
               k.period === array[0].period &&
               k.length === array[0].length &&
-              (k.dateCap ?? null) === (array[0].dateCap ?? null),
+              (k.dateCap ?? null) === (array[0].dateCap ?? null) &&
+              extraScopesFingerprint(k.extraScopes) ===
+                extraScopesFingerprint(array[0].extraScopes),
           ),
-          "Cannot batch-load timeseries with different periods or dateCaps",
+          "Cannot batch-load timeseries with different periods, dateCaps, or extraScopes",
         );
 
         // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
@@ -149,6 +216,21 @@ export const loadTimeseries = contextAwareDataLoader(
         // the transfer.
         const now =
           keys[0].dateCap ?? formatISO(new Date(), { representation: "date" });
+
+        // Asset scope for `firstTxDate` — broaden to include `extraScopes`'
+        // source assets so the series can anchor on the earliest pre-transfer
+        // tx (otherwise a transferred-into wrapper's chart would start at the
+        // transfer date, not at the source's first buy).
+        const extraScopes = keys[0].extraScopes ?? [];
+        const allAssetIds = (() => {
+          const allHaveAsset = keys.every((k) => k.assetId !== undefined);
+          const main = allHaveAsset
+            ? [...new Set(keys.map((k) => k.assetId as string))]
+            : null;
+          const extras = extraScopes.map((s) => s.assetId);
+          if (!main && extras.length === 0) return null;
+          return [...new Set([...(main ?? []), ...extras])];
+        })();
 
         // Earliest transaction in the filter scope — anchors the series at
         // the first-cached-price boundary for all periods. For `ALL`, this is
@@ -162,7 +244,9 @@ export const loadTimeseries = contextAwareDataLoader(
           .where(
             and(
               eq(InvestmentTransactions.currency, currency),
-              whereAssetId,
+              allAssetIds
+                ? inArray(InvestmentTransactions.assetId, allAssetIds)
+                : whereAssetId,
               whereInvestmentId(InvestmentTransactions),
             ),
           );
@@ -396,18 +480,41 @@ export const loadTimeseries = contextAwareDataLoader(
                   assetIds: key.assetId ? [key.assetId] : undefined,
                   investmentId: key.investmentId,
                   skipLive: false,
+                  ...(key.extraScopes && key.extraScopes.length > 0
+                    ? { extraScopes: key.extraScopes }
+                    : {}),
                 }).then((s) => s.totalValueMinor),
           ),
         );
 
         return keys.map<PortfolioTimeseries | null>((key, keyIndex) => {
+          // Sum across the main `assetId` plus any `extraScopes` source
+          // assets — for a transferred-into wrapper, the chart line should
+          // reflect the combined value (main asset's own + each source's
+          // pre-transfer holdings).
+          const sumSeriesByAsset = (
+            assetIds: string[],
+          ): number[] | undefined => {
+            const series = assetIds
+              .map((id) => yByAsset.get(id))
+              .filter((s): s is number[] => Array.isArray(s));
+            if (series.length === 0) return undefined;
+            return series[0].map((_, i) =>
+              series.reduce((a, s) => a + (s[i] ?? 0), 0),
+            );
+          };
           const y = (() => {
             const { assetId, investmentId } = key;
+            const extraAssetIds = (key.extraScopes ?? []).map((s) => s.assetId);
             if (assetId) {
               if (investmentId) {
+                // Per-investment + per-asset slice — extras would require a
+                // matching `(investmentId|extraAsset)` lookup. None of the
+                // current callers combine `investmentId` with `extraScopes`,
+                // so we keep the simple single-asset fallback.
                 return yByBoth.get(`${investmentId}|${assetId}`);
               }
-              return yByAsset.get(assetId);
+              return sumSeriesByAsset([assetId, ...extraAssetIds]);
             }
             if (investmentId) {
               return yByInvestment.get(investmentId);

@@ -396,12 +396,16 @@ export class Portfolio {
     length?: Int | null,
   ): Promise<PortfolioTimeseries | null> {
     const loader = loadTimeseries(ctx);
-    const dateCap = await this.loadDateCap();
+    const [dateCap, extraScopes] = await Promise.all([
+      this.loadDateCap(),
+      this.loadExtraScopes(),
+    ]);
     const options = {
       period,
       length: length ?? 1,
       skipLive: this.skipLive,
       ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     };
     const combineSeries = (all: (PortfolioTimeseries | null | Error)[]) => {
       const series = all.filter(isNonNullish);
@@ -470,7 +474,10 @@ export class Portfolio {
       !this.filterInvestmentIdIn,
       "Portfolio.candlestick does not support filtering by investment ID",
     );
-    const dateCap = await this.loadDateCap();
+    const [dateCap, extraScopes] = await Promise.all([
+      this.loadDateCap(),
+      this.loadExtraScopes(),
+    ]);
     return loadCandlestick(ctx).load({
       unit,
       length,
@@ -478,6 +485,7 @@ export class Portfolio {
       assetIds: this.filterAssetIdIn ?? undefined,
       skipLive: this.skipLive,
       ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
   }
 }

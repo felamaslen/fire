@@ -621,6 +621,87 @@ describe("Portfolio dateCap from transferOut", () => {
     expect(held.investments?.edges.map((e) => e.node.name)).toEqual([]);
   });
 
+  it("destination timeseries anchors at the source's earliest pre-transfer tx", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // Source's earliest tx is well before the destination's existence.
+    await buy(inv, fromAsset, "2020-01-15", 100, 10);
+    await setPrice(inv, "2020-01-15", 1000);
+    // Transfer to destination.
+    await createTransferOut(fromAsset, toAsset, "2022-06-15");
+    await setPrice(inv, "2025-01-01", 1500);
+
+    const data = await runGql(
+      graphql(`
+        query ($filterAssetIdIn: [ID!]) {
+          portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: true) {
+            timeseries(period: ALL) {
+              initialDate
+              points {
+                x
+                y
+              }
+            }
+          }
+        }
+      `),
+      { filterAssetIdIn: [toAsset] },
+    );
+    const series = data.portfolio?.timeseries;
+    expect(series).not.toBeNull();
+    // Series initial date should be at or before the source's first tx
+    // (2020-01-15) — proves the chart picks up source's pre-transfer data.
+    expect(series!.initialDate <= "2020-01-15").toBe(true);
+    // First point's y should be > 0 (held position from day 1).
+    const first = series!.points[0]!;
+    expect(first.y).toBeGreaterThan(0);
+  });
+
+  it("destination timeseries' last point includes live-overlaid inherited units", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // 100 units bought in source pre-transfer; nothing in destination.
+    await buy(inv, fromAsset, "2020-01-15", 100, 10);
+    await setPrice(inv, "2020-01-15", 1000);
+    await setPrice(inv, "2025-01-01", 1500);
+    // Live quote at £20/unit — the rightmost point should reflect this
+    // *and* the 100 inherited units, i.e. £2000.
+    await db.insert(InvestmentPricesLive).values({
+      investmentId: inv,
+      refreshedAt: new Date("2025-06-01T12:00:00Z"),
+      date: new Date("2025-06-01T12:00:00Z"),
+      currency: "GBP",
+      price: 2000,
+      pricePreviousClose: 1900,
+    });
+    await createTransferOut(fromAsset, toAsset, "2022-06-15");
+
+    // skipLive: false so the live overlay applies to the last point.
+    const data = await runGql(
+      graphql(`
+        query ($filterAssetIdIn: [ID!]) {
+          portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: false) {
+            timeseries(period: ALL) {
+              points {
+                x
+                y
+              }
+            }
+          }
+        }
+      `),
+      { filterAssetIdIn: [toAsset] },
+    );
+    const series = data.portfolio?.timeseries;
+    expect(series).not.toBeNull();
+    const last = series!.points.at(-1)!;
+    // 100 inherited units × £20 live = £2000 — proves extraScopes is
+    // threaded through `loadInvestmentStats` for the live overlay.
+    expect(last.y).toBe(2000);
+  });
+
   it("does not cap a sibling portfolio without a transfer-out", async () => {
     const fromAsset = await createAsset("Old ISA");
     const toAsset = await createAsset("New ISA");
