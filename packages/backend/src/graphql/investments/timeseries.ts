@@ -10,6 +10,7 @@ import {
   inArray,
   lte,
   min,
+  or,
   type SQL,
   sql,
   sum,
@@ -91,6 +92,54 @@ export const loadInvestmentsByKeyConditions = (
   return { whereAssetId, whereInvestmentId };
 };
 
+/** Union every key's per-asset cap requirement (main `assetId` + each `extraScopes` entry) into a single OR-combined `txInScope` predicate. The same asset appearing across keys with conflicting caps would have the looser branch silently dominate downstream per-asset accumulation, so we hard-fail on that — none of the in-tree callers can hit it. Returns `undefined` when at least one key wants every asset (no filter), in which case only the batch-level `dateCap` (if any) constrains. */
+function unionedTxInScope(
+  keys: readonly TimeseriesKey[],
+  dateCap: string | undefined,
+): SQL | undefined {
+  const capByAsset = new Map<string, string | null>();
+  let anyKeyUnconstrained = false;
+  const recordCap = (assetId: string, cap: string | null) => {
+    const prev = capByAsset.get(assetId);
+    assert(
+      prev === undefined || prev === cap,
+      `Asset ${assetId} batched with conflicting timeseries caps: ${prev ?? "<none>"} vs ${cap ?? "<none>"}`,
+    );
+    capByAsset.set(assetId, cap);
+  };
+  for (const k of keys) {
+    const extras = k.extraScopes ?? [];
+    if (k.assetId === undefined && extras.length === 0) {
+      anyKeyUnconstrained = true;
+      continue;
+    }
+    if (k.assetId !== undefined) recordCap(k.assetId, k.dateCap ?? null);
+    for (const s of extras) recordCap(s.assetId, s.dateCap);
+  }
+  if (anyKeyUnconstrained || capByAsset.size === 0) {
+    return dateCap
+      ? lte(InvestmentTransactions.date, sql`${dateCap}::date`)
+      : undefined;
+  }
+  // Group by cap so all assets sharing a cap collapse into a single
+  // `assetId in (…)` branch instead of one branch per asset.
+  const byCap = new Map<string | null, string[]>();
+  for (const [assetId, cap] of capByAsset) {
+    const list = byCap.get(cap) ?? [];
+    list.push(assetId);
+    byCap.set(cap, list);
+  }
+  const branches = [...byCap.entries()].map(([cap, ids]) =>
+    cap === null
+      ? inArray(InvestmentTransactions.assetId, ids)
+      : and(
+          inArray(InvestmentTransactions.assetId, ids),
+          lte(InvestmentTransactions.date, sql`${cap}::date`),
+        ),
+  );
+  return branches.length === 1 ? branches[0] : or(...branches);
+}
+
 /**
  * Retrieves unit-delta chain for each investment in the given set (or all, if no filters given). This can be used to compute historical holding values.
  */
@@ -99,50 +148,13 @@ const loadAdjustedUnits = contextAwareDataLoader(
     const { whereInvestmentId } = loadInvestmentsByKeyConditions(keys);
     // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
     const currency = HOME_CURRENCY;
-    // Keys are grouped by `(dateCap, extraScopes)` upstream (see the
-    // assertion in `loadTimeseries`), so every key in this batch shares
-    // the same cap + extras.
+    // Keys are grouped by `(period, length, dateCap)` upstream (see the
+    // assertion in `loadTimeseries`); `extraScopes` may differ per key
+    // (a transferred-into destination key folds in its source, a sibling
+    // unrelated-asset key doesn't), so the SQL scope is the union across
+    // every key's main + extras requirements.
     const dateCap = keys[0]?.dateCap;
-    const extraScopes = keys[0]?.extraScopes ?? [];
-    // OR-combined asset+date predicate: (mainAssetIds capped by `dateCap`)
-    // OR each extraScope. When no asset filter / extras are present this
-    // collapses back to the simple "main assets, optional date cap" form.
-    const txInScope = (() => {
-      const allHaveAsset = keys.every((k) => k.assetId !== undefined);
-      const mainAssetIds = allHaveAsset
-        ? [...new Set(keys.map((k) => k.assetId as string))]
-        : null;
-      if (!mainAssetIds && extraScopes.length === 0) {
-        return dateCap
-          ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
-          : undefined;
-      }
-      if (extraScopes.length === 0) {
-        return and(
-          mainAssetIds
-            ? inArray(InvestmentTransactions.assetId, mainAssetIds)
-            : undefined,
-          dateCap
-            ? sql`${InvestmentTransactions.date} <= ${dateCap}::date`
-            : undefined,
-        );
-      }
-      const branches: SQL[] = [];
-      if (mainAssetIds && mainAssetIds.length > 0) {
-        const dateClause = dateCap
-          ? sql` AND ${InvestmentTransactions.date} <= ${dateCap}::date`
-          : sql``;
-        branches.push(
-          sql`(${inArray(InvestmentTransactions.assetId, mainAssetIds)}${dateClause})`,
-        );
-      }
-      for (const s of extraScopes) {
-        branches.push(
-          sql`(${InvestmentTransactions.assetId} = ${s.assetId} AND ${InvestmentTransactions.date} <= ${s.dateCap}::date)`,
-        );
-      }
-      return sql`(${sql.join(branches, sql` OR `)})`;
-    })();
+    const txInScope = unionedTxInScope(keys, dateCap);
 
     return await db
       .select({
@@ -193,19 +205,19 @@ export const loadTimeseries = contextAwareDataLoader(
         //
         // If separate X axes are required, then requests should be made in separate microtasks, to avoid batching.
 
-        // Explicitly forbid batch-loading time series with differing periods,
-        // `dateCap`, or `extraScopes` (the SQL anchors `now` and the asset
-        // scope to one shape):
+        // Forbid batch-loading time series with differing periods or
+        // `dateCap` (the SQL anchors `now` to one cap, and the date series
+        // CTE is single-shape per batch). `extraScopes` *may* differ
+        // per-key — `unionedTxInScope` reconciles them by OR-combining
+        // every key's per-asset cap requirements.
         assert(
           keys.every(
             (k, _i, array) =>
               k.period === array[0].period &&
               k.length === array[0].length &&
-              (k.dateCap ?? null) === (array[0].dateCap ?? null) &&
-              extraScopesFingerprint(k.extraScopes) ===
-                extraScopesFingerprint(array[0].extraScopes),
+              (k.dateCap ?? null) === (array[0].dateCap ?? null),
           ),
-          "Cannot batch-load timeseries with different periods, dateCaps, or extraScopes",
+          "Cannot batch-load timeseries with different periods or dateCaps",
         );
 
         // Only stocks traded in (and portfolios valued in) HOME_CURRENCY are supported
@@ -217,18 +229,21 @@ export const loadTimeseries = contextAwareDataLoader(
         const now =
           keys[0].dateCap ?? formatISO(new Date(), { representation: "date" });
 
-        // Asset scope for `firstTxDate` — broaden to include `extraScopes`'
-        // source assets so the series can anchor on the earliest pre-transfer
-        // tx (otherwise a transferred-into wrapper's chart would start at the
-        // transfer date, not at the source's first buy).
-        const extraScopes = keys[0].extraScopes ?? [];
+        // Asset scope for `firstTxDate` — broaden to include every key's
+        // `extraScopes` source assets so the series can anchor on the
+        // earliest pre-transfer tx (otherwise a transferred-into wrapper's
+        // chart would start at the transfer date, not at the source's
+        // first buy).
         const allAssetIds = (() => {
           const allHaveAsset = keys.every((k) => k.assetId !== undefined);
           const main = allHaveAsset
             ? [...new Set(keys.map((k) => k.assetId as string))]
             : null;
-          const extras = extraScopes.map((s) => s.assetId);
-          if (!main && extras.length === 0) return null;
+          const extras = new Set<string>();
+          for (const k of keys) {
+            for (const s of k.extraScopes ?? []) extras.add(s.assetId);
+          }
+          if (!main && extras.size === 0) return null;
           return [...new Set([...(main ?? []), ...extras])];
         })();
 

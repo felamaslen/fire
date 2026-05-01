@@ -167,6 +167,20 @@ export async function loadInvestmentTransferOutForAsset(
   return row ? InvestmentTransfer.load(row) : null;
 }
 
+/** Raw `(assetIdTo, date)` of `assetId`'s outgoing transfer. Internal counterpart to `loadInvestmentTransferOutForAsset` for callers (e.g. `Portfolio.loadEffectiveFilter`) that need the destination id directly without going through the `InvestmentTransfer.assetTo` resolver. */
+export async function loadInvestmentTransferOutScopeForAsset(
+  assetId: string,
+): Promise<{ assetIdTo: string; date: Date } | null> {
+  const [row] = await db
+    .select({
+      assetIdTo: InvestmentTransfers.assetIdTo,
+      date: InvestmentTransfers.date,
+    })
+    .from(InvestmentTransfers)
+    .where(eq(InvestmentTransfers.assetIdFrom, assetId));
+  return row ?? null;
+}
+
 export async function loadInvestmentTransfersInForAsset(
   assetId: string,
 ): Promise<InvestmentTransfer[]> {

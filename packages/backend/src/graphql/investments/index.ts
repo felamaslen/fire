@@ -48,35 +48,59 @@ import {
 } from "./transactions";
 import {
   loadInvestmentTransferInScopesForAsset,
-  loadInvestmentTransferOutForAsset,
+  loadInvestmentTransferOutScopeForAsset,
 } from "./transfers";
 
-/** Resolve the freeze-at date for a request scoped to `filterAssetIdIn`: when the filter narrows to exactly one wrapper that has an outgoing `InvestmentTransfer`, return the day before the transfer (`YYYY-MM-DD`); otherwise `null` (no cap). Mirrors `Portfolio.loadDateCap` so per-investment views and the portfolio aggregate freeze on the same date. */
-async function dateCapForAssets(
+/** Resolve the transfer-aware view of `filterAssetIdIn`. Mirrors `Portfolio.loadEffectiveFilter`:
+ *
+ * - `effectiveAssetIds`: the user's filter with assets whose outgoing transfer destination is also in the filter dropped (so a `[src, dest]` shape collapses to `[dest]` and the source is folded via `extraScopes` instead of double-counted).
+ * - `extraScopes`: union of every surviving asset's inbound transfers, each capped at the day before the transfer. Sources may be the dropped assets.
+ * - `dateCap`: only set when `effectiveAssetIds` is a single transferred-out wrapper whose destination is *not* in the filter — the standalone defunct view.
+ */
+async function effectiveAssetFilter(
   filterAssetIdIn: readonly ID[] | null | undefined,
-): Promise<string | null> {
-  if (!filterAssetIdIn || filterAssetIdIn.length !== 1) return null;
-  const transfer = await loadInvestmentTransferOutForAsset(filterAssetIdIn[0]);
-  if (!transfer) return null;
-  const d = new Date(transfer.date as unknown as Date);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
-/** Resolve the inbound-transfer scopes for a request scoped to `filterAssetIdIn`: when the filter narrows to exactly one wrapper that has incoming `InvestmentTransfer`s, return one entry per source wrapper, each capped at the day before its transfer. Mirrors `Portfolio.loadExtraScopes`. */
-async function extraScopesForAssets(
-  filterAssetIdIn: readonly ID[] | null | undefined,
-): Promise<ReadonlyArray<{ assetId: string; dateCap: string }>> {
-  if (!filterAssetIdIn || filterAssetIdIn.length !== 1) return [];
-  const incoming = await loadInvestmentTransferInScopesForAsset(
-    filterAssetIdIn[0],
+): Promise<{
+  effectiveAssetIds: string[] | null;
+  extraScopes: ReadonlyArray<{ assetId: string; dateCap: string }>;
+  dateCap: string | null;
+}> {
+  if (!filterAssetIdIn || filterAssetIdIn.length === 0) {
+    return { effectiveAssetIds: null, extraScopes: [], dateCap: null };
+  }
+  const filterSet = new Set(filterAssetIdIn);
+  const outgoing = await Promise.all(
+    filterAssetIdIn.map((id) => loadInvestmentTransferOutScopeForAsset(id)),
   );
-  if (incoming.length === 0) return [];
-  return incoming.map((t) => {
-    const d = new Date(t.date);
+  const effective: string[] = [];
+  for (let i = 0; i < filterAssetIdIn.length; i++) {
+    const t = outgoing[i];
+    if (t && filterSet.has(t.assetIdTo as ID)) continue;
+    effective.push(filterAssetIdIn[i]);
+  }
+  const dayBefore = (date: Date | string): string => {
+    const d = new Date(date as unknown as Date);
     d.setUTCDate(d.getUTCDate() - 1);
-    return { assetId: t.assetIdFrom, dateCap: d.toISOString().slice(0, 10) };
-  });
+    return d.toISOString().slice(0, 10);
+  };
+  const extras: { assetId: string; dateCap: string }[] = [];
+  const seen = new Set<string>();
+  for (const assetId of effective) {
+    const incoming = await loadInvestmentTransferInScopesForAsset(assetId);
+    for (const t of incoming) {
+      const cap = dayBefore(t.date);
+      const key = `${t.assetIdFrom}@${cap}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      extras.push({ assetId: t.assetIdFrom, dateCap: cap });
+    }
+  }
+  let dateCap: string | null = null;
+  if (effective.length === 1) {
+    const idx = filterAssetIdIn.indexOf(effective[0] as ID);
+    const t = outgoing[idx];
+    if (t) dateCap = dayBefore(t.date);
+  }
+  return { effectiveAssetIds: effective, extraScopes: extras, dateCap };
 }
 
 /** The real-time unit price of a stock investment. `tickAt` is the time of the price tick reported by the upstream provider; `capturedAt` is the wall-clock time we last refreshed it. @gqlType */
@@ -180,7 +204,7 @@ export class Investment {
     /** When set and non-empty, used to derive a frozen-pre-transfer view: a single transferred-out wrapper caps the price at its transfer date. Has no other effect on the price itself (which is investment-level). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<Money | null> {
-    const dateCap = await dateCapForAssets(filterAssetIdIn);
+    const { dateCap } = await effectiveAssetFilter(filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       ...(dateCap ? { dateCap } : {}),
@@ -195,7 +219,7 @@ export class Investment {
     /** When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<DateTime | null> {
-    const dateCap = await dateCapForAssets(filterAssetIdIn);
+    const { dateCap } = await effectiveAssetFilter(filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       ...(dateCap ? { dateCap } : {}),
@@ -209,7 +233,7 @@ export class Investment {
     /** When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<CalendarDate | null> {
-    const dateCap = await dateCapForAssets(filterAssetIdIn);
+    const { dateCap } = await effectiveAssetFilter(filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       ...(dateCap ? { dateCap } : {}),
@@ -224,7 +248,7 @@ export class Investment {
     filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPriceLatest | null> {
     if (!(this.asset instanceof InvestmentStock)) return null;
-    const dateCap = await dateCapForAssets(filterAssetIdIn);
+    const { dateCap } = await effectiveAssetFilter(filterAssetIdIn);
     if (dateCap) return null;
     const s = await loadInvestmentStats(ctx, { investmentId: this.id });
     if (!s.live) return null;
@@ -241,15 +265,13 @@ export class Investment {
     /** When set and non-empty, scopes the position to the union of these wrappers. */
     filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPosition> {
-    const [dateCap, extraScopes] = await Promise.all([
-      dateCapForAssets(filterAssetIdIn),
-      extraScopesForAssets(filterAssetIdIn),
-    ]);
+    const { effectiveAssetIds, extraScopes, dateCap } =
+      await effectiveAssetFilter(filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       assetIds:
-        filterAssetIdIn && filterAssetIdIn.length > 0
-          ? (filterAssetIdIn as string[])
+        effectiveAssetIds && effectiveAssetIds.length > 0
+          ? effectiveAssetIds
           : undefined,
       ...(dateCap ? { dateCap } : {}),
       ...(extraScopes.length > 0 ? { extraScopes } : {}),
@@ -418,16 +440,17 @@ export async function investments(
   /** Filter on whether the investment is fully sold — i.e. has at least one transaction but a net-zero unit count (scoped to `filterAssetIdIn` when set and non-empty). `false` excludes sold investments, `true` keeps only sold ones, `null` / omitted applies no filter. Investments with no transactions are never considered sold. */
   filterIsSold?: boolean | null,
 ): Promise<Connection<Investment> | null> {
-  const [dateCapIso, extraScopes] = await Promise.all([
-    dateCapForAssets(filterAssetIdIn),
-    extraScopesForAssets(filterAssetIdIn),
-  ]);
+  const {
+    effectiveAssetIds,
+    extraScopes,
+    dateCap: dateCapIso,
+  } = await effectiveAssetFilter(filterAssetIdIn);
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const afterCursor = after ? decodeCursor(after) : null;
   const { key, direction } = parseSortInput(sort);
   const wrapperFilter =
-    filterAssetIdIn && filterAssetIdIn.length > 0
-      ? (filterAssetIdIn as string[])
+    effectiveAssetIds && effectiveAssetIds.length > 0
+      ? effectiveAssetIds
       : null;
 
   // SQL `WHERE` predicate that selects transactions in scope: the main

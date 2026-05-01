@@ -718,3 +718,111 @@ describe("Portfolio dateCap from transferOut", () => {
     expect(sib.portfolio?.totalValue?.amount).toBe(750);
   });
 });
+
+describe("Portfolio multi-asset transfer fold", () => {
+  it("collapses [src, dest] to a dest-only view (src folded as extras, post-transfer src txs ignored)", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // Pre-transfer buy in src + a stray post-transfer buy in src (e.g.
+    // mis-booked). Without the fold-and-cap logic, the stray buy would
+    // continue to contribute its 50 units uncapped.
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    await buy(inv, fromAsset, "2025-04-01", 50, 20);
+    // Genuine post-transfer activity in dest.
+    await buy(inv, toAsset, "2025-04-15", 50, 15);
+    await setPrice(inv, "2025-04-15", 2000);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    // Effective filter collapses to [toAsset]; src's pre-transfer 100 units
+    // fold in via extras (capped at 2025-03-14, so the stray 50-unit buy on
+    // 2025-04-01 is excluded). Held units = 100 + 50 = 150 → 150 × £20 = £3000.
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [fromAsset, toAsset],
+    });
+    expect(data.portfolio?.totalValue?.amount).toBe(3000);
+  });
+
+  it("[dest, other] folds src into dest and sums with the unrelated other", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const other = await createAsset("Brokerage");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10); // src — not in filter
+    await buy(inv, toAsset, "2025-04-15", 50, 15); // dest — in filter
+    await buy(inv, other, "2025-01-15", 30, 10); // other — in filter
+    await setPrice(inv, "2025-04-15", 2000);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    // dest folds src's pre-transfer 100 units → (100 + 50) × £20 = 3000.
+    // other contributes 30 × £20 = 600. Total = 3600.
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [toAsset, other],
+    });
+    expect(data.portfolio?.totalValue?.amount).toBe(3600);
+  });
+
+  it("[src, dest, other] is the [src, dest] collapse plus the unrelated other", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const other = await createAsset("Brokerage");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    await buy(inv, fromAsset, "2025-04-01", 50, 20); // stray post-transfer
+    await buy(inv, toAsset, "2025-04-15", 50, 15);
+    await buy(inv, other, "2025-01-15", 30, 10);
+    await setPrice(inv, "2025-04-15", 2000);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    // Same shape as the [dest, other] case: src is dropped from the
+    // effective filter (its dest is also selected), the stray post-transfer
+    // buy is excluded by the cap. (100 + 50 + 30) × £20 = 3600.
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [fromAsset, toAsset, other],
+    });
+    expect(data.portfolio?.totalValue?.amount).toBe(3600);
+  });
+
+  it("[src, dest] timeseries shows one continuous folded line (no double-count post-transfer)", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    await buy(inv, toAsset, "2025-04-15", 50, 20);
+    // Cached prices either side of the transfer.
+    await setPrice(inv, "2025-01-15", 1000);
+    await setPrice(inv, "2025-03-01", 1500);
+    await setPrice(inv, "2025-04-15", 2000);
+    await db.insert(InvestmentPricesLive).values({
+      investmentId: inv,
+      refreshedAt: new Date("2025-04-15T12:00:00Z"),
+      date: new Date("2025-04-15T12:00:00Z"),
+      currency: "GBP",
+      price: 2000,
+      pricePreviousClose: 2000,
+    });
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    const data = await runGql(
+      graphql(`
+        query ($filterAssetIdIn: [ID!]) {
+          portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: false) {
+            timeseries(period: ALL) {
+              points {
+                y
+              }
+            }
+          }
+        }
+      `),
+      { filterAssetIdIn: [fromAsset, toAsset] },
+    );
+    const points = data.portfolio?.timeseries?.points ?? [];
+    expect(points.length).toBeGreaterThan(0);
+    const last = points[points.length - 1];
+    // Held units at "now" = 100 (src pre-transfer, folded) + 50 (dest own).
+    // 150 × £20 live = £3000. Without the [src, dest] collapse the SQL
+    // would double-count src (uncapped) on top of dest, yielding £4000+.
+    expect(last.y).toBe(3000);
+  });
+});

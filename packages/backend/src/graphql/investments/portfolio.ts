@@ -31,7 +31,7 @@ import {
 import { loadTimeseries } from "./timeseries";
 import {
   loadInvestmentTransferInScopesForAsset,
-  loadInvestmentTransferOutForAsset,
+  loadInvestmentTransferOutScopeForAsset,
 } from "./transfers";
 
 /** Anchoring period for `Portfolio.timeseries`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
@@ -107,12 +107,24 @@ type Filters = {
   extraAssetIds?: readonly string[];
 };
 
+/** Resolved transfer-aware view of `Portfolio.filterAssetIdIn`:
+ *
+ * - `effectiveAssetIds`: the user's filter with any asset whose outgoing transfer destination is also in the filter dropped (e.g. `[src, dest]` collapses to `[dest]` so the source's pre-transfer history flows through `dest`'s extras instead of contributing its own series and double-counting).
+ * - `extrasByAsset`: for each surviving asset, every inbound transfer's source folded in (capped at the day before the transfer). Sources may include the dropped assets — that's the whole point of dropping them.
+ * - `dateCap`: only set when `effectiveAssetIds` resolves to a single transferred-out wrapper whose destination is *not* in the user's filter (the standalone defunct-portfolio view); the wrapper is valued as of the day before the transfer.
+ */
+type EffectiveFilter = {
+  effectiveAssetIds: string[] | null;
+  extrasByAsset: Map<
+    string,
+    ReadonlyArray<{ assetId: string; dateCap: string }>
+  >;
+  dateCap: string | null;
+};
+
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
-  private dateCapPromise: Promise<string | null> | null = null;
-  private extraScopesPromise: Promise<
-    ReadonlyArray<{ assetId: string; dateCap: string }>
-  > | null = null;
+  private effectiveFilterPromise: Promise<EffectiveFilter> | null = null;
 
   constructor(
     /** ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers. @gqlField */
@@ -123,47 +135,83 @@ export class Portfolio {
     private readonly skipLive: boolean = false,
   ) {}
 
-  /** Resolve the valuation date-cap for this `Portfolio`: when scoped to exactly one wrapper that has an outgoing `InvestmentTransfer`, holdings are valued as of the day before the transfer (so the headline numbers freeze on the pre-transfer state). Returns `null` for every other shape — multi-asset, all-asset, single-asset-without-transfer, single-investment slices. Memoised per-instance. */
-  private async loadDateCap(): Promise<string | null> {
-    this.dateCapPromise ??= (async () => {
-      if (!this.filterAssetIdIn || this.filterAssetIdIn.length !== 1) {
-        return null;
+  /** Resolve the transfer-aware filter for this `Portfolio` (see `EffectiveFilter`). Memoised per-instance. */
+  private async loadEffectiveFilter(): Promise<EffectiveFilter> {
+    this.effectiveFilterPromise ??= (async () => {
+      const filter = this.filterAssetIdIn;
+      if (!filter || filter.length === 0) {
+        return {
+          effectiveAssetIds: null,
+          extrasByAsset: new Map(),
+          dateCap: null,
+        };
       }
-      const transfer = await loadInvestmentTransferOutForAsset(
-        this.filterAssetIdIn[0],
+      const filterSet = new Set(filter);
+      const outgoing = await Promise.all(
+        filter.map((id) => loadInvestmentTransferOutScopeForAsset(id)),
       );
-      if (!transfer) return null;
-      // Cap to the day before the transfer — on the transfer date itself the
-      // wrapper is empty.
-      const d = new Date(transfer.date as unknown as Date);
-      d.setUTCDate(d.getUTCDate() - 1);
-      return d.toISOString().slice(0, 10);
+      // Drop any asset whose outgoing-transfer destination is also in the
+      // filter — its pre-transfer history will flow through the destination's
+      // extras, so keeping it would double-count.
+      const effective: string[] = [];
+      for (let i = 0; i < filter.length; i++) {
+        const t = outgoing[i];
+        if (t && filterSet.has(t.assetIdTo)) continue;
+        effective.push(filter[i]);
+      }
+      const dayBefore = (date: Date | string): string => {
+        const d = new Date(date as unknown as Date);
+        d.setUTCDate(d.getUTCDate() - 1);
+        return d.toISOString().slice(0, 10);
+      };
+      const extrasByAsset = new Map<
+        string,
+        ReadonlyArray<{ assetId: string; dateCap: string }>
+      >();
+      await Promise.all(
+        effective.map(async (assetId) => {
+          const incoming =
+            await loadInvestmentTransferInScopesForAsset(assetId);
+          if (incoming.length === 0) return;
+          extrasByAsset.set(
+            assetId,
+            incoming.map((t) => ({
+              assetId: t.assetIdFrom,
+              dateCap: dayBefore(t.date),
+            })),
+          );
+        }),
+      );
+      // Single-asset-effective with an outgoing transfer (whose destination
+      // is by construction *not* in the filter — otherwise the asset would
+      // have been dropped above) freezes at the day before the transfer.
+      let dateCap: string | null = null;
+      if (effective.length === 1) {
+        const idx = filter.indexOf(effective[0]);
+        const t = outgoing[idx];
+        if (t) dateCap = dayBefore(t.date);
+      }
+      return { effectiveAssetIds: effective, extrasByAsset, dateCap };
     })();
-    return this.dateCapPromise;
+    return this.effectiveFilterPromise;
   }
 
-  /** Resolve the inbound-transfer scopes: when scoped to exactly one wrapper that has incoming `InvestmentTransfer`s, return one entry per source wrapper, each capped at the day before the transfer. The destination's own scope is the regular `filterAssetIdIn`; these scopes are *additional* — folded in by the stats SQL via `extraScopes`. Returns `[]` for every other shape. Memoised per-instance. */
-  private async loadExtraScopes(): Promise<
+  /** Backwards-compat wrapper: union of all per-asset extras under `loadEffectiveFilter`. Used by single-stats-call resolvers (cash, allocations, scope-resolution helpers) that take one `extraScopes` shape. Per-asset resolvers should consume `extrasByAsset` directly. */
+  private async loadExtraScopesUnion(): Promise<
     ReadonlyArray<{ assetId: string; dateCap: string }>
   > {
-    this.extraScopesPromise ??= (async () => {
-      if (!this.filterAssetIdIn || this.filterAssetIdIn.length !== 1) {
-        return [];
+    const { extrasByAsset } = await this.loadEffectiveFilter();
+    const seen = new Set<string>();
+    const out: { assetId: string; dateCap: string }[] = [];
+    for (const list of extrasByAsset.values()) {
+      for (const e of list) {
+        const key = `${e.assetId}@${e.dateCap}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(e);
       }
-      const incoming = await loadInvestmentTransferInScopesForAsset(
-        this.filterAssetIdIn[0],
-      );
-      if (incoming.length === 0) return [];
-      return incoming.map((t) => {
-        const d = new Date(t.date);
-        d.setUTCDate(d.getUTCDate() - 1);
-        return {
-          assetId: t.assetIdFrom,
-          dateCap: d.toISOString().slice(0, 10),
-        };
-      });
-    })();
-    return this.extraScopesPromise;
+    }
+    return out;
   }
 
   /** Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities — otherwise Apollo would merge them and the first response's values would be clobbered by the second. @gqlField */
@@ -178,12 +226,17 @@ export class Portfolio {
   }
 
   private async filtersWithExtras(): Promise<Filters> {
-    const extras = await this.loadExtraScopes();
+    const { effectiveAssetIds, extrasByAsset } =
+      await this.loadEffectiveFilter();
+    const extraAssetIds = new Set<string>();
+    for (const list of extrasByAsset.values()) {
+      for (const e of list) extraAssetIds.add(e.assetId);
+    }
     return {
-      filterAssetIdIn: this.filterAssetIdIn,
+      filterAssetIdIn: effectiveAssetIds,
       filterInvestmentIdIn: this.filterInvestmentIdIn,
       currency: this.currency,
-      extraAssetIds: extras.map((s) => s.assetId),
+      extraAssetIds: [...extraAssetIds],
     };
   }
 
@@ -214,11 +267,12 @@ export class Portfolio {
   /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. A transferred-into wrapper folds in each source's pre-transfer cash flows. */
   private async cashMinor(ctx: Context): Promise<number> {
     if (this.filterInvestmentIdIn) return 0;
-    if (await this.loadDateCap()) return 0;
-    const extraScopes = await this.loadExtraScopes();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    if (dateCap) return 0;
+    const extraScopes = await this.loadExtraScopesUnion();
     return loadPortfolioCashMinor(
       ctx,
-      this.filterAssetIdIn,
+      effectiveAssetIds,
       this.currency,
       extraScopes,
     );
@@ -269,7 +323,15 @@ export class Portfolio {
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
   async xirr(ctx: Context): Promise<Float | null> {
-    const dateCap = await this.loadDateCap();
+    // `xirr` doesn't yet honour the transfer-fold (`extraScopes`) machinery,
+    // so we keep it on the user's literal filter rather than the effective
+    // one — folding via `effectiveAssetIds` alone would silently drop the
+    // dropped source's cash flows from the IRR. Loses precision for the
+    // `[src, dest]` shape (counts both ends naively) but doesn't regress.
+    const dateCap =
+      this.filterAssetIdIn?.length === 1
+        ? (await this.loadEffectiveFilter()).dateCap
+        : null;
     return (await computePortfolioXirr(ctx, {
       currency: this.currency,
       assetIds: this.filterAssetIdIn,
@@ -324,33 +386,37 @@ export class Portfolio {
    * request touches.
    */
   private async loadStats(ctx: Context): Promise<InvestmentStats[]> {
-    const assets = this.filterAssetIdIn;
+    const { effectiveAssetIds, extrasByAsset, dateCap } =
+      await this.loadEffectiveFilter();
     const investments = this.filterInvestmentIdIn;
-    const [dateCap, extraScopes] = await Promise.all([
-      this.loadDateCap(),
-      this.loadExtraScopes(),
-    ]);
-    const base = {
+    const baseCommon = {
       currency: this.currency,
       skipLive: this.skipLive,
-      ...(dateCap ? { dateCap } : {}),
-      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     } satisfies InvestmentStatsFilter;
+    const perAsset = (assetId: string): InvestmentStatsFilter => {
+      const extras = extrasByAsset.get(assetId);
+      return {
+        ...baseCommon,
+        assetIds: [assetId],
+        ...(dateCap ? { dateCap } : {}),
+        ...(extras && extras.length > 0 ? { extraScopes: extras } : {}),
+      };
+    };
     const keys: InvestmentStatsFilter[] = [];
-    if (assets && investments) {
-      for (const assetId of assets) {
+    if (effectiveAssetIds && investments) {
+      for (const assetId of effectiveAssetIds) {
         for (const investmentId of investments) {
-          keys.push({ ...base, assetIds: [assetId], investmentId });
+          keys.push({ ...perAsset(assetId), investmentId });
         }
       }
-    } else if (assets) {
-      for (const assetId of assets) keys.push({ ...base, assetIds: [assetId] });
+    } else if (effectiveAssetIds) {
+      for (const assetId of effectiveAssetIds) keys.push(perAsset(assetId));
     } else if (investments) {
       for (const investmentId of investments) {
-        keys.push({ ...base, investmentId });
+        keys.push({ ...baseCommon, investmentId });
       }
     } else {
-      keys.push(base);
+      keys.push(baseCommon);
     }
     return Promise.all(keys.map((k) => loadInvestmentStats(ctx, k)));
   }
@@ -361,15 +427,13 @@ export class Portfolio {
       await this.filtersWithExtras(),
     );
     if (investmentIds.length === 0) return [];
-    const [dateCap, extraScopes] = await Promise.all([
-      this.loadDateCap(),
-      this.loadExtraScopes(),
-    ]);
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    const extraScopes = await this.loadExtraScopesUnion();
     const perInvestment = await Promise.all(
       investmentIds.map(async (investmentId) => {
         const stats = await loadInvestmentStats(ctx, {
           investmentId,
-          assetIds: this.filterAssetIdIn ?? undefined,
+          assetIds: effectiveAssetIds ?? undefined,
           currency: this.currency,
           skipLive: this.skipLive,
           ...(dateCap ? { dateCap } : {}),
@@ -396,16 +460,20 @@ export class Portfolio {
     length?: Int | null,
   ): Promise<PortfolioTimeseries | null> {
     const loader = loadTimeseries(ctx);
-    const [dateCap, extraScopes] = await Promise.all([
-      this.loadDateCap(),
-      this.loadExtraScopes(),
-    ]);
-    const options = {
+    const { effectiveAssetIds, extrasByAsset, dateCap } =
+      await this.loadEffectiveFilter();
+    const baseOptions = {
       period,
       length: length ?? 1,
       skipLive: this.skipLive,
       ...(dateCap ? { dateCap } : {}),
-      ...(extraScopes.length > 0 ? { extraScopes } : {}),
+    };
+    const optionsForAsset = (assetId: string) => {
+      const extras = extrasByAsset.get(assetId);
+      return {
+        ...baseOptions,
+        ...(extras && extras.length > 0 ? { extraScopes: extras } : {}),
+      };
     };
     const combineSeries = (all: (PortfolioTimeseries | null | Error)[]) => {
       const series = all.filter(isNonNullish);
@@ -422,13 +490,13 @@ export class Portfolio {
         })),
       };
     };
-    if (this.filterAssetIdIn) {
+    if (effectiveAssetIds) {
       if (this.filterInvestmentIdIn) {
         return combineSeries(
           await loader.loadMany(
             this.filterInvestmentIdIn.flatMap((investmentId) =>
-              this.filterAssetIdIn!.map((assetId) => ({
-                ...options,
+              effectiveAssetIds.map((assetId) => ({
+                ...optionsForAsset(assetId),
                 investmentId,
                 assetId,
               })),
@@ -438,8 +506,8 @@ export class Portfolio {
       }
       return combineSeries(
         await loader.loadMany(
-          this.filterAssetIdIn!.map((assetId) => ({
-            ...options,
+          effectiveAssetIds.map((assetId) => ({
+            ...optionsForAsset(assetId),
             assetId,
           })),
         ),
@@ -448,14 +516,14 @@ export class Portfolio {
     if (this.filterInvestmentIdIn) {
       return combineSeries(
         await loader.loadMany(
-          this.filterInvestmentIdIn!.map((investmentId) => ({
-            ...options,
+          this.filterInvestmentIdIn.map((investmentId) => ({
+            ...baseOptions,
             investmentId,
           })),
         ),
       );
     }
-    return loader.load(options);
+    return loader.load(baseOptions);
   }
 
   /** Candlestick buckets of portfolio total over the requested period. @gqlField */
@@ -474,15 +542,13 @@ export class Portfolio {
       !this.filterInvestmentIdIn,
       "Portfolio.candlestick does not support filtering by investment ID",
     );
-    const [dateCap, extraScopes] = await Promise.all([
-      this.loadDateCap(),
-      this.loadExtraScopes(),
-    ]);
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    const extraScopes = await this.loadExtraScopesUnion();
     return loadCandlestick(ctx).load({
       unit,
       length,
       max,
-      assetIds: this.filterAssetIdIn ?? undefined,
+      assetIds: effectiveAssetIds ?? undefined,
       skipLive: this.skipLive,
       ...(dateCap ? { dateCap } : {}),
       ...(extraScopes.length > 0 ? { extraScopes } : {}),
