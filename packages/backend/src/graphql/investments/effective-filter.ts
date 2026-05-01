@@ -76,7 +76,7 @@ async function computeEffectiveFilter(
       }
     }),
   );
-  const soldOutCaps = await loadAssetSoldOutCaps(effective, HOME_CURRENCY);
+  const soldOutCaps = await loadAssetSoldOutCaps(ctx, effective, HOME_CURRENCY);
   let dateCap: string | null = null;
   if (effective.length >= 1) {
     const caps = effective.flatMap((id) => {

@@ -1,5 +1,6 @@
 import assert from "node:assert";
 
+import DataLoader from "dataloader";
 import { and, eq, exists, inArray, sql } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
@@ -10,7 +11,7 @@ import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import { assertNoErrors, assertNotError } from "@/errors";
 import { isNonNullish } from "@/is-truthy";
 
-import type { Context } from "../context";
+import { type Context, contextAwareDataLoader } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { assertCurrencyCode, Money } from "../money";
 import {
@@ -122,12 +123,12 @@ type EffectiveFilter = {
   dateCap: string | null;
 };
 
-/** Per-asset cap for wrappers that have been wound down — every `(investmentId)` position now nets to zero. The cap lands one day before the *first sell of the closing sell-down sequence* (i.e. the earliest sell that comes after the last buy in the wrapper), not just one day before the final closing tx. That way the last chart bucket shows the wrapper at its pre-wind-down value rather than partway through the closing sells. Wrappers with at least one open position aren't returned. */
-export async function loadAssetSoldOutCaps(
+type SoldOutCapKey = { assetId: string; currency: string };
+
+async function fetchSoldOutCaps(
   assetIds: readonly string[],
   currency: string,
 ): Promise<Map<string, string>> {
-  if (assetIds.length === 0) return new Map();
   const rows = await db.execute<{ assetId: string; capDate: string }>(sql`
     WITH tx_adj AS (
       SELECT
@@ -177,6 +178,52 @@ export async function loadAssetSoldOutCaps(
   const out = new Map<string, string>();
   for (const r of rows.rows ?? rows) {
     if (r.capDate) out.set(r.assetId, r.capDate);
+  }
+  return out;
+}
+
+/** Per-request batched loader for sold-out caps. Keys are `(assetId, currency)`; the batch fn buckets by currency (typically just `HOME_CURRENCY`) and runs one SQL per bucket covering every requested asset id. */
+const soldOutCapLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<SoldOutCapKey, string | null, string>(
+      async (keys) => {
+        const buckets = new Map<string, string[]>();
+        for (const k of keys) {
+          const list = buckets.get(k.currency) ?? [];
+          list.push(k.assetId);
+          buckets.set(k.currency, list);
+        }
+        const byCurrency = new Map<string, Map<string, string>>();
+        await Promise.all(
+          [...buckets.entries()].map(async ([currency, ids]) => {
+            const caps = await fetchSoldOutCaps([...new Set(ids)], currency);
+            byCurrency.set(currency, caps);
+          }),
+        );
+        return keys.map(
+          (k) => byCurrency.get(k.currency)?.get(k.assetId) ?? null,
+        );
+      },
+      { cacheKeyFn: (k) => `${k.currency}|${k.assetId}` },
+    ),
+);
+
+/** Per-asset cap for wrappers that have been wound down — every `(investmentId)` position now nets to zero. The cap lands one day before the *first sell of the closing sell-down sequence* (i.e. the earliest sell that comes after the last buy in the wrapper), not just one day before the final closing tx. That way the last chart bucket shows the wrapper at its pre-wind-down value rather than partway through the closing sells. Wrappers with at least one open position aren't returned. */
+export async function loadAssetSoldOutCaps(
+  ctx: Context,
+  assetIds: readonly string[],
+  currency: string,
+): Promise<Map<string, string>> {
+  if (assetIds.length === 0) return new Map();
+  const loader = soldOutCapLoader(ctx);
+  const caps = await loader.loadMany(
+    assetIds.map((assetId) => ({ assetId, currency })),
+  );
+  const out = new Map<string, string>();
+  for (let i = 0; i < assetIds.length; i++) {
+    const c = caps[i];
+    if (c instanceof Error) throw c;
+    if (c) out.set(assetIds[i], c);
   }
   return out;
 }
@@ -249,7 +296,11 @@ export class Portfolio {
       // zero). When *every* effective asset has a cap, freeze the chart at
       // the latest such date so it ends on the last day with non-zero
       // holdings instead of dragging zero candles to today.
-      const soldOutCaps = await loadAssetSoldOutCaps(effective, this.currency);
+      const soldOutCaps = await loadAssetSoldOutCaps(
+        ctx,
+        effective,
+        this.currency,
+      );
       const perAssetCap = (assetId: string): string | null => {
         const t = outgoing[filter.indexOf(assetId)];
         if (t) return dayBefore(t.date);
