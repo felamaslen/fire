@@ -1,10 +1,11 @@
 import DataLoader from "dataloader";
 import { differenceInDays, formatISO } from "date-fns";
-import { sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import type { ID } from "grats";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
+import { InvestmentValuePoints } from "@/db/schema/investments";
 
 import { Context, contextAwareDataLoader } from "../context";
 import { Money } from "../money";
@@ -17,6 +18,34 @@ import { loadInvestmentStats } from "./stats";
 
 /** Cursor wire format for `Portfolio.candlestick.endCursor` / `before:`. The cursor is the bucket-start date the next page should end at; we base64-encode it so the client treats it as fully opaque (matching the `ID` GraphQL contract — pasting a date directly into `before:` is undefined behaviour). */
 const CURSOR_PREFIX = "candle:";
+
+/** Hard cap on cursor-paginated bucket count from "today" to the current page's leftmost bucket. When the user pinches out far enough that the next page would extend past this many buckets back, `hasMore` flips to `false` and the client stops backfilling. Bounds the worst-case round-trip + render cost on aggressive zoom-outs. */
+const MAX_BUCKET_COUNT_ZOOMED = 3000;
+
+function bucketsBetween(
+  earlier: Date,
+  later: Date,
+  unit: PortfolioCandleUnit,
+  length: number,
+): number {
+  if (unit === "DAY") {
+    return Math.floor(
+      (later.getTime() - earlier.getTime()) / 86400000 / length,
+    );
+  }
+  if (unit === "WEEK") {
+    return Math.floor(
+      (later.getTime() - earlier.getTime()) / 86400000 / 7 / length,
+    );
+  }
+  if (unit === "MONTH") {
+    const months =
+      (later.getUTCFullYear() - earlier.getUTCFullYear()) * 12 +
+      (later.getUTCMonth() - earlier.getUTCMonth());
+    return Math.floor(months / length);
+  }
+  throw new Error(`Unhandled candle unit: ${unit as string}`);
+}
 
 function encodeCandlestickCursor(bucketStart: string): ID {
   return Buffer.from(`${CURSOR_PREFIX}${bucketStart}`, "utf-8").toString(
@@ -261,40 +290,51 @@ const loadOne = async (
     valueMax: row.valueMax,
   }));
 
-  // Probe for older IVP rows than the leftmost bucket's start, scoped to
-  // the same asset filter. Drives `hasMore` — the client uses this to
-  // know when to stop pagination on zoom-out.
+  // Drives `hasMore` — the client uses this to know when to stop
+  // pagination on zoom-out. Two reasons we set `hasMore = false`:
+  //
+  // (a) The leftmost bucket sits more than `MAX_BUCKET_COUNT_ZOOMED`
+  //     buckets back from "now". Caps the worst-case pagination depth
+  //     so an aggressive pinch-out on 3D candles can't walk the
+  //     client through the entire IVP history.
+  // (b) No IVP row older than the leftmost bucket exists in the
+  //     current asset scope — there's nothing left to paginate to.
   const leftmostStart = points[0].start;
-  const ivpScopeFilterForExistsCheck = (() => {
-    const mainAssetIds = key.assetIds ?? [];
-    const extraScopes = key.extraScopes ?? [];
-    if (mainAssetIds.length === 0 && extraScopes.length === 0) {
-      return sql``;
-    }
-    const branches: ReturnType<typeof sql>[] = [];
-    if (mainAssetIds.length > 0) {
-      branches.push(
-        sql`ivp."assetId" in (${sql.join(
-          mainAssetIds.map((id) => sql`${id}`),
-          sql`, `,
-        )})`,
-      );
-    }
-    for (const s of extraScopes) {
-      branches.push(sql`ivp."assetId" = ${s.assetId}`);
-    }
-    return sql`AND (${sql.join(branches, sql` OR `)})`;
-  })();
-  const hasMoreResult = await db.execute<{ has_more: boolean }>(sql`
-    SELECT EXISTS (
-      SELECT 1 FROM "InvestmentValuePoints" ivp
-      WHERE ivp.currency = ${currency}
-        AND ivp.value > 0
-        AND ivp.date < ${formatISO(leftmostStart, { representation: "date" })}::date
-        ${ivpScopeFilterForExistsCheck}
-    ) AS has_more
-  `);
-  const hasMore = (hasMoreResult.rows ?? hasMoreResult)[0]?.has_more ?? false;
+  const bucketsBack = bucketsBetween(
+    leftmostStart,
+    new Date(now),
+    key.unit,
+    key.length,
+  );
+  let hasMore = bucketsBack < MAX_BUCKET_COUNT_ZOOMED;
+  if (hasMore) {
+    const olderRowExistsScope = (() => {
+      const mainAssetIds = key.assetIds ?? [];
+      const extraScopes = key.extraScopes ?? [];
+      if (mainAssetIds.length === 0 && extraScopes.length === 0)
+        return undefined;
+      const branches = [
+        ...(mainAssetIds.length > 0
+          ? [inArray(InvestmentValuePoints.assetId, mainAssetIds)]
+          : []),
+        ...extraScopes.map((s) => eq(InvestmentValuePoints.assetId, s.assetId)),
+      ];
+      return branches.length === 1 ? branches[0] : or(...branches);
+    })();
+    const olderRows = await db
+      .select({ one: sql`1` })
+      .from(InvestmentValuePoints)
+      .where(
+        and(
+          eq(InvestmentValuePoints.currency, currency),
+          gt(InvestmentValuePoints.value, 0),
+          lt(InvestmentValuePoints.date, leftmostStart),
+          olderRowExistsScope,
+        ),
+      )
+      .limit(1);
+    hasMore = olderRows.length > 0;
+  }
 
   // Overlay the last bucket with today's live portfolio total so the tail of
   // the chart tracks intraday movement. `valueEnd` jumps to the live total;

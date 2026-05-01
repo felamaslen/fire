@@ -1,4 +1,5 @@
-import { useSuspenseQuery } from "@apollo/client/react";
+import { useApolloClient, useSuspenseQuery } from "@apollo/client/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDeferredValue } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,8 @@ export const PortfolioChartPortfolioFragment = graphql(`
       @include(if: $candlestick) {
       currency
       initialDate
+      endCursor
+      hasMore
       points {
         x0
         x1
@@ -91,6 +94,33 @@ const PortfolioChartDocument = graphql(
   `,
   [PortfolioChartPortfolioFragment],
 );
+
+/** Standalone fetch for older candlestick pages. The initial page comes through the parent suspense query; on pinch-zoom-out the loader fires this query with `before` = previous page's `endCursor` to backfill. */
+const PortfolioCandlestickPageDocument = graphql(`
+  query PortfolioCandlestickPage(
+    $filterAssetIdIn: [ID!]
+    $candleUnit: PortfolioCandleUnit!
+    $candleLength: Int!
+    $before: ID
+  ) {
+    portfolio(filterAssetIdIn: $filterAssetIdIn) {
+      id
+      candlestick(unit: $candleUnit, length: $candleLength, before: $before) {
+        initialDate
+        endCursor
+        hasMore
+        points {
+          x0
+          x1
+          from
+          to
+          lo
+          hi
+        }
+      }
+    }
+  }
+`);
 
 type Period =
   | { period: "YEAR"; length: number; label: string }
@@ -316,7 +346,11 @@ function PortfolioChartLoader({
       candleUnit: deferredCandleUnit,
       candleLength: deferredCandleLength,
       candlestick: deferredCandlestick,
-      stack: deferredStack,
+      // Gate `stack` on `!candlestick`: the candlestick mode never uses
+      // the stacked-line series (the toggle is disabled in the UI), and
+      // the per-investment `portfolios` edge fetch is the heaviest part
+      // of the query.
+      stack: deferredStack && !deferredCandlestick,
       filterAssetIdIn:
         deferredFilterAssetIds.length > 0 ? deferredFilterAssetIds : null,
     },
@@ -447,11 +481,17 @@ function PortfolioChartLoader({
         };
       })();
 
-  // Pass the full (x0, x1) bucket span through so the chart can place each
-  // candle along the shared time axis instead of evenly distributing them
-  // across the plot width.
-  const candles = portfolio?.candlestick
+  // Candlestick state machine: the parent suspense query above gives us
+  // the "current window" page (most recent N candles ending today). On
+  // pinch-zoom-out we backfill older pages via
+  // `PortfolioCandlestickPageDocument` and merge them client-side onto a
+  // shared X axis. The initial page lives at index 0; older pages
+  // append as the user zooms out further.
+  const initialCandlePage: CandlePage | null = portfolio?.candlestick
     ? {
+        initialDate: portfolio.candlestick.initialDate,
+        endCursor: portfolio.candlestick.endCursor ?? null,
+        hasMore: portfolio.candlestick.hasMore,
         points: portfolio.candlestick.points.map((p) => ({
           x0: p.x0,
           x1: p.x1,
@@ -462,6 +502,18 @@ function PortfolioChartLoader({
         })),
       }
     : null;
+  const {
+    candles: paginatedCandles,
+    candleInitialDate,
+    viewport: candleViewport,
+    onZoom,
+  } = useCandlestickPagination({
+    initialPage: initialCandlePage,
+    candlestickEnabled: deferredCandlestick,
+    filterAssetIds: deferredFilterAssetIds,
+    candleUnit: deferredCandleUnit,
+    candleLength: deferredCandleLength,
+  });
 
   // Anchor the X axis on whichever series is actually being rendered:
   // candle x0/x1 are server-relative to `candlestick.initialDate`, while
@@ -472,7 +524,7 @@ function PortfolioChartLoader({
   // as "the chart ends years ago" even though candle xMax matches the
   // last bucket.
   const initialDateStr = deferredCandlestick
-    ? (portfolio?.candlestick?.initialDate ?? null)
+    ? candleInitialDate
     : (stackInitialDate ?? portfolio?.timeseries?.initialDate ?? null);
 
   const initialDate =
@@ -532,9 +584,11 @@ function PortfolioChartLoader({
     >
       <PortfolioChart
         lines={deferredCandlestick ? undefined : lines}
-        candles={deferredCandlestick ? candles : null}
+        candles={deferredCandlestick ? paginatedCandles : null}
         currency={portfolio?.currency ?? "GBP"}
         initialDate={initialDate}
+        viewport={deferredCandlestick ? candleViewport : undefined}
+        onZoom={deferredCandlestick ? onZoom : undefined}
         stacked={!deferredCandlestick && deferredStack}
         annotations={annotations}
         className="w-full"
@@ -633,4 +687,308 @@ function stackLines(series: SeriesIn[]): {
   });
 
   return { lines, stackInitialDate };
+}
+
+type CandlePoint = {
+  x0: number;
+  x1: number;
+  from: number;
+  to: number;
+  lo: number;
+  hi: number;
+};
+type CandlePage = {
+  initialDate: string;
+  endCursor: string | null;
+  hasMore: boolean;
+  points: CandlePoint[];
+};
+
+const ONE_DAY_MS = 86400 * 1000;
+/** Scaling factor turning a wheel-event `deltaY` into a zoom-span multiplier via `exp(deltaY × ZOOM_RATE)`. Calibrated by feel: a single notch of a discrete mouse wheel (`deltaY ≈ 100`) zooms by ~1.6×; a trackpad pinch fires many small `deltaY ≈ 1–4` events per second, so the per-frame integration ends up smooth rather than blowing past several years on a single gesture. */
+const ZOOM_RATE = 0.005;
+/** Wait 1 s after the user stops zooming before firing the older-page fetch. Every zoom event resets this timer, so a long continuous pinch only triggers a single network call once the user settles. */
+const BACKFILL_DEBOUNCE_MS = 1000;
+
+/**
+ * Owns the candlestick pinch-zoom + cursor-paginated backfill state.
+ *
+ * Pages start with whatever the parent suspense query loaded (the initial
+ * "today's window" page). On `onZoom(+1)` the visible span grows; once
+ * it would extend past the leftmost loaded bucket the hook fires a
+ * follow-up query keyed off the previous page's `endCursor` and
+ * appends the result to `pages`. On `onZoom(-1)` the span shrinks; once
+ * it's back at-or-under the initial-page span the viewport overlay is
+ * dropped (the chart re-renders against just the initial page, same as
+ * before zoom).
+ *
+ * The merged `candles` returned here has every page's points re-anchored
+ * onto the *oldest loaded page's* `initialDate`, so `x0` / `x1` are
+ * consistent across pages even as the tail expands. The chart's
+ * `viewport` clips the visible portion of that merged series.
+ */
+function useCandlestickPagination({
+  initialPage,
+  candlestickEnabled,
+  filterAssetIds,
+  candleUnit,
+  candleLength,
+}: {
+  initialPage: CandlePage | null;
+  candlestickEnabled: boolean;
+  filterAssetIds: string[];
+  candleUnit: "DAY" | "WEEK" | "MONTH";
+  candleLength: number;
+}): {
+  candles: { points: CandlePoint[] } | null;
+  candleInitialDate: string | null;
+  viewport: { xMin: number; xMax: number } | undefined;
+  onZoom: (deltaY: number) => void;
+} {
+  const [pages, setPages] = useState<CandlePage[]>([]);
+  // `null` = "use the initial page's natural span"; positive number =
+  // viewport span override in days.
+  const [viewportSpanDays, setViewportSpanDays] = useState<number | null>(null);
+  const fetchInFlight = useRef(false);
+  const apolloClient = useApolloClient();
+
+  // Reset state whenever the candlestick scope changes (filter, unit,
+  // length, or the candlestick toggle flips). Keep `initialPage` *out*
+  // of the deps: it's reconstructed as a fresh object literal on every
+  // parent render, so depending on it would re-run the effect after
+  // every backfill / unrelated re-render. We resolve `initialPage` via
+  // a ref at the moment the effect actually decides to reset, so the
+  // page-1 data we plant is whatever the parent currently has — not
+  // a stale snapshot.
+  const filterKey = filterAssetIds.join(",");
+  const baselineKey = `${candleUnit}|${candleLength}|${filterKey}|${candlestickEnabled ? "1" : "0"}`;
+  const initialPageRef = useRef<CandlePage | null>(initialPage);
+  initialPageRef.current = initialPage;
+  const lastBaselineRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastBaselineRef.current === baselineKey) return;
+    lastBaselineRef.current = baselineKey;
+    const fresh = initialPageRef.current;
+    setPages(fresh ? [fresh] : []);
+    setViewportSpanDays(null);
+    fetchInFlight.current = false;
+  }, [baselineKey]);
+
+  // Independently of the scope-change reset above, seed `pages` on
+  // first mount with the parent's initial page. Match by
+  // `initialDate`: if the latest loaded page already starts on the
+  // same boundary we'd be seeding, skip the update — `initialPage` is
+  // reconstructed as a fresh object literal on every parent render,
+  // so checking by reference would loop forever (re-seed → re-render
+  // → re-seed). When the boundary genuinely moves (a new bucket
+  // ticked over midnight), prepend the fresh page rather than
+  // throwing away older backfilled pages.
+  useEffect(() => {
+    if (!initialPage) return;
+    setPages((cur) => {
+      if (cur.length === 0) return [initialPage];
+      const latestIdx = cur.reduce(
+        (best, p, i) =>
+          p.initialDate.localeCompare(cur[best].initialDate) > 0 ? i : best,
+        0,
+      );
+      if (cur[latestIdx].initialDate === initialPage.initialDate) return cur;
+      return [...cur.filter((_, i) => i !== latestIdx), initialPage];
+    });
+  }, [initialPage]);
+
+  const merged = useMemo(() => {
+    if (pages.length === 0) {
+      return {
+        points: [] as CandlePoint[],
+        oldestInitialDate: null as string | null,
+        rightmostX: 0,
+      };
+    }
+    // Sort pages oldest-first so re-anchoring is just `offset` per page.
+    const sorted = [...pages].sort((a, b) =>
+      a.initialDate.localeCompare(b.initialDate),
+    );
+    const oldest = sorted[0].initialDate;
+    const oldestMs = new Date(`${oldest}T00:00:00Z`).getTime();
+    const points: CandlePoint[] = [];
+    for (const page of sorted) {
+      const pageMs = new Date(`${page.initialDate}T00:00:00Z`).getTime();
+      const offset = Math.round((pageMs - oldestMs) / ONE_DAY_MS);
+      for (const p of page.points) {
+        points.push({
+          x0: p.x0 + offset,
+          x1: p.x1 + offset,
+          from: p.from,
+          to: p.to,
+          lo: p.lo,
+          hi: p.hi,
+        });
+      }
+    }
+    points.sort((a, b) => a.x0 - b.x0);
+    const rightmostX = points.length > 0 ? points[points.length - 1].x1 : 0;
+    return { points, oldestInitialDate: oldest, rightmostX };
+  }, [pages]);
+
+  // Initial-page span = the natural width of the first-loaded page. Used
+  // as the baseline for "zoom reset" — once the user pinches back to or
+  // past this span the viewport override drops to null.
+  const initialSpan = useMemo(() => {
+    if (!initialPage || initialPage.points.length === 0) return 0;
+    const last = initialPage.points[initialPage.points.length - 1];
+    const first = initialPage.points[0];
+    return last.x1 - first.x0;
+  }, [initialPage]);
+
+  // Backfill: when the visible span exceeds the loaded data span and we
+  // haven't told `hasMore = false`, fetch the next older page — but
+  // wait `BACKFILL_DEBOUNCE_MS` after the last viewport change before
+  // firing. The visible viewport extends past loaded data immediately
+  // (the chart shows empty space at the left edge during the gesture),
+  // and the older page lands quietly once the user has settled on a
+  // zoom level. Without this debounce, an aggressive pinch-out fires a
+  // chain of `before:` queries faster than they can return.
+  const fetchTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!candlestickEnabled) return;
+    if (viewportSpanDays === null) return;
+    const lastPage = pages.length > 0 ? pages[pages.length - 1] : null;
+    if (!lastPage) return;
+    if (!lastPage.hasMore || !lastPage.endCursor) return;
+    const loadedSpan = merged.rightmostX;
+    if (viewportSpanDays <= loadedSpan) return;
+    fetchTimer.current = window.setTimeout(() => {
+      fetchTimer.current = null;
+      if (fetchInFlight.current) return;
+      fetchInFlight.current = true;
+      apolloClient
+        .query({
+          query: PortfolioCandlestickPageDocument,
+          variables: {
+            filterAssetIdIn: filterAssetIds.length > 0 ? filterAssetIds : null,
+            candleUnit,
+            candleLength,
+            before: lastPage.endCursor,
+          },
+          // `no-cache`, not `network-only`: Apollo's normalised cache
+          // would otherwise merge this response into the same
+          // `Portfolio.candlestick` field that the parent suspense
+          // query owns, replacing the initial page's data with the
+          // older page's. The parent fragment read would then flip
+          // `initialPage` (which feeds `baselineKey` via its
+          // `initialDate`), the reset effect fires, and the user's
+          // pinch-zoom snaps back to "fully zoomed in" mid-gesture.
+          // The hook keeps its own `pages` array — no need to round-
+          // trip through Apollo cache.
+          fetchPolicy: "no-cache",
+        })
+        .then(({ data }) => {
+          const next = data?.portfolio?.candlestick;
+          if (next) {
+            setPages((cur) => [
+              ...cur,
+              {
+                initialDate: next.initialDate,
+                endCursor: (next.endCursor as string | null) ?? null,
+                hasMore: next.hasMore as boolean,
+                points: next.points.map((p) => ({
+                  x0: p.x0,
+                  x1: p.x1,
+                  from: p.from,
+                  to: p.to,
+                  lo: p.lo,
+                  hi: p.hi,
+                })),
+              },
+            ]);
+          }
+        })
+        .finally(() => {
+          fetchInFlight.current = false;
+        });
+    }, BACKFILL_DEBOUNCE_MS);
+    return () => {
+      // The effect re-runs on every viewport / pages change; cancel
+      // the pending fetch so the 1-s clock resets each time the user
+      // keeps zooming.
+      if (fetchTimer.current !== null) {
+        clearTimeout(fetchTimer.current);
+        fetchTimer.current = null;
+      }
+    };
+  }, [
+    apolloClient,
+    candleLength,
+    candleUnit,
+    candlestickEnabled,
+    filterAssetIds,
+    merged.rightmostX,
+    pages,
+    viewportSpanDays,
+  ]);
+
+  // Apply each wheel event directly to `viewportSpanDays` via the
+  // functional setter — that gives the chart the new viewport on the
+  // next render, which feels immediate (~60 Hz) without a per-frame
+  // batch in the way. `setViewportSpanDays((cur) => …)` reads the most
+  // recent state, so rapid consecutive wheel events compose naturally
+  // (each multiplies the previous span by `exp(delta × ZOOM_RATE)`).
+  //
+  // The callback is wrapped in a stable `onZoom` (via a ref) so the
+  // wheel listener `useEffect` in `PortfolioChart` doesn't detach /
+  // re-attach on every render — a hot detach during a wheel burst
+  // would drop events mid-pinch.
+  const initialSpanRef = useRef(initialSpan);
+  initialSpanRef.current = initialSpan;
+  const onZoom = useCallback((deltaY: number) => {
+    setViewportSpanDays((cur) => {
+      const initial = initialSpanRef.current;
+      const baseline = cur ?? initial;
+      const next = baseline * Math.exp(deltaY * ZOOM_RATE);
+      if (next <= initial + 1) return null;
+      return Math.round(next);
+    });
+  }, []);
+
+  if (!candlestickEnabled || pages.length === 0) {
+    return {
+      candles: null,
+      candleInitialDate: null,
+      viewport: undefined,
+      onZoom,
+    };
+  }
+
+  // Compute the viewport bounds in `merged.points`'s coordinate space.
+  // `xMax` is always the rightmost loaded bucket end (the chart's right
+  // edge stays pinned to "now"); `xMin = xMax − span` where `span` is
+  // either the user's zoomed value or — when they've zoomed back in
+  // past the initial-page span — the initial page's natural span.
+  //
+  // Always pinning the viewport here, even when `viewportSpanDays` is
+  // null, is what keeps the chart from popping to "show every page
+  // ever loaded" once the user zooms back to the initial view: after
+  // a pinch-out has loaded older pages, the merged data range is
+  // wider than the initial page, but the user expects "fully zoomed
+  // in" to mean "today's window again", not "every loaded page".
+  // `xMin` is allowed to fall below 0 (negative) when the user
+  // pinches out past loaded data — that's how the chart visibly
+  // stretches with empty space at the left while the 1-second
+  // backfill timer is running.
+  const span = viewportSpanDays ?? initialSpan;
+  const viewport: { xMin: number; xMax: number } | undefined =
+    initialSpan > 0
+      ? {
+          xMin: merged.rightmostX - span,
+          xMax: merged.rightmostX,
+        }
+      : undefined;
+
+  return {
+    candles: { points: merged.points },
+    candleInitialDate: merged.oldestInitialDate,
+    viewport,
+    onZoom,
+  };
 }
