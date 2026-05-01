@@ -23,6 +23,8 @@ export type PortfolioXirrFilter = {
   skipLive: boolean;
   /** ISO-`YYYY-MM-DD` cap, when set: drop transactions with `date > dateCap`, value the terminal flow as of `dateCap` (not "now"). Used for transferred-out wrappers. */
   dateCap?: string;
+  /** Additional asset scopes to fold in, each capped at its own date — used by transferred-into wrappers to inherit each source's pre-transfer cash flows (and terminal value). The terminal value comes from `loadInvestmentStats` with the same `extraScopes`. */
+  extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
 /**
@@ -30,22 +32,41 @@ export type PortfolioXirrFilter = {
  */
 export async function computePortfolioXirr(
   ctx: Context,
-  { currency, assetIds, investmentIds, skipLive, dateCap }: PortfolioXirrFilter,
+  filter: PortfolioXirrFilter,
 ): Promise<number | null> {
+  const { currency, investmentIds, dateCap, extraScopes } = filter;
   // Fire stats (live terminal value) and tx history in parallel — they're
   // independent. Both go through per-`Context` DataLoaders so concurrent
   // calls (e.g. one per portfolio wrapper from the forecast loader)
   // coalesce into one SQL each rather than fanning out to N round-trips.
-  const txKeys = expandTxKeys({ currency, assetIds, investmentIds, dateCap });
+  const txKeys = expandTxKeys(filter);
+  // Each `extraScopes` entry adds its own per-(assetId, dateCap) tx group
+  // — flows from the source's pre-transfer history are merged in as if
+  // they'd been booked on the destination wrapper.
+  const extraTxKeys: TxKey[] = [];
+  for (const s of extraScopes ?? []) {
+    if (investmentIds && investmentIds.length > 0) {
+      for (const investmentId of investmentIds) {
+        extraTxKeys.push({
+          currency,
+          assetId: s.assetId,
+          investmentId,
+          dateCap: s.dateCap,
+        });
+      }
+    } else {
+      extraTxKeys.push({
+        currency,
+        assetId: s.assetId,
+        investmentId: null,
+        dateCap: s.dateCap,
+      });
+    }
+  }
+  const allTxKeys = [...txKeys, ...extraTxKeys];
   const [todayValueMinor, txGroups] = await Promise.all([
-    loadTodayValueMinor(ctx, {
-      currency,
-      assetIds,
-      investmentIds,
-      skipLive,
-      dateCap,
-    }),
-    Promise.all(txKeys.map((k) => getTxLoader(ctx).load(k))),
+    loadTodayValueMinor(ctx, filter),
+    Promise.all(allTxKeys.map((k) => getTxLoader(ctx).load(k))),
   ]);
   if (todayValueMinor === null) return null;
 
@@ -75,29 +96,32 @@ export async function computePortfolioXirr(
  */
 async function loadTodayValueMinor(
   ctx: Context,
-  { currency, assetIds, investmentIds, skipLive, dateCap }: PortfolioXirrFilter,
+  {
+    currency,
+    assetIds,
+    investmentIds,
+    skipLive,
+    dateCap,
+    extraScopes,
+  }: PortfolioXirrFilter,
 ): Promise<number | null> {
+  // Single stats call covering the whole slice (incl. `extraScopes`) —
+  // `loadInvestmentStats`'s `assetIds` already unions the per-investment
+  // values, and `extraScopes` folds source pre-transfer holdings into
+  // each contributing investment's `unitsHeld`. For multi-investment
+  // requests we fan out per investment (the loader doesn't support a
+  // multi-`investmentId` shape) and sum.
   const base = {
     currency,
     skipLive,
     ...(dateCap ? { dateCap } : {}),
+    ...(extraScopes && extraScopes.length > 0 ? { extraScopes } : {}),
+    ...(assetIds && assetIds.length > 0 ? { assetIds: [...assetIds] } : {}),
   } satisfies InvestmentStatsFilter;
-  const keys: InvestmentStatsFilter[] = [];
-  if (assetIds && investmentIds) {
-    for (const assetId of assetIds) {
-      for (const investmentId of investmentIds) {
-        keys.push({ ...base, assetIds: [assetId], investmentId });
-      }
-    }
-  } else if (assetIds) {
-    for (const assetId of assetIds) keys.push({ ...base, assetIds: [assetId] });
-  } else if (investmentIds) {
-    for (const investmentId of investmentIds) {
-      keys.push({ ...base, investmentId });
-    }
-  } else {
-    keys.push(base);
-  }
+  const keys: InvestmentStatsFilter[] =
+    investmentIds && investmentIds.length > 0
+      ? investmentIds.map((investmentId) => ({ ...base, investmentId }))
+      : [base];
   const slices = await Promise.all(
     keys.map((k) => loadInvestmentStats(ctx, k)),
   );

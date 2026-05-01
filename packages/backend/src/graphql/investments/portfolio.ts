@@ -323,21 +323,15 @@ export class Portfolio {
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
   async xirr(ctx: Context): Promise<Float | null> {
-    // `xirr` doesn't yet honour the transfer-fold (`extraScopes`) machinery,
-    // so we keep it on the user's literal filter rather than the effective
-    // one — folding via `effectiveAssetIds` alone would silently drop the
-    // dropped source's cash flows from the IRR. Loses precision for the
-    // `[src, dest]` shape (counts both ends naively) but doesn't regress.
-    const dateCap =
-      this.filterAssetIdIn?.length === 1
-        ? (await this.loadEffectiveFilter()).dateCap
-        : null;
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    const extraScopes = await this.loadExtraScopesUnion();
     return (await computePortfolioXirr(ctx, {
       currency: this.currency,
-      assetIds: this.filterAssetIdIn,
+      assetIds: effectiveAssetIds,
       investmentIds: this.filterInvestmentIdIn,
       skipLive: this.skipLive,
       ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     })) as Float | null;
   }
 

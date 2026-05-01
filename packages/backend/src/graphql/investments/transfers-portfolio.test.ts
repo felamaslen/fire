@@ -783,6 +783,39 @@ describe("Portfolio multi-asset transfer fold", () => {
     expect(data.portfolio?.totalValue?.amount).toBe(3600);
   });
 
+  it("xirr on a transferred-into wrapper alone folds the source's pre-transfer flows", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // Source bought 100 units at £10 ages ago. Transferred in 2022. Today's
+    // price is £20 — the pure-from-buy IRR of "£1000 in 2022-01, worth
+    // £2000 today" is in the ballpark of 0.18-0.20. With a destination-only
+    // view that ignores the source flows, xirr would have a single
+    // negative flow (the buy at £10) that's *outside* the dest's tx
+    // history and so xirr would just see the terminal £2000 with no
+    // matching outflow → null / divergent. We assert a non-null number.
+    await buy(inv, fromAsset, "2022-01-15", 100, 10);
+    await setPrice(inv, "2025-01-01", 2000);
+    await db.insert(InvestmentPricesLive).values({
+      investmentId: inv,
+      refreshedAt: new Date("2025-01-01T12:00:00Z"),
+      date: new Date("2025-01-01T12:00:00Z"),
+      currency: "GBP",
+      price: 2000,
+      pricePreviousClose: 2000,
+    });
+    await createTransferOut(fromAsset, toAsset, "2022-06-15");
+
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [toAsset],
+    });
+    const xirr = data.portfolio?.xirr;
+    expect(xirr).not.toBeNull();
+    // Sanity: positive, in the 10–30 % / yr ballpark for a 2× over ~3 yrs.
+    expect(xirr).toBeGreaterThan(0.1);
+    expect(xirr).toBeLessThan(0.5);
+  });
+
   it("[src, dest] timeseries shows one continuous folded line (no double-count post-transfer)", async () => {
     const fromAsset = await createAsset("Old ISA");
     const toAsset = await createAsset("New ISA");
