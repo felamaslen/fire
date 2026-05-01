@@ -299,7 +299,7 @@ export function PortfolioChart({
           const p = candles.points[hoveredCandle];
           const cx = (xScale(p.x0) + xScale(p.x1)) / 2;
           const plotRight = width - AXIS_PAD_RIGHT;
-          const boxW = 148;
+          const boxW = 196;
           const boxH = 82;
           const gap = 10;
           const preferRight = cx + gap + boxW <= plotRight;
@@ -307,8 +307,11 @@ export function PortfolioChart({
             ? cx + gap
             : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
           const boxY = Math.max(AXIS_PAD_TOP, yScale(p.hi) - boxH / 2);
-          const d = initialDate
+          const dStart = initialDate
             ? new Date(initialDate.getTime() + Math.round(p.x0) * 86400 * 1000)
+            : null;
+          const dEnd = initialDate
+            ? new Date(initialDate.getTime() + Math.round(p.x1) * 86400 * 1000)
             : null;
           const isUp = p.to >= p.from;
           return (
@@ -332,9 +335,18 @@ export function PortfolioChart({
                 strokeWidth={1}
               />
               <g className="fill-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums">
-                {d && (
-                  <text x={boxX + 8} y={boxY + 14} className="font-medium">
-                    {fullDate(d)}
+                {dStart && (
+                  <text x={boxX + 8} y={boxY + 14}>
+                    <tspan className="font-medium">{fullDate(dStart)}</tspan>
+                    {dEnd && (
+                      <tspan
+                        className="fill-muted-foreground"
+                        fontSize="0.82em"
+                        dx="4"
+                      >
+                        → {fullDate(dEnd)}
+                      </tspan>
+                    )}
                   </text>
                 )}
                 <text
