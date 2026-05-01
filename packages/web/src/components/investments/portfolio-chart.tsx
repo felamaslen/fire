@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import {
@@ -55,6 +55,27 @@ type Props = {
   stacked?: boolean;
   /** Vertical event markers (transfer date arrows). */
   annotations?: ChartAnnotation[];
+  /**
+   * Override the X-axis bounds derived from data. Used by the candlestick
+   * pinch-zoom flow: the parent owns a viewport that may extend further
+   * left than the loaded candles (while a backfill is in flight) or
+   * shrink to a sub-range of loaded data. When set, the Y axis is still
+   * computed from data points whose `x` falls in `[xMin, xMax]` so a
+   * zoomed-in view re-fits its Y scale to the visible buckets.
+   */
+  viewport?: { xMin: number; xMax: number };
+  /**
+   * Pinch / wheel-zoom callback. Fired on `wheel + ctrlKey` (Mac trackpad
+   * pinch) and `wheel + metaKey`. `deltaY` is the raw event deltaY: positive
+   * = zoom OUT (gesture pinches inward, more range visible), negative =
+   * zoom IN. The parent typically applies an exponential factor like
+   * `exp(deltaY * k)` to translate this into a viewport-span change, and
+   * accumulates / raf-throttles to keep the zoom smooth across the
+   * 60-Hz wheel-event burst a trackpad pinch fires.
+   */
+  onZoom?: (deltaY: number) => void;
+  /** Click-and-drag horizontal pan. `deltaDays` is signed: positive = the user dragged to the right (so the visible window shifted forward in time, i.e. towards today); negative = dragged left (window shifted backward in time). The parent decides whether to clamp at "today" / kick off a backfill query for older data. */
+  onPan?: (deltaDays: number) => void;
 };
 
 const AXIS_PAD_LEFT = 56;
@@ -90,26 +111,50 @@ export function PortfolioChart({
   initialDate,
   stacked = false,
   annotations,
+  viewport,
+  onZoom,
+  onPan,
 }: Props) {
   const [hoveredCandle, setHoveredCandle] = useState<number | null>(null);
   const [lineHoverX, setLineHoverX] = useState<number | null>(null);
   const { xScale, yScale, xMin, xMax, yMin, yTicks, xTicks } = useMemo(() => {
-    const allXs: number[] = [];
+    // Honour the parent's viewport bounds when provided (candlestick
+    // pinch-zoom). The Y axis still scales to the points actually
+    // visible in `[xMin, xMax]` so a zoomed-in view re-fits to the
+    // amplitude of the visible buckets.
+    let xMin: number;
+    let xMax: number;
     const allYs: number[] = [];
-    for (const l of lines ?? []) {
-      for (const p of l.points) {
-        allXs.push(p.x);
-        allYs.push(p.y);
+    if (viewport) {
+      xMin = viewport.xMin;
+      xMax = viewport.xMax;
+      for (const l of lines ?? []) {
+        for (const p of l.points) {
+          if (p.x >= xMin && p.x <= xMax) allYs.push(p.y);
+        }
       }
-    }
-    if (candles) {
-      for (const p of candles.points) {
-        allXs.push(p.x0, p.x1);
-        allYs.push(p.lo, p.hi);
+      if (candles) {
+        for (const p of candles.points) {
+          if (p.x1 >= xMin && p.x0 <= xMax) allYs.push(p.lo, p.hi);
+        }
       }
+    } else {
+      const allXs: number[] = [];
+      for (const l of lines ?? []) {
+        for (const p of l.points) {
+          allXs.push(p.x);
+          allYs.push(p.y);
+        }
+      }
+      if (candles) {
+        for (const p of candles.points) {
+          allXs.push(p.x0, p.x1);
+          allYs.push(p.lo, p.hi);
+        }
+      }
+      xMin = allXs.length ? Math.min(...allXs) : 0;
+      xMax = allXs.length ? Math.max(...allXs) : 1;
     }
-    const xMin = allXs.length ? Math.min(...allXs) : 0;
-    const xMax = allXs.length ? Math.max(...allXs) : 1;
     // Float the Y axis to the data range rather than anchoring at 0, so a
     // portfolio that's always sat between £10k and £12k doesn't show up as
     // a flat line at the top of the chart. For stacked charts the whole
@@ -137,9 +182,102 @@ export function PortfolioChart({
       yScale: (y: number) =>
         AXIS_PAD_TOP + plotH - ((y - niceMin) / yRange) * plotH,
     };
-  }, [lines, candles, width, height, initialDate, stacked]);
+  }, [lines, candles, width, height, initialDate, stacked, viewport]);
 
-  if (!lines?.length && (!candles || candles.points.length === 0)) {
+  const hasData = !!lines?.length || !!candles?.points.length;
+
+  // All hooks are called before the early return below — the empty-data
+  // branch must not change the hook count between renders.
+  const svgRef = useRef<SVGSVGElement>(null);
+  // Attach the wheel listener via `addEventListener({ passive: false })`
+  // rather than React's synthetic `onWheel` prop. React's wheel handler
+  // is registered passively (modern Chrome default), so `e.preventDefault`
+  // inside it is a no-op and the browser still scrolls the page during
+  // a Ctrl+wheel pinch — the chart's zoom state advances *and* the page
+  // scrolls. The native non-passive listener lets us cancel the scroll
+  // and keep the gesture confined to the chart.
+  useEffect(() => {
+    if (!hasData) return;
+    const el = svgRef.current;
+    if (!el || !onZoom) return;
+    const handler = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      onZoom(e.deltaY);
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [hasData, onZoom]);
+
+  // Click-and-drag horizontal pan. We track raw pixel deltas, convert
+  // them to "days" using the current visible span / plot width, and
+  // bubble the signed delta to the parent. The drag is captured on the
+  // SVG element so the gesture doesn't get lost when the cursor leaves
+  // the chart while held.
+  const panStateRef = useRef<{
+    pointerId: number;
+    lastClientX: number;
+    plotWidth: number;
+    visibleSpanDays: number;
+  } | null>(null);
+  const xMinRef = useRef(xMin);
+  xMinRef.current = xMin;
+  const xMaxRef = useRef(xMax);
+  xMaxRef.current = xMax;
+  const handlePointerDown =
+    onPan && hasData
+      ? (e: React.PointerEvent<SVGSVGElement>) => {
+          if (e.button !== 0) return;
+          const plotWidth = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
+          const visibleSpanDays = Math.max(
+            1,
+            xMaxRef.current - xMinRef.current,
+          );
+          panStateRef.current = {
+            pointerId: e.pointerId,
+            lastClientX: e.clientX,
+            plotWidth,
+            visibleSpanDays,
+          };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }
+      : undefined;
+  const handlePointerMove =
+    onPan && hasData
+      ? (e: React.PointerEvent<SVGSVGElement>) => {
+          const s = panStateRef.current;
+          if (!s || s.pointerId !== e.pointerId) return;
+          const dxPx = e.clientX - s.lastClientX;
+          if (dxPx === 0) return;
+          s.lastClientX = e.clientX;
+          // dragging right = pulling earlier dates onto the chart from the
+          // left = visible window shifts BACKWARD in time = negative
+          // deltaDays in "days from initialDate" terms. Sign matches the
+          // `onPan` doc: positive = right, the parent flips it for date math.
+          const deltaDays = (dxPx / s.plotWidth) * s.visibleSpanDays;
+          onPan(deltaDays);
+        }
+      : undefined;
+  const handlePointerUp =
+    onPan && hasData
+      ? (e: React.PointerEvent<SVGSVGElement>) => {
+          const s = panStateRef.current;
+          if (!s || s.pointerId !== e.pointerId) return;
+          panStateRef.current = null;
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        }
+      : undefined;
+  // Unique clip-path id per instance so multiple charts on a page don't
+  // collide. The clip restricts candle / line rendering to the plot area
+  // (axis-text area excluded), so candles whose `x0` falls left of the
+  // visible viewport don't bleed past the Y axis when the user zooms
+  // out and a new page is appended.
+  const reactId = useId();
+  const clipId = `chart-plot-${reactId}`;
+
+  if (!hasData) {
     return (
       <div
         className={cn(
@@ -155,10 +293,29 @@ export function PortfolioChart({
 
   return (
     <svg
+      ref={svgRef}
       viewBox={`0 0 ${width} ${height}`}
-      className={cn("overflow-visible", className)}
+      className={cn(
+        "overflow-visible",
+        onPan && "cursor-grab select-none active:cursor-grabbing",
+        className,
+      )}
       style={{ aspectRatio: `${width} / ${height}` }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
     >
+      <defs>
+        <clipPath id={clipId}>
+          <rect
+            x={AXIS_PAD_LEFT}
+            y={AXIS_PAD_TOP}
+            width={width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT}
+            height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
+          />
+        </clipPath>
+      </defs>
       {/* Grid + Y axis labels */}
       {yTicks.map((v) => (
         <g key={`y${v}`}>
@@ -212,100 +369,119 @@ export function PortfolioChart({
         strokeOpacity={0.25}
       />
 
-      {candles?.points.map((p, i) => {
-        const xStart = xScale(p.x0);
-        const xEnd = xScale(p.x1);
-        const x = (xStart + xEnd) / 2;
-        const bodyTop = Math.max(p.from, p.to);
-        const bodyBottom = Math.min(p.from, p.to);
-        const bodyY = yScale(bodyTop);
-        const bodyHeight = Math.abs(yScale(p.from) - yScale(p.to)) || 1;
-        const isUp = p.to >= p.from;
-        // Leave a 15% gap between adjacent candles so the bucket boundaries
-        // are legible; wicks still centre on the bucket midpoint.
-        const bucketSpan = Math.max(2, xEnd - xStart);
-        const bucketWidth = Math.max(2, bucketSpan * 0.85);
-        const capWidth = Math.max(3, bucketWidth * 0.45);
-        const isHovered = hoveredCandle === i;
-        // Each wick (upper / lower / spine) is only drawn when it has non-
-        // zero length. Skipping them when high == max(from, to) etc.
-        // avoids rendering 1-pixel artefacts at the body edges and keeps
-        // a flat-line candle (open == close == high == low) clean.
-        const hasUpperWick = p.hi > bodyTop;
-        const hasLowerWick = bodyBottom > p.lo;
-        return (
-          <g key={i}>
-            {/* wick — explicit `stroke-foreground` (not `currentColor` via a
-                parent `text-foreground`) because SVG's `stroke="currentColor"`
-                resolves against the nearest ancestor that actually sets the
-                CSS `color` property, and the class on the wrapping `<g>`
-                doesn't always inherit into SVG children in every browser /
-                Tailwind setup — wicks went invisible in dark mode. Using the
-                stroke class sets `stroke: var(--foreground)` directly. */}
-            <g>
-              {(hasUpperWick || hasLowerWick) && (
-                <line
-                  x1={x}
-                  x2={x}
-                  y1={yScale(p.hi)}
-                  y2={yScale(p.lo)}
-                  className="stroke-foreground"
-                  strokeWidth={1}
-                />
-              )}
-              {hasUpperWick && (
-                <line
-                  x1={x - capWidth / 2}
-                  x2={x + capWidth / 2}
-                  y1={yScale(p.hi)}
-                  y2={yScale(p.hi)}
-                  className="stroke-foreground"
-                  strokeWidth={1}
-                />
-              )}
-              {hasLowerWick && (
-                <line
-                  x1={x - capWidth / 2}
-                  x2={x + capWidth / 2}
-                  y1={yScale(p.lo)}
-                  y2={yScale(p.lo)}
-                  className="stroke-foreground"
-                  strokeWidth={1}
-                />
-              )}
-            </g>
-            {/* body */}
-            <rect
-              x={x - bucketWidth / 2}
-              y={bodyY}
-              width={bucketWidth}
-              height={bodyHeight}
-              className={
-                isUp
-                  ? isHovered
-                    ? "fill-emerald-400"
-                    : "fill-emerald-500"
-                  : isHovered
-                    ? "fill-red-400"
-                    : "fill-red-500"
-              }
-            />
-            {/* hover hitbox — full plot height, slightly wider than the
+      <g clipPath={`url(#${clipId})`}>
+        {candles?.points.map((p, i) => {
+          // Skip candles entirely outside the viewport — the clip-path
+          // would hide them anyway, but the JS-side filter avoids
+          // building DOM nodes for thousands of off-screen buckets after
+          // several pinch-out backfills.
+          if (p.x1 < xMin || p.x0 > xMax) return null;
+          const xStart = xScale(p.x0);
+          const xEnd = xScale(p.x1);
+          const x = (xStart + xEnd) / 2;
+          const bodyTop = Math.max(p.from, p.to);
+          const bodyBottom = Math.min(p.from, p.to);
+          const bodyY = yScale(bodyTop);
+          const bodyHeight = Math.abs(yScale(p.from) - yScale(p.to)) || 1;
+          const isUp = p.to >= p.from;
+          // Leave a 15% gap between adjacent candles so the bucket boundaries
+          // are legible; wicks still centre on the bucket midpoint.
+          const bucketSpan = Math.max(2, xEnd - xStart);
+          const bucketWidth = Math.max(2, bucketSpan * 0.85);
+          const capWidth = Math.max(3, bucketWidth * 0.45);
+          const isHovered = hoveredCandle === i;
+          // Each wick (upper / lower / spine) is only drawn when it has non-
+          // zero length. Skipping them when high == max(from, to) etc.
+          // avoids rendering 1-pixel artefacts at the body edges and keeps
+          // a flat-line candle (open == close == high == low) clean.
+          const hasUpperWick = p.hi > bodyTop;
+          const hasLowerWick = bodyBottom > p.lo;
+          // At zoomed-out densities the candles get so narrow that the
+          // foreground-coloured cap lines turn into visual noise — they
+          // dominate the candle body. Below 10 px wide we drop the caps
+          // and recolour the spine to match the body, so the wick reads
+          // as a thin extension of the candle.
+          const isThin = bucketWidth < 10;
+          const wickClass = isThin
+            ? isUp
+              ? "stroke-emerald-500"
+              : "stroke-red-500"
+            : "stroke-foreground";
+          return (
+            <g key={i}>
+              {/* wick — for normal-width candles the spine + caps render in
+                `stroke-foreground` (explicit class rather than
+                `currentColor`, which doesn't inherit reliably into SVG
+                children across browser / Tailwind setups — wicks went
+                invisible in dark mode). For thin candles (< 10 px) we
+                tint the spine in the body colour and skip the cap lines
+                entirely so the candle reads cleanly at zoomed-out
+                densities. */}
+              <g>
+                {(hasUpperWick || hasLowerWick) && (
+                  <line
+                    x1={x}
+                    x2={x}
+                    y1={yScale(p.hi)}
+                    y2={yScale(p.lo)}
+                    className={wickClass}
+                    strokeWidth={1}
+                  />
+                )}
+                {!isThin && hasUpperWick && (
+                  <line
+                    x1={x - capWidth / 2}
+                    x2={x + capWidth / 2}
+                    y1={yScale(p.hi)}
+                    y2={yScale(p.hi)}
+                    className={wickClass}
+                    strokeWidth={1}
+                  />
+                )}
+                {!isThin && hasLowerWick && (
+                  <line
+                    x1={x - capWidth / 2}
+                    x2={x + capWidth / 2}
+                    y1={yScale(p.lo)}
+                    y2={yScale(p.lo)}
+                    className={wickClass}
+                    strokeWidth={1}
+                  />
+                )}
+              </g>
+              {/* body */}
+              <rect
+                x={x - bucketWidth / 2}
+                y={bodyY}
+                width={bucketWidth}
+                height={bodyHeight}
+                className={
+                  isUp
+                    ? isHovered
+                      ? "fill-emerald-400"
+                      : "fill-emerald-500"
+                    : isHovered
+                      ? "fill-red-400"
+                      : "fill-red-500"
+                }
+              />
+              {/* hover hitbox — full plot height, slightly wider than the
                 body so there's no dead pixel between candles */}
-            <rect
-              x={x - bucketWidth / 2 - 1}
-              y={AXIS_PAD_TOP}
-              width={bucketWidth + 2}
-              height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
-              fill="transparent"
-              onMouseEnter={() => setHoveredCandle(i)}
-              onMouseLeave={() =>
-                setHoveredCandle((cur) => (cur === i ? null : cur))
-              }
-            />
-          </g>
-        );
-      })}
+              <rect
+                x={x - bucketWidth / 2 - 1}
+                y={AXIS_PAD_TOP}
+                width={bucketWidth + 2}
+                height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
+                fill="transparent"
+                onMouseEnter={() => setHoveredCandle(i)}
+                onMouseLeave={() =>
+                  setHoveredCandle((cur) => (cur === i ? null : cur))
+                }
+              />
+            </g>
+          );
+        })}
+      </g>
       {candles &&
         hoveredCandle !== null &&
         candles.points[hoveredCandle] &&
@@ -413,49 +589,54 @@ export function PortfolioChart({
           );
         })()}
 
-      {lines?.map((line, idx) => {
-        if (stacked) {
-          // Build the closed polygon between this line and the one below it
-          // (or 0 if it's the bottom-most). Assumes lines are sorted from
-          // bottom to top and each y is cumulative.
-          const below = idx > 0 ? lines[idx - 1].points : null;
-          const topPath = line.points
+      <g clipPath={`url(#${clipId})`}>
+        {lines?.map((line, idx) => {
+          if (stacked) {
+            // Build the closed polygon between this line and the one below it
+            // (or 0 if it's the bottom-most). Assumes lines are sorted from
+            // bottom to top and each y is cumulative.
+            const below = idx > 0 ? lines[idx - 1].points : null;
+            const topPath = line.points
+              .map(
+                (p, i) =>
+                  `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`,
+              )
+              .join(" ");
+            const bottomPoints = (
+              below ?? line.points.map((p) => ({ x: p.x, y: 0 }))
+            )
+              .slice()
+              .reverse();
+            const bottomPath = bottomPoints
+              .map((p) => `L ${xScale(p.x)} ${yScale(p.y)}`)
+              .join(" ");
+            return (
+              <path
+                key={line.label}
+                d={`${topPath} ${bottomPath} Z`}
+                fill={line.color}
+                fillOpacity={0.7}
+                stroke={line.color}
+                strokeWidth={0.5}
+              />
+            );
+          }
+          const d = line.points
             .map(
               (p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`,
             )
             .join(" ");
-          const bottomPoints = (
-            below ?? line.points.map((p) => ({ x: p.x, y: 0 }))
-          )
-            .slice()
-            .reverse();
-          const bottomPath = bottomPoints
-            .map((p) => `L ${xScale(p.x)} ${yScale(p.y)}`)
-            .join(" ");
           return (
             <path
               key={line.label}
-              d={`${topPath} ${bottomPath} Z`}
-              fill={line.color}
-              fillOpacity={0.7}
+              d={d}
+              fill="none"
               stroke={line.color}
-              strokeWidth={0.5}
+              strokeWidth={1.5}
             />
           );
-        }
-        const d = line.points
-          .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`)
-          .join(" ");
-        return (
-          <path
-            key={line.label}
-            d={d}
-            fill="none"
-            stroke={line.color}
-            strokeWidth={1.5}
-          />
-        );
-      })}
+        })}
+      </g>
 
       {lines &&
         lines.length > 0 &&

@@ -894,7 +894,9 @@ type InvestmentWrapper {
   The wrapper (a `STOCK` or `PENSION` net-worth asset) this slice belongs to.
   """
   asset: NetWorthCategoryAsset!
-  """Holdings, cost basis, and gain/loss filtered to this wrapper."""
+  """
+  Holdings, cost basis, and gain/loss filtered to this wrapper. Folds in the wrapper's own `transfersIn` (each source's pre-transfer history of this investment) and respects its `transferOut` cap, so the unit count agrees with `Investment.position(filterAssetIdIn: [this.assetId])` — e.g. on a transferred-into wrapper a transferred-then-sold investment correctly nets to zero rather than reading negative.
+  """
   position: InvestmentPosition!
 }
 
@@ -1109,7 +1111,7 @@ type Mutation {
     ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ): PlanningEarning!
   """
-  Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to exactly 1.
+  Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to ~1 (post-rounding). Submitted fractions are rounded to the nearest 1% (2dp) before persisting; any residual rounding drift is absorbed by the largest allocation so the saved set still sums to exactly 1.
   """
   investmentAllocationsSet(
     allocations: [InvestmentAllocationInput!]!
@@ -2229,12 +2231,19 @@ type Portfolio {
   Per-investment breakdown of the filtered portfolio's current market value, expressed as fractions in `[0, 1]` that sum to `1`. Each entry pairs an investment with its share. Investments that contribute zero value (no holdings, fully sold, or missing a price) are excluded; the remaining fractions are renormalised over those that do contribute. Returns an empty array when the portfolio has no positive value.
   """
   allocations: [PortfolioAllocation!]!
-  """Candlestick buckets of portfolio total over the requested period."""
+  """Candlestick buckets of portfolio total over the requested window."""
   candlestick(
+    """
+    Lower bound on the visible range — buckets start at-or-after this date. Setting `after` to a date earlier than the previous response's `startCursor` is how the client zooms out: the chart's left edge moves to (the snapped equivalent of) `after`. The right edge stays at `before ?? today`.
+    """
+    after: Date
+    """
+    Upper bound on the visible range — buckets end at-or-before this date. The client passes this when panning the chart's right edge back from "today"; for the default unbounded-on-the-right view, leave it `null`. The live-overlay tail is skipped when `before` is set.
+    """
+    before: Date
     length: Int! = 1
     """
-    Maximum number of candle buckets to return. The series ends today and
-    extends backwards by `max × length` `unit`s.
+    Maximum number of candle buckets to return when neither `after` nor `before` is set. The series ends today and extends backwards by `max × length` `unit`s. Ignored when `after` is set (the range becomes `(after, before ?? today)`).
     """
     max: Int! = 50 @constraint(max: 100, min: 1)
     unit: PortfolioCandleUnit!
@@ -2276,11 +2285,11 @@ type Portfolio {
   """
   totalCost: Money!
   """
-  Total return (realised + unrealised) on the held positions — `(totalValue − cash) − totalCost`. Excludes the cash float so freshly-deposited funds don't read as a gain.
+  Total return (realised + unrealised) on the held positions — `totalValue − totalCost`. `totalValue` already excludes cash, so freshly-deposited funds don't read as a gain.
   """
   totalGain: Money
   """
-  Current market value of the filtered portfolio — the today-price value of units currently held plus uninvested cash held in the wrapper(s). Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
+  Current market value of the held positions in the filtered portfolio — `Σ unitsHeld_in_filter × priceLatest_investment`. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) — a holdings + cash combined number conflates investment performance with deposit timing.
   """
   totalValue: Money
   """
@@ -2301,12 +2310,20 @@ type PortfolioAllocation {
 }
 
 """
-OHLC-style time series of portfolio total, downsampled to at most 300 buckets while always preserving the first and last bucket.
+OHLC-style time series of portfolio total. The visible window is bounded by `(after, before)` — the client drives zoom-out / pan by lowering `after` (extending the chart left) or moving `before` back from "today" (panning right edge). Bucket boundaries snap to a stable epoch so any two queries with overlapping ranges return buckets that align exactly.
 """
 type PortfolioCandlestick {
   currency: String!
+  """
+  Calendar date of the *rightmost* bucket's end — i.e. the chart's current right edge. For an unbounded query (no `before`) this is "today" (or `dateCap`, for a transferred-out wrapper). The client passes a date earlier than `endCursor` as `before:` to pan the right edge back.
+  """
+  endCursor: Date!
   initialDate: Date!
   points: [PortfolioCandlestickPoint!]!
+  """
+  Calendar date of the *leftmost* bucket's start — i.e. the chart's current "initial date". Equal to `initialDate` here; exposed separately so a panning client can read it as a cursor without selecting `initialDate` (which is also used for date-axis labelling). When the client wants to zoom out, it passes a date earlier than `startCursor` as `after:` to extend the chart left.
+  """
+  startCursor: Date!
 }
 
 """
@@ -2321,6 +2338,10 @@ type PortfolioCandlestickPoint {
   Highest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
   """
   hi: Int!
+  """
+  Stable opaque identifier for the bucket — encodes the asset filter, candle size (`unit_length`), and bucket start date so the same bucket appearing in two overlapping queries normalises to the same Apollo cache entry. Lets the client merge a panned / zoomed range with the previously-loaded one without re-fetching shared candles.
+  """
+  id: ID!
   """
   Lowest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
   """

@@ -15,39 +15,59 @@ import {
 } from "./portfolio";
 import { loadInvestmentStats } from "./stats";
 
-/** Cursor wire format for `Portfolio.candlestick.endCursor` / `before:`. The cursor is the bucket-start date the next page should end at; we base64-encode it so the client treats it as fully opaque (matching the `ID` GraphQL contract — pasting a date directly into `before:` is undefined behaviour). */
-const CURSOR_PREFIX = "candle:";
+/** Per-`(unit, length)` cap on the chart's visible range — the maximum number of *days* `before` to `after` may span before the resolver throws. Calibrated to give the client roughly the same number of buckets at every zoom level (a few hundred to a few thousand), so 3D candles can't be asked to render twenty years of data. A small allowance is added on top to absorb rounding around bucket-boundary snaps. */
+const RANGE_LIMIT_DAYS: Record<string, number> = {
+  // 3D: 2 years of history.
+  "DAY|3": 365 * 2,
+  // 1W: 5 years.
+  "WEEK|1": 365 * 5,
+  // 2W: 10 years.
+  "WEEK|2": 365 * 10,
+  // 1M: 20 years.
+  "MONTH|1": 365 * 20,
+  // 3M: 60 years (effectively unbounded).
+  "MONTH|3": 365 * 60,
+};
+const RANGE_LIMIT_ALLOWANCE_DAYS = 31;
 
-function encodeCandlestickCursor(bucketStart: string): ID {
-  return Buffer.from(`${CURSOR_PREFIX}${bucketStart}`, "utf-8").toString(
-    "base64url",
-  ) as ID;
+function rangeLimitDays(unit: PortfolioCandleUnit, length: number): number {
+  const key = `${unit}|${length}`;
+  const limit = RANGE_LIMIT_DAYS[key];
+  if (limit !== undefined) return limit + RANGE_LIMIT_ALLOWANCE_DAYS;
+  // Fall-through for unit/length combos the UI doesn't currently expose:
+  // pick a sensible default proportional to bucket width.
+  const bucketDays =
+    unit === "DAY" ? length : unit === "WEEK" ? length * 7 : length * 30;
+  return bucketDays * 200 + RANGE_LIMIT_ALLOWANCE_DAYS;
 }
 
-export function decodeCandlestickCursor(cursor: ID): string {
-  const decoded = Buffer.from(cursor as string, "base64url").toString("utf-8");
-  if (!decoded.startsWith(CURSOR_PREFIX)) {
-    throw new Error(`Invalid candlestick cursor: ${String(cursor)}`);
-  }
-  const date = decoded.slice(CURSOR_PREFIX.length);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    throw new Error(`Invalid candlestick cursor (bad date): ${String(cursor)}`);
-  }
-  return date;
+/** Encode `(assetIds, size, bucketStart)` into a stable opaque ID. Apollo treats this as the cache key for `PortfolioCandlestickPoint` so the same bucket appearing in two overlapping queries (e.g. before vs after a pan) merges into one cache entry instead of duplicating. */
+function encodeCandlePointId(
+  assetIds: readonly string[],
+  unit: PortfolioCandleUnit,
+  length: number,
+  bucketStart: string,
+): ID {
+  const assets = assetIds.length > 0 ? [...assetIds].sort().join(",") : "";
+  const raw = `cp:${assets}|${unit}_${length}|${bucketStart}`;
+  return Buffer.from(raw, "utf-8").toString("base64url") as ID;
 }
 
 type CandlestickKey = {
-  /** When set, filters the result to the combined portfolio across these net worth asset IDs. Undefined / empty = every asset. The full set is part of the cache key, so two requests with the same set coalesce to one SQL query; requests with different sets run independently. */
+  /** When set, filters the result to the combined portfolio across these net worth asset IDs. Undefined / empty = every asset. */
   assetIds?: string[];
-  /** Each candle spans `length` of `unit`s; the series contains at most `max` candles. */
+  /** Each candle spans `length` of `unit`s. */
   unit: PortfolioCandleUnit;
   length: number;
+  /** Default bucket count when neither `after` nor `before` is set. Ignored when `after` is set (the range is then `(after, before ?? today)`). */
   max: number;
-  /** When `false`, the last bucket's `valueEnd` / `valueMax` / `valueMin` are overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB result is returned. Does not affect the SQL — only the overlay. */
+  /** When `false`, the rightmost bucket's `valueEnd` / `valueMax` / `valueMin` are overlaid with today's live-overlaid portfolio total. */
   skipLive: boolean;
-  /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
+  /** Right-edge cap (transferred-out wrappers freeze on the day before the transfer; `Portfolio.candlestick(before:)` also lands here). */
   dateCap?: string;
-  /** Additional asset scopes to fold in, each with its own per-scope cap — used to render a transferred-into wrapper that inherits the source's pre-transfer holdings. Each entry adds an OR-branch over `InvestmentValuePoints` rows where `assetId = entry.assetId AND date <= entry.dateCap`. */
+  /** Lower bound on the visible range (inclusive). When set, the leftmost bucket starts at-or-after this date. */
+  after?: string;
+  /** Additional asset scopes folded in for a transferred-into wrapper (the source's pre-transfer holdings flow into the destination). */
   extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
@@ -66,7 +86,7 @@ const cacheKeyFn = (key: CandlestickKey): string => {
         .map((s) => `${s.assetId}@${s.dateCap}`)
         .join(",")
     : "";
-  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}|${extra}`;
+  return `${key.unit}|${key.length}|${key.max}|${assets}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}|${key.after ?? ""}|${extra}`;
 };
 
 /**
@@ -180,30 +200,51 @@ const loadOne = async (
     }
     return sql`AND (${sql.join(branches, sql` OR `)})`;
   })();
-  // When `dateCap` is set, anchor `now` at the cap so the chart freezes on
-  // the day before the transfer.
+  // Right edge: `dateCap` (transferred-out wrapper freeze) or "today".
   const now = key.dateCap ?? formatISO(new Date(), { representation: "date" });
-  // Snap the right edge to a stable bucket boundary (Monday for WEEK,
-  // 1st-of-month for MONTH, mod-`length` since epoch for DAY) so two
-  // requests for the same `(unit, length)` with different `before`
-  // cursors produce buckets that line up exactly.
+  // Snap right edge to a stable bucket boundary (Mon for WEEK, 1st of
+  // month for MONTH, mod-`length` since epoch for DAY) so two queries
+  // for the same `(unit, length)` with overlapping windows return
+  // bucket boundaries that line up exactly.
   const anchor = formatISO(
     snapBucketStart(new Date(now), key.unit, key.length),
-    {
-      representation: "date",
-    },
+    { representation: "date" },
   );
-  // When `now` falls strictly inside a bucket (e.g. mid-week for 1W) we
-  // emit a trailing partial bucket from `anchor` to `now` of width 1 to
-  // `length` units. To keep the *total* bucket count at `max`, we
-  // generate one fewer full bucket in that case — i.e. start the date
-  // series at `anchor - (max-1) × length` instead of `anchor - max ×
-  // length`. With no partial bucket (`now == anchor`, the request lands
-  // exactly on a boundary or `before` was passed in), we generate the
-  // full `max` boundaries.
+  // Left edge: explicit `after`, or `anchor - max × length` units back
+  // for the unbounded query. Snap the explicit `after` down too —
+  // the leftmost bucket of the response should start on a stable
+  // boundary, and `after` itself may not land on one.
+  const leftEdge = key.after
+    ? formatISO(snapBucketStart(new Date(key.after), key.unit, key.length), {
+        representation: "date",
+      })
+    : null;
+  // Range guard: if the resulting window exceeds the per-(unit, length)
+  // limit, refuse to render. The client enforces matching limits in the
+  // zoom UX; this fence is a server-side belt to make sure a malformed
+  // query can't ask for unbounded scrollback.
+  if (leftEdge) {
+    const spanDays = Math.round(
+      (new Date(now).getTime() - new Date(leftEdge).getTime()) / 86400000,
+    );
+    const limitDays = rangeLimitDays(key.unit, key.length);
+    if (spanDays > limitDays) {
+      throw new Error(
+        `Portfolio.candlestick(${key.unit}, length: ${key.length}): requested range of ${spanDays} days exceeds limit of ${limitDays} days for this candle size`,
+      );
+    }
+  }
+  // Mid-bucket "today" → emit a trailing partial bucket of 1..length
+  // units' width. To keep the total bucket count at `max` (when no
+  // explicit `after`), we generate one fewer full bucket in that case.
   const hasPartial = anchor !== now;
   const fullBuckets = hasPartial ? key.max - 1 : key.max;
-  const windowLen = sql.raw(String(key.length * fullBuckets));
+  // When `after` is set we ignore `max` — the range is determined by
+  // (leftEdge, anchor). Generate boundaries from leftEdge to anchor
+  // stepping by `length unit`.
+  const seriesStart = leftEdge
+    ? sql`${leftEdge}::date`
+    : sql`${anchor}::date - interval '${sql.raw(String(key.length * fullBuckets))} ${unit}'`;
 
   const result = await db.execute<Row>(sql`
     WITH
@@ -211,7 +252,7 @@ const loadOne = async (
         SELECT date, row_number() OVER (ORDER BY date DESC) AS rn
         FROM (
           SELECT generate_series(
-            ${anchor}::date - interval '${windowLen} ${unit}',
+            ${seriesStart},
             ${anchor}::date,
             '${step} ${unit}'::interval
           ) AS date
@@ -261,47 +302,9 @@ const loadOne = async (
     valueMax: row.valueMax,
   }));
 
-  // Probe for older IVP rows than the leftmost bucket's start, scoped to
-  // the same asset filter. Drives `hasMore` — the client uses this to
-  // know when to stop pagination on zoom-out.
-  const leftmostStart = points[0].start;
-  const ivpScopeFilterForExistsCheck = (() => {
-    const mainAssetIds = key.assetIds ?? [];
-    const extraScopes = key.extraScopes ?? [];
-    if (mainAssetIds.length === 0 && extraScopes.length === 0) {
-      return sql``;
-    }
-    const branches: ReturnType<typeof sql>[] = [];
-    if (mainAssetIds.length > 0) {
-      branches.push(
-        sql`ivp."assetId" in (${sql.join(
-          mainAssetIds.map((id) => sql`${id}`),
-          sql`, `,
-        )})`,
-      );
-    }
-    for (const s of extraScopes) {
-      branches.push(sql`ivp."assetId" = ${s.assetId}`);
-    }
-    return sql`AND (${sql.join(branches, sql` OR `)})`;
-  })();
-  const hasMoreResult = await db.execute<{ has_more: boolean }>(sql`
-    SELECT EXISTS (
-      SELECT 1 FROM "InvestmentValuePoints" ivp
-      WHERE ivp.currency = ${currency}
-        AND ivp.value > 0
-        AND ivp.date < ${formatISO(leftmostStart, { representation: "date" })}::date
-        ${ivpScopeFilterForExistsCheck}
-    ) AS has_more
-  `);
-  const hasMore = (hasMoreResult.rows ?? hasMoreResult)[0]?.has_more ?? false;
-
-  // Overlay the last bucket with today's live portfolio total so the tail of
-  // the chart tracks intraday movement. `valueEnd` jumps to the live total;
-  // `valueMin` / `valueMax` expand only when live breaches the bucket's
-  // historical range. `valueStart` is the bucket's first-date value and stays
-  // untouched. With `dateCap`, the series is frozen pre-transfer — no live
-  // overlay.
+  // Live overlay on the rightmost bucket — only when no `dateCap` (the
+  // wrapper isn't transferred-out) and `skipLive` is off (the resolver
+  // wasn't `before:`-bounded).
   if (!key.skipLive && !key.dateCap) {
     const s = await loadInvestmentStats(ctx, {
       currency,
@@ -322,10 +325,18 @@ const loadOne = async (
   }
 
   const initialDate = points[0].start;
+  const rightmostEnd = points[points.length - 1].end;
+  const assetIdsForId = key.assetIds ?? [];
   return {
     currency,
     initialDate,
     points: points.map<PortfolioCandlestickPoint>((row) => ({
+      id: encodeCandlePointId(
+        assetIdsForId,
+        key.unit,
+        key.length,
+        formatISO(row.start, { representation: "date" }),
+      ),
       x0: differenceInDays(row.start, initialDate),
       x1: differenceInDays(row.end, initialDate),
       from: Math.round(
@@ -341,16 +352,13 @@ const loadOne = async (
         Money.fromMinorDenomination(row.valueMax, currency).amount,
       ),
     })),
-    // Cursor = leftmost bucket's start date. The client passes this back
-    // as `Portfolio.candlestick(before:)` to load the next older page;
-    // the server snaps anchors to a stable epoch (`snapBucketStart`) so
-    // the next page's right edge adjoins this page's left edge with no
-    // overlap or gap. `null` when there's nothing older to paginate to.
-    endCursor: hasMore
-      ? encodeCandlestickCursor(
-          formatISO(leftmostStart, { representation: "date" }),
-        )
-      : null,
-    hasMore,
+    // `startCursor` = leftmost bucket's start (the chart's "initial
+    // date"). When the client wants to zoom out, it passes a date
+    // earlier than this as `after:` and the server snaps that down to
+    // the stable bucket boundary. `endCursor` = rightmost bucket's end
+    // (typically today, or `dateCap` for a frozen wrapper). Pass an
+    // earlier date as `before:` to pan the right edge back.
+    startCursor: initialDate,
+    endCursor: rightmostEnd,
   };
 };

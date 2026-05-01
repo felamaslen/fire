@@ -1,4 +1,9 @@
-import { useSuspenseQuery } from "@apollo/client/react";
+import {
+  useApolloClient,
+  useQuery,
+  useSuspenseQuery,
+} from "@apollo/client/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDeferredValue } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -33,7 +38,10 @@ export const PortfolioChartPortfolioFragment = graphql(`
       @include(if: $candlestick) {
       currency
       initialDate
+      startCursor
+      endCursor
       points {
+        id
         x0
         x1
         from
@@ -91,6 +99,40 @@ const PortfolioChartDocument = graphql(
   `,
   [PortfolioChartPortfolioFragment],
 );
+
+/** Standalone fetch for an extended candlestick range. The initial page comes through the parent suspense query; on pinch-zoom-out the loader fires this query with `after` = the new (earlier) date the chart should extend back to, and replaces the active candle data with the response. Apollo normalises by `PortfolioCandlestickPoint.id` so overlapping buckets between the old and new query share cache. */
+const PortfolioCandlestickRangeDocument = graphql(`
+  query PortfolioCandlestickRange(
+    $filterAssetIdIn: [ID!]
+    $candleUnit: PortfolioCandleUnit!
+    $candleLength: Int!
+    $after: Date
+    $before: Date
+  ) {
+    portfolio(filterAssetIdIn: $filterAssetIdIn) {
+      id
+      candlestick(
+        unit: $candleUnit
+        length: $candleLength
+        after: $after
+        before: $before
+      ) {
+        initialDate
+        startCursor
+        endCursor
+        points {
+          id
+          x0
+          x1
+          from
+          to
+          lo
+          hi
+        }
+      }
+    }
+  }
+`);
 
 type Period =
   | { period: "YEAR"; length: number; label: string }
@@ -316,7 +358,11 @@ function PortfolioChartLoader({
       candleUnit: deferredCandleUnit,
       candleLength: deferredCandleLength,
       candlestick: deferredCandlestick,
-      stack: deferredStack,
+      // Gate `stack` on `!candlestick`: the candlestick mode never uses
+      // the stacked-line series (the toggle is disabled in the UI), and
+      // the per-investment `portfolios` edge fetch is the heaviest part
+      // of the query.
+      stack: deferredStack && !deferredCandlestick,
       filterAssetIdIn:
         deferredFilterAssetIds.length > 0 ? deferredFilterAssetIds : null,
     },
@@ -447,12 +493,19 @@ function PortfolioChartLoader({
         };
       })();
 
-  // Pass the full (x0, x1) bucket span through so the chart can place each
-  // candle along the shared time axis instead of evenly distributing them
-  // across the plot width.
-  const candles = portfolio?.candlestick
+  // Candlestick state machine: the parent suspense query loads the
+  // initial window (most recent N candles ending today). On pinch-zoom-
+  // out the hook fires `PortfolioCandlestickRangeDocument` with a wider
+  // `after` and replaces the active range with the response. Apollo
+  // normalises by `PortfolioCandlestickPoint.id` so overlapping buckets
+  // between queries share cache.
+  const initialCandleData: CandleData | null = portfolio?.candlestick
     ? {
+        initialDate: portfolio.candlestick.initialDate,
+        startCursor: portfolio.candlestick.startCursor,
+        endCursor: portfolio.candlestick.endCursor,
         points: portfolio.candlestick.points.map((p) => ({
+          id: p.id,
           x0: p.x0,
           x1: p.x1,
           from: p.from,
@@ -462,6 +515,19 @@ function PortfolioChartLoader({
         })),
       }
     : null;
+  const {
+    candles: paginatedCandles,
+    candleInitialDate,
+    viewport: candleViewport,
+    onZoom,
+    onPan,
+  } = useCandlestickPagination({
+    initialData: initialCandleData,
+    candlestickEnabled: deferredCandlestick,
+    filterAssetIds: deferredFilterAssetIds,
+    candleUnit: deferredCandleUnit,
+    candleLength: deferredCandleLength,
+  });
 
   // Anchor the X axis on whichever series is actually being rendered:
   // candle x0/x1 are server-relative to `candlestick.initialDate`, while
@@ -472,7 +538,7 @@ function PortfolioChartLoader({
   // as "the chart ends years ago" even though candle xMax matches the
   // last bucket.
   const initialDateStr = deferredCandlestick
-    ? (portfolio?.candlestick?.initialDate ?? null)
+    ? candleInitialDate
     : (stackInitialDate ?? portfolio?.timeseries?.initialDate ?? null);
 
   const initialDate =
@@ -532,9 +598,12 @@ function PortfolioChartLoader({
     >
       <PortfolioChart
         lines={deferredCandlestick ? undefined : lines}
-        candles={deferredCandlestick ? candles : null}
+        candles={deferredCandlestick ? paginatedCandles : null}
         currency={portfolio?.currency ?? "GBP"}
         initialDate={initialDate}
+        viewport={deferredCandlestick ? candleViewport : undefined}
+        onZoom={deferredCandlestick ? onZoom : undefined}
+        onPan={deferredCandlestick ? onPan : undefined}
         stacked={!deferredCandlestick && deferredStack}
         annotations={annotations}
         className="w-full"
@@ -633,4 +702,364 @@ function stackLines(series: SeriesIn[]): {
   });
 
   return { lines, stackInitialDate };
+}
+
+type CandlePoint = {
+  id: string;
+  x0: number;
+  x1: number;
+  from: number;
+  to: number;
+  lo: number;
+  hi: number;
+};
+type CandleData = {
+  initialDate: string;
+  startCursor: string;
+  endCursor: string;
+  points: CandlePoint[];
+};
+
+const ONE_DAY_MS = 86400 * 1000;
+/** Scaling factor turning a wheel-event `deltaY` into a zoom-span multiplier via `exp(deltaY × ZOOM_RATE)`. Calibrated by feel: a single notch of a discrete mouse wheel (`deltaY ≈ 100`) zooms by ~1.6×; a trackpad pinch fires many small `deltaY ≈ 1–4` events per second, so the per-frame integration ends up smooth rather than blowing past several years on a single gesture. */
+const ZOOM_RATE = 0.005;
+/** Wait 1 s after the user stops zooming before firing the wider-range fetch. Every zoom event resets this timer, so a long continuous pinch only triggers a single network call once the user settles. */
+const BACKFILL_DEBOUNCE_MS = 1000;
+
+/** Per-`(unit, length)` cap on the chart's visible range, in days. The server enforces a similar limit + small allowance; the client mirrors it so the zoom UX clamps cleanly instead of letting the user pinch into a server-rejected request. */
+const ZOOM_LIMIT_DAYS: Record<string, number> = {
+  "DAY|3": 365 * 2,
+  "WEEK|1": 365 * 5,
+  "WEEK|2": 365 * 10,
+  "MONTH|1": 365 * 20,
+  "MONTH|3": 365 * 60,
+};
+function zoomLimitDays(unit: "DAY" | "WEEK" | "MONTH", length: number): number {
+  return ZOOM_LIMIT_DAYS[`${unit}|${length}`] ?? 365 * 60;
+}
+
+/**
+ * Owns the candlestick pinch-zoom + range-extension state.
+ *
+ * The active candle range starts as whatever the parent suspense query
+ * loaded (the initial "today's window"). On pinch-zoom-out the visible
+ * span grows beyond the initial range; the hook waits
+ * `BACKFILL_DEBOUNCE_MS` after the last zoom event, then fires a
+ * `Portfolio.candlestick(after: …)` query whose response replaces the
+ * active range with a wider one. Apollo normalises by
+ * `PortfolioCandlestickPoint.id`, so buckets that overlap the previous
+ * range share cache entries (no duplicate work for the rendered UI,
+ * and toggling zoom in/out doesn't re-fetch the same data).
+ *
+ * The chart's `viewport` clips the visible portion of the active
+ * range. When the user pinches back in past the initial span, the
+ * viewport snaps to that span — *not* to the full zoomed-out range —
+ * so "fully zoomed in" always means "today's window".
+ */
+function daysBetween(a: string, b: string): number {
+  return Math.round(
+    (new Date(`${b}T00:00:00Z`).getTime() -
+      new Date(`${a}T00:00:00Z`).getTime()) /
+      ONE_DAY_MS,
+  );
+}
+
+function addDays(date: string, days: number): string {
+  const ms =
+    new Date(`${date}T00:00:00Z`).getTime() + Math.round(days) * ONE_DAY_MS;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function useCandlestickPagination({
+  initialData,
+  candlestickEnabled,
+  filterAssetIds,
+  candleUnit,
+  candleLength,
+}: {
+  initialData: CandleData | null;
+  candlestickEnabled: boolean;
+  filterAssetIds: string[];
+  candleUnit: "DAY" | "WEEK" | "MONTH";
+  candleLength: number;
+}): {
+  candles: { points: CandlePoint[] } | null;
+  candleInitialDate: string | null;
+  viewport: { xMin: number; xMax: number } | undefined;
+  onZoom: (deltaY: number) => void;
+  onPan: (deltaDays: number) => void;
+} {
+  // `active` holds whichever range is currently rendered: the initial
+  // page (default) or the latest extended range fetched via the zoom-
+  // out / pan query. Replaced wholesale on a successful fetch.
+  const [active, setActive] = useState<CandleData | null>(null);
+  // `null` = "use the natural initial-data window pinned to the right
+  // edge"; non-null = an explicit date window driven by pinch-zoom or
+  // drag-to-pan. Date strings (`YYYY-MM-DD`), so the viewport stays
+  // anchored across active swaps that change the coord-space origin
+  // (`active.initialDate` shifts when a wider range arrives).
+  const [viewport, setViewport] = useState<{
+    startDate: string;
+    endDate: string;
+  } | null>(null);
+  const fetchInFlight = useRef(false);
+  const apolloClient = useApolloClient();
+
+  // Reset state on scope changes (filter, unit, length, candlestick
+  // toggle). Keep `initialData` out of the deps — it's reconstructed
+  // each parent render, so depending on it would re-run the effect on
+  // every render. We resolve it via a ref at the moment we actually
+  // reset.
+  const filterKey = filterAssetIds.join(",");
+  const baselineKey = `${candleUnit}|${candleLength}|${filterKey}|${candlestickEnabled ? "1" : "0"}`;
+  const initialDataRef = useRef<CandleData | null>(initialData);
+  initialDataRef.current = initialData;
+  const lastBaselineRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastBaselineRef.current === baselineKey) return;
+    lastBaselineRef.current = baselineKey;
+    setActive(initialDataRef.current);
+    setViewport(null);
+    fetchInFlight.current = false;
+  }, [baselineKey]);
+
+  // Seed `active` with the parent's initial data on first mount, and
+  // forward subsequent boundary updates (e.g. midnight ticked over).
+  // `initialData` is rebuilt every parent render, so we compare by
+  // cursor strings rather than by reference.
+  useEffect(() => {
+    if (!initialData) return;
+    setActive((cur) => {
+      if (!cur) return initialData;
+      // If the active range was loaded via a zoom-out fetch, its
+      // `startCursor` is earlier than the parent's narrow window —
+      // leave it alone. Otherwise (matching `startCursor`), refresh
+      // when the right edge has advanced (midnight tick, polled
+      // refetch, etc.); skip a no-op replace when both ends match.
+      if (cur.startCursor !== initialData.startCursor) return cur;
+      if (cur.endCursor === initialData.endCursor) return cur;
+      return initialData;
+    });
+  }, [initialData]);
+
+  // Default viewport (when `viewport` state is null) = the natural
+  // span of the parent's initial data, pinned to its right edge.
+  // Recomputed when `initialData` changes so e.g. midnight ticking
+  // over slides the default forward.
+  const defaultViewport = useMemo<{
+    startDate: string;
+    endDate: string;
+  } | null>(() => {
+    if (!initialData || initialData.points.length === 0) return null;
+    return {
+      startDate: initialData.startCursor,
+      endDate: initialData.endCursor,
+    };
+  }, [initialData]);
+
+  // Hard cap on how far the user can zoom out for this candle size —
+  // matches the server's per-(unit, length) cap so a runaway pinch
+  // doesn't get truncated by a 4xx mid-gesture.
+  const maxZoomDays = zoomLimitDays(candleUnit, candleLength);
+
+  // The "live right edge" — the latest date the user is allowed to
+  // pan towards. Pulled from the parent's initial data (the suspense
+  // query selects today by default), so panning right always returns
+  // to today.
+  const liveRightDate = initialData?.endCursor ?? null;
+
+  // Backfill: when the viewport extends beyond the loaded `active`
+  // range on either side, we need a wider query covering the new
+  // viewport. Two paths run in parallel:
+  //   1. A cache-only `useQuery` keyed by the same variables we'd
+  //      fetch — instant hit when the user pans into a region we've
+  //      already loaded this session, no debounce.
+  //   2. A debounced `apolloClient.query` (cache-first) that fires
+  //      1 s after the user settles, fills the cache on miss. The
+  //      cache-only subscription then picks up the new data and
+  //      swaps `active` — both paths funnel through one `setActive`
+  //      site (the `cachedRange` effect below).
+  const effectiveViewport = viewport ?? defaultViewport;
+  const fetchVars = useMemo(() => {
+    if (!candlestickEnabled) return null;
+    if (!active || active.points.length === 0) return null;
+    if (!effectiveViewport) return null;
+    const needsLeft = effectiveViewport.startDate < active.initialDate;
+    const needsRight = effectiveViewport.endDate > active.endCursor;
+    if (!needsLeft && !needsRight) return null;
+    const requestedSpan = daysBetween(
+      effectiveViewport.startDate,
+      effectiveViewport.endDate,
+    );
+    const cappedSpan = Math.min(requestedSpan, maxZoomDays);
+    const after = addDays(effectiveViewport.endDate, -cappedSpan);
+    const before =
+      liveRightDate && effectiveViewport.endDate < liveRightDate
+        ? effectiveViewport.endDate
+        : null;
+    return {
+      filterAssetIdIn: filterAssetIds.length > 0 ? filterAssetIds : null,
+      candleUnit,
+      candleLength,
+      after,
+      before,
+    };
+  }, [
+    active,
+    candleLength,
+    candleUnit,
+    candlestickEnabled,
+    effectiveViewport,
+    filterAssetIds,
+    liveRightDate,
+    maxZoomDays,
+  ]);
+
+  const { data: cachedRangeData } = useQuery(
+    PortfolioCandlestickRangeDocument,
+    {
+      variables: fetchVars ?? {
+        filterAssetIdIn: null,
+        candleUnit: "DAY",
+        candleLength: 1,
+        after: null,
+        before: null,
+      },
+      skip: fetchVars === null,
+      fetchPolicy: "cache-only",
+    },
+  );
+
+  // Single `setActive` site for any cache hit (whether the data was
+  // already there when the user panned, or the debounced network
+  // fetch just filled it).
+  useEffect(() => {
+    const c = cachedRangeData?.portfolio?.candlestick;
+    if (!c) return;
+    setActive({
+      initialDate: c.initialDate,
+      startCursor: c.startCursor,
+      endCursor: c.endCursor,
+      points: c.points.map((p) => ({
+        id: p.id,
+        x0: p.x0,
+        x1: p.x1,
+        from: p.from,
+        to: p.to,
+        lo: p.lo,
+        hi: p.hi,
+      })),
+    });
+  }, [cachedRangeData]);
+
+  const fetchTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!fetchVars) return;
+    // Cache hit already populated `active` via the effect above —
+    // no network fetch needed.
+    if (cachedRangeData?.portfolio?.candlestick) return;
+    fetchTimer.current = window.setTimeout(() => {
+      fetchTimer.current = null;
+      if (fetchInFlight.current) return;
+      fetchInFlight.current = true;
+      apolloClient
+        .query({
+          query: PortfolioCandlestickRangeDocument,
+          variables: fetchVars,
+          fetchPolicy: "cache-first",
+        })
+        .finally(() => {
+          fetchInFlight.current = false;
+        });
+    }, BACKFILL_DEBOUNCE_MS);
+    return () => {
+      if (fetchTimer.current !== null) {
+        clearTimeout(fetchTimer.current);
+        fetchTimer.current = null;
+      }
+    };
+  }, [apolloClient, cachedRangeData, fetchVars]);
+
+  // Stable wheel/pan callbacks via refs so the chart's listeners
+  // don't churn every render.
+  const defaultViewportRef = useRef(defaultViewport);
+  defaultViewportRef.current = defaultViewport;
+  const maxZoomRef = useRef(maxZoomDays);
+  maxZoomRef.current = maxZoomDays;
+  const liveRightRef = useRef(liveRightDate);
+  liveRightRef.current = liveRightDate;
+  const initialSpanDays = defaultViewport
+    ? daysBetween(defaultViewport.startDate, defaultViewport.endDate)
+    : 0;
+  const initialSpanRef = useRef(initialSpanDays);
+  initialSpanRef.current = initialSpanDays;
+
+  const onZoom = useCallback((deltaY: number) => {
+    setViewport((cur) => {
+      const def = defaultViewportRef.current;
+      if (!def) return cur;
+      const base = cur ?? def;
+      const span = daysBetween(base.startDate, base.endDate);
+      const initial = initialSpanRef.current;
+      const max = maxZoomRef.current;
+      const factor = Math.exp(deltaY * ZOOM_RATE);
+      const newSpan = Math.min(max, Math.max(1, Math.round(span * factor)));
+      // Once the user zooms back in to (or beyond) the initial span and
+      // the right edge is at "today", snap back to default — keeps
+      // "fully zoomed in" pinned to today's window without leaving a
+      // stale viewport state hanging around.
+      if (newSpan <= initial + 1 && base.endDate === def.endDate) return null;
+      return {
+        startDate: addDays(base.endDate, -newSpan),
+        endDate: base.endDate,
+      };
+    });
+  }, []);
+
+  const onPan = useCallback((deltaDays: number) => {
+    setViewport((cur) => {
+      const def = defaultViewportRef.current;
+      if (!def) return cur;
+      const base = cur ?? def;
+      const span = daysBetween(base.startDate, base.endDate);
+      // Drag-right (positive deltaDays) = the user is pulling earlier
+      // dates onto the chart from the left = visible window shifts
+      // BACKWARD in time = subtract from end date.
+      const liveRight = liveRightRef.current;
+      let newEnd = addDays(base.endDate, -deltaDays);
+      if (liveRight && newEnd > liveRight) newEnd = liveRight;
+      const newStart = addDays(newEnd, -span);
+      if (newEnd === def.endDate && newStart === def.startDate) return null;
+      return { startDate: newStart, endDate: newEnd };
+    });
+  }, []);
+
+  if (!candlestickEnabled || !active || active.points.length === 0) {
+    return {
+      candles: null,
+      candleInitialDate: null,
+      viewport: undefined,
+      onZoom,
+      onPan,
+    };
+  }
+
+  // Translate the date-keyed viewport into the chart's coord space
+  // (days since `active.initialDate`). The chart's clip-path takes
+  // care of any out-of-range buckets while a backfill is in flight.
+  const chartViewport: { xMin: number; xMax: number } | undefined =
+    effectiveViewport
+      ? {
+          xMin: daysBetween(active.initialDate, effectiveViewport.startDate),
+          xMax: daysBetween(active.initialDate, effectiveViewport.endDate),
+        }
+      : undefined;
+
+  return {
+    candles: { points: active.points },
+    candleInitialDate: active.initialDate,
+    viewport: chartViewport,
+    onZoom,
+    onPan,
+  };
 }

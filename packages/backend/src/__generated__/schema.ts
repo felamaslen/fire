@@ -2368,6 +2368,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "hi",
                     type: new GraphQLNonNull(GraphQLInt)
                 },
+                id: {
+                    description: "Stable opaque identifier for the bucket \u2014 encodes the asset filter, candle size (`unit_length`), and bucket start date so the same bucket appearing in two overlapping queries normalises to the same Apollo cache entry. Lets the client merge a panned / zoomed range with the previously-loaded one without re-fetching shared candles.",
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
                 lo: {
                     description: "Lowest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field",
                     name: "lo",
@@ -2393,7 +2398,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
     });
     const PortfolioCandlestickType: GraphQLObjectType = new GraphQLObjectType({
         name: "PortfolioCandlestick",
-        description: "OHLC-style time series of portfolio total, downsampled to at most 300 buckets while always preserving the first and last bucket.",
+        description: "OHLC-style time series of portfolio total. The visible window is bounded by `(after, before)` \u2014 the client drives zoom-out / pan by lowering `after` (extending the chart left) or moving `before` back from \"today\" (panning right edge). Bucket boundaries snap to a stable epoch so any two queries with overlapping ranges return buckets that align exactly.",
         fields() {
             return {
                 currency: {
@@ -2401,14 +2406,9 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 endCursor: {
-                    description: "Opaque cursor pointing at the *earliest* bucket on this page. Pass it back as `Portfolio.candlestick(before:)` to load the next older page; the new page's right edge will adjoin this page's left edge with no overlap or gap (bucket boundaries are stable across pagination). `null` when this page already starts at the earliest available data.",
+                    description: "Calendar date of the *rightmost* bucket's end \u2014 i.e. the chart's current right edge. For an unbounded query (no `before`) this is \"today\" (or `dateCap`, for a transferred-out wrapper). The client passes a date earlier than `endCursor` as `before:` to pan the right edge back.",
                     name: "endCursor",
-                    type: GraphQLID
-                },
-                hasMore: {
-                    description: "`true` when there are older buckets the client can paginate to via `endCursor`.",
-                    name: "hasMore",
-                    type: new GraphQLNonNull(GraphQLBoolean)
+                    type: new GraphQLNonNull(DateType)
                 },
                 initialDate: {
                     name: "initialDate",
@@ -2417,6 +2417,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 points: {
                     name: "points",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioCandlestickPointType)))
+                },
+                startCursor: {
+                    description: "Calendar date of the *leftmost* bucket's start \u2014 i.e. the chart's current \"initial date\". Equal to `initialDate` here; exposed separately so a panning client can read it as a cursor without selecting `initialDate` (which is also used for date-axis labelling). When the client wants to zoom out, it passes a date earlier than `startCursor` as `after:` to extend the chart left.",
+                    name: "startCursor",
+                    type: new GraphQLNonNull(DateType)
                 }
             };
         }
@@ -2504,20 +2509,24 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 candlestick: {
-                    description: "Candlestick buckets of portfolio total over the requested period.",
+                    description: "Candlestick buckets of portfolio total over the requested window.",
                     name: "candlestick",
                     type: PortfolioCandlestickType,
                     args: {
+                        after: {
+                            description: "Lower bound on the visible range \u2014 buckets start at-or-after this date. Setting `after` to a date earlier than the previous response's `startCursor` is how the client zooms out: the chart's left edge moves to (the snapped equivalent of) `after`. The right edge stays at `before ?? today`.",
+                            type: DateType
+                        },
                         before: {
-                            description: "Opaque pagination cursor returned as `endCursor` on a previous\n`Portfolio.candlestick` page. Pinning the right edge here loads the\npage immediately older than the previous one, with bucket\nboundaries that adjoin exactly (boundaries are stable across\npagination \u2014 see `snapBucketStart` in `candlestick.ts`). The\nlive-overlay tail is skipped on cursor-driven pages.",
-                            type: GraphQLID
+                            description: "Upper bound on the visible range \u2014 buckets end at-or-before this date. The client passes this when panning the chart's right edge back from \"today\"; for the default unbounded-on-the-right view, leave it `null`. The live-overlay tail is skipped when `before` is set.",
+                            type: DateType
                         },
                         length: {
                             type: new GraphQLNonNull(GraphQLInt),
                             defaultValue: 1
                         },
                         max: {
-                            description: "Maximum number of candle buckets to return. The series ends at `before` (or today, when `before` is unset) and extends backwards by `max \u00D7 length` `unit`s.",
+                            description: "Maximum number of candle buckets to return when neither `after` nor `before` is set. The series ends today and extends backwards by `max \u00D7 length` `unit`s. Ignored when `after` is set (the range becomes `(after, before ?? today)`).",
                             type: new GraphQLNonNull(GraphQLInt),
                             defaultValue: 50,
                             extensions: {
@@ -2537,7 +2546,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(source, args, context) {
-                        return source.candlestick(context, args.unit, args.length, args.max, args.before);
+                        return source.candlestick(context, args.unit, args.length, args.max, args.after, args.before);
                     }
                 },
                 cash: {

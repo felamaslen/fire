@@ -20,7 +20,7 @@ import {
   decodeCursor,
   encodeCursor,
 } from "../pagination";
-import { decodeCandlestickCursor, loadCandlestick } from "./candlestick";
+import { loadCandlestick } from "./candlestick";
 import { Investment } from "./index";
 import { loadPortfolioCashMinor } from "./portfolio-cash";
 import { computePortfolioXirr } from "./portfolio-xirr";
@@ -61,6 +61,8 @@ export type PortfolioTimeseries = {
 
 /** One OHLC candlestick bucket. `from` / `to` are the portfolio total at the bucket's start / end; `lo` / `hi` are the minimum / maximum across the bucket. All values are in major units of `currency`. @gqlType */
 export type PortfolioCandlestickPoint = {
+  /** Stable opaque identifier for the bucket — encodes the asset filter, candle size (`unit_length`), and bucket start date so the same bucket appearing in two overlapping queries normalises to the same Apollo cache entry. Lets the client merge a panned / zoomed range with the previously-loaded one without re-fetching shared candles. @gqlField */
+  id: ID;
   /** Number of days (at start of candle) since `initialDate` on the parent `PortfolioCandlestick` @gqlField */
   x0: Int;
   /** Number of days (at end of candle) since `initialDate` on the parent `PortfolioCandlestick` @gqlField */
@@ -75,7 +77,7 @@ export type PortfolioCandlestickPoint = {
   hi: Int;
 };
 
-/** OHLC-style time series of portfolio total, downsampled to at most 300 buckets while always preserving the first and last bucket. @gqlType */
+/** OHLC-style time series of portfolio total. The visible window is bounded by `(after, before)` — the client drives zoom-out / pan by lowering `after` (extending the chart left) or moving `before` back from "today" (panning right edge). Bucket boundaries snap to a stable epoch so any two queries with overlapping ranges return buckets that align exactly. @gqlType */
 export type PortfolioCandlestick = {
   /** @gqlField */
   currency: string;
@@ -83,10 +85,10 @@ export type PortfolioCandlestick = {
   initialDate: CalendarDate;
   /** @gqlField */
   points: PortfolioCandlestickPoint[];
-  /** Opaque cursor pointing at the *earliest* bucket on this page. Pass it back as `Portfolio.candlestick(before:)` to load the next older page; the new page's right edge will adjoin this page's left edge with no overlap or gap (bucket boundaries are stable across pagination). `null` when this page already starts at the earliest available data. @gqlField */
-  endCursor: ID | null;
-  /** `true` when there are older buckets the client can paginate to via `endCursor`. @gqlField */
-  hasMore: boolean;
+  /** Calendar date of the *leftmost* bucket's start — i.e. the chart's current "initial date". Equal to `initialDate` here; exposed separately so a panning client can read it as a cursor without selecting `initialDate` (which is also used for date-axis labelling). When the client wants to zoom out, it passes a date earlier than `startCursor` as `after:` to extend the chart left. @gqlField */
+  startCursor: CalendarDate;
+  /** Calendar date of the *rightmost* bucket's end — i.e. the chart's current right edge. For an unbounded query (no `before`) this is "today" (or `dateCap`, for a transferred-out wrapper). The client passes a date earlier than `endCursor` as `before:` to pan the right edge back. @gqlField */
+  endCursor: CalendarDate;
 };
 
 /** Share of the parent `Portfolio`'s current market value held in one investment. `fraction` is in `[0, 1]`; values across a `Portfolio.allocations` array sum to `1` (modulo floating-point error). Held investments missing a price are excluded entirely so they don't drag the denominator. @gqlType */
@@ -650,25 +652,24 @@ export class Portfolio {
     return loader.load(baseOptions);
   }
 
-  /** Candlestick buckets of portfolio total over the requested period. @gqlField */
+  /** Candlestick buckets of portfolio total over the requested window. @gqlField */
   async candlestick(
     ctx: Context,
     unit: PortfolioCandleUnit,
     length: Int = 1,
     /**
-     * Maximum number of candle buckets to return. The series ends at `before` (or today, when `before` is unset) and extends backwards by `max × length` `unit`s.
+     * Maximum number of candle buckets to return when neither `after` nor `before` is set. The series ends today and extends backwards by `max × length` `unit`s. Ignored when `after` is set (the range becomes `(after, before ?? today)`).
      * @gqlAnnotate constraint(min: 1, max: 100)
      */
     max: Int = 50,
     /**
-     * Opaque pagination cursor returned as `endCursor` on a previous
-     * `Portfolio.candlestick` page. Pinning the right edge here loads the
-     * page immediately older than the previous one, with bucket
-     * boundaries that adjoin exactly (boundaries are stable across
-     * pagination — see `snapBucketStart` in `candlestick.ts`). The
-     * live-overlay tail is skipped on cursor-driven pages.
+     * Lower bound on the visible range — buckets start at-or-after this date. Setting `after` to a date earlier than the previous response's `startCursor` is how the client zooms out: the chart's left edge moves to (the snapped equivalent of) `after`. The right edge stays at `before ?? today`.
      */
-    before?: ID | null,
+    after?: CalendarDate | null,
+    /**
+     * Upper bound on the visible range — buckets end at-or-before this date. The client passes this when panning the chart's right edge back from "today"; for the default unbounded-on-the-right view, leave it `null`. The live-overlay tail is skipped when `before` is set.
+     */
+    before?: CalendarDate | null,
   ): Promise<PortfolioCandlestick | null> {
     assert(
       !this.filterInvestmentIdIn,
@@ -676,11 +677,17 @@ export class Portfolio {
     );
     const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
     const extraScopes = await this.loadExtraScopesUnion(ctx);
-    // `before` and `dateCap` both anchor the right edge; if both are set
-    // (a user pagination cursor on a transferred-out wrapper), use the
-    // earlier of the two — the transfer cap is an absolute upper bound,
-    // and the user's cursor is what they're paginating towards.
-    const beforeStr = before ? decodeCandlestickCursor(before) : null;
+    const afterStr =
+      after instanceof Date
+        ? after.toISOString().slice(0, 10)
+        : (after ?? null);
+    const beforeStr =
+      before instanceof Date
+        ? before.toISOString().slice(0, 10)
+        : (before ?? null);
+    // `before` and `dateCap` both pin the right edge; if both are set
+    // (the user pans a transferred-out wrapper), use the earlier of
+    // the two — the transfer cap is an absolute upper bound.
     const rightEdge =
       beforeStr && dateCap
         ? beforeStr < dateCap
@@ -693,10 +700,12 @@ export class Portfolio {
       max,
       assetIds: effectiveAssetIds ?? undefined,
       // Live overlay only makes sense when the series ends at "today";
-      // a paginated page or a frozen-at-dateCap series shouldn't pick up
-      // an intraday quote on its right edge.
+      // a `before:`-bounded query, a paginated page, or a frozen-at-
+      // dateCap series shouldn't pick up an intraday quote on its
+      // right edge.
       skipLive: this.skipLive || beforeStr !== null,
       ...(rightEdge ? { dateCap: rightEdge } : {}),
+      ...(afterStr ? { after: afterStr } : {}),
       ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
   }
