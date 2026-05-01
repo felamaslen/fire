@@ -1,5 +1,14 @@
 import DataLoader from "dataloader";
-import { and, desc, eq, inArray, isNotNull, sql, sum } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  type SQL,
+  sql,
+  sum,
+} from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
@@ -23,13 +32,26 @@ export type AssetCashFloat = {
   amountMinor: number;
 };
 
-/** DataLoader key. `assetIds === null` means "every wrapper" (no asset-id filter). Equivalent (modulo asset-id ordering) keys collapse to one cache slot via `cacheKeyFn`. */
+/** DataLoader key. `assetIds === null` means "every wrapper" (no asset-id filter). `extraScopes` (when set) folds in additional asset flows up to a per-scope `dateCap` — used by transferred-into wrappers to inherit their source's pre-transfer cash flows. Equivalent (modulo ordering) keys collapse to one cache slot via `cacheKeyFn`. */
 type CashKey = {
   assetIds: string[] | null;
+  extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
 function cacheKeyFn(key: CashKey): string {
-  return key.assetIds === null ? "*" : [...key.assetIds].sort().join(",");
+  const assets =
+    key.assetIds === null ? "*" : [...key.assetIds].sort().join(",");
+  const extra = key.extraScopes
+    ? [...key.extraScopes]
+        .sort((a, b) =>
+          a.assetId === b.assetId
+            ? a.dateCap.localeCompare(b.dateCap)
+            : a.assetId.localeCompare(b.assetId),
+        )
+        .map((s) => `${s.assetId}@${s.dateCap}`)
+        .join(",")
+    : "";
+  return `${assets}|${extra}`;
 }
 
 type CashContributionRow = {
@@ -50,7 +72,26 @@ type SnapshotRow = {
  */
 async function fetchFlows(
   assetIds: string[] | null,
+  extraScopes: ReadonlyArray<{ assetId: string; dateCap: string }>,
 ): Promise<CashContributionRow[]> {
+  // Build the per-asset where: an asset belongs to either the main scope
+  // (uncapped) or one of the `extraScopes` (each capped at its own date).
+  // SQL: `assetId IN (mainAssetIds) OR (assetId = e1.assetId AND date <=
+  // e1.cap) OR …`. When `assetIds` is null and there are no extra scopes,
+  // collapses back to "no filter".
+  const buildScopeSql = (assetCol: SQL, dateCol: SQL): SQL | undefined => {
+    if (assetIds === null && extraScopes.length === 0) return undefined;
+    const branches: SQL[] = [];
+    if (assetIds !== null && assetIds.length > 0) {
+      branches.push(sql`${assetCol} IN ${assetIds}`);
+    }
+    for (const s of extraScopes) {
+      branches.push(
+        sql`(${assetCol} = ${s.assetId} AND ${dateCol} <= ${s.dateCap}::date)`,
+      );
+    }
+    return sql`(${sql.join(branches, sql` OR `)})`;
+  };
   const planning = db
     .select({
       assetId: sql<string>`${PlanningTransactions.assetId}`.as("assetId"),
@@ -63,6 +104,10 @@ async function fetchFlows(
       and(
         isNotNull(PlanningTransactions.assetId),
         eq(PlanningTransactions.isProvisional, false),
+        buildScopeSql(
+          sql`${PlanningTransactions.assetId}`,
+          sql`${PlanningTransactions.date}`,
+        ),
       ),
     );
 
@@ -73,7 +118,13 @@ async function fetchFlows(
       value: sql<number>`${InvestmentDeposits.amount}::bigint`.as("value"),
       kind: sql<"C" | "T">`'C'`.as("kind"),
     })
-    .from(InvestmentDeposits);
+    .from(InvestmentDeposits)
+    .where(
+      buildScopeSql(
+        sql`${InvestmentDeposits.assetId}`,
+        sql`${InvestmentDeposits.date}`,
+      ),
+    );
 
   const trades = db
     .select({
@@ -86,10 +137,30 @@ async function fetchFlows(
       kind: sql<"C" | "T">`'T'`.as("kind"),
     })
     .from(InvestmentTransactions)
-    .where(eq(InvestmentTransactions.drip, false));
+    .where(
+      and(
+        eq(InvestmentTransactions.drip, false),
+        buildScopeSql(
+          sql`${InvestmentTransactions.assetId}`,
+          sql`${InvestmentTransactions.date}`,
+        ),
+      ),
+    );
 
   const flows = unionAll(planning, deposits, trades).as("flows");
 
+  // Each branch already filtered to the asset+date scope, so the outer
+  // filter is just a defensive narrow to the union of `assetIds` ∪
+  // `extraScopes.assetId` when one is set.
+  const eligibleAssetIds =
+    assetIds === null && extraScopes.length === 0
+      ? null
+      : [
+          ...new Set([
+            ...(assetIds ?? []),
+            ...extraScopes.map((s) => s.assetId),
+          ]),
+        ];
   const rows = await db
     .select({
       assetId: flows.assetId,
@@ -98,7 +169,11 @@ async function fetchFlows(
       amount: sum(flows.value).mapWith(Number).as("amount"),
     })
     .from(flows)
-    .where(assetIds === null ? undefined : inArray(flows.assetId, assetIds))
+    .where(
+      eligibleAssetIds === null
+        ? undefined
+        : inArray(flows.assetId, eligibleAssetIds),
+    )
     .groupBy(flows.assetId, flows.currency, flows.kind);
 
   return rows.map((r) => ({
@@ -165,34 +240,78 @@ const cashFloatLoader = contextAwareDataLoader(
   () =>
     new DataLoader<CashKey, AssetCashFloat[], string>(
       async (keys) => {
-        const needAll = keys.some((k) => k.assetIds === null);
-        const requestedIds = needAll
-          ? null
-          : [
-              ...new Set(
-                keys.flatMap((k) => (k.assetIds === null ? [] : k.assetIds)),
-              ),
-            ];
-
-        const latestEntryDate = await fetchLatestEntryDate();
-        const flows = await fetchFlows(requestedIds);
-
-        const tracked = await loadTrackedAssetSet(latestEntryDate, flows);
-
-        const byAsset = new Map<string, Map<string, number>>();
-        for (const r of flows) {
-          if (!tracked(r)) continue;
-          let m = byAsset.get(r.assetId);
-          if (!m) {
-            m = new Map();
-            byAsset.set(r.assetId, m);
-          }
-          m.set(r.currency, (m.get(r.currency) ?? 0) + r.amount);
+        // Bucket keys by `extraScopes` shape so each batch fires one
+        // SQL whose per-branch filter is consistent. Keys without
+        // `extraScopes` collapse into a single bucket (the common path).
+        const extraId = (k: CashKey) =>
+          k.extraScopes
+            ? [...k.extraScopes]
+                .sort((a, b) =>
+                  a.assetId === b.assetId
+                    ? a.dateCap.localeCompare(b.dateCap)
+                    : a.assetId.localeCompare(b.assetId),
+                )
+                .map((s) => `${s.assetId}@${s.dateCap}`)
+                .join(",")
+            : "";
+        const buckets = new Map<string, CashKey[]>();
+        for (const k of keys) {
+          const id = extraId(k);
+          const list = buckets.get(id) ?? [];
+          list.push(k);
+          buckets.set(id, list);
         }
+        const totalsByBucket = new Map<
+          string,
+          Map<string, Map<string, number>>
+        >();
+        await Promise.all(
+          [...buckets.entries()].map(async ([id, group]) => {
+            const needAll = group.some((k) => k.assetIds === null);
+            const requestedIds = needAll
+              ? null
+              : [
+                  ...new Set(
+                    group.flatMap((k) =>
+                      k.assetIds === null ? [] : k.assetIds,
+                    ),
+                  ),
+                ];
+            const extraScopes = group[0].extraScopes ?? [];
+            const latestEntryDate = await fetchLatestEntryDate();
+            const flows = await fetchFlows(requestedIds, extraScopes);
+            const tracked = await loadTrackedAssetSet(
+              latestEntryDate,
+              flows,
+              new Set(extraScopes.map((s) => s.assetId)),
+            );
+            const byAsset = new Map<string, Map<string, number>>();
+            for (const r of flows) {
+              if (!tracked(r)) continue;
+              let m = byAsset.get(r.assetId);
+              if (!m) {
+                m = new Map();
+                byAsset.set(r.assetId, m);
+              }
+              m.set(r.currency, (m.get(r.currency) ?? 0) + r.amount);
+            }
+            totalsByBucket.set(id, byAsset);
+          }),
+        );
 
         return keys.map((key) => {
+          const byAsset =
+            totalsByBucket.get(extraId(key)) ??
+            new Map<string, Map<string, number>>();
+          // The destination's own asset(s) plus every `extraScope` source
+          // contribute to the result.
           const ids =
-            key.assetIds === null ? [...byAsset.keys()] : key.assetIds;
+            key.assetIds === null
+              ? [...byAsset.keys()]
+              : [
+                  ...key.assetIds,
+                  ...(key.extraScopes?.map((s) => s.assetId) ?? []),
+                ];
           const totals = new Map<string, number>();
           for (const id of ids) {
             const perCurrency = byAsset.get(id);
@@ -211,10 +330,11 @@ const cashFloatLoader = contextAwareDataLoader(
     ),
 );
 
-/** Build the per-flow-row "should this asset's flows count?" predicate. With a `latestEntryDate`, an asset is tracked iff it has a positive recorded value in that entry (in any currency). Without one, fall back to the contribution-tracked rule — at least one deposit / planning row must exist for the asset, otherwise its trades alone could surface phantom cash. */
+/** Build the per-flow-row "should this asset's flows count?" predicate. With a `latestEntryDate`, an asset is tracked iff it has a positive recorded value in that entry (in any currency). Without one, fall back to the contribution-tracked rule — at least one deposit / planning row must exist for the asset, otherwise its trades alone could surface phantom cash. Asset ids in `forceTracked` (e.g. `extraScopes` sources of an inbound transfer) bypass both checks — their pre-cap flows must always count, even though the source wrapper is post-transfer defunct. */
 async function loadTrackedAssetSet(
   latestEntryDate: Date | null,
   flows: CashContributionRow[],
+  forceTracked: ReadonlySet<string> = new Set(),
 ): Promise<(row: CashContributionRow) => boolean> {
   if (latestEntryDate !== null) {
     const snapshots = await fetchSnapshotValues(latestEntryDate, null);
@@ -222,13 +342,16 @@ async function loadTrackedAssetSet(
     for (const s of snapshots) {
       if (s.amount > 0) tracked.add(s.assetId);
     }
-    return (r) => tracked.has(r.assetId);
+    return (r) => forceTracked.has(r.assetId) || tracked.has(r.assetId);
   }
   const contributionTracked = new Set<string>();
   for (const r of flows) {
     if (r.kind === "C") contributionTracked.add(r.assetId);
   }
-  return (r) => r.kind === "C" || contributionTracked.has(r.assetId);
+  return (r) =>
+    forceTracked.has(r.assetId) ||
+    r.kind === "C" ||
+    contributionTracked.has(r.assetId);
 }
 
 /** Per-currency uninvested cash float for one wrapper. */
@@ -239,14 +362,18 @@ export async function loadAssetCashFloat(
   return cashFloatLoader(ctx).load({ assetIds: [assetId] });
 }
 
-/** Aggregate uninvested cash across many wrappers (or every `STOCK` / `PENSION` wrapper when `assetIds` is `null`), scoped to a single currency. Returns the total in fractional units of `currency`, clamped to ≥ 0 — recording cash contributions is optional, and a wrapper with held positions but no contribution log shouldn't surface a negative "available to invest" pulled out of the buy cost. */
+/** Aggregate uninvested cash across many wrappers (or every `STOCK` / `PENSION` wrapper when `assetIds` is `null`), scoped to a single currency. Returns the total in fractional units of `currency`, clamped to ≥ 0 — recording cash contributions is optional, and a wrapper with held positions but no contribution log shouldn't surface a negative "available to invest" pulled out of the buy cost. `extraScopes` (when set) folds in additional asset flows up to a per-scope `dateCap` — used by transferred-into wrappers to inherit their source's pre-transfer cash flows. */
 export async function loadPortfolioCashMinor(
   ctx: Context,
   assetIds: string[] | null,
   currency: string,
+  extraScopes: ReadonlyArray<{ assetId: string; dateCap: string }> = [],
 ): Promise<number> {
   assertCurrencyCode(currency);
-  const floats = await cashFloatLoader(ctx).load({ assetIds });
+  const floats = await cashFloatLoader(ctx).load({
+    assetIds,
+    ...(extraScopes.length > 0 ? { extraScopes } : {}),
+  });
   const minor = floats.find((f) => f.currency === currency)?.amountMinor ?? 0;
   return Math.max(0, minor);
 }

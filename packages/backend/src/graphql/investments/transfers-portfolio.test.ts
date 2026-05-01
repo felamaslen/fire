@@ -478,6 +478,149 @@ describe("Portfolio dateCap from transferOut", () => {
     ]);
   });
 
+  it("destination Portfolio rolls source pre-transfer txs into totals", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // Source has 100 units bought at £10 (£1000 cost) before the transfer.
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    // Destination books a further 50 units at £12 after the transfer.
+    await buy(inv, toAsset, "2025-04-01", 50, 12);
+    await setPrice(inv, "2025-05-01", 1500);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [toAsset],
+    });
+    // 150 units × £15 = £2250 totalValue. Cost = £1000 + £600 = £1600.
+    expect(data.portfolio).toMatchObject({
+      totalValue: { amount: 2250 },
+      totalCost: { amount: 1600 },
+      totalGain: { amount: 650 },
+    });
+  });
+
+  it("destination view excludes source's post-transfer activity", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    // Stray buy on the source after the transfer — must NOT leak into the
+    // destination's view.
+    await buy(inv, fromAsset, "2025-04-01", 999, 50);
+    await setPrice(inv, "2025-05-01", 1500);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [toAsset],
+    });
+    expect(data.portfolio).toMatchObject({
+      totalValue: { amount: 1500 },
+      totalCost: { amount: 1000 },
+    });
+  });
+
+  it("destination cash folds in source's pre-transfer flows (clamped at zero)", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // Source: £500 deposit, £400 buy → +100 cash float pre-transfer.
+    await depositCash(fromAsset, "2025-01-15", 500);
+    await buy(inv, fromAsset, "2025-01-15", 40, 10);
+    await setPrice(inv, "2025-03-01", 1200);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [toAsset],
+    });
+    // Destination should *not* show the held positions' market value as
+    // available cash. With our current model the destination's cash only
+    // includes its own (zero) plus the source's pre-transfer float (£100).
+    // Importantly — it must NOT explode to ~£480 (units × current price).
+    expect(data.portfolio?.cash?.amount).toBeLessThan(200);
+    expect(data.portfolio?.cash?.amount).toBeGreaterThanOrEqual(0);
+  });
+
+  it("Investment.position folds source pre-transfer holdings into the destination view", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // Source bought 290 units before transfer.
+    await buy(inv, fromAsset, "2022-01-15", 290, 10);
+    // Destination sold 290 of those after the transfer (no buy in
+    // destination — the units came in via the transfer).
+    await buy(inv, toAsset, "2024-12-02", -290, 12);
+    await setPrice(inv, "2025-01-01", 1300);
+    await createTransferOut(fromAsset, toAsset, "2022-06-15");
+
+    const data = await runGql(
+      graphql(`
+        query ($assets: [ID!]) {
+          investments(filterAssetIdIn: $assets) {
+            edges {
+              node {
+                id
+                position(filterAssetIdIn: $assets) {
+                  units
+                }
+              }
+            }
+          }
+        }
+      `),
+      { assets: [toAsset] },
+    );
+    const node = data.investments?.edges.find((e) => e.node.id === inv)?.node;
+    // 290 (source pre-transfer) + (-290) (destination) = 0 — not −290.
+    expect(node?.position.units).toBe(0);
+  });
+
+  it("Query.investments(filterIsSold: true) classifies a transferred-then-sold position as sold", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2022-01-15", 290, 10);
+    await buy(inv, toAsset, "2024-12-02", -290, 12);
+    await createTransferOut(fromAsset, toAsset, "2022-06-15");
+
+    // filterIsSold = true: net 0 across (source pre-transfer + destination)
+    // → fully sold → surfaces.
+    const sold = await runGql(
+      graphql(`
+        query ($assets: [ID!]) {
+          investments(filterAssetIdIn: $assets, filterIsSold: true) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      `),
+      { assets: [toAsset] },
+    );
+    expect(sold.investments?.edges.map((e) => e.node.name)).toEqual(["Acme"]);
+
+    // filterIsSold = false: should hide it.
+    const held = await runGql(
+      graphql(`
+        query ($assets: [ID!]) {
+          investments(filterAssetIdIn: $assets, filterIsSold: false) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      `),
+      { assets: [toAsset] },
+    );
+    expect(held.investments?.edges.map((e) => e.node.name)).toEqual([]);
+  });
+
   it("does not cap a sibling portfolio without a transfer-out", async () => {
     const fromAsset = await createAsset("Old ISA");
     const toAsset = await createAsset("New ISA");

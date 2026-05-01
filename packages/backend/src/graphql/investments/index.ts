@@ -1,6 +1,16 @@
 import { strict as assert } from "node:assert";
 
-import { and, eq, exists, inArray, not, or, sql, sum } from "drizzle-orm";
+import {
+  and,
+  eq,
+  exists,
+  inArray,
+  not,
+  or,
+  type SQL,
+  sql,
+  sum,
+} from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
 
@@ -36,7 +46,10 @@ import {
   loadInvestmentTransactions,
   loadInvestmentTransactionsConnection,
 } from "./transactions";
-import { loadInvestmentTransferOutForAsset } from "./transfers";
+import {
+  loadInvestmentTransferInScopesForAsset,
+  loadInvestmentTransferOutForAsset,
+} from "./transfers";
 
 /** Resolve the freeze-at date for a request scoped to `filterAssetIdIn`: when the filter narrows to exactly one wrapper that has an outgoing `InvestmentTransfer`, return the day before the transfer (`YYYY-MM-DD`); otherwise `null` (no cap). Mirrors `Portfolio.loadDateCap` so per-investment views and the portfolio aggregate freeze on the same date. */
 async function dateCapForAssets(
@@ -48,6 +61,22 @@ async function dateCapForAssets(
   const d = new Date(transfer.date as unknown as Date);
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
+}
+
+/** Resolve the inbound-transfer scopes for a request scoped to `filterAssetIdIn`: when the filter narrows to exactly one wrapper that has incoming `InvestmentTransfer`s, return one entry per source wrapper, each capped at the day before its transfer. Mirrors `Portfolio.loadExtraScopes`. */
+async function extraScopesForAssets(
+  filterAssetIdIn: readonly ID[] | null | undefined,
+): Promise<ReadonlyArray<{ assetId: string; dateCap: string }>> {
+  if (!filterAssetIdIn || filterAssetIdIn.length !== 1) return [];
+  const incoming = await loadInvestmentTransferInScopesForAsset(
+    filterAssetIdIn[0],
+  );
+  if (incoming.length === 0) return [];
+  return incoming.map((t) => {
+    const d = new Date(t.date);
+    d.setUTCDate(d.getUTCDate() - 1);
+    return { assetId: t.assetIdFrom, dateCap: d.toISOString().slice(0, 10) };
+  });
 }
 
 /** The real-time unit price of a stock investment. `tickAt` is the time of the price tick reported by the upstream provider; `capturedAt` is the wall-clock time we last refreshed it. @gqlType */
@@ -206,13 +235,16 @@ export class Investment {
     );
   }
 
-  /** Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). When `filterAssetIdIn` resolves to a single transferred-out wrapper, holdings are frozen at the day before the transfer. @gqlField */
+  /** Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). When `filterAssetIdIn` resolves to a single transferred-out wrapper, holdings are frozen at the day before the transfer. When it resolves to a single transferred-into wrapper, each source's pre-transfer transactions are folded into the result. @gqlField */
   async position(
     ctx: Context,
     /** When set and non-empty, scopes the position to the union of these wrappers. */
     filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPosition> {
-    const dateCap = await dateCapForAssets(filterAssetIdIn);
+    const [dateCap, extraScopes] = await Promise.all([
+      dateCapForAssets(filterAssetIdIn),
+      extraScopesForAssets(filterAssetIdIn),
+    ]);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       assetIds:
@@ -220,6 +252,7 @@ export class Investment {
           ? (filterAssetIdIn as string[])
           : undefined,
       ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
     return new InvestmentPosition(s);
   }
@@ -385,7 +418,10 @@ export async function investments(
   /** Filter on whether the investment is fully sold — i.e. has at least one transaction but a net-zero unit count (scoped to `filterAssetIdIn` when set and non-empty). `false` excludes sold investments, `true` keeps only sold ones, `null` / omitted applies no filter. Investments with no transactions are never considered sold. */
   filterIsSold?: boolean | null,
 ): Promise<Connection<Investment> | null> {
-  const dateCapIso = await dateCapForAssets(filterAssetIdIn);
+  const [dateCapIso, extraScopes] = await Promise.all([
+    dateCapForAssets(filterAssetIdIn),
+    extraScopesForAssets(filterAssetIdIn),
+  ]);
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const afterCursor = after ? decodeCursor(after) : null;
   const { key, direction } = parseSortInput(sort);
@@ -394,37 +430,50 @@ export async function investments(
       ? (filterAssetIdIn as string[])
       : null;
 
-  // Net units across all transactions for `Investments.id`, scoped to
-  // `wrapperFilter` when set, and to `dateCap` when set (so an investment
-  // that's been re-bought after a transfer date still counts as sold for a
-  // transferred-out portfolio view). Returns `NULL` for investments with no
-  // matching transactions, which is treated as "not sold" below.
+  // SQL `WHERE` predicate that selects transactions in scope: the main
+  // wrapper(s) (capped by `dateCapIso` when set) OR each `extraScope`'s
+  // source asset capped at its transfer date. Mirrors `loadInvestmentStats`
+  // so the per-investment "is this investment in scope?" check sees the
+  // same rows the stats loader aggregates.
+  const txInScope = (() => {
+    if (!wrapperFilter && extraScopes.length === 0) return undefined;
+    const branches: SQL[] = [];
+    if (wrapperFilter) {
+      const dateClause = dateCapIso
+        ? sql` AND ${InvestmentTransactions.date} <= ${dateCapIso}::date`
+        : sql``;
+      branches.push(
+        sql`(${inArray(InvestmentTransactions.assetId, wrapperFilter)}${dateClause})`,
+      );
+    }
+    for (const s of extraScopes) {
+      branches.push(
+        sql`(${InvestmentTransactions.assetId} = ${s.assetId} AND ${InvestmentTransactions.date} <= ${s.dateCap}::date)`,
+      );
+    }
+    return sql`(${sql.join(branches, sql` OR `)})`;
+  })();
+
+  // Net units across all transactions for `Investments.id` in the scope
+  // computed above. Returns `NULL` for investments with no matching
+  // transactions, which is treated as "not sold" below.
   const unitsSum = db
     .select({ s: sum(InvestmentTransactions.units) })
     .from(InvestmentTransactions)
     .where(
-      and(
-        eq(InvestmentTransactions.investmentId, Investments.id),
-        wrapperFilter
-          ? inArray(InvestmentTransactions.assetId, wrapperFilter)
-          : undefined,
-        dateCapIso
-          ? sql`${InvestmentTransactions.date} <= ${dateCapIso}::date`
-          : undefined,
-      ),
+      and(eq(InvestmentTransactions.investmentId, Investments.id), txInScope),
     );
-  // `hasAnyTransaction` deliberately ignores `dateCapIso`. Its sole purpose
-  // is to spare freshly-created, zero-tx investments from being filtered
-  // out of the wrapper-scoped view. If we capped it, an investment whose
-  // *only* txs are post-cap would falsely qualify as "freshly created" and
-  // leak into a transferred-out wrapper view.
+  // `hasAnyTransaction` deliberately ignores `dateCapIso` / `extraScopes`.
+  // Its sole purpose is to spare freshly-created, zero-tx investments from
+  // being filtered out of the wrapper-scoped view. Capping it would
+  // falsely surface investments whose only txs are out-of-scope.
   const hasAnyTransaction = exists(
     db
       .select({ id: InvestmentTransactions.id })
       .from(InvestmentTransactions)
       .where(eq(InvestmentTransactions.investmentId, Investments.id)),
   );
-  const hasTransactionInWrapper = wrapperFilter
+  const hasTransactionInWrapper = txInScope
     ? exists(
         db
           .select({ id: InvestmentTransactions.id })
@@ -432,10 +481,7 @@ export async function investments(
           .where(
             and(
               eq(InvestmentTransactions.investmentId, Investments.id),
-              inArray(InvestmentTransactions.assetId, wrapperFilter),
-              dateCapIso
-                ? sql`${InvestmentTransactions.date} <= ${dateCapIso}::date`
-                : undefined,
+              txInScope,
             ),
           ),
       )
@@ -488,6 +534,7 @@ export async function investments(
               investmentId: row.id,
               assetIds: wrapperFilter ?? undefined,
               ...(dateCapIso ? { dateCap: dateCapIso } : {}),
+              ...(extraScopes.length > 0 ? { extraScopes } : {}),
             });
             const totalValue = s.totalValueMinor;
             const totalGain =

@@ -176,3 +176,17 @@ export async function loadInvestmentTransfersInForAsset(
     .where(eq(InvestmentTransfers.assetIdTo, assetId));
   return rows.map(InvestmentTransfer.load);
 }
+
+/** Raw `(assetIdFrom, date)` pairs of every inbound transfer into `assetId`. Used by `Portfolio` / `Investment` resolvers to fold each source's pre-transfer transaction history into the destination's aggregates — the public `InvestmentTransfer` class hides `assetIdFrom` behind a `NetWorthCategoryAsset` resolver, which is the wrong shape for this internal use. */
+export async function loadInvestmentTransferInScopesForAsset(
+  assetId: string,
+): Promise<ReadonlyArray<{ assetIdFrom: string; date: Date }>> {
+  const rows = await db
+    .select({
+      assetIdFrom: InvestmentTransfers.assetIdFrom,
+      date: InvestmentTransfers.date,
+    })
+    .from(InvestmentTransfers)
+    .where(eq(InvestmentTransfers.assetIdTo, assetId));
+  return rows;
+}

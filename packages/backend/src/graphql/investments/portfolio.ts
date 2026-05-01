@@ -29,7 +29,10 @@ import {
   loadInvestmentStats,
 } from "./stats";
 import { loadTimeseries } from "./timeseries";
-import { loadInvestmentTransferOutForAsset } from "./transfers";
+import {
+  loadInvestmentTransferInScopesForAsset,
+  loadInvestmentTransferOutForAsset,
+} from "./transfers";
 
 /** Anchoring period for `Portfolio.timeseries`. `YTD` spans the start of the current calendar year through today and ignores `length`. @gqlEnum */
 export type PortfolioTimePeriod = "YEAR" | "MONTH" | "YTD" | "ALL";
@@ -100,11 +103,16 @@ type Filters = {
   filterAssetIdIn: string[] | null;
   filterInvestmentIdIn: string[] | null;
   currency: string;
+  /** Additional asset ids to include via inbound transfers (sources of `transfersIn` on the destination). When the destination is the only filter, an investment that's only held in a source still counts as in-scope. */
+  extraAssetIds?: readonly string[];
 };
 
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
   private dateCapPromise: Promise<string | null> | null = null;
+  private extraScopesPromise: Promise<
+    ReadonlyArray<{ assetId: string; dateCap: string }>
+  > | null = null;
 
   constructor(
     /** ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers. @gqlField */
@@ -134,6 +142,30 @@ export class Portfolio {
     return this.dateCapPromise;
   }
 
+  /** Resolve the inbound-transfer scopes: when scoped to exactly one wrapper that has incoming `InvestmentTransfer`s, return one entry per source wrapper, each capped at the day before the transfer. The destination's own scope is the regular `filterAssetIdIn`; these scopes are *additional* — folded in by the stats SQL via `extraScopes`. Returns `[]` for every other shape. Memoised per-instance. */
+  private async loadExtraScopes(): Promise<
+    ReadonlyArray<{ assetId: string; dateCap: string }>
+  > {
+    this.extraScopesPromise ??= (async () => {
+      if (!this.filterAssetIdIn || this.filterAssetIdIn.length !== 1) {
+        return [];
+      }
+      const incoming = await loadInvestmentTransferInScopesForAsset(
+        this.filterAssetIdIn[0],
+      );
+      if (incoming.length === 0) return [];
+      return incoming.map((t) => {
+        const d = new Date(t.date);
+        d.setUTCDate(d.getUTCDate() - 1);
+        return {
+          assetId: t.assetIdFrom,
+          dateCap: d.toISOString().slice(0, 10),
+        };
+      });
+    })();
+    return this.extraScopesPromise;
+  }
+
   /** Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities — otherwise Apollo would merge them and the first response's values would be clobbered by the second. @gqlField */
   get id(): ID {
     const assets = this.filterAssetIdIn
@@ -145,11 +177,13 @@ export class Portfolio {
     return `portfolio:${this.currency}:${assets}:${investments}:${this.skipLive ? "cached" : "live"}` as ID;
   }
 
-  private get filters(): Filters {
+  private async filtersWithExtras(): Promise<Filters> {
+    const extras = await this.loadExtraScopes();
     return {
       filterAssetIdIn: this.filterAssetIdIn,
       filterInvestmentIdIn: this.filterInvestmentIdIn,
       currency: this.currency,
+      extraAssetIds: extras.map((s) => s.assetId),
     };
   }
 
@@ -177,11 +211,17 @@ export class Portfolio {
     return Money.fromMinorDenomination(invested + cash, this.currency);
   }
 
-  /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. */
+  /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. A transferred-into wrapper folds in each source's pre-transfer cash flows. */
   private async cashMinor(ctx: Context): Promise<number> {
     if (this.filterInvestmentIdIn) return 0;
     if (await this.loadDateCap()) return 0;
-    return loadPortfolioCashMinor(ctx, this.filterAssetIdIn, this.currency);
+    const extraScopes = await this.loadExtraScopes();
+    return loadPortfolioCashMinor(
+      ctx,
+      this.filterAssetIdIn,
+      this.currency,
+      extraScopes,
+    );
   }
 
   private async totalInvestedMinor(ctx: Context): Promise<number> {
@@ -286,11 +326,15 @@ export class Portfolio {
   private async loadStats(ctx: Context): Promise<InvestmentStats[]> {
     const assets = this.filterAssetIdIn;
     const investments = this.filterInvestmentIdIn;
-    const dateCap = await this.loadDateCap();
+    const [dateCap, extraScopes] = await Promise.all([
+      this.loadDateCap(),
+      this.loadExtraScopes(),
+    ]);
     const base = {
       currency: this.currency,
       skipLive: this.skipLive,
       ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     } satisfies InvestmentStatsFilter;
     const keys: InvestmentStatsFilter[] = [];
     if (assets && investments) {
@@ -313,9 +357,14 @@ export class Portfolio {
 
   /** Per-investment breakdown of the filtered portfolio's current market value, expressed as fractions in `[0, 1]` that sum to `1`. Each entry pairs an investment with its share. Investments that contribute zero value (no holdings, fully sold, or missing a price) are excluded; the remaining fractions are renormalised over those that do contribute. Returns an empty array when the portfolio has no positive value. @gqlField */
   async allocations(ctx: Context): Promise<PortfolioAllocation[]> {
-    const investmentIds = await loadInvestmentIdsInScope(this.filters);
+    const investmentIds = await loadInvestmentIdsInScope(
+      await this.filtersWithExtras(),
+    );
     if (investmentIds.length === 0) return [];
-    const dateCap = await this.loadDateCap();
+    const [dateCap, extraScopes] = await Promise.all([
+      this.loadDateCap(),
+      this.loadExtraScopes(),
+    ]);
     const perInvestment = await Promise.all(
       investmentIds.map(async (investmentId) => {
         const stats = await loadInvestmentStats(ctx, {
@@ -324,6 +373,7 @@ export class Portfolio {
           currency: this.currency,
           skipLive: this.skipLive,
           ...(dateCap ? { dateCap } : {}),
+          ...(extraScopes.length > 0 ? { extraScopes } : {}),
         });
         return { investmentId, value: stats.totalValueMinor ?? 0 };
       }),
@@ -447,6 +497,10 @@ async function loadInvestmentIdsInScope(filters: Filters): Promise<string[]> {
     conditions.push(inArray(Investments.id, filters.filterInvestmentIdIn));
   }
   if (filters.filterAssetIdIn && filters.filterAssetIdIn.length > 0) {
+    const eligibleAssetIds = [
+      ...filters.filterAssetIdIn,
+      ...(filters.extraAssetIds ?? []),
+    ];
     conditions.push(
       exists(
         db
@@ -455,7 +509,7 @@ async function loadInvestmentIdsInScope(filters: Filters): Promise<string[]> {
           .where(
             and(
               eq(InvestmentTransactions.investmentId, Investments.id),
-              inArray(InvestmentTransactions.assetId, filters.filterAssetIdIn),
+              inArray(InvestmentTransactions.assetId, eligibleAssetIds),
             ),
           ),
       ),

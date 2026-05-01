@@ -609,7 +609,7 @@ type Investment {
   id: ID!
   name: String!
   """
-  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). When `filterAssetIdIn` resolves to a single transferred-out wrapper, holdings are frozen at the day before the transfer.
+  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). When `filterAssetIdIn` resolves to a single transferred-out wrapper, holdings are frozen at the day before the transfer. When it resolves to a single transferred-into wrapper, each source's pre-transfer transactions are folded into the result.
   """
   position(
     """
