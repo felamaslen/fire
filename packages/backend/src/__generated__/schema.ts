@@ -809,6 +809,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
                 },
+                soldOutOn: {
+                    description: "Date the wrapper was fully sold out \u2014 every position's net split-adjusted units is zero, the wrapper has at least one transaction, and there is no `transferOut` (otherwise that takes precedence as the \"defunct\" reason). The date is the last transaction in the wrapper, i.e. the closing sell that brought everything to zero. `null` for any wrapper that still holds units, has no transactions, or has been transferred out.",
+                    name: "soldOutOn",
+                    type: DateType,
+                    resolve(source, _args, context) {
+                        return source.soldOutOn(context);
+                    }
+                },
                 transferOut: {
                     description: "The outgoing transfer for this wrapper, if any \u2014 at most one. When set, this wrapper's holdings and cash are treated as fully migrated into the destination wrapper on the transfer date.",
                     name: "transferOut",

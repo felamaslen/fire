@@ -436,8 +436,10 @@ describe("Portfolio dateCap from transferOut", () => {
 
     await createTransferOut(fromAsset, toAsset, "2025-03-15");
 
-    // filterIsSold = false: should hide only `sold`. `held` shows; `stray`
-    // doesn't (no pre-transfer activity in the wrapper).
+    // The wrapper is defunct (transferred out), so every in-scope position
+    // counts as "sold" from the user's current perspective regardless of
+    // its pre-transfer net units. `stray` never appears in either branch
+    // because its only tx is post-transfer (out of frozen scope).
     const filtered = await runGql(
       graphql(`
         query ($filterAssetIdIn: [ID!]) {
@@ -453,11 +455,8 @@ describe("Portfolio dateCap from transferOut", () => {
       `),
       { filterAssetIdIn: [fromAsset] },
     );
-    expect(filtered.investments?.edges.map((e) => e.node.name)).toEqual([
-      "Held",
-    ]);
+    expect(filtered.investments?.edges.map((e) => e.node.name)).toEqual([]);
 
-    // filterIsSold = true (the "show only sold" toggle): only `sold` shows.
     const onlySold = await runGql(
       graphql(`
         query ($filterAssetIdIn: [ID!]) {
@@ -473,7 +472,8 @@ describe("Portfolio dateCap from transferOut", () => {
       `),
       { filterAssetIdIn: [fromAsset] },
     );
-    expect(onlySold.investments?.edges.map((e) => e.node.name)).toEqual([
+    expect(onlySold.investments?.edges.map((e) => e.node.name).sort()).toEqual([
+      "Held",
       "Sold",
     ]);
   });
@@ -883,6 +883,103 @@ describe("Portfolio multi-asset transfer fold", () => {
       filterAssetIdIn: [assetId],
     });
     expect(data.portfolio?.totalValue?.amount).toBe(1500);
+  });
+
+  it("hides a defunct wrapper's frozen positions when filterIsSold = false (`hide sold`)", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    await setPrice(inv, "2025-01-15", 1000);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    // Viewing the transferred-out wrapper alone with `hide sold` on:
+    // every position is frozen at pre-transfer holdings, but from the
+    // user's *current* perspective the wrapper holds nothing — so they
+    // shouldn't appear in the list.
+    const data = await runGql(
+      graphql(`
+        query ($assets: [ID!]) {
+          investments(filterAssetIdIn: $assets, filterIsSold: false) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }
+      `),
+      { assets: [fromAsset] },
+    );
+    expect(data.investments?.edges).toEqual([]);
+  });
+
+  it("hides a sold-out wrapper's frozen positions when filterIsSold = false (`hide sold`)", async () => {
+    const assetId = await createAsset("Closed ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, assetId, "2025-01-15", 100, 10);
+    await buy(inv, assetId, "2025-04-01", -100, 12);
+
+    const data = await runGql(
+      graphql(`
+        query ($assets: [ID!]) {
+          investments(filterAssetIdIn: $assets, filterIsSold: false) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }
+      `),
+      { assets: [assetId] },
+    );
+    expect(data.investments?.edges).toEqual([]);
+  });
+
+  it("exposes soldOutOn for a wrapper whose closing sells netted every position to zero", async () => {
+    const assetId = await createAsset("Closed ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, assetId, "2025-01-15", 100, 10);
+    await buy(inv, assetId, "2025-04-01", -100, 12);
+
+    const data = await runGql(
+      graphql(`
+        query ($id: ID!) {
+          netWorthCategoryAsset(id: $id) {
+            soldOutOn
+            transferOut {
+              id
+            }
+          }
+        }
+      `),
+      { id: assetId },
+    );
+    expect(data.netWorthCategoryAsset?.soldOutOn).toBe("2025-04-01");
+    expect(data.netWorthCategoryAsset?.transferOut).toBeNull();
+  });
+
+  it("does NOT expose soldOutOn when the wrapper has a transferOut (transferred-out takes precedence)", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    // Note: the transfer is metadata-only — no closing sells exist on
+    // `fromAsset`, but its destination receives the holdings logically.
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    const data = await runGql(
+      graphql(`
+        query ($id: ID!) {
+          netWorthCategoryAsset(id: $id) {
+            soldOutOn
+          }
+        }
+      `),
+      { id: fromAsset },
+    );
+    expect(data.netWorthCategoryAsset?.soldOutOn).toBeNull();
   });
 
   it("freezes a sold-out wrapper before the *first* sell of a multi-sell wind-down (not just the last)", async () => {

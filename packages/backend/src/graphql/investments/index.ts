@@ -540,14 +540,25 @@ export async function investments(
         // precision so summing buys + sells of fractional shares can leave a
         // sub-unit residue (e.g. ~1e-13) instead of an exact zero — compare
         // against a small epsilon, not `= 0`, so those positions still hide.
+        //
+        // When the effective scope is defunct (`dateCapIso` set: every
+        // selected wrapper is either transferred out or fully sold), treat
+        // every in-scope investment as sold regardless of its pre-cap units.
+        // Pre-cap holdings on a defunct wrapper aren't currently held — they
+        // exist only to keep the frozen chart / totals meaningful — so the
+        // hide-sold toggle should still hide them.
         filterIsSold === true
-          ? and(hasAnyTransaction, sql`abs(coalesce(${unitsSum}, 0)) < 1e-9`)
+          ? dateCapIso
+            ? hasTransactionInWrapper
+            : and(hasAnyTransaction, sql`abs(coalesce(${unitsSum}, 0)) < 1e-9`)
           : undefined,
         filterIsSold === false
-          ? or(
-              not(hasAnyTransaction),
-              sql`abs(coalesce(${unitsSum}, 0)) >= 1e-9`,
-            )
+          ? dateCapIso
+            ? not(hasTransactionInWrapper ?? sql`false`)
+            : or(
+                not(hasAnyTransaction),
+                sql`abs(coalesce(${unitsSum}, 0)) >= 1e-9`,
+              )
           : undefined,
       ),
     );

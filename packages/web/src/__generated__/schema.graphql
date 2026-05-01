@@ -1455,6 +1455,10 @@ type NetWorthCategoryAsset implements NetWorthCategory {
   isDefunct: Boolean!
   name: String!
   """
+  Date the wrapper was fully sold out — every position's net split-adjusted units is zero, the wrapper has at least one transaction, and there is no `transferOut` (otherwise that takes precedence as the "defunct" reason). The date is the last transaction in the wrapper, i.e. the closing sell that brought everything to zero. `null` for any wrapper that still holds units, has no transactions, or has been transferred out.
+  """
+  soldOutOn: Date
+  """
   The outgoing transfer for this wrapper, if any — at most one. When set, this wrapper's holdings and cash are treated as fully migrated into the destination wrapper on the transfer date.
   """
   transferOut: InvestmentTransfer

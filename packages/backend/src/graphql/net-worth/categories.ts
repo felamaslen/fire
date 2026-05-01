@@ -20,6 +20,7 @@ import type { Float, ID, Int } from "grats";
 import type { IsEqual } from "type-fest";
 
 import { db } from "@/db";
+import { InvestmentTransactions } from "@/db/schema/investments";
 import {
   NetWorthCategoryAssets,
   netWorthCategoryAssetType,
@@ -198,7 +199,62 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
   async transfersIn(): Promise<InvestmentTransfer[]> {
     return loadInvestmentTransfersInForAsset(this.id);
   }
+
+  /** Date the wrapper was fully sold out — every position's net split-adjusted units is zero, the wrapper has at least one transaction, and there is no `transferOut` (otherwise that takes precedence as the "defunct" reason). The date is the last transaction in the wrapper, i.e. the closing sell that brought everything to zero. `null` for any wrapper that still holds units, has no transactions, or has been transferred out. @gqlField */
+  async soldOutOn(ctx: Context): Promise<CalendarDate | null> {
+    return soldOutOnLoader(ctx).load(this.id);
+  }
 }
+
+/** Per-request batched loader for `NetWorthCategoryAsset.soldOutOn`. One SQL groups every requested asset's transactions by `(assetId, investmentId)`, computes the split-adjusted net per position, and reports `MAX(date)` for assets where every net is zero AND there's no `InvestmentTransfers` row out. */
+const soldOutOnLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, CalendarDate | null>(async (assetIds) => {
+      const ids = [...assetIds];
+      const rows = await db.execute<{
+        assetId: string;
+        soldOutOn: string | null;
+      }>(sql`
+        WITH tx_adj AS (
+          SELECT
+            "InvestmentTransactions"."assetId",
+            "InvestmentTransactions"."investmentId",
+            "InvestmentTransactions".date,
+            "InvestmentTransactions".units * COALESCE(EXP((
+              SELECT SUM(LN(s.ratio))
+              FROM "InvestmentStockSplits" s
+              WHERE s."investmentId" = "InvestmentTransactions"."investmentId"
+                AND s.date > "InvestmentTransactions".date
+            )), 1) AS adj_units
+          FROM "InvestmentTransactions"
+          WHERE ${inArray(InvestmentTransactions.assetId, ids)}
+        ),
+        per_pos AS (
+          SELECT
+            "assetId",
+            "investmentId",
+            SUM(adj_units) AS net,
+            MAX(date) AS last_date
+          FROM tx_adj
+          GROUP BY "assetId", "investmentId"
+        )
+        SELECT
+          per_pos."assetId" AS "assetId",
+          MAX(per_pos.last_date)::text AS "soldOutOn"
+        FROM per_pos
+        LEFT JOIN "InvestmentTransfers"
+          ON "InvestmentTransfers"."assetIdFrom" = per_pos."assetId"
+        WHERE "InvestmentTransfers"."assetIdFrom" IS NULL
+        GROUP BY per_pos."assetId"
+        HAVING BOOL_AND(ABS(per_pos.net) < 1e-9)
+      `);
+      const byId = new Map<string, CalendarDate>();
+      for (const r of rows.rows ?? rows) {
+        if (r.soldOutOn) byId.set(r.assetId, new Date(r.soldOutOn));
+      }
+      return ids.map((id) => byId.get(id) ?? null);
+    }),
+);
 
 /** Per-request batched loader for `NetWorthCategoryAsset.isDefunct`. One SQL groups by `categoryAssetId` and reports `(everRecorded, activeInLatest)`; an asset only flips to defunct when it was ever recorded but the latest entry no longer carries a positive value for it. */
 const defunctnessLoader = contextAwareDataLoader(

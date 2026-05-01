@@ -1,4 +1,4 @@
-import { useQuery, useSuspenseQuery } from "@apollo/client/react";
+import { useSuspenseQuery } from "@apollo/client/react";
 import {
   createFileRoute,
   Outlet,
@@ -179,6 +179,7 @@ const PortfolioFilterOptionsFragment = graphql(`
         name
       }
     }
+    soldOutOn
   }
 `);
 
@@ -640,14 +641,7 @@ function InvestmentsPageContent() {
       filterIsSold: loadHideSold() ? false : null,
     };
   });
-  // Fire-and-forget prewarm. The page never reads this query's `data` —
-  // it only exists to populate the cache so each child's own `useQuery` /
-  // `useSuspenseQuery` resolves synchronously. We deliberately don't
-  // `useSuspenseQuery` here: under React 18 + Apollo's queryRef lifecycle
-  // we were seeing the same operation fire twice on initial load (also in
-  // production), and a non-suspending fetch sidesteps that entirely while
-  // still warming the cache before any child mounts and reads it.
-  const { data: pageData } = useQuery(InvestmentsPageDocument, {
+  const { data: pageData } = useSuspenseQuery(InvestmentsPageDocument, {
     variables: initialVars,
   });
   const portfolioOptions: PortfolioFilterOption[] =
@@ -666,6 +660,10 @@ function InvestmentsPageContent() {
         : "Selected portfolios";
   const transferredOut = singleSelected?.transferOut ?? null;
   const transfersIn = singleSelected?.transfersIn ?? [];
+  // Mutually exclusive with `transferredOut` — the backend resolver gates
+  // `soldOutOn` on having no outgoing transfer, so we never show both.
+  const soldOutOn = singleSelected?.soldOutOn ?? null;
+  const isDefunct = transferredOut !== null || soldOutOn !== null;
 
   return (
     <>
@@ -687,6 +685,13 @@ function InvestmentsPageContent() {
           cash, and totals are frozen at the day before the transfer.
         </div>
       )}
+      {soldOutOn && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-900/40 dark:bg-amber-900/10">
+          This portfolio was sold out on{" "}
+          <span className="tabular-nums">{soldOutOn}</span>. Holdings, cash, and
+          totals are frozen at the day before the wind-down began.
+        </div>
+      )}
       <PortfolioSection
         filterAssetIds={filterAssetIds}
         selectedLabel={selectedLabel}
@@ -697,7 +702,7 @@ function InvestmentsPageContent() {
         bottomSlot={
           <AllocationsSection
             filterAssetIds={filterAssetIds}
-            transferredOut={transferredOut !== null}
+            transferredOut={isDefunct}
           />
         }
       />
@@ -710,7 +715,7 @@ function InvestmentsPageContent() {
         sort={sort}
         onSortChange={setSort}
         filterAssetIds={filterAssetIds}
-        transferredOut={transferredOut !== null}
+        transferredOut={isDefunct}
       />
     </>
   );
