@@ -28,7 +28,7 @@ import { NetWorthChart } from "./net-worth-chart";
 
 const HomeDocument = graphql(
   `
-    query Home($years: Int!) {
+    query Home($years: Int!, $showForecast: Boolean!) {
       netWorthHistory {
         date
         assetsByType {
@@ -56,7 +56,7 @@ const HomeDocument = graphql(
         inflationRate
         drawdownRate
       }
-      netWorthForecast(years: $years, limit: 20) {
+      netWorthForecast(years: $years, limit: 20) @include(if: $showForecast) {
         points {
           date
           assetsByType {
@@ -211,17 +211,30 @@ export function Home() {
     const id = window.setTimeout(() => setYears(draftYears), 200);
     return () => window.clearTimeout(id);
   }, [draftYears, years, setYears]);
-  // Defer the query variable on top of the debounce so the refetch
+  // Defer the query variables on top of the debounce so the refetch
   // suspends in a non-interrupting pass — the previous chart stays
-  // visible while the new horizon loads.
+  // visible while the new horizon (or forecast toggle) loads.
   const deferredYears = useDeferredValue(years);
-  const refetching = deferredYears !== years || draftYears !== years;
+  const deferredShowForecast = useDeferredValue(showForecast);
+  const refetching =
+    deferredYears !== years ||
+    draftYears !== years ||
+    deferredShowForecast !== showForecast;
   const { data } = useSuspenseQuery(HomeDocument, {
-    variables: { years: deferredYears },
+    variables: {
+      years: deferredYears,
+      showForecast: deferredShowForecast,
+    },
   });
   const [saveRetirementYear] = useMutation(RetirementSettingsUpdateDocument, {
     refetchQueries: [
-      { query: HomeDocument, variables: { years: deferredYears } },
+      {
+        query: HomeDocument,
+        variables: {
+          years: deferredYears,
+          showForecast: deferredShowForecast,
+        },
+      },
     ],
     awaitRefetchQueries: true,
   });
