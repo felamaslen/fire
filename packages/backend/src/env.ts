@@ -7,8 +7,8 @@ const schema = z.object({
     .default("development"),
   /** Postgres connection string. */
   DATABASE_URL: z.string().min(1),
-  /** Maximum number of Postgres connections held open by the pool. Lower this when many test workers run concurrently against a single Postgres instance to avoid exhausting `max_connections`. */
-  DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
+  /** Maximum number of Postgres connections held open by the pool. Lower this when many test workers run concurrently against a single Postgres instance to avoid exhausting `max_connections`. The default is sized for the single-server dev / prod case where each request fans out into many parallel resolver SQLs and queueing on a small pool dominates wall time before any actual SQL contention does. */
+  DATABASE_POOL_MAX: z.coerce.number().int().positive().default(25),
   /** Seconds an idle Postgres connection stays in the pool before it's closed. `0` keeps connections forever. */
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().int().nonnegative().default(20),
   /** Local uploads-bucket directory. Created on demand by `src/uploads.ts`. */
