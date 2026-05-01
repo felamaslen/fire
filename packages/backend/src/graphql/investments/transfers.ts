@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 
+import DataLoader from "dataloader";
 import { eq, inArray } from "drizzle-orm";
 import type { ID } from "grats";
 
@@ -8,7 +9,7 @@ import { db } from "@/db";
 import { InvestmentTransfers } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
-import type { Context } from "../context";
+import { type Context, contextAwareDataLoader } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
 import { Portfolio } from "./portfolio";
@@ -167,18 +168,35 @@ export async function loadInvestmentTransferOutForAsset(
   return row ? InvestmentTransfer.load(row) : null;
 }
 
+/** Per-request batched loader for `loadInvestmentTransferOutScopeForAsset`. One SQL covers every requested asset's outgoing transfer (`assetIdFrom IN (...)`). The unique index on `assetIdFrom` guarantees at most one row per key, so the loader maps directly to a per-key value or null. */
+const transferOutScopeLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, { assetIdTo: string; date: Date } | null>(
+      async (assetIds) => {
+        const ids = [...assetIds];
+        const rows = await db
+          .select({
+            assetIdFrom: InvestmentTransfers.assetIdFrom,
+            assetIdTo: InvestmentTransfers.assetIdTo,
+            date: InvestmentTransfers.date,
+          })
+          .from(InvestmentTransfers)
+          .where(inArray(InvestmentTransfers.assetIdFrom, ids));
+        const byFrom = new Map<string, { assetIdTo: string; date: Date }>();
+        for (const r of rows) {
+          byFrom.set(r.assetIdFrom, { assetIdTo: r.assetIdTo, date: r.date });
+        }
+        return ids.map((id) => byFrom.get(id) ?? null);
+      },
+    ),
+);
+
 /** Raw `(assetIdTo, date)` of `assetId`'s outgoing transfer. Internal counterpart to `loadInvestmentTransferOutForAsset` for callers (e.g. `Portfolio.loadEffectiveFilter`) that need the destination id directly without going through the `InvestmentTransfer.assetTo` resolver. */
 export async function loadInvestmentTransferOutScopeForAsset(
+  ctx: Context,
   assetId: string,
 ): Promise<{ assetIdTo: string; date: Date } | null> {
-  const [row] = await db
-    .select({
-      assetIdTo: InvestmentTransfers.assetIdTo,
-      date: InvestmentTransfers.date,
-    })
-    .from(InvestmentTransfers)
-    .where(eq(InvestmentTransfers.assetIdFrom, assetId));
-  return row ?? null;
+  return transferOutScopeLoader(ctx).load(assetId);
 }
 
 export async function loadInvestmentTransfersInForAsset(
@@ -191,16 +209,35 @@ export async function loadInvestmentTransfersInForAsset(
   return rows.map(InvestmentTransfer.load);
 }
 
+/** Per-request batched loader for `loadInvestmentTransferInScopesForAsset`. One SQL covers every requested asset's inbound transfers (`assetIdTo IN (...)`). Each key may have zero or many rows — the loader groups by `assetIdTo` and returns an array per key. */
+const transferInScopesLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, ReadonlyArray<{ assetIdFrom: string; date: Date }>>(
+      async (assetIds) => {
+        const ids = [...assetIds];
+        const rows = await db
+          .select({
+            assetIdFrom: InvestmentTransfers.assetIdFrom,
+            assetIdTo: InvestmentTransfers.assetIdTo,
+            date: InvestmentTransfers.date,
+          })
+          .from(InvestmentTransfers)
+          .where(inArray(InvestmentTransfers.assetIdTo, ids));
+        const byTo = new Map<string, { assetIdFrom: string; date: Date }[]>();
+        for (const r of rows) {
+          const list = byTo.get(r.assetIdTo) ?? [];
+          list.push({ assetIdFrom: r.assetIdFrom, date: r.date });
+          byTo.set(r.assetIdTo, list);
+        }
+        return ids.map((id) => byTo.get(id) ?? []);
+      },
+    ),
+);
+
 /** Raw `(assetIdFrom, date)` pairs of every inbound transfer into `assetId`. Used by `Portfolio` / `Investment` resolvers to fold each source's pre-transfer transaction history into the destination's aggregates — the public `InvestmentTransfer` class hides `assetIdFrom` behind a `NetWorthCategoryAsset` resolver, which is the wrong shape for this internal use. */
 export async function loadInvestmentTransferInScopesForAsset(
+  ctx: Context,
   assetId: string,
 ): Promise<ReadonlyArray<{ assetIdFrom: string; date: Date }>> {
-  const rows = await db
-    .select({
-      assetIdFrom: InvestmentTransfers.assetIdFrom,
-      date: InvestmentTransfers.date,
-    })
-    .from(InvestmentTransfers)
-    .where(eq(InvestmentTransfers.assetIdTo, assetId));
-  return rows;
+  return transferInScopesLoader(ctx).load(assetId);
 }

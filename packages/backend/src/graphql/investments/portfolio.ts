@@ -195,7 +195,7 @@ export class Portfolio {
   ) {}
 
   /** Resolve the transfer-aware filter for this `Portfolio` (see `EffectiveFilter`). Memoised per-instance. */
-  private async loadEffectiveFilter(): Promise<EffectiveFilter> {
+  private async loadEffectiveFilter(ctx: Context): Promise<EffectiveFilter> {
     this.effectiveFilterPromise ??= (async () => {
       const filter = this.filterAssetIdIn;
       if (!filter || filter.length === 0) {
@@ -207,7 +207,7 @@ export class Portfolio {
       }
       const filterSet = new Set(filter);
       const outgoing = await Promise.all(
-        filter.map((id) => loadInvestmentTransferOutScopeForAsset(id)),
+        filter.map((id) => loadInvestmentTransferOutScopeForAsset(ctx, id)),
       );
       // Drop any asset whose outgoing-transfer destination is also in the
       // filter — its pre-transfer history will flow through the destination's
@@ -229,8 +229,10 @@ export class Portfolio {
       >();
       await Promise.all(
         effective.map(async (assetId) => {
-          const incoming =
-            await loadInvestmentTransferInScopesForAsset(assetId);
+          const incoming = await loadInvestmentTransferInScopesForAsset(
+            ctx,
+            assetId,
+          );
           if (incoming.length === 0) return;
           extrasByAsset.set(
             assetId,
@@ -269,10 +271,10 @@ export class Portfolio {
   }
 
   /** Backwards-compat wrapper: union of all per-asset extras under `loadEffectiveFilter`. Used by single-stats-call resolvers (cash, allocations, scope-resolution helpers) that take one `extraScopes` shape. Per-asset resolvers should consume `extrasByAsset` directly. */
-  private async loadExtraScopesUnion(): Promise<
-    ReadonlyArray<{ assetId: string; dateCap: string }>
-  > {
-    const { extrasByAsset } = await this.loadEffectiveFilter();
+  private async loadExtraScopesUnion(
+    ctx: Context,
+  ): Promise<ReadonlyArray<{ assetId: string; dateCap: string }>> {
+    const { extrasByAsset } = await this.loadEffectiveFilter(ctx);
     const seen = new Set<string>();
     const out: { assetId: string; dateCap: string }[] = [];
     for (const list of extrasByAsset.values()) {
@@ -297,9 +299,9 @@ export class Portfolio {
     return `portfolio:${this.currency}:${assets}:${investments}:${this.skipLive ? "cached" : "live"}` as ID;
   }
 
-  private async filtersWithExtras(): Promise<Filters> {
+  private async filtersWithExtras(ctx: Context): Promise<Filters> {
     const { effectiveAssetIds, extrasByAsset } =
-      await this.loadEffectiveFilter();
+      await this.loadEffectiveFilter(ctx);
     const extraAssetIds = new Set<string>();
     for (const list of extrasByAsset.values()) {
       for (const e of list) extraAssetIds.add(e.assetId);
@@ -336,9 +338,9 @@ export class Portfolio {
   /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. A transferred-into wrapper folds in each source's pre-transfer cash flows. */
   private async cashMinor(ctx: Context): Promise<number> {
     if (this.filterInvestmentIdIn) return 0;
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
     if (dateCap) return 0;
-    const extraScopes = await this.loadExtraScopesUnion();
+    const extraScopes = await this.loadExtraScopesUnion(ctx);
     return loadPortfolioCashMinor(
       ctx,
       effectiveAssetIds,
@@ -392,8 +394,8 @@ export class Portfolio {
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
   async xirr(ctx: Context): Promise<Float | null> {
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
-    const extraScopes = await this.loadExtraScopesUnion();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
+    const extraScopes = await this.loadExtraScopesUnion(ctx);
     return (await computePortfolioXirr(ctx, {
       currency: this.currency,
       assetIds: effectiveAssetIds,
@@ -450,7 +452,7 @@ export class Portfolio {
    */
   private async loadStats(ctx: Context): Promise<InvestmentStats[]> {
     const { effectiveAssetIds, extrasByAsset, dateCap } =
-      await this.loadEffectiveFilter();
+      await this.loadEffectiveFilter(ctx);
     const investments = this.filterInvestmentIdIn;
     const baseCommon = {
       currency: this.currency,
@@ -487,11 +489,11 @@ export class Portfolio {
   /** Per-investment breakdown of the filtered portfolio's current market value, expressed as fractions in `[0, 1]` that sum to `1`. Each entry pairs an investment with its share. Investments that contribute zero value (no holdings, fully sold, or missing a price) are excluded; the remaining fractions are renormalised over those that do contribute. Returns an empty array when the portfolio has no positive value. @gqlField */
   async allocations(ctx: Context): Promise<PortfolioAllocation[]> {
     const investmentIds = await loadInvestmentIdsInScope(
-      await this.filtersWithExtras(),
+      await this.filtersWithExtras(ctx),
     );
     if (investmentIds.length === 0) return [];
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
-    const extraScopes = await this.loadExtraScopesUnion();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
+    const extraScopes = await this.loadExtraScopesUnion(ctx);
     const perInvestment = await Promise.all(
       investmentIds.map(async (investmentId) => {
         const stats = await loadInvestmentStats(ctx, {
@@ -524,7 +526,7 @@ export class Portfolio {
   ): Promise<PortfolioTimeseries | null> {
     const loader = loadTimeseries(ctx);
     const { effectiveAssetIds, extrasByAsset, dateCap } =
-      await this.loadEffectiveFilter();
+      await this.loadEffectiveFilter(ctx);
     const baseOptions = {
       period,
       length: length ?? 1,
@@ -605,8 +607,8 @@ export class Portfolio {
       !this.filterInvestmentIdIn,
       "Portfolio.candlestick does not support filtering by investment ID",
     );
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
-    const extraScopes = await this.loadExtraScopesUnion();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
+    const extraScopes = await this.loadExtraScopesUnion(ctx);
     return loadCandlestick(ctx).load({
       unit,
       length,

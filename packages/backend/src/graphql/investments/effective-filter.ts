@@ -41,6 +41,7 @@ const dayBefore = (date: Date | string): string => {
 };
 
 async function computeEffectiveFilter(
+  ctx: Context,
   filterAssetIdIn: readonly string[] | null,
 ): Promise<EffectiveAssetFilter> {
   if (!filterAssetIdIn || filterAssetIdIn.length === 0) {
@@ -48,7 +49,9 @@ async function computeEffectiveFilter(
   }
   const filterSet = new Set(filterAssetIdIn);
   const outgoing = await Promise.all(
-    filterAssetIdIn.map((id) => loadInvestmentTransferOutScopeForAsset(id)),
+    filterAssetIdIn.map((id) =>
+      loadInvestmentTransferOutScopeForAsset(ctx, id),
+    ),
   );
   const effective: string[] = [];
   for (let i = 0; i < filterAssetIdIn.length; i++) {
@@ -60,7 +63,10 @@ async function computeEffectiveFilter(
   const seen = new Set<string>();
   await Promise.all(
     effective.map(async (assetId) => {
-      const incoming = await loadInvestmentTransferInScopesForAsset(assetId);
+      const incoming = await loadInvestmentTransferInScopesForAsset(
+        ctx,
+        assetId,
+      );
       for (const t of incoming) {
         const cap = dayBefore(t.date);
         const key = `${t.assetIdFrom}@${cap}`;
@@ -92,12 +98,15 @@ async function computeEffectiveFilter(
 const NO_FILTER_KEY = "*";
 
 const effectiveFilterLoader = contextAwareDataLoader(
-  () =>
+  (ctx: Context) =>
     new DataLoader<string, EffectiveAssetFilter, string>(
       async (keys) =>
         Promise.all(
           keys.map((k) =>
-            computeEffectiveFilter(k === NO_FILTER_KEY ? null : k.split(",")),
+            computeEffectiveFilter(
+              ctx,
+              k === NO_FILTER_KEY ? null : k.split(","),
+            ),
           ),
         ),
       // Identity cache key — the keys we pass in are already the
