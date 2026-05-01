@@ -216,7 +216,9 @@ export function PortfolioChart({
         const xStart = xScale(p.x0);
         const xEnd = xScale(p.x1);
         const x = (xStart + xEnd) / 2;
-        const bodyY = yScale(Math.max(p.from, p.to));
+        const bodyTop = Math.max(p.from, p.to);
+        const bodyBottom = Math.min(p.from, p.to);
+        const bodyY = yScale(bodyTop);
         const bodyHeight = Math.abs(yScale(p.from) - yScale(p.to)) || 1;
         const isUp = p.to >= p.from;
         // Leave a 15% gap between adjacent candles so the bucket boundaries
@@ -225,6 +227,12 @@ export function PortfolioChart({
         const bucketWidth = Math.max(2, bucketSpan * 0.85);
         const capWidth = Math.max(3, bucketWidth * 0.45);
         const isHovered = hoveredCandle === i;
+        // Each wick (upper / lower / spine) is only drawn when it has non-
+        // zero length. Skipping them when high == max(from, to) etc.
+        // avoids rendering 1-pixel artefacts at the body edges and keeps
+        // a flat-line candle (open == close == high == low) clean.
+        const hasUpperWick = p.hi > bodyTop;
+        const hasLowerWick = bodyBottom > p.lo;
         return (
           <g key={i}>
             {/* wick — explicit `stroke-foreground` (not `currentColor` via a
@@ -235,30 +243,36 @@ export function PortfolioChart({
                 Tailwind setup — wicks went invisible in dark mode. Using the
                 stroke class sets `stroke: var(--foreground)` directly. */}
             <g>
-              <line
-                x1={x}
-                x2={x}
-                y1={yScale(p.hi)}
-                y2={yScale(p.lo)}
-                className="stroke-foreground"
-                strokeWidth={1}
-              />
-              <line
-                x1={x - capWidth / 2}
-                x2={x + capWidth / 2}
-                y1={yScale(p.hi)}
-                y2={yScale(p.hi)}
-                className="stroke-foreground"
-                strokeWidth={1}
-              />
-              <line
-                x1={x - capWidth / 2}
-                x2={x + capWidth / 2}
-                y1={yScale(p.lo)}
-                y2={yScale(p.lo)}
-                className="stroke-foreground"
-                strokeWidth={1}
-              />
+              {(hasUpperWick || hasLowerWick) && (
+                <line
+                  x1={x}
+                  x2={x}
+                  y1={yScale(p.hi)}
+                  y2={yScale(p.lo)}
+                  className="stroke-foreground"
+                  strokeWidth={1}
+                />
+              )}
+              {hasUpperWick && (
+                <line
+                  x1={x - capWidth / 2}
+                  x2={x + capWidth / 2}
+                  y1={yScale(p.hi)}
+                  y2={yScale(p.hi)}
+                  className="stroke-foreground"
+                  strokeWidth={1}
+                />
+              )}
+              {hasLowerWick && (
+                <line
+                  x1={x - capWidth / 2}
+                  x2={x + capWidth / 2}
+                  y1={yScale(p.lo)}
+                  y2={yScale(p.lo)}
+                  className="stroke-foreground"
+                  strokeWidth={1}
+                />
+              )}
             </g>
             {/* body */}
             <rect
