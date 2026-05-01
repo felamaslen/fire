@@ -23,9 +23,9 @@ type CandlestickKey = {
   max: number;
   /** When `false`, the last bucket's `valueEnd` / `valueMax` / `valueMin` are overlaid with today's live-overlaid portfolio total (fetched from `loadInvestmentStats`). When `true`, the raw DB result is returned. Does not affect the SQL — only the overlay. */
   skipLive: boolean;
-  /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), only `InvestmentTransactions` with `date <= dateCap` contribute, and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
+  /** ISO-`YYYY-MM-DD` cap, when set: the series ends on `dateCap` (instead of "today"), and the live overlay is skipped. Used to freeze the chart for a transferred-out wrapper. */
   dateCap?: string;
-  /** Additional asset scopes to fold in, each with its own per-scope cap — used to render a transferred-into wrapper that inherits the source's pre-transfer holdings. */
+  /** Additional asset scopes to fold in, each with its own per-scope cap — used to render a transferred-into wrapper that inherits the source's pre-transfer holdings. Each entry adds an OR-branch over `InvestmentValuePoints` rows where `assetId = entry.assetId AND date <= entry.dateCap`. */
   extraScopes?: ReadonlyArray<{ assetId: string; dateCap: string }>;
 };
 
@@ -50,7 +50,7 @@ const cacheKeyFn = (key: CandlestickKey): string => {
 /**
  * Retrieves a candlestick series of portfolio total value, optionally filtered to a set of net-worth assets (the combined position across them).
  *
- * Per-date portfolio totals are computed *before* min/max, so `lo` / `hi` reflect the true drawdown / peak of the held position across the bucket — not the sum of per-stock extremes on possibly different days.
+ * Reads pre-aggregated daily totals from `InvestmentValuePoints` (maintained by triggers — see `db/schema/investments.ts`) and aggregates them into OHLC buckets in SQL. Per-date portfolio totals are computed *before* min/max so `lo` / `hi` reflect the true drawdown / peak of the held position across the bucket — not the sum of per-investment extrema on possibly different days (which would mis-state portfolio-level volatility).
  */
 export const loadCandlestick = contextAwareDataLoader(
   (ctx) =>
@@ -77,108 +77,90 @@ const loadOne = async (
   const unit = sql.raw(key.unit.toLowerCase());
   const windowLen = sql.raw(String(key.length * key.max));
   const step = sql.raw(String(key.length));
-  // OR-combined asset+date scope: (mainAssetIds capped by `dateCap`) OR
-  // each extraScope. When neither is set this collapses to "no filter".
-  const txScopeFilter = (() => {
+  // OR-combined asset scope over `InvestmentValuePoints`. Empty filter =
+  // "every asset" (the unscoped portfolio chart).
+  //
+  // Extra scopes (transferred-in source wrappers) include the source's
+  // assetId without a per-scope `ivp.date <= s.dateCap` filter. Each
+  // extra-scope's `dateCap` was meant by the original (txn-based) query
+  // to limit which TXNs of the source accumulate into units; once those
+  // units are accumulated, the source's contribution at any chart day is
+  // `units × price-at-day`. In IVP, units remain constant after the
+  // source's last txn, so reading IVP for the source across all dates
+  // gives the same answer — provided the source has no post-`dateCap`
+  // txns. That invariant is enforced upstream: `effectiveAssetFilter`
+  // only emits extras for `InvestmentTransfers` source wrappers, which
+  // by codebase convention are not booked against after the transfer.
+  const ivpScopeFilter = (() => {
     const mainAssetIds = key.assetIds ?? [];
     const extraScopes = key.extraScopes ?? [];
     if (mainAssetIds.length === 0 && extraScopes.length === 0) {
-      return key.dateCap ? sql`and t.date <= ${key.dateCap}::date` : sql``;
+      return sql``;
     }
     const branches: ReturnType<typeof sql>[] = [];
     if (mainAssetIds.length > 0) {
       const dateClause = key.dateCap
-        ? sql` AND t.date <= ${key.dateCap}::date`
+        ? sql` AND ivp.date <= ${key.dateCap}::date`
         : sql``;
       branches.push(
-        sql`(t."assetId" in (${sql.join(
+        sql`(ivp."assetId" in (${sql.join(
           mainAssetIds.map((id) => sql`${id}`),
           sql`, `,
         )})${dateClause})`,
       );
     }
     for (const s of extraScopes) {
-      branches.push(
-        sql`(t."assetId" = ${s.assetId} AND t.date <= ${s.dateCap}::date)`,
-      );
+      branches.push(sql`ivp."assetId" = ${s.assetId}`);
     }
-    return sql`and (${sql.join(branches, sql` OR `)})`;
+    return sql`AND (${sql.join(branches, sql` OR `)})`;
   })();
-  // When `dateCap` is set, anchor `now` (the rightmost edge of the series)
-  // at the cap so the chart freezes on the day before the transfer.
+  // When `dateCap` is set, anchor `now` at the cap so the chart freezes on
+  // the day before the transfer.
   const now = key.dateCap ?? formatISO(new Date(), { representation: "date" });
 
-  // `u_tx` / `u` are MATERIALIZED so (a) the stock-split scalar subquery runs
-  // once per transaction (~hundreds) rather than once per (bucket × price) pair
-  // (~tens of thousands), and (b) the cumulative units window runs once per
-  // investment instead of being inlined into every lateral probe.
-  const result = await db.transaction(async (tx) => {
-    await tx.execute(sql`set local jit = off;`);
-    return await tx.execute<Row>(sql`
-      with
-        d as (
-          select date, row_number() over (order by date desc) as rn
-          from (
-            select generate_series(
-              ${now}::date - interval '${windowLen} ${unit}',
-              ${now}::date,
-              '${step} ${unit}'::interval
-            ) as date
-          ) x
-        ),
-        b as (
-          select d1.date as start, d0.date as "end"
-          from d d0
-          inner join d d1 on d1.rn = d0.rn + 1
-        ),
-        u_tx as materialized (
-          select
-            t."investmentId",
-            t.date,
-            (t.units * coalesce(exp(
-              (select sum(ln(ss.ratio)) from "InvestmentStockSplits" ss
-               where ss."investmentId" = t."investmentId" and ss.date > t.date)
-            ), 1))::double precision as "unitsAdjusted"
-          from "InvestmentTransactions" t
-          where t.currency = ${currency}
-          ${txScopeFilter}
-        ),
-        u as materialized (
-          select
-            "investmentId",
-            date,
-            sum("unitsAdjusted") over (
-              partition by "investmentId"
-              order by date
-              rows between unbounded preceding and current row
-            ) as units_cum
-          from u_tx
-        ),
-        v as (
-          select b.start, b."end", pb.date,
-            sum(pb."priceAdjusted" * u_latest.units_cum)::bigint as value
-          from b
-          inner join "InvestmentPrices" pb
-            on pb.date between b.start and b."end"
-          inner join lateral (
-            select units_cum from u
-            where u."investmentId" = pb."investmentId" and u.date <= pb.date
-            order by u.date desc limit 1
-          ) u_latest on true
-          group by b.start, b."end", pb.date
-        )
-      select
-        start,
-        "end",
-        min(value)::int as "valueMin",
-        max(value)::int as "valueMax",
-        (array_agg(value order by date asc))[1]::int as "valueStart",
-        (array_agg(value order by date desc))[1]::int as "valueEnd"
-      from v
-      group by start, "end"
-      order by start
-    `);
-  });
+  const result = await db.execute<Row>(sql`
+    WITH
+      d AS (
+        SELECT date, row_number() OVER (ORDER BY date DESC) AS rn
+        FROM (
+          SELECT generate_series(
+            ${now}::date - interval '${windowLen} ${unit}',
+            ${now}::date,
+            '${step} ${unit}'::interval
+          ) AS date
+        ) x
+      ),
+      b AS (
+        SELECT d1.date AS start, d0.date AS "end"
+        FROM d d0
+        INNER JOIN d d1 ON d1.rn = d0.rn + 1
+      ),
+      daily AS (
+        SELECT ivp.date, SUM(ivp."value")::bigint AS total
+        FROM "InvestmentValuePoints" ivp
+        WHERE ivp.currency = ${currency}
+          ${ivpScopeFilter}
+        GROUP BY ivp.date
+        -- Drop days where the only contribution is from sold-out wrappers'
+        -- explicit value=0 rows. Without this filter, the bucket
+        -- generate_series spanning a flat-zero stretch would produce
+        -- buckets with from=to=lo=hi=0 — visually misleading and
+        -- divergent from the prior (txn-based) query, which used
+        -- INNER JOIN "InvestmentPrices" so price-less buckets dropped out.
+        HAVING SUM(ivp."value") <> 0
+      )
+    SELECT
+      b.start,
+      b."end",
+      MIN(daily.total)::int AS "valueMin",
+      MAX(daily.total)::int AS "valueMax",
+      (array_agg(daily.total ORDER BY daily.date ASC))[1]::int AS "valueStart",
+      (array_agg(daily.total ORDER BY daily.date DESC))[1]::int AS "valueEnd"
+    FROM b
+    INNER JOIN daily ON daily.date BETWEEN b.start AND b."end"
+    GROUP BY b.start, b."end"
+    ORDER BY b.start
+  `);
 
   if (!result.rows.length) return null;
 
@@ -203,10 +185,6 @@ const loadOne = async (
       assetIds:
         key.assetIds && key.assetIds.length > 0 ? key.assetIds : undefined,
       skipLive: false,
-      // Fold any inbound-transfer sources into the live overlay too —
-      // otherwise the last candle's `valueEnd` collapses to "main asset
-      // only", producing a spurious red candle when the rest of the
-      // series included folded source holdings.
       ...(key.extraScopes && key.extraScopes.length > 0
         ? { extraScopes: key.extraScopes }
         : {}),

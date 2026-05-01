@@ -407,10 +407,10 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
           "initialDate": "2026-04-11",
           "points": [
             {
-              "from": 6700,
-              "hi": 7500,
-              "lo": 6700,
-              "to": 7500,
+              "from": 9300,
+              "hi": 10500,
+              "lo": 9300,
+              "to": 10500,
               "x0": 0,
               "x1": 7,
             },
@@ -418,18 +418,26 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
         },
         "percentGain": 1.9577464788732395,
         "timeseries": {
-          "initialDate": "2026-04-15",
+          "initialDate": "2026-04-14",
           "points": [
             {
               "x": 0,
+              "y": 9300,
+            },
+            {
+              "x": 1,
               "y": 9650,
             },
             {
               "x": 2,
-              "y": 10150,
+              "y": 9900,
             },
             {
               "x": 3,
+              "y": 10150,
+            },
+            {
+              "x": 4,
               "y": 10500,
             },
           ],

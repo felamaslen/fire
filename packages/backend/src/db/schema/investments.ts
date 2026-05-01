@@ -9,7 +9,6 @@ import {
   jsonb,
   numeric,
   pgTable,
-  pgView,
   primaryKey,
   text,
   timestamp,
@@ -377,70 +376,64 @@ export const investmentAllocationsRelations = relations(
   }),
 );
 
-/** Daily portfolio value per wrapper, per currency. One row per `(currency, assetId, date)` triple, covering every day from the earliest price-quote date through the latest. `amount` is the sum over all investments held in that wrapper of `units_held_on_day * last_known_price_on_or_before_day`, in fractional units of `currency`. Dates with no known price for an investment forward-fill from the most recent quote. */
-export const InvestmentPortfolioDailyBreakdown = pgView(
-  "InvestmentPortfolioDailyBreakdown",
+/** Pre-aggregated end-of-day value of a single investment within a single wrapper. One row per `(investmentId, assetId, date)`, with `date` ranging from the wrapper's first transaction in that investment to the latest "interesting" date for the investment (`max(last tx date, last InvestmentPrices.date)`). Drives `Portfolio.timeseries` and `Portfolio.candlestick` — the resolver range-scans this table instead of recomputing daily totals from scratch on every read. Maintained by `InvestmentValuePoints_refresh_fn(uuid[], date)` and the per-table triggers added in this migration; never written from application code.
+ *
+ * Rows are only inserted when the value is *known*: either `units = 0` (with `value = 0`, an explicit "nothing held" point so the chart drops to zero after a sold-out wrapper rather than forward-filling the last non-zero value forever) or `units != 0` AND a price ≤ `date` exists for the investment (with `value = round(units * priceAdjusted)`). Days where `units != 0` but no price has been recorded yet are skipped — the value is unknown, not zero. */
+export const InvestmentValuePoints = pgTable(
+  "InvestmentValuePoints",
   {
-    currency: currencyCode("currency").notNull(),
-    assetId: uuid("assetId").notNull(),
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    investmentId: uuid("investmentId")
+      .notNull()
+      .references(() => Investments.id, { onDelete: "cascade" }),
+    assetId: uuid("assetId")
+      .notNull()
+      .references(() => NetWorthCategoryAssets.id, { onDelete: "cascade" }),
     date: date("date", { mode: "date" }).notNull(),
-    amount: doublePrecision("amount").notNull(),
+    /** Split-adjusted units held in this wrapper as of `date` end-of-day. May be negative when sells in this wrapper exceed buys of the same investment (e.g. a manual cross-wrapper rebalance booked as separate sells / buys without an `InvestmentTransfers` row) — the resolver sums these slices into a portfolio total that nets to the correct number. */
+    units: doublePrecision("units").notNull(),
+    /** `round(units * InvestmentPrices.priceAdjusted)` evaluated at the latest price ≤ `date`, in fractional units of `currency` (e.g. pence for `GBP`). `0` when `units = 0`. */
+    value: bigint("value", { mode: "number" }).notNull(),
+    /** Snapshot of `Investments.currency` denormalised into the row so the resolver can filter by currency without joining `Investments`. */
+    currency: currencyCode("currency").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-).as(
-  sql`
-    WITH
-      "priceRange" AS (
-        SELECT MIN(date) AS "startDate", MAX(date) AS "endDate"
-        FROM "InvestmentPrices"
-      ),
-      days AS (
-        SELECT generate_series("startDate", "endDate", '1 day'::interval)::date AS date
-        FROM "priceRange"
-        WHERE "startDate" IS NOT NULL
-      ),
-      holdings AS (
-        SELECT DISTINCT "assetId", "investmentId"
-        FROM "InvestmentTransactions"
-      ),
-      "unitsByDay" AS (
-        SELECT
-          h."assetId",
-          h."investmentId",
-          d.date,
-          COALESCE(
-            (SELECT SUM(t.units)
-             FROM "InvestmentTransactions" t
-             WHERE t."assetId" = h."assetId"
-               AND t."investmentId" = h."investmentId"
-               AND t.date <= d.date),
-            0
-          ) AS units
-        FROM holdings h
-        CROSS JOIN days d
-      ),
-      "priceByDay" AS (
-        SELECT
-          h."investmentId",
-          d.date,
-          (SELECT p.price
-           FROM "InvestmentPrices" p
-           WHERE p."investmentId" = h."investmentId" AND p.date <= d.date
-           ORDER BY p.date DESC
-           LIMIT 1) AS price
-        FROM (SELECT DISTINCT "investmentId" FROM holdings) h
-        CROSS JOIN days d
-      )
-    SELECT
-      i.currency,
-      u."assetId",
-      u.date,
-      SUM(u.units * p.price) AS amount
-    FROM "unitsByDay" u
-    JOIN "Investments" i ON i.id = u."investmentId"
-    JOIN "priceByDay" p ON p."investmentId" = u."investmentId" AND p.date = u.date
-    WHERE p.price IS NOT NULL AND u.units <> 0
-    GROUP BY i.currency, u."assetId", u.date
-  `,
+  (t) => [
+    uniqueIndex("InvestmentValuePoints_investmentId_assetId_date_uq").on(
+      t.investmentId,
+      t.assetId,
+      t.date,
+    ),
+    // Read patterns: Portfolio.timeseries / candlestick filter by either
+    // assetId (per-wrapper chart) or investmentId (per-stock chart), then
+    // range-scan by date.
+    index("InvestmentValuePoints_assetId_date_idx").on(t.assetId, t.date),
+    index("InvestmentValuePoints_investmentId_date_idx").on(
+      t.investmentId,
+      t.date,
+    ),
+  ],
+);
+
+export const investmentValuePointsRelations = relations(
+  InvestmentValuePoints,
+  ({ one }) => ({
+    investment: one(Investments, {
+      fields: [InvestmentValuePoints.investmentId],
+      references: [Investments.id],
+    }),
+    asset: one(NetWorthCategoryAssets, {
+      fields: [InvestmentValuePoints.assetId],
+      references: [NetWorthCategoryAssets.id],
+    }),
+  }),
 );
 
 // The function bodies below match the migration text byte-for-byte — Postgres
@@ -601,6 +594,278 @@ export const InvestmentStockSplits_recomputePrices_trg = pgCustomSQL(
     CREATE TRIGGER "InvestmentStockSplits_recomputePrices_trg"
     AFTER INSERT OR UPDATE OR DELETE ON "InvestmentStockSplits"
     FOR EACH ROW EXECUTE FUNCTION "InvestmentStockSplits_recomputePrices_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Refreshes \`InvestmentValuePoints\` rows for the given investments from \`p_from_date\` onward (or the entire history if \`p_from_date IS NULL\`). Deletes existing rows in scope then re-inserts one per \`(investmentId, assetId, date)\` from \`max(first tx date, p_from_date)\` through the investment's latest "interesting" date (\`max(last tx, last InvestmentPrices.date)\`).
+ *
+ * Rows are only inserted when the value is *known*: either \`units = 0\` (with \`value = 0\`) or \`units != 0\` AND a price ≤ that day exists for the investment. Days where \`units != 0\` but no price has been recorded yet are skipped.
+ *
+ * Reads \`InvestmentPrices.priceAdjusted\` directly (kept fresh by \`InvestmentPrices_setAdjusted_trg\` / \`InvestmentStockSplits_recomputePrices_trg\` — both fire before this on the same statement) and applies the same \`EXP(SUM(LN(ratio)))\` split-multiplier to units that \`loadInvestmentStats\` does.
+ *
+ * Idempotent for the same \`(p_ids, p_from_date)\` — calling repeatedly produces the same rows. */
+// prettier-ignore
+export const InvestmentValuePoints_refresh_fn = pgCustomSQL(
+  sql`CREATE FUNCTION "InvestmentValuePoints_refresh_fn"(p_ids uuid[], p_from_date date DEFAULT NULL) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF cardinality(p_ids) = 0 THEN
+    RETURN;
+  END IF;
+
+  IF p_from_date IS NULL THEN
+    DELETE FROM "InvestmentValuePoints" WHERE "investmentId" = ANY(p_ids);
+  ELSE
+    DELETE FROM "InvestmentValuePoints"
+     WHERE "investmentId" = ANY(p_ids)
+       AND date >= p_from_date;
+  END IF;
+
+  INSERT INTO "InvestmentValuePoints"
+    ("investmentId", "assetId", "date", "units", "value", "currency")
+  WITH
+    -- Per (investmentId, assetId): the date band to materialise.
+    --
+    -- first_date is the earliest day we re-insert for. It's clamped so we
+    -- never insert rows for dates the caller asked us not to touch
+    -- (>= p_from_date), but ALSO clamped so that if the new write extends
+    -- the IVP series past the previously-materialised last_date, the gap
+    -- between the surviving max IVP date and p_from_date gets filled in.
+    -- Without this clamp, inserting a price that pushes last_date into a
+    -- previously-unmaterialised future would leave the days between the
+    -- old last_date and the new price absent from IVP.
+    --
+    -- last_date is max(latest tx, latest price) so days after the last
+    -- "interesting" event aren't materialised (charts forward-fill).
+    scope AS (
+      SELECT
+        t."investmentId",
+        t."assetId",
+        i.currency,
+        GREATEST(
+          MIN(t.date),
+          LEAST(
+            COALESCE(p_from_date, '0001-01-01'::date),
+            COALESCE(
+              (SELECT MAX(ivp.date) + 1
+               FROM "InvestmentValuePoints" ivp
+               WHERE ivp."investmentId" = t."investmentId"
+                 AND ivp."assetId" = t."assetId"),
+              '0001-01-01'::date
+            )
+          )
+        ) AS first_date,
+        GREATEST(
+          MAX(t.date),
+          (SELECT MAX(p.date) FROM "InvestmentPrices" p
+            WHERE p."investmentId" = t."investmentId")
+        ) AS last_date
+      FROM "InvestmentTransactions" t
+      INNER JOIN "Investments" i ON i.id = t."investmentId"
+      WHERE t."investmentId" = ANY(p_ids)
+      GROUP BY t."investmentId", t."assetId", i.currency
+    ),
+    days AS (
+      SELECT s."investmentId", s."assetId", s.currency, gs::date AS date
+      FROM scope s,
+           generate_series(s.first_date, s.last_date, '1 day'::interval) gs
+      WHERE s.first_date <= s.last_date
+    ),
+    -- Split-adjusted units cumulative through each day. Same shape as
+    -- the tx_adj CTE in loadInvestmentStats — keep the ROUND(..., 6) so
+    -- floating-point drift in EXP(SUM(LN(...))) doesn't surface as
+    -- non-integer unit counts.
+    units_per_day AS (
+      SELECT
+        d."investmentId", d."assetId", d.currency, d.date,
+        COALESCE(SUM(
+          ROUND((t.units * COALESCE(
+            EXP((SELECT SUM(LN(s.ratio::double precision))
+                 FROM "InvestmentStockSplits" s
+                 WHERE s."investmentId" = t."investmentId"
+                   AND s.date > t.date)),
+            1
+          ))::numeric, 6)
+        ), 0)::double precision AS units
+      FROM days d
+      LEFT JOIN "InvestmentTransactions" t
+        ON t."investmentId" = d."investmentId"
+       AND t."assetId" = d."assetId"
+       AND t.date <= d.date
+      GROUP BY d."investmentId", d."assetId", d.currency, d.date
+    ),
+    -- Latest price ≤ d.date per investment. The (investmentId, date)
+    -- unique index serves the ORDER BY DESC LIMIT 1 lookup directly.
+    price_per_day AS (
+      SELECT u.*,
+             (SELECT p."priceAdjusted"
+              FROM "InvestmentPrices" p
+              WHERE p."investmentId" = u."investmentId"
+                AND p.date <= u.date
+              ORDER BY p.date DESC
+              LIMIT 1) AS price_adj
+      FROM units_per_day u
+    )
+  SELECT
+    "investmentId", "assetId", date, units,
+    CASE
+      WHEN units = 0 THEN 0::bigint
+      ELSE ROUND(units * price_adj)::bigint
+    END AS "value",
+    currency
+  FROM price_per_day
+  WHERE units = 0 OR price_adj IS NOT NULL;
+END;
+$$;`,
+  { priority: 2 },
+);
+
+/** Per-statement trigger function shared by every \`refreshValuePoints_*_trg\` on \`InvestmentTransactions\`, \`InvestmentPrices\`, and \`InvestmentStockSplits\`. Gathers the affected \`investmentId\`s and the earliest changed \`date\` from the transition tables (only \`InvestmentTransactions\` and \`InvestmentPrices\` have a \`date\` column — splits force a full refresh because their multiplier reaches every historic row), then delegates to \`InvestmentValuePoints_refresh_fn\`.
+ *
+ * The \`pg_trigger_depth() > 1\` guard prevents re-entry: \`refresh_fn\` writes to \`InvestmentValuePoints\` (no triggers of its own), but the existing \`InvestmentStockSplits_recomputePrices_trg\` fires UPDATEs on \`InvestmentPrices\` from inside its own AFTER trigger — those updates would otherwise re-fire \`InvestmentPrices_refreshValuePoints_upd_trg\` mid-recompute. */
+// prettier-ignore
+export const InvestmentValuePoints_refreshFromTrigger_fn = pgCustomSQL(
+  sql`CREATE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  affected uuid[] := ARRAY[]::uuid[];
+  from_date date := NULL;
+BEGIN
+  IF pg_trigger_depth() > 1 THEN
+    RETURN NULL;
+  END IF;
+
+  -- Splits change every historic priceAdjusted and every historic
+  -- adjUnits multiplier — leave from_date NULL so refresh_fn rebuilds
+  -- the entire history for the affected investments. For Tx/Prices we
+  -- gather MIN(date) across both transition tables; that's the earliest
+  -- date whose IVP row could possibly change.
+  IF TG_TABLE_NAME = 'InvestmentStockSplits' THEN
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+      affected := affected || ARRAY(SELECT DISTINCT "investmentId" FROM new_rows);
+    END IF;
+    IF TG_OP IN ('DELETE', 'UPDATE') THEN
+      affected := affected || ARRAY(SELECT DISTINCT "investmentId" FROM old_rows);
+    END IF;
+  ELSE
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+      affected := affected || ARRAY(SELECT DISTINCT "investmentId" FROM new_rows);
+      from_date := LEAST(from_date, (SELECT MIN(date) FROM new_rows));
+    END IF;
+    IF TG_OP IN ('DELETE', 'UPDATE') THEN
+      affected := affected || ARRAY(SELECT DISTINCT "investmentId" FROM old_rows);
+      from_date := LEAST(from_date, (SELECT MIN(date) FROM old_rows));
+    END IF;
+  END IF;
+
+  IF cardinality(affected) = 0 THEN
+    RETURN NULL;
+  END IF;
+
+  PERFORM "InvestmentValuePoints_refresh_fn"(
+    ARRAY(SELECT DISTINCT unnest(affected)),
+    from_date
+  );
+  RETURN NULL;
+END;
+$$;`,
+  { priority: 2 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER INSERT\` on \`InvestmentTransactions\`. */
+export const InvestmentTransactions_refreshValuePoints_ins_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentTransactions_refreshValuePoints_ins_trg"
+    AFTER INSERT ON "InvestmentTransactions"
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER UPDATE\` on \`InvestmentTransactions\`. */
+export const InvestmentTransactions_refreshValuePoints_upd_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentTransactions_refreshValuePoints_upd_trg"
+    AFTER UPDATE ON "InvestmentTransactions"
+    REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER DELETE\` on \`InvestmentTransactions\`. */
+export const InvestmentTransactions_refreshValuePoints_del_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentTransactions_refreshValuePoints_del_trg"
+    AFTER DELETE ON "InvestmentTransactions"
+    REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER INSERT\` on \`InvestmentPrices\`. Fires after the BEFORE \`setAdjusted_trg\` (which mutates \`NEW.priceAdjusted\`) by virtue of being AFTER, so the refresh reads the up-to-date adjusted prices. */
+export const InvestmentPrices_refreshValuePoints_ins_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentPrices_refreshValuePoints_ins_trg"
+    AFTER INSERT ON "InvestmentPrices"
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER UPDATE\` on \`InvestmentPrices\`. */
+export const InvestmentPrices_refreshValuePoints_upd_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentPrices_refreshValuePoints_upd_trg"
+    AFTER UPDATE ON "InvestmentPrices"
+    REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER DELETE\` on \`InvestmentPrices\`. */
+export const InvestmentPrices_refreshValuePoints_del_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentPrices_refreshValuePoints_del_trg"
+    AFTER DELETE ON "InvestmentPrices"
+    REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER INSERT\` on \`InvestmentStockSplits\`. Sorts alphabetically after the existing \`InvestmentStockSplits_recomputePrices_trg\` (\`r,e,c\` < \`r,e,f\`), so by the time we read \`priceAdjusted\` it has already been re-multiplied for the new split. */
+export const InvestmentStockSplits_refreshValuePoints_ins_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentStockSplits_refreshValuePoints_ins_trg"
+    AFTER INSERT ON "InvestmentStockSplits"
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER UPDATE\` on \`InvestmentStockSplits\`. */
+export const InvestmentStockSplits_refreshValuePoints_upd_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentStockSplits_refreshValuePoints_upd_trg"
+    AFTER UPDATE ON "InvestmentStockSplits"
+    REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
+  `,
+  { priority: 3 },
+);
+
+/** Wires \`InvestmentValuePoints_refreshFromTrigger_fn\` to \`AFTER DELETE\` on \`InvestmentStockSplits\`. */
+export const InvestmentStockSplits_refreshValuePoints_del_trg = pgCustomSQL(
+  sql`
+    CREATE TRIGGER "InvestmentStockSplits_refreshValuePoints_del_trg"
+    AFTER DELETE ON "InvestmentStockSplits"
+    REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION "InvestmentValuePoints_refreshFromTrigger_fn"();
   `,
   { priority: 3 },
 );
