@@ -436,6 +436,12 @@ export const investmentValuePointsRelations = relations(
   }),
 );
 
+/** `InvestmentValuePoints` is a derived cache fully rebuildable from `InvestmentTransactions`, `InvestmentPrices`, and `InvestmentStockSplits` via `InvestmentValuePoints_refresh_fn`. Exclude it from the WAL — losing rows on crash is fine, the triggers (or a manual full refresh) regenerate them. */
+export const InvestmentValuePoints_unlogged = pgCustomSQL(
+  sql`ALTER TABLE "InvestmentValuePoints" SET UNLOGGED;`,
+  { priority: 1 },
+);
+
 // The function bodies below match the migration text byte-for-byte — Postgres
 // stores the body between the `$$` markers verbatim in `pg_proc.prosrc`, so
 // any whitespace difference between the migrated and the schema.sql versions

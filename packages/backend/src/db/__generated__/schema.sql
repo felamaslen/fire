@@ -774,6 +774,10 @@ CREATE FUNCTION "InvestmentPrices_computeAdjusted" (
   );
 $$;
 
+ALTER TABLE "InvestmentValuePoints"
+SET
+  UNLOGGED;
+
 ALTER TABLE "PlanningAccounts"
 ADD CONSTRAINT "PlanningAccounts_sortOrder_uq" UNIQUE ("sortOrder") DEFERRABLE INITIALLY DEFERRED;
 
