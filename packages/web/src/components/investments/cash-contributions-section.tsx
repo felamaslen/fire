@@ -251,7 +251,7 @@ export function CashContributionsSection({ assetId }: { assetId: string }) {
 
   return (
     <section className="rounded-lg border bg-card p-4">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="text-base font-semibold">Cash contributions</h2>
           <p className="text-xs text-muted-foreground">
@@ -259,7 +259,7 @@ export function CashContributionsSection({ assetId }: { assetId: string }) {
             {cash ? formatAccountingMoney(cash.currency, cash.amount) : "—"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
             <Wallet className="mr-1 h-4 w-4" />
             Manage cash deposits

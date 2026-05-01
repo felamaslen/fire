@@ -2592,7 +2592,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 totalGain: {
-                    description: "Total return (realised + unrealised) on the held positions \u2014 `(totalValue \u2212 cash) \u2212 totalCost`. Excludes the cash float so freshly-deposited funds don't read as a gain.",
+                    description: "Total return (realised + unrealised) on the held positions \u2014 `totalValue \u2212 totalCost`. `totalValue` already excludes cash, so freshly-deposited funds don't read as a gain.",
                     name: "totalGain",
                     type: MoneyType,
                     resolve(source, _args, context) {
@@ -2600,7 +2600,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 totalValue: {
-                    description: "Current market value of the filtered portfolio \u2014 the today-price value of units currently held plus uninvested cash held in the wrapper(s). Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate \u2014 matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.",
+                    description: "Current market value of the held positions in the filtered portfolio \u2014 `\u03A3 unitsHeld_in_filter \u00D7 priceLatest_investment`. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) \u2014 a holdings + cash combined number conflates investment performance with deposit timing.",
                     name: "totalValue",
                     type: MoneyType,
                     resolve(source, _args, context) {

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Figure, FigureDocument } from "@/components/figure";
 import { cn } from "@/lib/cn";
+import { formatAccountingMoney } from "@/lib/format";
 
 import { graphql, readFragment } from "../../graphql";
 
@@ -13,6 +14,10 @@ export const PortfolioHeadlineFragment = graphql(
       currency
       totalValue {
         ...Figure
+      }
+      cash {
+        amount
+        currency
       }
       totalGain {
         amount
@@ -178,7 +183,15 @@ export function PortfolioHeadline({
 
   return (
     <section className="flex flex-col gap-y-1 rounded-md border px-2 py-1 text-xs sm:flex-row sm:flex-wrap sm:gap-x-6 sm:gap-y-2 sm:px-4 sm:py-2 sm:text-sm">
-      <Stat label="Value">
+      <Stat
+        label="Value"
+        sub={
+          portfolio?.cash && portfolio.cash.amount > 0
+            ? `+ ${formatAccountingMoney(portfolio.cash.currency, portfolio.cash.amount)} cash`
+            : null
+        }
+        subMuted
+      >
         {portfolio?.totalValue ? <Figure data={portfolio.totalValue} /> : "—"}
       </Stat>
       <Stat
@@ -225,12 +238,15 @@ function signColor(amount: number | null | undefined): string {
 function Stat({
   label,
   sub,
+  subMuted,
   flash,
   colorSign,
   children,
 }: {
   label: string;
   sub?: string | null;
+  /** When `true`, render `sub` in the muted-foreground colour rather than tracking the parent's gain/loss colour. Used for the cash sub-line on `Value`, where the cash float doesn't have a sign-coloured meaning. */
+  subMuted?: boolean;
   flash?: FlashDirection;
   colorSign?: number | null;
   children: React.ReactNode;
@@ -249,7 +265,12 @@ function Stat({
         {children}
       </span>
       {sub ? (
-        <span className={cn("text-xs tabular-nums", signColor(colorSign))}>
+        <span
+          className={cn(
+            "text-xs tabular-nums",
+            subMuted ? "text-muted-foreground" : signColor(colorSign),
+          )}
+        >
           {sub}
         </span>
       ) : null}

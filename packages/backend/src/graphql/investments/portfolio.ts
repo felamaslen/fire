@@ -327,13 +327,10 @@ export class Portfolio {
     return Investment.load(row);
   }
 
-  /** Current market value of the filtered portfolio — the today-price value of units currently held plus uninvested cash held in the wrapper(s). Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline. @gqlField */
+  /** Current market value of the held positions in the filtered portfolio — `Σ unitsHeld_in_filter × priceLatest_investment`. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) — a holdings + cash combined number conflates investment performance with deposit timing. @gqlField */
   async totalValue(ctx: Context): Promise<Money | null> {
-    const [invested, cash] = await Promise.all([
-      this.totalInvestedMinor(ctx),
-      this.cashMinor(ctx),
-    ]);
-    return Money.fromMinorDenomination(invested + cash, this.currency);
+    const invested = await this.totalInvestedMinor(ctx);
+    return Money.fromMinorDenomination(invested, this.currency);
   }
 
   /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. A transferred-into wrapper folds in each source's pre-transfer cash flows. */
@@ -376,7 +373,7 @@ export class Portfolio {
     return Money.fromMinorDenomination(total, this.currency);
   }
 
-  /** Total return (realised + unrealised) on the held positions — `(totalValue − cash) − totalCost`. Excludes the cash float so freshly-deposited funds don't read as a gain. @gqlField */
+  /** Total return (realised + unrealised) on the held positions — `totalValue − totalCost`. `totalValue` already excludes cash, so freshly-deposited funds don't read as a gain. @gqlField */
   async totalGain(ctx: Context): Promise<Money | null> {
     const invested = await this.totalInvestedMinor(ctx);
     const cost = await this.totalCost(ctx);

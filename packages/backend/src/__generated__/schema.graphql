@@ -2276,11 +2276,11 @@ type Portfolio {
   """
   totalCost: Money!
   """
-  Total return (realised + unrealised) on the held positions — `(totalValue − cash) − totalCost`. Excludes the cash float so freshly-deposited funds don't read as a gain.
+  Total return (realised + unrealised) on the held positions — `totalValue − totalCost`. `totalValue` already excludes cash, so freshly-deposited funds don't read as a gain.
   """
   totalGain: Money
   """
-  Current market value of the filtered portfolio — the today-price value of units currently held plus uninvested cash held in the wrapper(s). Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price (neither a live quote nor any `InvestmentPrices` row) contribute zero rather than nulling the whole aggregate — matches the `timeseries` / `dailyGain*` fields' graceful-degradation behaviour so a single stale or unresolvable ticker doesn't wipe the headline.
+  Current market value of the held positions in the filtered portfolio — `Σ unitsHeld_in_filter × priceLatest_investment`. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) — a holdings + cash combined number conflates investment performance with deposit timing.
   """
   totalValue: Money
   """

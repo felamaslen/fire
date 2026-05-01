@@ -83,9 +83,6 @@ export const AllocationsSectionPortfolioFragment = graphql(`
   }
 `);
 
-const CASH_SEGMENT_ID = "__cash__";
-const CASH_SEGMENT_COLOR = "#9ca3af";
-
 const AllocationsSectionDocument = graphql(
   `
     query AllocationsSection($first: Int, $filterAssetIdIn: [ID!]) {
@@ -256,38 +253,21 @@ export function AllocationsSection({
     ? (allBuckets.find((b) => b.assetId === filterAssetId) ?? null)
     : null;
 
-  // ACTUAL segments come straight from the BE-computed per-investment fractions
-  // for the current filter. The server already excludes cash and renormalises
-  // over investments that contribute, so we only translate `Investment` →
-  // label / colour for rendering.
+  // ACTUAL segments come straight from the BE-computed per-investment
+  // fractions for the current filter. The server's `allocations` already sum
+  // to 1 over invested holdings; cash sits outside this bar (it's surfaced
+  // in the headline and the cash-contributions section instead).
   const actualSegments = useMemo<AllocationSegment[]>(() => {
     const portfolio = data?.portfolio
       ? readFragment(AllocationsSectionPortfolioFragment, data.portfolio)
       : null;
     const allocs = portfolio?.allocations ?? [];
-    const totalValue = portfolio?.totalValue?.amount ?? 0;
-    const cashValue = portfolio?.cash?.amount ?? 0;
-    // BE allocations sum to 1 over invested holdings (cash excluded). Rescale
-    // each by the invested share so cash can occupy its own segment without
-    // displacing the per-investment fractions' relative ordering.
-    const cashFraction =
-      totalValue > 0 ? Math.max(0, Math.min(1, cashValue / totalValue)) : 0;
-    const investedFraction = 1 - cashFraction;
-    const segments: AllocationSegment[] = allocs.map((a) => ({
+    return allocs.map((a) => ({
       id: a.investment.id,
       label: labelForInvestment(a.investment),
       color: colorForInvestment(a.investment),
-      value: a.fraction * investedFraction,
+      value: a.fraction,
     }));
-    if (cashFraction > 0) {
-      segments.push({
-        id: CASH_SEGMENT_ID,
-        label: "Available to invest",
-        color: CASH_SEGMENT_COLOR,
-        value: cashFraction,
-      });
-    }
-    return segments;
   }, [data]);
 
   // TARGET state — baseline comes from the selected wrapper's saved
@@ -319,23 +299,8 @@ export function AllocationsSection({
   // Mirror the actual bar's ordering (which the server returns by descending
   // fraction) so the two stacked bars line up segment-for-segment instead of
   // the editable bar reshuffling alphabetically.
-  // Cash is non-editable (it's a fact about the wrapper, not a target). Keep
-  // the cash segment's value as-is on the target bar; only investment
-  // segments mirror the draft, scaled into the invested portion.
-  const cashSegment = actualSegments.find((s) => s.id === CASH_SEGMENT_ID);
-  const investedSegments = actualSegments.filter(
-    (s) => s.id !== CASH_SEGMENT_ID,
-  );
-  const investedShareSum =
-    investedSegments.reduce((a, s) => a + s.value, 0) || 1;
   const targetSegments: AllocationSegment[] = bucket
-    ? [
-        ...investedSegments.map((s) => ({
-          ...s,
-          value: (draft.get(s.id) ?? 0) * investedShareSum,
-        })),
-        ...(cashSegment ? [cashSegment] : []),
-      ]
+    ? actualSegments.map((s) => ({ ...s, value: draft.get(s.id) ?? 0 }))
     : actualSegments;
 
   // Drag flow. The snapshot captures the pre-drag map so a sequence of small
@@ -395,8 +360,6 @@ export function AllocationsSection({
 
   const onBoundaryDrag = useCallback(
     (leftId: string, rightId: string) => {
-      if (leftId === CASH_SEGMENT_ID || rightId === CASH_SEGMENT_ID)
-        return null;
       return (
         fraction: number,
         phase: "start" | "move" | "end",

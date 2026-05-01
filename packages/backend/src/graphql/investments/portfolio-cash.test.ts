@@ -444,22 +444,19 @@ describe("Portfolio.cash", () => {
   });
 });
 
-describe("Portfolio.totalValue / totalGain include cash correctly", () => {
-  it("totalValue = held value + cash float", async () => {
+describe("Portfolio.totalValue / totalGain", () => {
+  it("totalValue = held value only (cash is surfaced separately via Portfolio.cash)", async () => {
     const isa = await createStockAsset("ISA");
     const aapl = await createStock("Apple", "AAPL");
-    // Seed enough deposit that the cash float stays positive — otherwise
-    // the floor at zero hides the trade math we're trying to verify lands
-    // in totalValue.
     await recordDeposit(isa, 100, "Funding");
     await buy(aapl, isa, 10, 5); // £50 in
     await setPrice(aapl, 600); // 6.00/share
     await recordDeposit(isa, 25, "Dividend");
 
     const p = await queryPortfolio([isa]);
-    // Held: 10 × 6 = 60. Cash float: 100 (funding) + 25 (dividend) - 50
-    // (buy) = 75. Total: 135.
-    expect(p.totalValue?.amount).toBe(60 + 75);
+    // Held: 10 × 6 = 60. Cash float: 100 + 25 - 50 = 75 — exposed via
+    // `cash`, not folded into `totalValue`.
+    expect(p.totalValue?.amount).toBe(60);
     expect(p.cash.amount).toBe(75);
   });
 
@@ -474,7 +471,6 @@ describe("Portfolio.totalValue / totalGain include cash correctly", () => {
     expect(p.totalCost.amount).toBe(50);
     expect(p.totalGain?.amount).toBe(20);
     expect(p.percentGain).toBeCloseTo(0.4, 5);
-    // Cash still surfaces in totalValue, just not in the gain.
-    expect(p.totalValue?.amount).toBe(70 + (1000 - 50));
+    expect(p.totalValue?.amount).toBe(70);
   });
 });
