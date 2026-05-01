@@ -14,6 +14,7 @@ import {
 import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
 
+import { HOME_CURRENCY } from "@/config";
 import { db, runInTransaction } from "@/db";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
@@ -30,6 +31,7 @@ import {
   encodeCursor,
 } from "../pagination";
 import { VOID, type Void } from "../void";
+import { loadAssetSoldOutCaps } from "./portfolio";
 import {
   InvestmentPosition,
   InvestmentWrapper,
@@ -94,11 +96,22 @@ async function effectiveAssetFilter(
       extras.push({ assetId: t.assetIdFrom, dateCap: cap });
     }
   }
+  // Per-asset "defunct cap": outgoing transfer (cap = transferDate − 1)
+  // or a fully sold-out wrapper (every position netted to zero, cap =
+  // lastTxDate − 1). When every effective asset has a cap, freeze the
+  // request at the latest such date.
+  const soldOutCaps = await loadAssetSoldOutCaps(effective, HOME_CURRENCY);
   let dateCap: string | null = null;
-  if (effective.length === 1) {
-    const idx = filterAssetIdIn.indexOf(effective[0] as ID);
-    const t = outgoing[idx];
-    if (t) dateCap = dayBefore(t.date);
+  if (effective.length >= 1) {
+    const caps = effective.flatMap((id) => {
+      const t = outgoing[filterAssetIdIn.indexOf(id as ID)];
+      if (t) return [dayBefore(t.date)];
+      const sold = soldOutCaps.get(id);
+      return sold ? [sold] : [];
+    });
+    if (caps.length === effective.length) {
+      dateCap = caps.reduce((acc, d) => (d > acc ? d : acc));
+    }
   }
   return { effectiveAssetIds: effective, extraScopes: extras, dateCap };
 }

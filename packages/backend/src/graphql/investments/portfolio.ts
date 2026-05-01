@@ -122,6 +122,65 @@ type EffectiveFilter = {
   dateCap: string | null;
 };
 
+/** Per-asset cap for wrappers that have been wound down — every `(investmentId)` position now nets to zero. The cap lands one day before the *first sell of the closing sell-down sequence* (i.e. the earliest sell that comes after the last buy in the wrapper), not just one day before the final closing tx. That way the last chart bucket shows the wrapper at its pre-wind-down value rather than partway through the closing sells. Wrappers with at least one open position aren't returned. */
+export async function loadAssetSoldOutCaps(
+  assetIds: readonly string[],
+  currency: string,
+): Promise<Map<string, string>> {
+  if (assetIds.length === 0) return new Map();
+  const rows = await db.execute<{ assetId: string; capDate: string }>(sql`
+    WITH tx_adj AS (
+      SELECT
+        "InvestmentTransactions"."assetId",
+        "InvestmentTransactions"."investmentId",
+        "InvestmentTransactions".date,
+        "InvestmentTransactions".units AS units_raw,
+        "InvestmentTransactions".units * COALESCE(EXP((
+          SELECT SUM(LN(s.ratio))
+          FROM "InvestmentStockSplits" s
+          WHERE s."investmentId" = "InvestmentTransactions"."investmentId"
+            AND s.date > "InvestmentTransactions".date
+        )), 1) AS adj_units
+      FROM "InvestmentTransactions"
+      WHERE ${inArray(InvestmentTransactions.assetId, [...assetIds])}
+        AND "InvestmentTransactions".currency = ${currency}
+    ),
+    per_pos AS (
+      SELECT "assetId", "investmentId", SUM(adj_units) AS net
+      FROM tx_adj
+      GROUP BY "assetId", "investmentId"
+    ),
+    sold_out AS (
+      SELECT "assetId"
+      FROM per_pos
+      GROUP BY "assetId"
+      HAVING BOOL_AND(ABS(net) < 1e-9)
+    ),
+    last_buy AS (
+      SELECT "assetId", MAX(date) AS d
+      FROM tx_adj
+      WHERE units_raw > 0
+      GROUP BY "assetId"
+    )
+    SELECT
+      s."assetId" AS "assetId",
+      ((
+        SELECT MIN(t.date)
+        FROM tx_adj t
+        WHERE t."assetId" = s."assetId"
+          AND t.units_raw < 0
+          AND (lb.d IS NULL OR t.date > lb.d)
+      ) - INTERVAL '1 day')::date::text AS "capDate"
+    FROM sold_out s
+    LEFT JOIN last_buy lb ON lb."assetId" = s."assetId"
+  `);
+  const out = new Map<string, string>();
+  for (const r of rows.rows ?? rows) {
+    if (r.capDate) out.set(r.assetId, r.capDate);
+  }
+  return out;
+}
+
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
   private effectiveFilterPromise: Promise<EffectiveFilter> | null = null;
@@ -182,14 +241,27 @@ export class Portfolio {
           );
         }),
       );
-      // Single-asset-effective with an outgoing transfer (whose destination
-      // is by construction *not* in the filter — otherwise the asset would
-      // have been dropped above) freezes at the day before the transfer.
+      // Per-asset "defunct cap": either an outgoing transfer (cap =
+      // transferDate − 1, by construction the destination isn't in the
+      // filter) or an entirely sold-out wrapper (every position netted to
+      // zero). When *every* effective asset has a cap, freeze the chart at
+      // the latest such date so it ends on the last day with non-zero
+      // holdings instead of dragging zero candles to today.
+      const soldOutCaps = await loadAssetSoldOutCaps(effective, this.currency);
+      const perAssetCap = (assetId: string): string | null => {
+        const t = outgoing[filter.indexOf(assetId)];
+        if (t) return dayBefore(t.date);
+        return soldOutCaps.get(assetId) ?? null;
+      };
       let dateCap: string | null = null;
-      if (effective.length === 1) {
-        const idx = filter.indexOf(effective[0]);
-        const t = outgoing[idx];
-        if (t) dateCap = dayBefore(t.date);
+      if (effective.length >= 1) {
+        const caps = effective.flatMap((id) => {
+          const c = perAssetCap(id);
+          return c ? [c] : [];
+        });
+        if (caps.length === effective.length) {
+          dateCap = caps.reduce((acc, d) => (d > acc ? d : acc));
+        }
       }
       return { effectiveAssetIds: effective, extrasByAsset, dateCap };
     })();

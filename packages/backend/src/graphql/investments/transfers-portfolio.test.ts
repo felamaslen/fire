@@ -864,6 +864,80 @@ describe("Portfolio multi-asset transfer fold", () => {
     expect(last.to).toBe(2000);
   });
 
+  it("freezes a fully sold-out wrapper at the day before its last sell (no formal transfer needed)", async () => {
+    const assetId = await createAsset("Closed ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // Buy 100, sell 100 — wrapper is empty after the closing sell. No
+    // `InvestmentTransfers` row, so the existing transferOut path doesn't
+    // freeze it; the sold-out detection must.
+    await buy(inv, assetId, "2025-01-15", 100, 10);
+    await buy(inv, assetId, "2025-04-01", -100, 12);
+    await setPrice(inv, "2025-01-15", 1000);
+    await setPrice(inv, "2025-03-15", 1500); // < first closing sell
+    await setPrice(inv, "2025-09-01", 9999); // post-sell — must NOT win
+
+    // Last buy = 2025-01-15. First sell after = 2025-04-01. dateCap =
+    // 2025-04-01 − 1 = 2025-03-31. Most recent price ≤ that date is £15.
+    // Held units at the cap = 100. 100 × £15 = £1500.
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [assetId],
+    });
+    expect(data.portfolio?.totalValue?.amount).toBe(1500);
+  });
+
+  it("freezes a sold-out wrapper before the *first* sell of a multi-sell wind-down (not just the last)", async () => {
+    const assetId = await createAsset("Closed ISA");
+    const a = await createStock("Acme", "ACME.L");
+    const b = await createStock("Beta", "BETA.L");
+    // Two positions, each independently sold to zero across separate
+    // dates. The closing sell-down starts on 2025-04-01; the wrapper
+    // hits zero only on 2025-05-01. The cap should be 2025-03-31 (a day
+    // before the first closing sell) — *not* 2025-04-30 (a day before
+    // the wrapper-empties date) — so the last bucket doesn't span the
+    // partial wind-down.
+    await buy(a, assetId, "2025-01-15", 100, 10);
+    await buy(b, assetId, "2025-02-01", 50, 20);
+    await buy(a, assetId, "2025-04-01", -100, 12); // first closing sell
+    await buy(b, assetId, "2025-05-01", -50, 25);
+    await setPrice(a, "2025-03-31", 1500);
+    await setPrice(b, "2025-03-31", 2200);
+    await setPrice(a, "2025-09-01", 9999);
+    await setPrice(b, "2025-09-01", 9999);
+
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [assetId],
+    });
+    // 100 × £15 + 50 × £22 = 1500 + 1100 = 2600.
+    expect(data.portfolio?.totalValue?.amount).toBe(2600);
+  });
+
+  it("freezes at the latest transfer date when every selected wrapper is defunct", async () => {
+    const src1 = await createAsset("Old A");
+    const dst1 = await createAsset("New A");
+    const src2 = await createAsset("Old B");
+    const dst2 = await createAsset("New B");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, src1, "2025-01-15", 100, 10);
+    await buy(inv, src2, "2025-01-15", 50, 10);
+    // Cached prices either side of both transfers.
+    await setPrice(inv, "2025-01-15", 1000);
+    await setPrice(inv, "2025-04-01", 1500); // < src1 transfer
+    await setPrice(inv, "2025-06-01", 1800); // < src2 transfer
+    await setPrice(inv, "2025-09-01", 2500); // > both transfers — must NOT win
+    await createTransferOut(src1, dst1, "2025-04-15");
+    await createTransferOut(src2, dst2, "2025-06-15");
+
+    // Both [src1, src2] are defunct (their destinations dst1, dst2 are
+    // *not* in the filter), so the combined view freezes at the latest
+    // transfer date - 1 = 2025-06-14. The most recent price ≤ that date
+    // is £18, NOT the post-transfer £25. Held units = 100 + 50 = 150 →
+    // 150 × £18 = £2700.
+    const data = await runGql(PortfolioStatsDocument, {
+      filterAssetIdIn: [src1, src2],
+    });
+    expect(data.portfolio?.totalValue?.amount).toBe(2700);
+  });
+
   it("[src, dest] timeseries shows one continuous folded line (no double-count post-transfer)", async () => {
     const fromAsset = await createAsset("Old ISA");
     const toAsset = await createAsset("New ISA");
