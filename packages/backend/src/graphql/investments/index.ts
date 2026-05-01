@@ -59,7 +59,7 @@ import {
  * - `extraScopes`: union of every surviving asset's inbound transfers, each capped at the day before the transfer. Sources may be the dropped assets.
  * - `dateCap`: only set when `effectiveAssetIds` is a single transferred-out wrapper whose destination is *not* in the filter — the standalone defunct view.
  */
-async function effectiveAssetFilter(
+export async function effectiveAssetFilter(
   filterAssetIdIn: readonly ID[] | null | undefined,
 ): Promise<{
   effectiveAssetIds: string[] | null;
