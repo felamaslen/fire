@@ -334,6 +334,150 @@ describe("Portfolio dateCap from transferOut", () => {
     expect(lastIso <= "2025-03-14").toBe(true);
   });
 
+  it("Investment.position auto-caps at the wrapper's transfer date", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    // Stray transactions after the cap — must not influence the capped view.
+    await buy(inv, fromAsset, "2025-04-01", 50, 20);
+    await setPrice(inv, "2025-03-01", 1200);
+    await setPrice(inv, "2025-04-01", 1500);
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    const data = await runGql(
+      graphql(`
+        query ($assets: [ID!]) {
+          investments(filterAssetIdIn: $assets) {
+            edges {
+              node {
+                id
+                position(filterAssetIdIn: $assets) {
+                  units
+                  totalValue {
+                    amount
+                  }
+                  totalGain {
+                    amount
+                  }
+                }
+              }
+            }
+          }
+        }
+      `),
+      { assets: [fromAsset] },
+    );
+    const node = data.investments?.edges.find((e) => e.node.id === inv)?.node;
+    expect(node?.position).toMatchObject({
+      units: 100,
+      totalValue: { amount: 1200 },
+      totalGain: { amount: 200 },
+    });
+  });
+
+  it("Investment.unitPriceLatest is null on a transferred-out wrapper view, even with a live quote", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    await buy(inv, fromAsset, "2025-01-15", 100, 10);
+    await setPrice(inv, "2025-03-01", 1200);
+    await db.insert(InvestmentPricesLive).values({
+      investmentId: inv,
+      refreshedAt: new Date("2025-04-01T12:00:00Z"),
+      date: new Date("2025-04-01T12:00:00Z"),
+      currency: "GBP",
+      price: 9999,
+      pricePreviousClose: 9000,
+    });
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    const data = await runGql(
+      graphql(`
+        query ($assets: [ID!]) {
+          investments(filterAssetIdIn: $assets) {
+            edges {
+              node {
+                id
+                unitPriceLatest(filterAssetIdIn: $assets) {
+                  price {
+                    amount
+                  }
+                }
+                unitPriceCached(filterAssetIdIn: $assets) {
+                  amount
+                }
+              }
+            }
+          }
+        }
+      `),
+      { assets: [fromAsset] },
+    );
+    const node = data.investments?.edges.find((e) => e.node.id === inv)?.node;
+    expect(node?.unitPriceLatest).toBeNull();
+    expect(node?.unitPriceCached?.amount).toBe(12);
+  });
+
+  it("Query.investments filterIsSold treats post-transfer activity as out-of-scope", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const sold = await createStock("Sold", "SOLD.L");
+    const held = await createStock("Held", "HELD.L");
+    const stray = await createStock("Stray", "STRAY.L");
+    // `sold` was bought and sold before the transfer.
+    await buy(sold, fromAsset, "2025-01-15", 100, 10);
+    await buy(sold, fromAsset, "2025-02-15", -100, 12);
+    // `held` was still held at the day before transfer.
+    await buy(held, fromAsset, "2025-01-15", 50, 10);
+    // `stray` was only bought *after* the transfer date — must be invisible
+    // on this filtered view (the wrapper is frozen pre-transfer).
+    await buy(stray, fromAsset, "2025-04-01", 30, 10);
+
+    await createTransferOut(fromAsset, toAsset, "2025-03-15");
+
+    // filterIsSold = false: should hide only `sold`. `held` shows; `stray`
+    // doesn't (no pre-transfer activity in the wrapper).
+    const filtered = await runGql(
+      graphql(`
+        query ($filterAssetIdIn: [ID!]) {
+          investments(filterAssetIdIn: $filterAssetIdIn, filterIsSold: false) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      `),
+      { filterAssetIdIn: [fromAsset] },
+    );
+    expect(filtered.investments?.edges.map((e) => e.node.name)).toEqual([
+      "Held",
+    ]);
+
+    // filterIsSold = true (the "show only sold" toggle): only `sold` shows.
+    const onlySold = await runGql(
+      graphql(`
+        query ($filterAssetIdIn: [ID!]) {
+          investments(filterAssetIdIn: $filterAssetIdIn, filterIsSold: true) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      `),
+      { filterAssetIdIn: [fromAsset] },
+    );
+    expect(onlySold.investments?.edges.map((e) => e.node.name)).toEqual([
+      "Sold",
+    ]);
+  });
+
   it("does not cap a sibling portfolio without a transfer-out", async () => {
     const fromAsset = await createAsset("Old ISA");
     const toAsset = await createAsset("New ISA");

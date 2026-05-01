@@ -33,6 +33,8 @@ export type InvestmentStats = {
   priceLatest: number | null;
   /** When the latest cached `InvestmentPrices` row for this investment was created. `null` for multi-investment slices, or when no price history exists yet. */
   priceLatestCachedAt: Date | null;
+  /** Calendar date the latest cached `InvestmentPrices` row applies to (i.e. `InvestmentPrices.date`, not the row's DB-creation timestamp). Useful in tooltips to show what *day* the cached price represents — distinct from when we first stored it. `null` for multi-investment slices, or when no price history exists yet. */
+  priceLatestCachedDate: Date | null;
 
   /** Net split-adjusted units matching the slice. Meaningful per-investment; across investments it's a meaningless sum (leave to callers that know the slice is single-investment). */
   unitsHeld: number;
@@ -158,6 +160,7 @@ type SliceRow = {
   stockCode: string | null;
   priceLatestCached: number | null;
   priceLatestCachedAt: Date | null;
+  priceLatestCachedDate: Date | null;
   unitsHeld: number;
   unitsPriceSum: number;
   buyCostSum: number;
@@ -266,6 +269,7 @@ async function fetchSlices(
             investmentId: InvestmentPrices.investmentId,
             priceAdjusted: InvestmentPrices.priceAdjusted,
             createdAt: InvestmentPrices.createdAt,
+            date: InvestmentPrices.date,
           })
           .from(InvestmentPrices)
           .where(
@@ -287,6 +291,7 @@ async function fetchSlices(
             investmentId: InvestmentPrices.investmentId,
             priceAdjusted: InvestmentPrices.priceAdjusted,
             createdAt: InvestmentPrices.createdAt,
+            date: InvestmentPrices.date,
           })
           .from(InvestmentPrices)
           .where(
@@ -312,6 +317,7 @@ async function fetchSlices(
       stockCode: Investments.stockCode,
       priceLatestCached: latestPrices.priceAdjusted,
       priceLatestCachedAt: latestPrices.createdAt,
+      priceLatestCachedDate: latestPrices.date,
       livePrice: InvestmentPricesLive.price,
       livePricePreviousClose: InvestmentPricesLive.pricePreviousClose,
       liveCurrency: InvestmentPricesLive.currency,
@@ -372,6 +378,7 @@ async function fetchSlices(
       Investments.stockCode,
       latestPrices.priceAdjusted,
       latestPrices.createdAt,
+      latestPrices.date,
       InvestmentPricesLive.price,
       InvestmentPricesLive.pricePreviousClose,
       InvestmentPricesLive.currency,
@@ -525,6 +532,7 @@ function aggregateKey(
     stockCode: metaSource?.stockCode ?? null,
     priceLatest: overlay?.priceLatest ?? null,
     priceLatestCachedAt: metaSource?.priceLatestCachedAt ?? null,
+    priceLatestCachedDate: metaSource?.priceLatestCachedDate ?? null,
     unitsHeld,
     unitsPriceSum,
     buyCostSum,

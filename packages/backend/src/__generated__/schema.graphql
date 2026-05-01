@@ -609,7 +609,7 @@ type Investment {
   id: ID!
   name: String!
   """
-  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty).
+  Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). When `filterAssetIdIn` resolves to a single transferred-out wrapper, holdings are frozen at the day before the transfer.
   """
   position(
     """
@@ -633,17 +633,41 @@ type Investment {
     first: Int
   ): InvestmentTransactionConnection @semanticNonNull
   """
-  Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.
+  Most recent split-adjusted unit price known for this investment. When `filterAssetIdIn` resolves to a single transferred-out wrapper, the price is frozen at the most recent quote on or before the day of the transfer (the live overlay is skipped). `null` if no qualifying prices have been recorded yet.
   """
-  unitPriceCached: Money
+  unitPriceCached(
+    """
+    When set and non-empty, used to derive a frozen-pre-transfer view: a single transferred-out wrapper caps the price at its transfer date. Has no other effect on the price itself (which is investment-level).
+    """
+    filterAssetIdIn: [ID!]
+  ): Money
   """
-  When the most recent cached unit price was first recorded for this investment. `null` if no prices have been recorded yet.
+  When the most recent cached unit price was first recorded for this investment (DB-row creation timestamp). `null` if no prices have been recorded yet.
   """
-  unitPriceCachedAt: DateTime
+  unitPriceCachedAt(
+    """
+    When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`).
+    """
+    filterAssetIdIn: [ID!]
+  ): DateTime
   """
-  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.
+  Calendar date the most recent cached unit price applies to — i.e. the trading day the close price represents, distinct from when it was first stored (`unitPriceCachedAt`). When the wrapper filter resolves to a transferred-out wrapper, returns the date of the most recent quote on or before the day of the transfer. `null` if no prices have been recorded yet.
   """
-  unitPriceLatest: InvestmentPriceLatest
+  unitPriceCachedDate(
+    """
+    When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`).
+    """
+    filterAssetIdIn: [ID!]
+  ): Date
+  """
+  Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, when no quote is available, or when `filterAssetIdIn` resolves to a single transferred-out wrapper (a frozen pre-transfer view never reads the live tick). The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.
+  """
+  unitPriceLatest(
+    """
+    When set and non-empty, used to suppress the live overlay for transferred-out wrappers (see `unitPriceCached`).
+    """
+    filterAssetIdIn: [ID!]
+  ): InvestmentPriceLatest
   """
   Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.
   """
@@ -2407,7 +2431,7 @@ type Query {
   investments(
     after: ID
     """
-    When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers.
+    When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers. When the filter resolves to a single transferred-out wrapper, predicates and sort keys are evaluated at the day before the transfer (so a position that's still held then is not classified as sold).
     """
     filterAssetIdIn: [ID!]
     """

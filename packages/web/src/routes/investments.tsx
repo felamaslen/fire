@@ -95,11 +95,12 @@ const InvestmentRowDocument = graphql(
           url
         }
       }
-      unitPriceCached {
+      unitPriceCached(filterAssetIdIn: $filterAssetIdIn) {
         ...Figure
       }
-      unitPriceCachedAt
-      unitPriceLatest {
+      unitPriceCachedAt(filterAssetIdIn: $filterAssetIdIn)
+      unitPriceCachedDate(filterAssetIdIn: $filterAssetIdIn)
+      unitPriceLatest(filterAssetIdIn: $filterAssetIdIn) {
         price {
           ...Figure
         }
@@ -683,7 +684,12 @@ function InvestmentsPageContent() {
         settings={chart}
         onChange={setChart}
         transferOut={transferredOut}
-        bottomSlot={<AllocationsSection filterAssetIds={filterAssetIds} />}
+        bottomSlot={
+          <AllocationsSection
+            filterAssetIds={filterAssetIds}
+            transferredOut={transferredOut !== null}
+          />
+        }
       />
       {filterAssetIds.length === 1 && (
         <Suspense fallback={<Spinner />}>
@@ -717,9 +723,6 @@ function InvestmentsList({
   const setSort = (updater: (prev: SortState) => SortState) =>
     onSortChange(updater(sort));
   const [hideSold, setHideSold] = useHideSold();
-  // Transferred-out portfolios force-hide sold investments (every position
-  // is conceptually sold at the transfer date). The toggle becomes a no-op.
-  const effectiveHideSold = transferredOut || hideSold;
 
   // Defer sort / filter changes through `useDeferredValue` so switching
   // suspends the fetch in a non-interrupting pass — the previous rows
@@ -735,12 +738,12 @@ function InvestmentsList({
     deferredFilterAssetIdsKey.length > 0
       ? deferredFilterAssetIdsKey.split(",")
       : null;
-  const deferredHideSold = useDeferredValue(effectiveHideSold);
+  const deferredHideSold = useDeferredValue(hideSold);
   const loading =
     deferredKind !== sort.kind ||
     deferredDir !== sort.dir ||
     deferredFilterAssetIdsKey !== filterAssetIdsKey ||
-    deferredHideSold !== effectiveHideSold;
+    deferredHideSold !== hideSold;
   const { data } = useSuspenseQuery(InvestmentsListDocument, {
     variables: {
       first: 100,
@@ -771,18 +774,12 @@ function InvestmentsList({
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <label
-          className={cn(
-            "flex items-center gap-2 text-sm",
-            transferredOut && "text-muted-foreground",
-          )}
-        >
+        <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
-            checked={effectiveHideSold}
-            disabled={transferredOut}
+            checked={hideSold}
             onChange={(e) => setHideSold(e.target.checked)}
-            className="accent-foreground disabled:opacity-50"
+            className="accent-foreground"
           />
           Hide sold or transferred investments
         </label>
@@ -963,6 +960,7 @@ function UnitPrice({
   live,
   cached,
   cachedAt,
+  cachedDate,
   prefix,
 }: {
   live: {
@@ -972,6 +970,8 @@ function UnitPrice({
   } | null;
   cached: FragmentOf<typeof FigureDocument> | null;
   cachedAt: string | null;
+  /** Calendar date the cached quote applies to (e.g. "2025-03-14"), distinct from `cachedAt` (DB-row creation time). */
+  cachedDate: string | null;
   prefix?: string;
 }) {
   const priceFragment = live?.price ?? cached;
@@ -1016,7 +1016,18 @@ function UnitPrice({
                 <span>{new Date(live.tickAt).toLocaleString("en-GB")}</span>
               </div>
             ) : (
-              <>Recorded {new Date(refreshedAt).toLocaleString("en-GB")}</>
+              <div className="grid grid-cols-[auto_auto] gap-x-2">
+                <span className="text-muted-foreground">Cached</span>
+                <span>{new Date(refreshedAt).toLocaleString("en-GB")}</span>
+                {cachedDate && (
+                  <>
+                    <span className="text-muted-foreground">Quote date</span>
+                    <span>
+                      {new Date(cachedDate).toLocaleDateString("en-GB")}
+                    </span>
+                  </>
+                )}
+              </div>
             )}
           </TooltipContent>
         </Tooltip>
@@ -1120,6 +1131,7 @@ function InvestmentRow({
               live={inv.unitPriceLatest}
               cached={inv.unitPriceCached}
               cachedAt={inv.unitPriceCachedAt}
+              cachedDate={inv.unitPriceCachedDate}
               prefix="@ "
             />
           </span>
@@ -1130,6 +1142,7 @@ function InvestmentRow({
           live={inv.unitPriceLatest}
           cached={inv.unitPriceCached}
           cachedAt={inv.unitPriceCachedAt}
+          cachedDate={inv.unitPriceCachedDate}
         />
       </TableCell>
       <TableCell className="text-right align-middle sm:hidden">

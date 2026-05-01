@@ -529,7 +529,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 position: {
-                    description: "Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty).",
+                    description: "Holdings, cost basis, and gain/loss aggregated across every wrapper, or scoped to the union of a set of wrappers when `filterAssetIdIn` is supplied (non-empty). When `filterAssetIdIn` resolves to a single transferred-out wrapper, holdings are frozen at the day before the transfer.",
                     name: "position",
                     type: new GraphQLNonNull(InvestmentPositionType),
                     args: {
@@ -579,27 +579,59 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 unitPriceCached: {
-                    description: "Most recent split-adjusted unit price known for this investment. `null` if no prices have been recorded yet.",
+                    description: "Most recent split-adjusted unit price known for this investment. When `filterAssetIdIn` resolves to a single transferred-out wrapper, the price is frozen at the most recent quote on or before the day of the transfer (the live overlay is skipped). `null` if no qualifying prices have been recorded yet.",
                     name: "unitPriceCached",
                     type: MoneyType,
-                    resolve(source, _args, context) {
-                        return source.unitPriceCached(context);
+                    args: {
+                        filterAssetIdIn: {
+                            description: "When set and non-empty, used to derive a frozen-pre-transfer view: a single transferred-out wrapper caps the price at its transfer date. Has no other effect on the price itself (which is investment-level).",
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        }
+                    },
+                    resolve(source, args, context) {
+                        return source.unitPriceCached(context, args.filterAssetIdIn);
                     }
                 },
                 unitPriceCachedAt: {
-                    description: "When the most recent cached unit price was first recorded for this investment. `null` if no prices have been recorded yet.",
+                    description: "When the most recent cached unit price was first recorded for this investment (DB-row creation timestamp). `null` if no prices have been recorded yet.",
                     name: "unitPriceCachedAt",
                     type: DateTimeType,
-                    resolve(source, _args, context) {
-                        return source.unitPriceCachedAt(context);
+                    args: {
+                        filterAssetIdIn: {
+                            description: "When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`).",
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        }
+                    },
+                    resolve(source, args, context) {
+                        return source.unitPriceCachedAt(context, args.filterAssetIdIn);
+                    }
+                },
+                unitPriceCachedDate: {
+                    description: "Calendar date the most recent cached unit price applies to \u2014 i.e. the trading day the close price represents, distinct from when it was first stored (`unitPriceCachedAt`). When the wrapper filter resolves to a transferred-out wrapper, returns the date of the most recent quote on or before the day of the transfer. `null` if no prices have been recorded yet.",
+                    name: "unitPriceCachedDate",
+                    type: DateType,
+                    args: {
+                        filterAssetIdIn: {
+                            description: "When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`).",
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        }
+                    },
+                    resolve(source, args, context) {
+                        return source.unitPriceCachedDate(context, args.filterAssetIdIn);
                     }
                 },
                 unitPriceLatest: {
-                    description: "Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, or when no quote is available. The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.",
+                    description: "Live unit price and the timestamp it was captured at, sourced from the real-time quote provider. `null` for non-stock investments, when no quote is available, or when `filterAssetIdIn` resolves to a single transferred-out wrapper (a frozen pre-transfer view never reads the live tick). The persisted `InvestmentPricesLive` row is read directly; if it's stale (> 5 minutes) and we're inside the currency's business-hours window, the stats loader fires a background refresh whose result surfaces on the next request.",
                     name: "unitPriceLatest",
                     type: InvestmentPriceLatestType,
-                    resolve(source, _args, context) {
-                        return source.unitPriceLatest(context);
+                    args: {
+                        filterAssetIdIn: {
+                            description: "When set and non-empty, used to suppress the live overlay for transferred-out wrappers (see `unitPriceCached`).",
+                            type: new GraphQLList(new GraphQLNonNull(GraphQLID))
+                        }
+                    },
+                    resolve(source, args, context) {
+                        return source.unitPriceLatest(context, args.filterAssetIdIn);
                     }
                 },
                 wrappers: {
@@ -2754,7 +2786,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: GraphQLID
                         },
                         filterAssetIdIn: {
-                            description: "When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers.",
+                            description: "When set and non-empty, only investments with at least one transaction booked against any of these wrappers are returned (in addition to investments with no transactions at all), and computed sort keys (`value`, `gainAbs`, `gainPercent`) are scoped to the union of those wrappers. When the filter resolves to a single transferred-out wrapper, predicates and sort keys are evaluated at the day before the transfer (so a position that's still held then is not classified as sold).",
                             type: new GraphQLList(new GraphQLNonNull(GraphQLID))
                         },
                         filterIsSold: {
