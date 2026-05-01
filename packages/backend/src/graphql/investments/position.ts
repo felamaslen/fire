@@ -10,6 +10,7 @@ import { InvestmentTransactions } from "@/db/schema/investments";
 import type { Context } from "../context";
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
+import { effectiveAssetFilter } from "./effective-filter";
 import {
   costBasis,
   costBasisWithFees,
@@ -139,11 +140,16 @@ export class InvestmentWrapper {
     return NetWorthCategoryAsset.load(row);
   }
 
-  /** Holdings, cost basis, and gain/loss filtered to this wrapper. @gqlField */
+  /** Holdings, cost basis, and gain/loss filtered to this wrapper. Folds in the wrapper's own `transfersIn` (each source's pre-transfer history of this investment) and respects its `transferOut` cap, so the unit count agrees with `Investment.position(filterAssetIdIn: [this.assetId])` — e.g. on a transferred-into wrapper a transferred-then-sold investment correctly nets to zero rather than reading negative. @gqlField */
   async position(ctx: Context): Promise<InvestmentPosition> {
+    const { extraScopes, dateCap } = await effectiveAssetFilter(ctx, [
+      this.assetId,
+    ]);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.investmentId,
       assetIds: [this.assetId],
+      ...(dateCap ? { dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
     return new InvestmentPosition(s);
   }

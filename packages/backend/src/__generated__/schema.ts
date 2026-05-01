@@ -495,7 +495,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(NetWorthCategoryAssetType)
                 },
                 position: {
-                    description: "Holdings, cost basis, and gain/loss filtered to this wrapper.",
+                    description: "Holdings, cost basis, and gain/loss filtered to this wrapper. Folds in the wrapper's own `transfersIn` (each source's pre-transfer history of this investment) and respects its `transferOut` cap, so the unit count agrees with `Investment.position(filterAssetIdIn: [this.assetId])` \u2014 e.g. on a transferred-into wrapper a transferred-then-sold investment correctly nets to zero rather than reading negative.",
                     name: "position",
                     type: new GraphQLNonNull(InvestmentPositionType),
                     resolve(source, _args, context) {
@@ -4214,7 +4214,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 investmentAllocationsSet: {
-                    description: "Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to exactly 1.",
+                    description: "Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to ~1 (post-rounding). Submitted fractions are rounded to the nearest 1% (2dp) before persisting; any residual rounding drift is absorbed by the largest allocation so the saved set still sums to exactly 1.",
                     name: "investmentAllocationsSet",
                     type: new GraphQLNonNull(InvestmentAllocationsResultType),
                     args: {
@@ -4226,8 +4226,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLID)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentAllocationsSetResolver(args.assetId, args.allocations);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentAllocationsSetResolver(context, args.assetId, args.allocations);
                     }
                 },
                 investmentCashAllocationSet: {

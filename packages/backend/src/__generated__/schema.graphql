@@ -894,7 +894,9 @@ type InvestmentWrapper {
   The wrapper (a `STOCK` or `PENSION` net-worth asset) this slice belongs to.
   """
   asset: NetWorthCategoryAsset!
-  """Holdings, cost basis, and gain/loss filtered to this wrapper."""
+  """
+  Holdings, cost basis, and gain/loss filtered to this wrapper. Folds in the wrapper's own `transfersIn` (each source's pre-transfer history of this investment) and respects its `transferOut` cap, so the unit count agrees with `Investment.position(filterAssetIdIn: [this.assetId])` — e.g. on a transferred-into wrapper a transferred-then-sold investment correctly nets to zero rather than reading negative.
+  """
   position: InvestmentPosition!
 }
 
@@ -1109,7 +1111,7 @@ type Mutation {
     ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
   ): PlanningEarning!
   """
-  Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to exactly 1.
+  Replace the per-investment allocations for a wrapper. Must cover every investment with non-zero holdings in the wrapper, exclude every fully-sold investment, and sum to ~1 (post-rounding). Submitted fractions are rounded to the nearest 1% (2dp) before persisting; any residual rounding drift is absorbed by the largest allocation so the saved set still sums to exactly 1.
   """
   investmentAllocationsSet(
     allocations: [InvestmentAllocationInput!]!

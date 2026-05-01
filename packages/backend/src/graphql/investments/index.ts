@@ -14,7 +14,6 @@ import {
 import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
 
-import { HOME_CURRENCY } from "@/config";
 import { db, runInTransaction } from "@/db";
 import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
@@ -31,7 +30,7 @@ import {
   encodeCursor,
 } from "../pagination";
 import { VOID, type Void } from "../void";
-import { loadAssetSoldOutCaps } from "./portfolio";
+import { effectiveAssetFilter } from "./effective-filter";
 import {
   InvestmentPosition,
   InvestmentWrapper,
@@ -48,73 +47,10 @@ import {
   loadInvestmentTransactions,
   loadInvestmentTransactionsConnection,
 } from "./transactions";
-import {
-  loadInvestmentTransferInScopesForAsset,
-  loadInvestmentTransferOutScopeForAsset,
-} from "./transfers";
 
-/** Resolve the transfer-aware view of `filterAssetIdIn`. Mirrors `Portfolio.loadEffectiveFilter`:
- *
- * - `effectiveAssetIds`: the user's filter with assets whose outgoing transfer destination is also in the filter dropped (so a `[src, dest]` shape collapses to `[dest]` and the source is folded via `extraScopes` instead of double-counted).
- * - `extraScopes`: union of every surviving asset's inbound transfers, each capped at the day before the transfer. Sources may be the dropped assets.
- * - `dateCap`: only set when `effectiveAssetIds` is a single transferred-out wrapper whose destination is *not* in the filter — the standalone defunct view.
- */
-export async function effectiveAssetFilter(
-  filterAssetIdIn: readonly ID[] | null | undefined,
-): Promise<{
-  effectiveAssetIds: string[] | null;
-  extraScopes: ReadonlyArray<{ assetId: string; dateCap: string }>;
-  dateCap: string | null;
-}> {
-  if (!filterAssetIdIn || filterAssetIdIn.length === 0) {
-    return { effectiveAssetIds: null, extraScopes: [], dateCap: null };
-  }
-  const filterSet = new Set(filterAssetIdIn);
-  const outgoing = await Promise.all(
-    filterAssetIdIn.map((id) => loadInvestmentTransferOutScopeForAsset(id)),
-  );
-  const effective: string[] = [];
-  for (let i = 0; i < filterAssetIdIn.length; i++) {
-    const t = outgoing[i];
-    if (t && filterSet.has(t.assetIdTo as ID)) continue;
-    effective.push(filterAssetIdIn[i]);
-  }
-  const dayBefore = (date: Date | string): string => {
-    const d = new Date(date as unknown as Date);
-    d.setUTCDate(d.getUTCDate() - 1);
-    return d.toISOString().slice(0, 10);
-  };
-  const extras: { assetId: string; dateCap: string }[] = [];
-  const seen = new Set<string>();
-  for (const assetId of effective) {
-    const incoming = await loadInvestmentTransferInScopesForAsset(assetId);
-    for (const t of incoming) {
-      const cap = dayBefore(t.date);
-      const key = `${t.assetIdFrom}@${cap}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      extras.push({ assetId: t.assetIdFrom, dateCap: cap });
-    }
-  }
-  // Per-asset "defunct cap": outgoing transfer (cap = transferDate − 1)
-  // or a fully sold-out wrapper (every position netted to zero, cap =
-  // lastTxDate − 1). When every effective asset has a cap, freeze the
-  // request at the latest such date.
-  const soldOutCaps = await loadAssetSoldOutCaps(effective, HOME_CURRENCY);
-  let dateCap: string | null = null;
-  if (effective.length >= 1) {
-    const caps = effective.flatMap((id) => {
-      const t = outgoing[filterAssetIdIn.indexOf(id as ID)];
-      if (t) return [dayBefore(t.date)];
-      const sold = soldOutCaps.get(id);
-      return sold ? [sold] : [];
-    });
-    if (caps.length === effective.length) {
-      dateCap = caps.reduce((acc, d) => (d > acc ? d : acc));
-    }
-  }
-  return { effectiveAssetIds: effective, extraScopes: extras, dateCap };
-}
+// `effectiveAssetFilter` is re-exported from `./effective-filter` for
+// existing call sites; the module owns the DataLoader cache.
+export { effectiveAssetFilter } from "./effective-filter";
 
 /** The real-time unit price of a stock investment. `tickAt` is the time of the price tick reported by the upstream provider; `capturedAt` is the wall-clock time we last refreshed it. @gqlType */
 export class InvestmentPriceLatest {
@@ -217,7 +153,7 @@ export class Investment {
     /** When set and non-empty, used to derive a frozen-pre-transfer view: a single transferred-out wrapper caps the price at its transfer date. Has no other effect on the price itself (which is investment-level). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<Money | null> {
-    const { dateCap } = await effectiveAssetFilter(filterAssetIdIn);
+    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       ...(dateCap ? { dateCap } : {}),
@@ -232,7 +168,7 @@ export class Investment {
     /** When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<DateTime | null> {
-    const { dateCap } = await effectiveAssetFilter(filterAssetIdIn);
+    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       ...(dateCap ? { dateCap } : {}),
@@ -246,7 +182,7 @@ export class Investment {
     /** When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<CalendarDate | null> {
-    const { dateCap } = await effectiveAssetFilter(filterAssetIdIn);
+    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       ...(dateCap ? { dateCap } : {}),
@@ -261,7 +197,7 @@ export class Investment {
     filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPriceLatest | null> {
     if (!(this.asset instanceof InvestmentStock)) return null;
-    const { dateCap } = await effectiveAssetFilter(filterAssetIdIn);
+    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
     if (dateCap) return null;
     const s = await loadInvestmentStats(ctx, { investmentId: this.id });
     if (!s.live) return null;
@@ -279,7 +215,7 @@ export class Investment {
     filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPosition> {
     const { effectiveAssetIds, extraScopes, dateCap } =
-      await effectiveAssetFilter(filterAssetIdIn);
+      await effectiveAssetFilter(ctx, filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       assetIds:
@@ -457,7 +393,7 @@ export async function investments(
     effectiveAssetIds,
     extraScopes,
     dateCap: dateCapIso,
-  } = await effectiveAssetFilter(filterAssetIdIn);
+  } = await effectiveAssetFilter(ctx, filterAssetIdIn);
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const afterCursor = after ? decodeCursor(after) : null;
   const { key, direction } = parseSortInput(sort);

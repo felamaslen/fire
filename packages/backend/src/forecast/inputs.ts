@@ -28,7 +28,7 @@ import {
 } from "@/db/schema/planning";
 
 import type { Context } from "../graphql/context";
-import { effectiveAssetFilter } from "../graphql/investments/index";
+import { effectiveAssetFilter } from "../graphql/investments/effective-filter";
 import { computePortfolioXirr } from "../graphql/investments/portfolio-xirr";
 import {
   buildRateToHome,
@@ -142,7 +142,7 @@ export async function loadForecastInputs(
       // wrapper's forecast IRR includes its inherited history rather than
       // starting from the transfer date.
       const { effectiveAssetIds, extraScopes, dateCap } =
-        await effectiveAssetFilter([assetId]);
+        await effectiveAssetFilter(ctx, [assetId]);
       const xirr = await computePortfolioXirr(ctx, {
         currency: HOME_CURRENCY,
         assetIds: effectiveAssetIds,
