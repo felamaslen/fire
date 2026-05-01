@@ -1,20 +1,12 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
-import {
-  NetWorthCategoryAssets,
-  NetWorthCategoryLiabilities,
-  NetWorthCurrencyRates,
-  NetWorthEntries,
-  NetWorthValueAmounts,
-  NetWorthValues,
-} from "@/db/schema/net-worth";
+import { NetWorthEntries, NetWorthEntryBuckets } from "@/db/schema/net-worth";
 
 import type { Date as CalendarDate } from "../date";
 import { Money } from "../money";
 import type { NetWorthAssetType } from "./categories";
-import { buildRateToHome, convertToHomeMinor } from "./index";
 
 /** One bucket at a single history point, grouped by asset `type`. @gqlType */
 export type NetWorthHistoryAssetBucket = {
@@ -47,104 +39,71 @@ export type NetWorthHistoryPoint = {
 export async function netWorthHistory(): Promise<
   NetWorthHistoryPoint[] | null
 > {
-  const entries = await db
-    .select()
-    .from(NetWorthEntries)
-    .orderBy(asc(NetWorthEntries.date), asc(NetWorthEntries.id));
-  if (entries.length === 0) return [];
-
-  const entryIds = entries.map((e) => e.id);
-  const rateRows = await db
-    .select()
-    .from(NetWorthCurrencyRates)
-    .where(inArray(NetWorthCurrencyRates.entryId, entryIds));
-
-  const valueRows = await db
+  const rows = await db
     .select({
-      entryId: NetWorthValues.entryId,
-      categoryAssetId: NetWorthValues.categoryAssetId,
-      categoryLiabilityId: NetWorthValues.categoryLiabilityId,
-      categoryOptionId: NetWorthValues.categoryOptionId,
-      assetType: NetWorthCategoryAssets.type,
-      liabilitySkip: NetWorthCategoryLiabilities.skip,
-      amount: NetWorthValueAmounts.amount,
-      currency: NetWorthValueAmounts.currency,
+      entryId: NetWorthEntries.id,
+      date: NetWorthEntries.date,
+      bucket: NetWorthEntryBuckets.bucket,
+      amount: NetWorthEntryBuckets.amountHomeMinor,
     })
-    .from(NetWorthValues)
+    .from(NetWorthEntries)
     .leftJoin(
-      NetWorthValueAmounts,
-      eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
+      NetWorthEntryBuckets,
+      eq(NetWorthEntryBuckets.entryId, NetWorthEntries.id),
     )
-    .leftJoin(
-      NetWorthCategoryAssets,
-      eq(NetWorthCategoryAssets.id, NetWorthValues.categoryAssetId),
-    )
-    .leftJoin(
-      NetWorthCategoryLiabilities,
-      eq(NetWorthCategoryLiabilities.id, NetWorthValues.categoryLiabilityId),
-    )
-    .where(inArray(NetWorthValues.entryId, entryIds));
-
-  const ratesByEntry = new Map<
-    string,
-    (typeof NetWorthCurrencyRates.$inferSelect)[]
-  >();
-  for (const r of rateRows) {
-    const arr = ratesByEntry.get(r.entryId);
-    if (arr) arr.push(r);
-    else ratesByEntry.set(r.entryId, [r]);
-  }
-
-  const valuesByEntry = new Map<string, typeof valueRows>();
-  for (const v of valueRows) {
-    const arr = valuesByEntry.get(v.entryId);
-    if (arr) arr.push(v);
-    else valuesByEntry.set(v.entryId, [v]);
-  }
+    .orderBy(asc(NetWorthEntries.date), asc(NetWorthEntries.id));
 
   const out: NetWorthHistoryPoint[] = [];
-  for (const e of entries) {
-    const rateMap = buildRateToHome(ratesByEntry.get(e.id) ?? []);
-    const assetsByType = new Map<NetWorthAssetType, number>();
-    let assetsTotal = 0;
-    let liabTotal = 0;
+  let current: {
+    entryId: string;
+    date: Date;
+    assetsByType: Map<NetWorthAssetType, number>;
+    assetsTotal: number;
+    liabTotal: number;
+  } | null = null;
 
-    for (const row of valuesByEntry.get(e.id) ?? []) {
-      if (row.amount == null || row.currency == null) continue;
-      const homeMinor = convertToHomeMinor(row.amount, row.currency, rateMap);
-
-      if (row.categoryLiabilityId) {
-        if (row.liabilitySkip) continue;
-        // Liability amounts are stored signed (typically negative); surface
-        // as a positive magnitude so `net = assets - liabilities` is correct.
-        liabTotal += Math.abs(homeMinor);
-      } else if (row.categoryOptionId) {
-        assetsByType.set(
-          "OPTION",
-          (assetsByType.get("OPTION") ?? 0) + homeMinor,
-        );
-        assetsTotal += homeMinor;
-      } else if (row.categoryAssetId && row.assetType) {
-        const t = row.assetType as NetWorthAssetType;
-        assetsByType.set(t, (assetsByType.get(t) ?? 0) + homeMinor);
-        assetsTotal += homeMinor;
-      }
-    }
-
+  const flush = (): void => {
+    if (!current) return;
     out.push({
-      date: e.date,
-      assetsByType: [...assetsByType.entries()]
-        .filter(([, amt]) => amt !== 0)
+      date: current.date,
+      assetsByType: [...current.assetsByType.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([type, amt]) => ({
           type,
           amount: Money.fromMinorDenomination(amt, HOME_CURRENCY),
         })),
-      assets: Money.fromMinorDenomination(assetsTotal, HOME_CURRENCY),
-      liabilities: Money.fromMinorDenomination(liabTotal, HOME_CURRENCY),
-      net: Money.fromMinorDenomination(assetsTotal - liabTotal, HOME_CURRENCY),
+      assets: Money.fromMinorDenomination(current.assetsTotal, HOME_CURRENCY),
+      liabilities: Money.fromMinorDenomination(
+        current.liabTotal,
+        HOME_CURRENCY,
+      ),
+      net: Money.fromMinorDenomination(
+        current.assetsTotal - current.liabTotal,
+        HOME_CURRENCY,
+      ),
     });
+  };
+
+  for (const row of rows) {
+    if (!current || current.entryId !== row.entryId) {
+      flush();
+      current = {
+        entryId: row.entryId,
+        date: row.date,
+        assetsByType: new Map(),
+        assetsTotal: 0,
+        liabTotal: 0,
+      };
+    }
+    if (row.bucket == null || row.amount == null) continue;
+    if (row.bucket === "LIABILITY") {
+      current.liabTotal += row.amount;
+    } else {
+      current.assetsByType.set(row.bucket, row.amount);
+      current.assetsTotal += row.amount;
+    }
   }
+  flush();
 
   return out;
 }

@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import { pgEnum } from "drizzle-orm/pg-core";
+import { pgCustomSQL } from "drizzle-pgkit-migrator";
 
 import { CURRENCIES } from "@/config";
 
@@ -81,3 +83,17 @@ void _checkAllCurrenciesCovered;
 export const currencyCode = pgEnum("CurrencyCode", CURRENCY_CODE_ENUM_ORDER);
 
 export type CurrencyCode = (typeof currencyCode.enumValues)[number];
+
+/** Number of fractional digits for an ISO-4217 code — `2` for GBP, `0` for JPY, `3` for KWD, etc. Mirrors `CURRENCIES[code].scale` so SQL-side amount conversion (e.g. `NetWorthEntryBuckets_refresh_fn`) doesn't have to round-trip into TypeScript. The body is generated from `CURRENCIES` at build time, so any new currency lands in both the TS config and this SQL function in a single change. */
+export const Currency_scale_fn = pgCustomSQL(
+  sql.raw(
+    `CREATE FUNCTION "Currency_scale"(p_code "CurrencyCode") RETURNS int LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE p_code::text
+    ${Object.entries(CURRENCIES)
+      .map(([code, { scale }]) => `WHEN '${code}' THEN ${scale}`)
+      .join("\n    ")}
+  END;
+$$;`,
+  ),
+  { priority: 1 },
+);
