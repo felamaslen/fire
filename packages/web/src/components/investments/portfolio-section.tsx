@@ -463,11 +463,17 @@ function PortfolioChartLoader({
       }
     : null;
 
-  const initialDateStr =
-    stackInitialDate ??
-    portfolio?.timeseries?.initialDate ??
-    portfolio?.candlestick?.initialDate ??
-    null;
+  // Anchor the X axis on whichever series is actually being rendered:
+  // candle x0/x1 are server-relative to `candlestick.initialDate`, while
+  // line points are relative to `timeseries.initialDate` (or the
+  // `stackLines`-computed shared anchor in stacked mode). Using the
+  // wrong one when toggling stacked → candle drags every candle's
+  // labelled date back to the earliest stacked-line anchor — visible
+  // as "the chart ends years ago" even though candle xMax matches the
+  // last bucket.
+  const initialDateStr = deferredCandlestick
+    ? (portfolio?.candlestick?.initialDate ?? null)
+    : (stackInitialDate ?? portfolio?.timeseries?.initialDate ?? null);
 
   const initialDate =
     typeof initialDateStr === "string"
