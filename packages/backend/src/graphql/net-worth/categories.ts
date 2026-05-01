@@ -191,13 +191,13 @@ export class NetWorthCategoryAsset implements NetWorthCategory {
   }
 
   /** The outgoing transfer for this wrapper, if any — at most one. When set, this wrapper's holdings and cash are treated as fully migrated into the destination wrapper on the transfer date. @gqlField */
-  async transferOut(): Promise<InvestmentTransfer | null> {
-    return loadInvestmentTransferOutForAsset(this.id);
+  async transferOut(ctx: Context): Promise<InvestmentTransfer | null> {
+    return loadInvestmentTransferOutForAsset(ctx, this.id);
   }
 
   /** Incoming transfers into this wrapper. Each contributes its source wrapper's full transaction and cash history into this one's portfolio aggregation from its `date`. @gqlField */
-  async transfersIn(): Promise<InvestmentTransfer[]> {
-    return loadInvestmentTransfersInForAsset(this.id);
+  async transfersIn(ctx: Context): Promise<InvestmentTransfer[]> {
+    return loadInvestmentTransfersInForAsset(ctx, this.id);
   }
 
   /** Date the wrapper was fully sold out — every position's net split-adjusted units is zero, the wrapper has at least one transaction, and there is no `transferOut` (otherwise that takes precedence as the "defunct" reason). The date is the last transaction in the wrapper, i.e. the closing sell that brought everything to zero. `null` for any wrapper that still holds units, has no transactions, or has been transferred out. @gqlField */
