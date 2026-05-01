@@ -74,6 +74,8 @@ type Props = {
    * 60-Hz wheel-event burst a trackpad pinch fires.
    */
   onZoom?: (deltaY: number) => void;
+  /** Click-and-drag horizontal pan. `deltaDays` is signed: positive = the user dragged to the right (so the visible window shifted forward in time, i.e. towards today); negative = dragged left (window shifted backward in time). The parent decides whether to clamp at "today" / kick off a backfill query for older data. */
+  onPan?: (deltaDays: number) => void;
 };
 
 const AXIS_PAD_LEFT = 56;
@@ -111,6 +113,7 @@ export function PortfolioChart({
   annotations,
   viewport,
   onZoom,
+  onPan,
 }: Props) {
   const [hoveredCandle, setHoveredCandle] = useState<number | null>(null);
   const [lineHoverX, setLineHoverX] = useState<number | null>(null);
@@ -205,6 +208,67 @@ export function PortfolioChart({
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
   }, [hasData, onZoom]);
+
+  // Click-and-drag horizontal pan. We track raw pixel deltas, convert
+  // them to "days" using the current visible span / plot width, and
+  // bubble the signed delta to the parent. The drag is captured on the
+  // SVG element so the gesture doesn't get lost when the cursor leaves
+  // the chart while held.
+  const panStateRef = useRef<{
+    pointerId: number;
+    lastClientX: number;
+    plotWidth: number;
+    visibleSpanDays: number;
+  } | null>(null);
+  const xMinRef = useRef(xMin);
+  xMinRef.current = xMin;
+  const xMaxRef = useRef(xMax);
+  xMaxRef.current = xMax;
+  const handlePointerDown =
+    onPan && hasData
+      ? (e: React.PointerEvent<SVGSVGElement>) => {
+          if (e.button !== 0) return;
+          const plotWidth = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
+          const visibleSpanDays = Math.max(
+            1,
+            xMaxRef.current - xMinRef.current,
+          );
+          panStateRef.current = {
+            pointerId: e.pointerId,
+            lastClientX: e.clientX,
+            plotWidth,
+            visibleSpanDays,
+          };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }
+      : undefined;
+  const handlePointerMove =
+    onPan && hasData
+      ? (e: React.PointerEvent<SVGSVGElement>) => {
+          const s = panStateRef.current;
+          if (!s || s.pointerId !== e.pointerId) return;
+          const dxPx = e.clientX - s.lastClientX;
+          if (dxPx === 0) return;
+          s.lastClientX = e.clientX;
+          // dragging right = pulling earlier dates onto the chart from the
+          // left = visible window shifts BACKWARD in time = negative
+          // deltaDays in "days from initialDate" terms. Sign matches the
+          // `onPan` doc: positive = right, the parent flips it for date math.
+          const deltaDays = (dxPx / s.plotWidth) * s.visibleSpanDays;
+          onPan(deltaDays);
+        }
+      : undefined;
+  const handlePointerUp =
+    onPan && hasData
+      ? (e: React.PointerEvent<SVGSVGElement>) => {
+          const s = panStateRef.current;
+          if (!s || s.pointerId !== e.pointerId) return;
+          panStateRef.current = null;
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        }
+      : undefined;
   // Unique clip-path id per instance so multiple charts on a page don't
   // collide. The clip restricts candle / line rendering to the plot area
   // (axis-text area excluded), so candles whose `x0` falls left of the
@@ -231,8 +295,16 @@ export function PortfolioChart({
     <svg
       ref={svgRef}
       viewBox={`0 0 ${width} ${height}`}
-      className={cn("overflow-visible", className)}
+      className={cn(
+        "overflow-visible",
+        onPan && "cursor-grab select-none active:cursor-grabbing",
+        className,
+      )}
       style={{ aspectRatio: `${width} / ${height}` }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
     >
       <defs>
         <clipPath id={clipId}>
@@ -324,15 +396,27 @@ export function PortfolioChart({
           // a flat-line candle (open == close == high == low) clean.
           const hasUpperWick = p.hi > bodyTop;
           const hasLowerWick = bodyBottom > p.lo;
+          // At zoomed-out densities the candles get so narrow that the
+          // foreground-coloured cap lines turn into visual noise — they
+          // dominate the candle body. Below 10 px wide we drop the caps
+          // and recolour the spine to match the body, so the wick reads
+          // as a thin extension of the candle.
+          const isThin = bucketWidth < 10;
+          const wickClass = isThin
+            ? isUp
+              ? "stroke-emerald-500"
+              : "stroke-red-500"
+            : "stroke-foreground";
           return (
             <g key={i}>
-              {/* wick — explicit `stroke-foreground` (not `currentColor` via a
-                parent `text-foreground`) because SVG's `stroke="currentColor"`
-                resolves against the nearest ancestor that actually sets the
-                CSS `color` property, and the class on the wrapping `<g>`
-                doesn't always inherit into SVG children in every browser /
-                Tailwind setup — wicks went invisible in dark mode. Using the
-                stroke class sets `stroke: var(--foreground)` directly. */}
+              {/* wick — for normal-width candles the spine + caps render in
+                `stroke-foreground` (explicit class rather than
+                `currentColor`, which doesn't inherit reliably into SVG
+                children across browser / Tailwind setups — wicks went
+                invisible in dark mode). For thin candles (< 10 px) we
+                tint the spine in the body colour and skip the cap lines
+                entirely so the candle reads cleanly at zoomed-out
+                densities. */}
               <g>
                 {(hasUpperWick || hasLowerWick) && (
                   <line
@@ -340,27 +424,27 @@ export function PortfolioChart({
                     x2={x}
                     y1={yScale(p.hi)}
                     y2={yScale(p.lo)}
-                    className="stroke-foreground"
+                    className={wickClass}
                     strokeWidth={1}
                   />
                 )}
-                {hasUpperWick && (
+                {!isThin && hasUpperWick && (
                   <line
                     x1={x - capWidth / 2}
                     x2={x + capWidth / 2}
                     y1={yScale(p.hi)}
                     y2={yScale(p.hi)}
-                    className="stroke-foreground"
+                    className={wickClass}
                     strokeWidth={1}
                   />
                 )}
-                {hasLowerWick && (
+                {!isThin && hasLowerWick && (
                   <line
                     x1={x - capWidth / 2}
                     x2={x + capWidth / 2}
                     y1={yScale(p.lo)}
                     y2={yScale(p.lo)}
-                    className="stroke-foreground"
+                    className={wickClass}
                     strokeWidth={1}
                   />
                 )}

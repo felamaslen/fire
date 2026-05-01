@@ -520,14 +520,12 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     expect(combinedFirst).toMatchObject({ from: 130, to: 130 });
   });
 
-  it("paginates older buckets via the opaque endCursor with stable boundaries", async () => {
-    // 50 weeks of daily prices ending the day before TEST_NOW so the
-    // history is long enough to need more than one page of weekly
-    // candles (default `max` is 50).
+  it("zooms out via `after:` to extend the chart's left edge to a stable bucket boundary", async () => {
+    // 380 days of history so the zoom-out target lands well within
+    // available data (no edge-of-data clipping).
     const asset = await createAsset();
     const a = await createStock("A", "AAA");
     await buy(a, asset, "2025-04-01", 10, 100);
-    // Steady £1/share price for the whole window.
     for (let i = 0; i < 380; i++) {
       const d = new Date("2025-04-01T00:00:00Z");
       d.setUTCDate(d.getUTCDate() + i);
@@ -535,13 +533,14 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     }
 
     const doc = graphql(`
-      query ($before: ID) {
+      query ($after: Date) {
         portfolio(skipLive: true) {
-          candlestick(unit: WEEK, length: 1, max: 5, before: $before) {
+          candlestick(unit: WEEK, length: 1, max: 5, after: $after) {
             initialDate
+            startCursor
             endCursor
-            hasMore
             points {
+              id
               x0
               x1
             }
@@ -550,34 +549,75 @@ describe("Query.portfolio.timeseries and candlestick", () => {
       }
     `);
 
+    // Initial query: no `after` → 5-bucket window ending today.
     const page1 = await runGql(doc, {});
     const cs1 = page1.portfolio?.candlestick;
     expect(cs1?.points.length).toBe(5);
-    expect(cs1?.hasMore).toBe(true);
-    expect(cs1?.endCursor).toBeTruthy();
     // Every full bucket is exactly 7 days wide, anchored on Mondays.
-    const fullBuckets1 = cs1?.points.slice(0, -1) ?? [];
-    for (const p of fullBuckets1) expect(p.x1 - p.x0).toBe(7);
-    // Starting Monday of the first bucket: count back 4 weeks from the
-    // ISO Monday of TEST_NOW=2026-04-18 (Sat). ISO Mon-of-week is
-    // 2026-04-13; 4 weeks back is 2026-03-16.
+    for (const p of cs1?.points.slice(0, -1) ?? []) {
+      expect(p.x1 - p.x0).toBe(7);
+    }
+    // ISO Mon-of-week of TEST_NOW=2026-04-18 (Sat) is 2026-04-13;
+    // 4 weeks back is 2026-03-16.
     expect(cs1?.initialDate).toBe("2026-03-16");
+    expect(cs1?.startCursor).toBe("2026-03-16");
+    // Right edge is "today" (TEST_NOW = 2026-04-18) since no `before`.
+    expect(cs1?.endCursor).toBe("2026-04-18");
+    // Point IDs are stable, opaque base64url strings.
+    expect(cs1?.points[0]?.id).toMatch(/^[A-Za-z0-9_-]+$/);
 
-    // Page 2: pass page 1's endCursor as `before`. The new page's last
-    // bucket should end on page 1's first bucket's start (no overlap,
-    // no gap).
-    const page2 = await runGql(doc, {
-      before: cs1?.endCursor as string | null | undefined,
-    });
+    // Zoom out: pass an earlier date as `after`. The chart's left edge
+    // moves to the snapped equivalent of `after`, the right edge stays
+    // at "today", and the same buckets that were in `cs1` re-appear
+    // with identical IDs (Apollo can normalise across the two queries).
+    const page2 = await runGql(doc, { after: "2025-09-01" });
     const cs2 = page2.portfolio?.candlestick;
-    expect(cs2?.points.length).toBe(5);
-    const cs2InitialDate = new Date(`${cs2?.initialDate}T00:00:00Z`);
-    const lastBucketEndDays = cs2?.points[cs2.points.length - 1]?.x1 ?? 0;
-    const lastBucketEnd = new Date(cs2InitialDate);
-    lastBucketEnd.setUTCDate(lastBucketEnd.getUTCDate() + lastBucketEndDays);
-    expect(lastBucketEnd.toISOString().slice(0, 10)).toBe("2026-03-16");
+    expect(cs2?.startCursor).toBe("2025-09-01");
+    expect(cs2?.endCursor).toBe("2026-04-18");
+    // First-bucket Monday = ISO Mon-of-week of 2025-09-01 = 2025-09-01.
+    expect(cs2?.initialDate).toBe("2025-09-01");
+    // Buckets that overlap `cs1` keep the same id (asset filter, size
+    // and bucket-start are the inputs to `encodeCandlePointId`).
+    const cs1IdsByX1 = new Map(
+      (cs1?.points ?? []).map((p) => {
+        const date = new Date("2026-03-16T00:00:00Z");
+        date.setUTCDate(date.getUTCDate() + p.x1);
+        return [date.toISOString().slice(0, 10), p.id];
+      }),
+    );
+    const cs2OverlappingIds = (cs2?.points ?? []).filter((p) => {
+      const date = new Date("2025-09-01T00:00:00Z");
+      date.setUTCDate(date.getUTCDate() + p.x1);
+      return cs1IdsByX1.has(date.toISOString().slice(0, 10));
+    });
+    expect(cs2OverlappingIds.length).toBeGreaterThan(0);
+    for (const p of cs2OverlappingIds) {
+      const date = new Date("2025-09-01T00:00:00Z");
+      date.setUTCDate(date.getUTCDate() + p.x1);
+      expect(p.id).toBe(cs1IdsByX1.get(date.toISOString().slice(0, 10)));
+    }
+  });
 
-    // All buckets on the older page are full-width.
-    for (const p of cs2?.points ?? []) expect(p.x1 - p.x0).toBe(7);
+  it("rejects ranges that exceed the per-(unit, length) zoom-out limit", async () => {
+    const asset = await createAsset();
+    const a = await createStock("A", "AAA");
+    await buy(a, asset, "2024-01-01", 10, 100);
+    await setPrice(a, "2024-01-01", 100);
+
+    const doc = graphql(`
+      query ($after: Date) {
+        portfolio(skipLive: true) {
+          candlestick(unit: DAY, length: 3, after: $after) {
+            initialDate
+          }
+        }
+      }
+    `);
+    // 3D candles cap at ~2 years. 5 years back is well over the limit.
+    await expect(
+      runGql(doc, { after: "2021-04-18" }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Error: GraphQL errors: Portfolio.candlestick(DAY, length: 3): requested range of 1826 days exceeds limit of 761 days for this candle size]`,
+    );
   });
 });

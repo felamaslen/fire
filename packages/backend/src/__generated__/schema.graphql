@@ -2231,20 +2231,19 @@ type Portfolio {
   Per-investment breakdown of the filtered portfolio's current market value, expressed as fractions in `[0, 1]` that sum to `1`. Each entry pairs an investment with its share. Investments that contribute zero value (no holdings, fully sold, or missing a price) are excluded; the remaining fractions are renormalised over those that do contribute. Returns an empty array when the portfolio has no positive value.
   """
   allocations: [PortfolioAllocation!]!
-  """Candlestick buckets of portfolio total over the requested period."""
+  """Candlestick buckets of portfolio total over the requested window."""
   candlestick(
     """
-    Opaque pagination cursor returned as `endCursor` on a previous
-    `Portfolio.candlestick` page. Pinning the right edge here loads the
-    page immediately older than the previous one, with bucket
-    boundaries that adjoin exactly (boundaries are stable across
-    pagination — see `snapBucketStart` in `candlestick.ts`). The
-    live-overlay tail is skipped on cursor-driven pages.
+    Lower bound on the visible range — buckets start at-or-after this date. Setting `after` to a date earlier than the previous response's `startCursor` is how the client zooms out: the chart's left edge moves to (the snapped equivalent of) `after`. The right edge stays at `before ?? today`.
     """
-    before: ID
+    after: Date
+    """
+    Upper bound on the visible range — buckets end at-or-before this date. The client passes this when panning the chart's right edge back from "today"; for the default unbounded-on-the-right view, leave it `null`. The live-overlay tail is skipped when `before` is set.
+    """
+    before: Date
     length: Int! = 1
     """
-    Maximum number of candle buckets to return. The series ends at `before` (or today, when `before` is unset) and extends backwards by `max × length` `unit`s.
+    Maximum number of candle buckets to return when neither `after` nor `before` is set. The series ends today and extends backwards by `max × length` `unit`s. Ignored when `after` is set (the range becomes `(after, before ?? today)`).
     """
     max: Int! = 50 @constraint(max: 100, min: 1)
     unit: PortfolioCandleUnit!
@@ -2311,20 +2310,20 @@ type PortfolioAllocation {
 }
 
 """
-OHLC-style time series of portfolio total, downsampled to at most 300 buckets while always preserving the first and last bucket.
+OHLC-style time series of portfolio total. The visible window is bounded by `(after, before)` — the client drives zoom-out / pan by lowering `after` (extending the chart left) or moving `before` back from "today" (panning right edge). Bucket boundaries snap to a stable epoch so any two queries with overlapping ranges return buckets that align exactly.
 """
 type PortfolioCandlestick {
   currency: String!
   """
-  Opaque cursor pointing at the *earliest* bucket on this page. Pass it back as `Portfolio.candlestick(before:)` to load the next older page; the new page's right edge will adjoin this page's left edge with no overlap or gap (bucket boundaries are stable across pagination). `null` when this page already starts at the earliest available data.
+  Calendar date of the *rightmost* bucket's end — i.e. the chart's current right edge. For an unbounded query (no `before`) this is "today" (or `dateCap`, for a transferred-out wrapper). The client passes a date earlier than `endCursor` as `before:` to pan the right edge back.
   """
-  endCursor: ID
-  """
-  `true` when there are older buckets the client can paginate to via `endCursor`.
-  """
-  hasMore: Boolean!
+  endCursor: Date!
   initialDate: Date!
   points: [PortfolioCandlestickPoint!]!
+  """
+  Calendar date of the *leftmost* bucket's start — i.e. the chart's current "initial date". Equal to `initialDate` here; exposed separately so a panning client can read it as a cursor without selecting `initialDate` (which is also used for date-axis labelling). When the client wants to zoom out, it passes a date earlier than `startCursor` as `after:` to extend the chart left.
+  """
+  startCursor: Date!
 }
 
 """
@@ -2339,6 +2338,10 @@ type PortfolioCandlestickPoint {
   Highest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
   """
   hi: Int!
+  """
+  Stable opaque identifier for the bucket — encodes the asset filter, candle size (`unit_length`), and bucket start date so the same bucket appearing in two overlapping queries normalises to the same Apollo cache entry. Lets the client merge a panned / zoomed range with the previously-loaded one without re-fetching shared candles.
+  """
+  id: ID!
   """
   Lowest Y value in major currency units of the parent `PortfolioCandlestick` `currency` field
   """
