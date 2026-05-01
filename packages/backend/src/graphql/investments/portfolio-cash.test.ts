@@ -88,7 +88,7 @@ async function buy(
       mutation (
         $investmentId: ID!
         $assetId: ID!
-        $units: Int!
+        $units: Float!
         $price: Float!
         $drip: Boolean
       ) {

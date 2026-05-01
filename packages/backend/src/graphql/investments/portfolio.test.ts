@@ -45,7 +45,7 @@ async function buy(
       $investmentId: ID!
       $assetId: ID!
       $date: Date!
-      $units: Int!
+      $units: Float!
       $priceAmount: Float!
       $currency: String!
     ) {
@@ -206,10 +206,13 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
-    // Cash float is +£20 (the realised gain): 50 buy → -50; 70 sell → +70.
-    // Floor at zero is irrelevant here (already non-negative). totalGain
-    // stays held − cost = 0 − (−20) = +20.
-    expect(data.portfolio?.totalValue?.amount).toBe(20);
+    // Held = 0. Cash float would be +£20 from the realised gain, but with
+    // no deposit / planning contributions the wrapper isn't
+    // contribution-tracked (see `portfolio-cash` test of the same shape),
+    // so cash is gated to 0 — the realised proceeds may have been
+    // withdrawn. `totalGain` still surfaces the realised £20 via the
+    // negative `totalCost`.
+    expect(data.portfolio?.totalValue?.amount).toBe(0);
     expect(data.portfolio?.totalCost?.amount).toBeCloseTo(-20);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(20);
   });

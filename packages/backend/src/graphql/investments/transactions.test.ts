@@ -43,7 +43,7 @@ async function createTransaction(
     mutation (
       $investmentId: ID!
       $assetId: ID!
-      $units: Int!
+      $units: Float!
       $priceAmount: Float!
       $drip: Boolean
     ) {

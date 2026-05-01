@@ -60,7 +60,7 @@ async function tx(
       $investmentId: ID!
       $assetId: ID!
       $date: Date!
-      $units: Int!
+      $units: Float!
       $priceAmount: Float!
     ) {
       investmentTransactionCreate(
