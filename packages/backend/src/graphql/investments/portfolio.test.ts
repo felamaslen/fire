@@ -519,4 +519,65 @@ describe("Query.portfolio.timeseries and candlestick", () => {
     expect(sippFirst).toMatchObject({ from: 80, to: 80 });
     expect(combinedFirst).toMatchObject({ from: 130, to: 130 });
   });
+
+  it("paginates older buckets via the opaque endCursor with stable boundaries", async () => {
+    // 50 weeks of daily prices ending the day before TEST_NOW so the
+    // history is long enough to need more than one page of weekly
+    // candles (default `max` is 50).
+    const asset = await createAsset();
+    const a = await createStock("A", "AAA");
+    await buy(a, asset, "2025-04-01", 10, 100);
+    // Steady £1/share price for the whole window.
+    for (let i = 0; i < 380; i++) {
+      const d = new Date("2025-04-01T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + i);
+      await setPrice(a, d.toISOString().slice(0, 10), 100);
+    }
+
+    const doc = graphql(`
+      query ($before: ID) {
+        portfolio(skipLive: true) {
+          candlestick(unit: WEEK, length: 1, max: 5, before: $before) {
+            initialDate
+            endCursor
+            hasMore
+            points {
+              x0
+              x1
+            }
+          }
+        }
+      }
+    `);
+
+    const page1 = await runGql(doc, {});
+    const cs1 = page1.portfolio?.candlestick;
+    expect(cs1?.points.length).toBe(5);
+    expect(cs1?.hasMore).toBe(true);
+    expect(cs1?.endCursor).toBeTruthy();
+    // Every full bucket is exactly 7 days wide, anchored on Mondays.
+    const fullBuckets1 = cs1?.points.slice(0, -1) ?? [];
+    for (const p of fullBuckets1) expect(p.x1 - p.x0).toBe(7);
+    // Starting Monday of the first bucket: count back 4 weeks from the
+    // ISO Monday of TEST_NOW=2026-04-18 (Sat). ISO Mon-of-week is
+    // 2026-04-13; 4 weeks back is 2026-03-16.
+    expect(cs1?.initialDate).toBe("2026-03-16");
+
+    // Page 2: pass page 1's endCursor as `before`. The new page's last
+    // bucket should end on page 1's first bucket's start (no overlap,
+    // no gap).
+    const page2 = await runGql(doc, {
+      before: cs1?.endCursor as string | null | undefined,
+    });
+    const cs2 = page2.portfolio?.candlestick;
+    expect(cs2?.points.length).toBe(5);
+    const cs2InitialDate = new Date(`${cs2?.initialDate}T00:00:00Z`);
+    const lastBucketEndDays = cs2?.points[cs2.points.length - 1]?.x1 ?? 0;
+    const lastBucketEnd = new Date(cs2InitialDate);
+    lastBucketEnd.setUTCDate(lastBucketEnd.getUTCDate() + lastBucketEndDays);
+    expect(lastBucketEnd.toISOString().slice(0, 10)).toBe("2026-03-16");
+
+    // All buckets on the older page are full-width.
+    for (const p of cs2?.points ?? []) expect(p.x1 - p.x0).toBe(7);
+  });
 });

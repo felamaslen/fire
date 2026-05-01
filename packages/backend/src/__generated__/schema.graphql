@@ -2233,10 +2233,18 @@ type Portfolio {
   allocations: [PortfolioAllocation!]!
   """Candlestick buckets of portfolio total over the requested period."""
   candlestick(
+    """
+    Opaque pagination cursor returned as `endCursor` on a previous
+    `Portfolio.candlestick` page. Pinning the right edge here loads the
+    page immediately older than the previous one, with bucket
+    boundaries that adjoin exactly (boundaries are stable across
+    pagination — see `snapBucketStart` in `candlestick.ts`). The
+    live-overlay tail is skipped on cursor-driven pages.
+    """
+    before: ID
     length: Int! = 1
     """
-    Maximum number of candle buckets to return. The series ends today and
-    extends backwards by `max × length` `unit`s.
+    Maximum number of candle buckets to return. The series ends at `before` (or today, when `before` is unset) and extends backwards by `max × length` `unit`s.
     """
     max: Int! = 50 @constraint(max: 100, min: 1)
     unit: PortfolioCandleUnit!
@@ -2307,6 +2315,14 @@ OHLC-style time series of portfolio total, downsampled to at most 300 buckets wh
 """
 type PortfolioCandlestick {
   currency: String!
+  """
+  Opaque cursor pointing at the *earliest* bucket on this page. Pass it back as `Portfolio.candlestick(before:)` to load the next older page; the new page's right edge will adjoin this page's left edge with no overlap or gap (bucket boundaries are stable across pagination). `null` when this page already starts at the earliest available data.
+  """
+  endCursor: ID
+  """
+  `true` when there are older buckets the client can paginate to via `endCursor`.
+  """
+  hasMore: Boolean!
   initialDate: Date!
   points: [PortfolioCandlestickPoint!]!
 }

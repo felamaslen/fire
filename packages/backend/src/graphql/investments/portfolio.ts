@@ -20,7 +20,7 @@ import {
   decodeCursor,
   encodeCursor,
 } from "../pagination";
-import { loadCandlestick } from "./candlestick";
+import { decodeCandlestickCursor, loadCandlestick } from "./candlestick";
 import { Investment } from "./index";
 import { loadPortfolioCashMinor } from "./portfolio-cash";
 import { computePortfolioXirr } from "./portfolio-xirr";
@@ -83,6 +83,10 @@ export type PortfolioCandlestick = {
   initialDate: CalendarDate;
   /** @gqlField */
   points: PortfolioCandlestickPoint[];
+  /** Opaque cursor pointing at the *earliest* bucket on this page. Pass it back as `Portfolio.candlestick(before:)` to load the next older page; the new page's right edge will adjoin this page's left edge with no overlap or gap (bucket boundaries are stable across pagination). `null` when this page already starts at the earliest available data. @gqlField */
+  endCursor: ID | null;
+  /** `true` when there are older buckets the client can paginate to via `endCursor`. @gqlField */
+  hasMore: boolean;
 };
 
 /** Share of the parent `Portfolio`'s current market value held in one investment. `fraction` is in `[0, 1]`; values across a `Portfolio.allocations` array sum to `1` (modulo floating-point error). Held investments missing a price are excluded entirely so they don't drag the denominator. @gqlType */
@@ -652,11 +656,19 @@ export class Portfolio {
     unit: PortfolioCandleUnit,
     length: Int = 1,
     /**
-     * Maximum number of candle buckets to return. The series ends today and
-     * extends backwards by `max × length` `unit`s.
+     * Maximum number of candle buckets to return. The series ends at `before` (or today, when `before` is unset) and extends backwards by `max × length` `unit`s.
      * @gqlAnnotate constraint(min: 1, max: 100)
      */
     max: Int = 50,
+    /**
+     * Opaque pagination cursor returned as `endCursor` on a previous
+     * `Portfolio.candlestick` page. Pinning the right edge here loads the
+     * page immediately older than the previous one, with bucket
+     * boundaries that adjoin exactly (boundaries are stable across
+     * pagination — see `snapBucketStart` in `candlestick.ts`). The
+     * live-overlay tail is skipped on cursor-driven pages.
+     */
+    before?: ID | null,
   ): Promise<PortfolioCandlestick | null> {
     assert(
       !this.filterInvestmentIdIn,
@@ -664,13 +676,27 @@ export class Portfolio {
     );
     const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
     const extraScopes = await this.loadExtraScopesUnion(ctx);
+    // `before` and `dateCap` both anchor the right edge; if both are set
+    // (a user pagination cursor on a transferred-out wrapper), use the
+    // earlier of the two — the transfer cap is an absolute upper bound,
+    // and the user's cursor is what they're paginating towards.
+    const beforeStr = before ? decodeCandlestickCursor(before) : null;
+    const rightEdge =
+      beforeStr && dateCap
+        ? beforeStr < dateCap
+          ? beforeStr
+          : dateCap
+        : (beforeStr ?? dateCap ?? null);
     return loadCandlestick(ctx).load({
       unit,
       length,
       max,
       assetIds: effectiveAssetIds ?? undefined,
-      skipLive: this.skipLive,
-      ...(dateCap ? { dateCap } : {}),
+      // Live overlay only makes sense when the series ends at "today";
+      // a paginated page or a frozen-at-dateCap series shouldn't pick up
+      // an intraday quote on its right edge.
+      skipLive: this.skipLive || beforeStr !== null,
+      ...(rightEdge ? { dateCap: rightEdge } : {}),
       ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
   }

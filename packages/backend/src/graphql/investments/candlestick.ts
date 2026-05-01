@@ -1,6 +1,7 @@
 import DataLoader from "dataloader";
 import { differenceInDays, formatISO } from "date-fns";
 import { sql } from "drizzle-orm";
+import type { ID } from "grats";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
@@ -13,6 +14,27 @@ import {
   PortfolioCandleUnit,
 } from "./portfolio";
 import { loadInvestmentStats } from "./stats";
+
+/** Cursor wire format for `Portfolio.candlestick.endCursor` / `before:`. The cursor is the bucket-start date the next page should end at; we base64-encode it so the client treats it as fully opaque (matching the `ID` GraphQL contract — pasting a date directly into `before:` is undefined behaviour). */
+const CURSOR_PREFIX = "candle:";
+
+function encodeCandlestickCursor(bucketStart: string): ID {
+  return Buffer.from(`${CURSOR_PREFIX}${bucketStart}`, "utf-8").toString(
+    "base64url",
+  ) as ID;
+}
+
+export function decodeCandlestickCursor(cursor: ID): string {
+  const decoded = Buffer.from(cursor as string, "base64url").toString("utf-8");
+  if (!decoded.startsWith(CURSOR_PREFIX)) {
+    throw new Error(`Invalid candlestick cursor: ${String(cursor)}`);
+  }
+  const date = decoded.slice(CURSOR_PREFIX.length);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(`Invalid candlestick cursor (bad date): ${String(cursor)}`);
+  }
+  return date;
+}
 
 type CandlestickKey = {
   /** When set, filters the result to the combined portfolio across these net worth asset IDs. Undefined / empty = every asset. The full set is part of the cache key, so two requests with the same set coalesce to one SQL query; requests with different sets run independently. */
@@ -69,13 +91,57 @@ type Row = {
   valueEnd: number;
 };
 
+/** Snap `d` to the bucket start it belongs to, given a `(unit, length)` candle width. Bucket boundaries are anchored to a fixed epoch (1970-01-01 for DAY, the Monday 1969-12-29 for WEEK, 1970-01-01 for MONTH) and indexed in multiples of `length`, so two requests with different right-edge anchors but the same `(unit, length)` produce buckets that line up exactly — pagination via the `before` cursor returns adjoining ranges, not a shifted one. */
+function snapBucketStart(
+  d: Date,
+  unit: PortfolioCandleUnit,
+  length: number,
+): Date {
+  const out = new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
+  if (unit === "DAY") {
+    const daysSinceEpoch = Math.floor(out.getTime() / 86400000);
+    const offset = ((daysSinceEpoch % length) + length) % length;
+    out.setUTCDate(out.getUTCDate() - offset);
+    return out;
+  }
+  if (unit === "WEEK") {
+    // Snap to ISO Monday first, then to a multiple of `length` weeks
+    // since 1969-12-29 (the Monday of the week containing the Unix
+    // epoch).
+    const dayOfWeek = out.getUTCDay(); // 0 Sun .. 6 Sat
+    const offsetToMon = (dayOfWeek + 6) % 7;
+    out.setUTCDate(out.getUTCDate() - offsetToMon);
+    if (length > 1) {
+      const epochMon = Date.UTC(1969, 11, 29);
+      const weeksSince = Math.floor(
+        (out.getTime() - epochMon) / (7 * 86400000),
+      );
+      const offset = ((weeksSince % length) + length) % length;
+      out.setUTCDate(out.getUTCDate() - offset * 7);
+    }
+    return out;
+  }
+  if (unit === "MONTH") {
+    out.setUTCDate(1);
+    if (length > 1) {
+      const monthsSince =
+        (out.getUTCFullYear() - 1970) * 12 + out.getUTCMonth();
+      const offset = ((monthsSince % length) + length) % length;
+      out.setUTCMonth(out.getUTCMonth() - offset);
+    }
+    return out;
+  }
+  throw new Error(`Unhandled candle unit: ${unit as string}`);
+}
+
 const loadOne = async (
   ctx: Context,
   key: CandlestickKey,
 ): Promise<PortfolioCandlestick | null> => {
   const currency = HOME_CURRENCY;
   const unit = sql.raw(key.unit.toLowerCase());
-  const windowLen = sql.raw(String(key.length * key.max));
   const step = sql.raw(String(key.length));
   // OR-combined asset scope over `InvestmentValuePoints`. Empty filter =
   // "every asset" (the unscoped portfolio chart).
@@ -117,6 +183,27 @@ const loadOne = async (
   // When `dateCap` is set, anchor `now` at the cap so the chart freezes on
   // the day before the transfer.
   const now = key.dateCap ?? formatISO(new Date(), { representation: "date" });
+  // Snap the right edge to a stable bucket boundary (Monday for WEEK,
+  // 1st-of-month for MONTH, mod-`length` since epoch for DAY) so two
+  // requests for the same `(unit, length)` with different `before`
+  // cursors produce buckets that line up exactly.
+  const anchor = formatISO(
+    snapBucketStart(new Date(now), key.unit, key.length),
+    {
+      representation: "date",
+    },
+  );
+  // When `now` falls strictly inside a bucket (e.g. mid-week for 1W) we
+  // emit a trailing partial bucket from `anchor` to `now` of width 1 to
+  // `length` units. To keep the *total* bucket count at `max`, we
+  // generate one fewer full bucket in that case — i.e. start the date
+  // series at `anchor - (max-1) × length` instead of `anchor - max ×
+  // length`. With no partial bucket (`now == anchor`, the request lands
+  // exactly on a boundary or `before` was passed in), we generate the
+  // full `max` boundaries.
+  const hasPartial = anchor !== now;
+  const fullBuckets = hasPartial ? key.max - 1 : key.max;
+  const windowLen = sql.raw(String(key.length * fullBuckets));
 
   const result = await db.execute<Row>(sql`
     WITH
@@ -124,10 +211,11 @@ const loadOne = async (
         SELECT date, row_number() OVER (ORDER BY date DESC) AS rn
         FROM (
           SELECT generate_series(
-            ${now}::date - interval '${windowLen} ${unit}',
-            ${now}::date,
+            ${anchor}::date - interval '${windowLen} ${unit}',
+            ${anchor}::date,
             '${step} ${unit}'::interval
           ) AS date
+          ${hasPartial ? sql`UNION SELECT ${now}::date AS date` : sql``}
         ) x
       ),
       b AS (
@@ -172,6 +260,41 @@ const loadOne = async (
     valueMin: row.valueMin,
     valueMax: row.valueMax,
   }));
+
+  // Probe for older IVP rows than the leftmost bucket's start, scoped to
+  // the same asset filter. Drives `hasMore` — the client uses this to
+  // know when to stop pagination on zoom-out.
+  const leftmostStart = points[0].start;
+  const ivpScopeFilterForExistsCheck = (() => {
+    const mainAssetIds = key.assetIds ?? [];
+    const extraScopes = key.extraScopes ?? [];
+    if (mainAssetIds.length === 0 && extraScopes.length === 0) {
+      return sql``;
+    }
+    const branches: ReturnType<typeof sql>[] = [];
+    if (mainAssetIds.length > 0) {
+      branches.push(
+        sql`ivp."assetId" in (${sql.join(
+          mainAssetIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      );
+    }
+    for (const s of extraScopes) {
+      branches.push(sql`ivp."assetId" = ${s.assetId}`);
+    }
+    return sql`AND (${sql.join(branches, sql` OR `)})`;
+  })();
+  const hasMoreResult = await db.execute<{ has_more: boolean }>(sql`
+    SELECT EXISTS (
+      SELECT 1 FROM "InvestmentValuePoints" ivp
+      WHERE ivp.currency = ${currency}
+        AND ivp.value > 0
+        AND ivp.date < ${formatISO(leftmostStart, { representation: "date" })}::date
+        ${ivpScopeFilterForExistsCheck}
+    ) AS has_more
+  `);
+  const hasMore = (hasMoreResult.rows ?? hasMoreResult)[0]?.has_more ?? false;
 
   // Overlay the last bucket with today's live portfolio total so the tail of
   // the chart tracks intraday movement. `valueEnd` jumps to the live total;
@@ -218,5 +341,16 @@ const loadOne = async (
         Money.fromMinorDenomination(row.valueMax, currency).amount,
       ),
     })),
+    // Cursor = leftmost bucket's start date. The client passes this back
+    // as `Portfolio.candlestick(before:)` to load the next older page;
+    // the server snaps anchors to a stable epoch (`snapBucketStart`) so
+    // the next page's right edge adjoins this page's left edge with no
+    // overlap or gap. `null` when there's nothing older to paginate to.
+    endCursor: hasMore
+      ? encodeCandlestickCursor(
+          formatISO(leftmostStart, { representation: "date" }),
+        )
+      : null,
+    hasMore,
   };
 };

@@ -2400,6 +2400,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "currency",
                     type: new GraphQLNonNull(GraphQLString)
                 },
+                endCursor: {
+                    description: "Opaque cursor pointing at the *earliest* bucket on this page. Pass it back as `Portfolio.candlestick(before:)` to load the next older page; the new page's right edge will adjoin this page's left edge with no overlap or gap (bucket boundaries are stable across pagination). `null` when this page already starts at the earliest available data.",
+                    name: "endCursor",
+                    type: GraphQLID
+                },
+                hasMore: {
+                    description: "`true` when there are older buckets the client can paginate to via `endCursor`.",
+                    name: "hasMore",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
                 initialDate: {
                     name: "initialDate",
                     type: new GraphQLNonNull(DateType)
@@ -2498,12 +2508,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "candlestick",
                     type: PortfolioCandlestickType,
                     args: {
+                        before: {
+                            description: "Opaque pagination cursor returned as `endCursor` on a previous\n`Portfolio.candlestick` page. Pinning the right edge here loads the\npage immediately older than the previous one, with bucket\nboundaries that adjoin exactly (boundaries are stable across\npagination \u2014 see `snapBucketStart` in `candlestick.ts`). The\nlive-overlay tail is skipped on cursor-driven pages.",
+                            type: GraphQLID
+                        },
                         length: {
                             type: new GraphQLNonNull(GraphQLInt),
                             defaultValue: 1
                         },
                         max: {
-                            description: "Maximum number of candle buckets to return. The series ends today and\nextends backwards by `max \u00D7 length` `unit`s.",
+                            description: "Maximum number of candle buckets to return. The series ends at `before` (or today, when `before` is unset) and extends backwards by `max \u00D7 length` `unit`s.",
                             type: new GraphQLNonNull(GraphQLInt),
                             defaultValue: 50,
                             extensions: {
@@ -2523,7 +2537,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(source, args, context) {
-                        return source.candlestick(context, args.unit, args.length, args.max);
+                        return source.candlestick(context, args.unit, args.length, args.max, args.before);
                     }
                 },
                 cash: {
