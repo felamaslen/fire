@@ -492,6 +492,7 @@ export function AllocationsSection({
       // without re-introducing per-investment colour.
       color: i % 2 === 0 ? "#9ca3af" : "#6b7280",
       label: "",
+      title: "",
     }));
     return (
       <section className="absolute inset-x-0 bottom-0">
