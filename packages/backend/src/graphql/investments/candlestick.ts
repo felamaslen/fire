@@ -203,6 +203,13 @@ const loadOne = async (
       assetIds:
         key.assetIds && key.assetIds.length > 0 ? key.assetIds : undefined,
       skipLive: false,
+      // Fold any inbound-transfer sources into the live overlay too —
+      // otherwise the last candle's `valueEnd` collapses to "main asset
+      // only", producing a spurious red candle when the rest of the
+      // series included folded source holdings.
+      ...(key.extraScopes && key.extraScopes.length > 0
+        ? { extraScopes: key.extraScopes }
+        : {}),
     });
     const liveTotal: number | null = s.totalValueMinor;
     if (liveTotal !== null) {

@@ -816,6 +816,54 @@ describe("Portfolio multi-asset transfer fold", () => {
     expect(xirr).toBeLessThan(0.5);
   });
 
+  it("candlestick last bucket's live overlay folds source pre-transfer holdings (no spurious red candle)", async () => {
+    const fromAsset = await createAsset("Old ISA");
+    const toAsset = await createAsset("New ISA");
+    const inv = await createStock("Acme", "ACME.L");
+    // Source bought 100 units before transfer; destination buys nothing of
+    // its own. Without the fold reaching the live overlay, the last
+    // candle's `valueEnd` would collapse to dest-own (= 0) while the
+    // candle's historical range sat at £2000, producing an artificial
+    // crash to zero (a tall red candle).
+    await buy(inv, fromAsset, "2022-01-15", 100, 10);
+    // Cached prices spanning the candlestick window (the test clock is
+    // frozen mid-April 2026, so a 12-month MONTH window covers 2025-04 →
+    // 2026-04). Without prices in-window the candlestick CTE has no rows
+    // to bucket and returns null.
+    await setPrice(inv, "2025-04-01", 2000);
+    await setPrice(inv, "2026-04-01", 2000);
+    await db.insert(InvestmentPricesLive).values({
+      investmentId: inv,
+      refreshedAt: new Date("2026-04-15T12:00:00Z"),
+      date: new Date("2026-04-15T12:00:00Z"),
+      currency: "GBP",
+      price: 2000,
+      pricePreviousClose: 2000,
+    });
+    await createTransferOut(fromAsset, toAsset, "2022-06-15");
+
+    const data = await runGql(
+      graphql(`
+        query ($filterAssetIdIn: [ID!]) {
+          portfolio(filterAssetIdIn: $filterAssetIdIn, skipLive: false) {
+            candlestick(unit: MONTH, length: 1, max: 12) {
+              points {
+                from
+                to
+              }
+            }
+          }
+        }
+      `),
+      { filterAssetIdIn: [toAsset] },
+    );
+    const points = data.portfolio?.candlestick?.points ?? [];
+    expect(points.length).toBeGreaterThan(0);
+    const last = points[points.length - 1];
+    // 100 inherited units × £20 live = £2000 — no crash to zero.
+    expect(last.to).toBe(2000);
+  });
+
   it("[src, dest] timeseries shows one continuous folded line (no double-count post-transfer)", async () => {
     const fromAsset = await createAsset("Old ISA");
     const toAsset = await createAsset("New ISA");
