@@ -253,9 +253,21 @@ export class Portfolio {
         };
       }
       const filterSet = new Set(filter);
-      const outgoing = await Promise.all(
-        filter.map((id) => loadInvestmentTransferOutScopeForAsset(ctx, id)),
-      );
+      // Three round-trips fan out in parallel against the full `filter` set
+      // rather than serialising on `effective`: `effective` is always a
+      // subset of `filter`, so speculatively fetching transfers-in /
+      // sold-out caps for the dropped ids only adds a few rows to a
+      // batched query, but collapses three sequential DataLoader trips
+      // into one.
+      const [outgoing, incomingByFilterIdx, soldOutCaps] = await Promise.all([
+        Promise.all(
+          filter.map((id) => loadInvestmentTransferOutScopeForAsset(ctx, id)),
+        ),
+        Promise.all(
+          filter.map((id) => loadInvestmentTransferInScopesForAsset(ctx, id)),
+        ),
+        loadAssetSoldOutCaps(ctx, filter, this.currency),
+      ]);
       // Drop any asset whose outgoing-transfer destination is also in the
       // filter — its pre-transfer history will flow through the destination's
       // extras, so keeping it would double-count.
@@ -265,6 +277,7 @@ export class Portfolio {
         if (t && filterSet.has(t.assetIdTo)) continue;
         effective.push(filter[i]);
       }
+      const effectiveSet = new Set(effective);
       const dayBefore = (date: Date | string): string => {
         const d = new Date(date as unknown as Date);
         d.setUTCDate(d.getUTCDate() - 1);
@@ -274,33 +287,24 @@ export class Portfolio {
         string,
         ReadonlyArray<{ assetId: string; dateCap: string }>
       >();
-      await Promise.all(
-        effective.map(async (assetId) => {
-          const incoming = await loadInvestmentTransferInScopesForAsset(
-            ctx,
-            assetId,
-          );
-          if (incoming.length === 0) return;
-          extrasByAsset.set(
-            assetId,
-            incoming.map((t) => ({
-              assetId: t.assetIdFrom,
-              dateCap: dayBefore(t.date),
-            })),
-          );
-        }),
-      );
+      for (let i = 0; i < filter.length; i++) {
+        if (!effectiveSet.has(filter[i])) continue;
+        const incoming = incomingByFilterIdx[i];
+        if (incoming.length === 0) continue;
+        extrasByAsset.set(
+          filter[i],
+          incoming.map((t) => ({
+            assetId: t.assetIdFrom,
+            dateCap: dayBefore(t.date),
+          })),
+        );
+      }
       // Per-asset "defunct cap": either an outgoing transfer (cap =
       // transferDate − 1, by construction the destination isn't in the
       // filter) or an entirely sold-out wrapper (every position netted to
       // zero). When *every* effective asset has a cap, freeze the chart at
       // the latest such date so it ends on the last day with non-zero
       // holdings instead of dragging zero candles to today.
-      const soldOutCaps = await loadAssetSoldOutCaps(
-        ctx,
-        effective,
-        this.currency,
-      );
       const perAssetCap = (assetId: string): string | null => {
         const t = outgoing[filter.indexOf(assetId)];
         if (t) return dayBefore(t.date);

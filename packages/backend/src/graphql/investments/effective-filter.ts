@@ -48,35 +48,43 @@ async function computeEffectiveFilter(
     return { effectiveAssetIds: null, extraScopes: [], dateCap: null };
   }
   const filterSet = new Set(filterAssetIdIn);
-  const outgoing = await Promise.all(
-    filterAssetIdIn.map((id) =>
-      loadInvestmentTransferOutScopeForAsset(ctx, id),
+  // Three round-trips fan out in parallel against `filterAssetIdIn` rather
+  // than serialising on `effective`: `effective` is always a subset of
+  // `filterAssetIdIn`, so speculatively fetching transfers-in / sold-out
+  // caps for the dropped ids only adds a few rows to a batched query, but
+  // collapses three sequential DataLoader trips into one.
+  const [outgoing, incomingByAsset, soldOutCaps] = await Promise.all([
+    Promise.all(
+      filterAssetIdIn.map((id) =>
+        loadInvestmentTransferOutScopeForAsset(ctx, id),
+      ),
     ),
-  );
+    Promise.all(
+      filterAssetIdIn.map((id) =>
+        loadInvestmentTransferInScopesForAsset(ctx, id),
+      ),
+    ),
+    loadAssetSoldOutCaps(ctx, filterAssetIdIn, HOME_CURRENCY),
+  ]);
   const effective: string[] = [];
   for (let i = 0; i < filterAssetIdIn.length; i++) {
     const t = outgoing[i];
     if (t && filterSet.has(t.assetIdTo)) continue;
     effective.push(filterAssetIdIn[i]);
   }
+  const effectiveSet = new Set(effective);
   const extras: { assetId: string; dateCap: string }[] = [];
   const seen = new Set<string>();
-  await Promise.all(
-    effective.map(async (assetId) => {
-      const incoming = await loadInvestmentTransferInScopesForAsset(
-        ctx,
-        assetId,
-      );
-      for (const t of incoming) {
-        const cap = dayBefore(t.date);
-        const key = `${t.assetIdFrom}@${cap}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        extras.push({ assetId: t.assetIdFrom, dateCap: cap });
-      }
-    }),
-  );
-  const soldOutCaps = await loadAssetSoldOutCaps(ctx, effective, HOME_CURRENCY);
+  for (let i = 0; i < filterAssetIdIn.length; i++) {
+    if (!effectiveSet.has(filterAssetIdIn[i])) continue;
+    for (const t of incomingByAsset[i]) {
+      const cap = dayBefore(t.date);
+      const key = `${t.assetIdFrom}@${cap}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      extras.push({ assetId: t.assetIdFrom, dateCap: cap });
+    }
+  }
   let dateCap: string | null = null;
   if (effective.length >= 1) {
     const caps = effective.flatMap((id) => {
