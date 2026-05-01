@@ -1,5 +1,6 @@
 import assert from "node:assert";
 
+import DataLoader from "dataloader";
 import { and, eq, exists, inArray, sql } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
@@ -10,7 +11,7 @@ import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import { assertNoErrors, assertNotError } from "@/errors";
 import { isNonNullish } from "@/is-truthy";
 
-import type { Context } from "../context";
+import { type Context, contextAwareDataLoader } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { assertCurrencyCode, Money } from "../money";
 import {
@@ -122,12 +123,12 @@ type EffectiveFilter = {
   dateCap: string | null;
 };
 
-/** Per-asset cap for wrappers that have been wound down — every `(investmentId)` position now nets to zero. The cap lands one day before the *first sell of the closing sell-down sequence* (i.e. the earliest sell that comes after the last buy in the wrapper), not just one day before the final closing tx. That way the last chart bucket shows the wrapper at its pre-wind-down value rather than partway through the closing sells. Wrappers with at least one open position aren't returned. */
-export async function loadAssetSoldOutCaps(
+type SoldOutCapKey = { assetId: string; currency: string };
+
+async function fetchSoldOutCaps(
   assetIds: readonly string[],
   currency: string,
 ): Promise<Map<string, string>> {
-  if (assetIds.length === 0) return new Map();
   const rows = await db.execute<{ assetId: string; capDate: string }>(sql`
     WITH tx_adj AS (
       SELECT
@@ -181,6 +182,52 @@ export async function loadAssetSoldOutCaps(
   return out;
 }
 
+/** Per-request batched loader for sold-out caps. Keys are `(assetId, currency)`; the batch fn buckets by currency (typically just `HOME_CURRENCY`) and runs one SQL per bucket covering every requested asset id. */
+const soldOutCapLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<SoldOutCapKey, string | null, string>(
+      async (keys) => {
+        const buckets = new Map<string, string[]>();
+        for (const k of keys) {
+          const list = buckets.get(k.currency) ?? [];
+          list.push(k.assetId);
+          buckets.set(k.currency, list);
+        }
+        const byCurrency = new Map<string, Map<string, string>>();
+        await Promise.all(
+          [...buckets.entries()].map(async ([currency, ids]) => {
+            const caps = await fetchSoldOutCaps([...new Set(ids)], currency);
+            byCurrency.set(currency, caps);
+          }),
+        );
+        return keys.map(
+          (k) => byCurrency.get(k.currency)?.get(k.assetId) ?? null,
+        );
+      },
+      { cacheKeyFn: (k) => `${k.currency}|${k.assetId}` },
+    ),
+);
+
+/** Per-asset cap for wrappers that have been wound down — every `(investmentId)` position now nets to zero. The cap lands one day before the *first sell of the closing sell-down sequence* (i.e. the earliest sell that comes after the last buy in the wrapper), not just one day before the final closing tx. That way the last chart bucket shows the wrapper at its pre-wind-down value rather than partway through the closing sells. Wrappers with at least one open position aren't returned. */
+export async function loadAssetSoldOutCaps(
+  ctx: Context,
+  assetIds: readonly string[],
+  currency: string,
+): Promise<Map<string, string>> {
+  if (assetIds.length === 0) return new Map();
+  const loader = soldOutCapLoader(ctx);
+  const caps = await loader.loadMany(
+    assetIds.map((assetId) => ({ assetId, currency })),
+  );
+  const out = new Map<string, string>();
+  for (let i = 0; i < assetIds.length; i++) {
+    const c = caps[i];
+    if (c instanceof Error) throw c;
+    if (c) out.set(assetIds[i], c);
+  }
+  return out;
+}
+
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
   private effectiveFilterPromise: Promise<EffectiveFilter> | null = null;
@@ -195,7 +242,7 @@ export class Portfolio {
   ) {}
 
   /** Resolve the transfer-aware filter for this `Portfolio` (see `EffectiveFilter`). Memoised per-instance. */
-  private async loadEffectiveFilter(): Promise<EffectiveFilter> {
+  private async loadEffectiveFilter(ctx: Context): Promise<EffectiveFilter> {
     this.effectiveFilterPromise ??= (async () => {
       const filter = this.filterAssetIdIn;
       if (!filter || filter.length === 0) {
@@ -206,9 +253,21 @@ export class Portfolio {
         };
       }
       const filterSet = new Set(filter);
-      const outgoing = await Promise.all(
-        filter.map((id) => loadInvestmentTransferOutScopeForAsset(id)),
-      );
+      // Three round-trips fan out in parallel against the full `filter` set
+      // rather than serialising on `effective`: `effective` is always a
+      // subset of `filter`, so speculatively fetching transfers-in /
+      // sold-out caps for the dropped ids only adds a few rows to a
+      // batched query, but collapses three sequential DataLoader trips
+      // into one.
+      const [outgoing, incomingByFilterIdx, soldOutCaps] = await Promise.all([
+        Promise.all(
+          filter.map((id) => loadInvestmentTransferOutScopeForAsset(ctx, id)),
+        ),
+        Promise.all(
+          filter.map((id) => loadInvestmentTransferInScopesForAsset(ctx, id)),
+        ),
+        loadAssetSoldOutCaps(ctx, filter, this.currency),
+      ]);
       // Drop any asset whose outgoing-transfer destination is also in the
       // filter — its pre-transfer history will flow through the destination's
       // extras, so keeping it would double-count.
@@ -218,6 +277,7 @@ export class Portfolio {
         if (t && filterSet.has(t.assetIdTo)) continue;
         effective.push(filter[i]);
       }
+      const effectiveSet = new Set(effective);
       const dayBefore = (date: Date | string): string => {
         const d = new Date(date as unknown as Date);
         d.setUTCDate(d.getUTCDate() - 1);
@@ -227,27 +287,24 @@ export class Portfolio {
         string,
         ReadonlyArray<{ assetId: string; dateCap: string }>
       >();
-      await Promise.all(
-        effective.map(async (assetId) => {
-          const incoming =
-            await loadInvestmentTransferInScopesForAsset(assetId);
-          if (incoming.length === 0) return;
-          extrasByAsset.set(
-            assetId,
-            incoming.map((t) => ({
-              assetId: t.assetIdFrom,
-              dateCap: dayBefore(t.date),
-            })),
-          );
-        }),
-      );
+      for (let i = 0; i < filter.length; i++) {
+        if (!effectiveSet.has(filter[i])) continue;
+        const incoming = incomingByFilterIdx[i];
+        if (incoming.length === 0) continue;
+        extrasByAsset.set(
+          filter[i],
+          incoming.map((t) => ({
+            assetId: t.assetIdFrom,
+            dateCap: dayBefore(t.date),
+          })),
+        );
+      }
       // Per-asset "defunct cap": either an outgoing transfer (cap =
       // transferDate − 1, by construction the destination isn't in the
       // filter) or an entirely sold-out wrapper (every position netted to
       // zero). When *every* effective asset has a cap, freeze the chart at
       // the latest such date so it ends on the last day with non-zero
       // holdings instead of dragging zero candles to today.
-      const soldOutCaps = await loadAssetSoldOutCaps(effective, this.currency);
       const perAssetCap = (assetId: string): string | null => {
         const t = outgoing[filter.indexOf(assetId)];
         if (t) return dayBefore(t.date);
@@ -269,10 +326,10 @@ export class Portfolio {
   }
 
   /** Backwards-compat wrapper: union of all per-asset extras under `loadEffectiveFilter`. Used by single-stats-call resolvers (cash, allocations, scope-resolution helpers) that take one `extraScopes` shape. Per-asset resolvers should consume `extrasByAsset` directly. */
-  private async loadExtraScopesUnion(): Promise<
-    ReadonlyArray<{ assetId: string; dateCap: string }>
-  > {
-    const { extrasByAsset } = await this.loadEffectiveFilter();
+  private async loadExtraScopesUnion(
+    ctx: Context,
+  ): Promise<ReadonlyArray<{ assetId: string; dateCap: string }>> {
+    const { extrasByAsset } = await this.loadEffectiveFilter(ctx);
     const seen = new Set<string>();
     const out: { assetId: string; dateCap: string }[] = [];
     for (const list of extrasByAsset.values()) {
@@ -297,9 +354,9 @@ export class Portfolio {
     return `portfolio:${this.currency}:${assets}:${investments}:${this.skipLive ? "cached" : "live"}` as ID;
   }
 
-  private async filtersWithExtras(): Promise<Filters> {
+  private async filtersWithExtras(ctx: Context): Promise<Filters> {
     const { effectiveAssetIds, extrasByAsset } =
-      await this.loadEffectiveFilter();
+      await this.loadEffectiveFilter(ctx);
     const extraAssetIds = new Set<string>();
     for (const list of extrasByAsset.values()) {
       for (const e of list) extraAssetIds.add(e.assetId);
@@ -336,9 +393,9 @@ export class Portfolio {
   /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. A transferred-into wrapper folds in each source's pre-transfer cash flows. */
   private async cashMinor(ctx: Context): Promise<number> {
     if (this.filterInvestmentIdIn) return 0;
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
     if (dateCap) return 0;
-    const extraScopes = await this.loadExtraScopesUnion();
+    const extraScopes = await this.loadExtraScopesUnion(ctx);
     return loadPortfolioCashMinor(
       ctx,
       effectiveAssetIds,
@@ -392,8 +449,8 @@ export class Portfolio {
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
   async xirr(ctx: Context): Promise<Float | null> {
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
-    const extraScopes = await this.loadExtraScopesUnion();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
+    const extraScopes = await this.loadExtraScopesUnion(ctx);
     return (await computePortfolioXirr(ctx, {
       currency: this.currency,
       assetIds: effectiveAssetIds,
@@ -450,7 +507,7 @@ export class Portfolio {
    */
   private async loadStats(ctx: Context): Promise<InvestmentStats[]> {
     const { effectiveAssetIds, extrasByAsset, dateCap } =
-      await this.loadEffectiveFilter();
+      await this.loadEffectiveFilter(ctx);
     const investments = this.filterInvestmentIdIn;
     const baseCommon = {
       currency: this.currency,
@@ -487,11 +544,11 @@ export class Portfolio {
   /** Per-investment breakdown of the filtered portfolio's current market value, expressed as fractions in `[0, 1]` that sum to `1`. Each entry pairs an investment with its share. Investments that contribute zero value (no holdings, fully sold, or missing a price) are excluded; the remaining fractions are renormalised over those that do contribute. Returns an empty array when the portfolio has no positive value. @gqlField */
   async allocations(ctx: Context): Promise<PortfolioAllocation[]> {
     const investmentIds = await loadInvestmentIdsInScope(
-      await this.filtersWithExtras(),
+      await this.filtersWithExtras(ctx),
     );
     if (investmentIds.length === 0) return [];
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
-    const extraScopes = await this.loadExtraScopesUnion();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
+    const extraScopes = await this.loadExtraScopesUnion(ctx);
     const perInvestment = await Promise.all(
       investmentIds.map(async (investmentId) => {
         const stats = await loadInvestmentStats(ctx, {
@@ -524,7 +581,7 @@ export class Portfolio {
   ): Promise<PortfolioTimeseries | null> {
     const loader = loadTimeseries(ctx);
     const { effectiveAssetIds, extrasByAsset, dateCap } =
-      await this.loadEffectiveFilter();
+      await this.loadEffectiveFilter(ctx);
     const baseOptions = {
       period,
       length: length ?? 1,
@@ -605,8 +662,8 @@ export class Portfolio {
       !this.filterInvestmentIdIn,
       "Portfolio.candlestick does not support filtering by investment ID",
     );
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter();
-    const extraScopes = await this.loadExtraScopesUnion();
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
+    const extraScopes = await this.loadExtraScopesUnion(ctx);
     return loadCandlestick(ctx).load({
       unit,
       length,

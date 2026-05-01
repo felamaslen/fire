@@ -47,6 +47,7 @@ import {
   loadInvestmentTransactions,
   loadInvestmentTransactionsConnection,
 } from "./transactions";
+import { primeInvestmentTransferLoaders } from "./transfers";
 
 // `effectiveAssetFilter` is re-exported from `./effective-filter` for
 // existing call sites; the module owns the DataLoader cache.
@@ -285,6 +286,7 @@ export type InvestmentInitialTransactionInput = {
 
 /** Create a new investment, optionally booking one or more initial transactions in the same round-trip. @gqlMutationField */
 export async function investmentCreate(
+  ctx: Context,
   name: string,
   /** ISO-4217 currency code every price and transaction for this investment will be quoted in. */
   currency: string,
@@ -303,6 +305,7 @@ export async function investmentCreate(
     if (transactions && transactions.length > 0) {
       for (const tx of transactions) {
         await investmentTransactionCreate(
+          ctx,
           row.id as ID,
           tx.assetId,
           tx.date,
@@ -568,9 +571,9 @@ export async function investments(
  * @gqlQueryField
  * @gqlAnnotate semanticNonNull
  */
-export async function investmentPortfolios(): Promise<
-  NetWorthCategoryAsset[] | null
-> {
+export async function investmentPortfolios(
+  ctx: Context,
+): Promise<NetWorthCategoryAsset[] | null> {
   const rows = await db
     .selectDistinct({ row: NetWorthCategoryAssets })
     .from(NetWorthCategoryAssets)
@@ -585,5 +588,12 @@ export async function investmentPortfolios(): Promise<
     if (a.row.type !== b.row.type) return a.row.type === "STOCK" ? -1 : 1;
     return a.row.name.localeCompare(b.row.name);
   });
+  // Pre-warm transfer DataLoaders so the per-wrapper `transferOut` /
+  // `transfersIn` / `soldOutOn` resolvers don't each fire their own
+  // single-id batch as they resolve across separate microtask ticks.
+  // Fire-and-forget — `.load()` from each resolver still awaits the same
+  // promise the DataLoader caches here.
+  const ids = rows.map((r) => r.row.id);
+  primeInvestmentTransferLoaders(ctx, ids);
   return rows.map((r) => NetWorthCategoryAsset.load(r.row));
 }

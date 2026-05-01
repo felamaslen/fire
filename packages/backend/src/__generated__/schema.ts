@@ -820,12 +820,18 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 transferOut: {
                     description: "The outgoing transfer for this wrapper, if any \u2014 at most one. When set, this wrapper's holdings and cash are treated as fully migrated into the destination wrapper on the transfer date.",
                     name: "transferOut",
-                    type: InvestmentTransferType
+                    type: InvestmentTransferType,
+                    resolve(source, _args, context) {
+                        return source.transferOut(context);
+                    }
                 },
                 transfersIn: {
                     description: "Incoming transfers into this wrapper. Each contributes its source wrapper's full transaction and cash history into this one's portfolio aggregation from its `date`.",
                     name: "transfersIn",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentTransferType)))
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(InvestmentTransferType))),
+                    resolve(source, _args, context) {
+                        return source.transfersIn(context);
+                    }
                 },
                 type: {
                     name: "type",
@@ -2781,8 +2787,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Every wrapper (a `STOCK` or `PENSION` `NetWorthCategoryAsset`) that has at least one `InvestmentTransaction` booked against it, ordered with `STOCK` wrappers before `PENSION`s and alphabetically by `name` within each group. Drives the portfolio switcher on the investments page.",
                     name: "investmentPortfolios",
                     type: new GraphQLList(new GraphQLNonNull(NetWorthCategoryAssetType)),
-                    resolve() {
-                        return assertNonNull(queryInvestmentPortfoliosResolver());
+                    resolve(_source, _args, context) {
+                        return assertNonNull(queryInvestmentPortfoliosResolver(context));
                     }
                 },
                 investments: {
@@ -4264,8 +4270,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLList(new GraphQLNonNull(InvestmentInitialTransactionInputType))
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentCreateResolver(args.name, args.currency, args.asset, args.transactions);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentCreateResolver(context, args.name, args.currency, args.asset, args.transactions);
                     }
                 },
                 investmentDelete: {
@@ -4431,8 +4437,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLFloat)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentTransactionCreateResolver(args.investmentId, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentTransactionCreateResolver(context, args.investmentId, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
                     }
                 },
                 investmentTransactionDelete: {
@@ -4444,8 +4450,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLID)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentTransactionDeleteResolver(args.id);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentTransactionDeleteResolver(context, args.id);
                     }
                 },
                 investmentTransactionUpdate: {
@@ -4478,8 +4484,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: GraphQLFloat
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentTransactionUpdateResolver(args.id, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentTransactionUpdateResolver(context, args.id, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
                     }
                 },
                 investmentUpdate: {

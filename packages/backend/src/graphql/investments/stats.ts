@@ -1,5 +1,5 @@
 import DataLoader from "dataloader";
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -323,13 +323,17 @@ async function fetchSlices(
 
   // `latestPrices` — one row per investment (or zero if no history yet). When
   // uncapped, hits the partial unique index on `(investmentId, isLatest)`
-  // (migration `0024`). When `dateCap` is set, picks the price row with the
-  // greatest `date` ≤ `dateCap` per investmentId — used to value a
-  // transferred-out wrapper as of its frozen pre-transfer state.
+  // (migration `0024`). When `dateCap` is set, uses `DISTINCT ON
+  // ("investmentId") ORDER BY "investmentId", date DESC` against the
+  // `(investmentId, date)` unique index to pick the latest pre-cap row per
+  // investment — used to value a transferred-out wrapper as of its frozen
+  // pre-transfer state. The earlier `NOT EXISTS (... date > ip.date)` shape
+  // produced an O(N²) anti-join that scanned ~12k buffers and dominated the
+  // capped-stats SQL wall time at ~17 ms.
   const latestPrices = (
     dateCap
       ? db
-          .select({
+          .selectDistinctOn([InvestmentPrices.investmentId], {
             investmentId: InvestmentPrices.investmentId,
             priceAdjusted: InvestmentPrices.priceAdjusted,
             createdAt: InvestmentPrices.createdAt,
@@ -342,13 +346,11 @@ async function fetchSlices(
               investmentIds
                 ? inArray(InvestmentPrices.investmentId, investmentIds)
                 : undefined,
-              sql`NOT EXISTS (
-                SELECT 1 FROM ${InvestmentPrices} p2
-                WHERE p2."investmentId" = ${InvestmentPrices.investmentId}
-                  AND p2.date <= ${dateCap}::date
-                  AND p2.date > ${InvestmentPrices.date}
-              )`,
             ),
+          )
+          .orderBy(
+            asc(InvestmentPrices.investmentId),
+            desc(InvestmentPrices.date),
           )
       : db
           .select({
