@@ -354,6 +354,45 @@ describe("Portfolio.cash", () => {
     expect(p.cash.amount).toBe(0);
   });
 
+  it("debits the cash float by trade taxes + fees alongside the unit cost", async () => {
+    const isa = await createStockAsset("ISA");
+    const aapl = await createStock("Apple", "AAPL");
+    await recordDeposit(isa, 1000, "Funding");
+    // Buy 100 units @ £5 each with £2 taxes and £3 fees. Cash impact
+    // = -(100 * £5 + £2 + £3) = -£505. Float = £1000 deposit - £505 buy
+    // = £495.
+    await runGql(
+      graphql(`
+        mutation (
+          $investmentId: ID!
+          $assetId: ID!
+          $taxes: MoneyInput!
+          $fees: MoneyInput!
+        ) {
+          investmentTransactionCreate(
+            investmentId: $investmentId
+            assetId: $assetId
+            date: "2026-03-01"
+            units: 100
+            price: { amount: 5, currency: "GBP" }
+            taxes: $taxes
+            fees: $fees
+          ) {
+            id
+          }
+        }
+      `),
+      {
+        investmentId: aapl,
+        assetId: isa,
+        taxes: { amount: 2, currency: "GBP" },
+        fees: { amount: 3, currency: "GBP" },
+      },
+    );
+    const p = await queryPortfolio([isa]);
+    expect(p.cash.amount).toBe(495);
+  });
+
   it("aggregates planning transactions, deposits, and trades into one float", async () => {
     await seedYear();
     const cashAccount = await createCashAsset("Current");

@@ -387,13 +387,12 @@ export class NetWorthCategoryOption implements NetWorthCategory {
     /** @gqlField */
     public readonly id: ID,
     private readonly nameValue: string,
-    private readonly createdAt: Date,
   ) {}
 
   static load(
     row: typeof NetWorthCategoryOptions.$inferSelect,
   ): NetWorthCategoryOption {
-    return new NetWorthCategoryOption(row.id as ID, row.name, row.createdAt);
+    return new NetWorthCategoryOption(row.id as ID, row.name);
   }
 
   /** @gqlField */
@@ -529,7 +528,7 @@ export async function netWorthCategories(
         forward ? desc(table.createdAt) : asc(table.createdAt),
         forward ? desc(table.id) : asc(table.id),
       )
-      .limit(limit + 1)) as unknown as T[];
+      .limit(limit + 1)) as T[];
 
     // Attach `createdAtDate` onto the mapped instance in place so class
     // methods on the NetWorth*Category types (e.g. `asset()` /

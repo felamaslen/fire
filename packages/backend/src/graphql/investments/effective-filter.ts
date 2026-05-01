@@ -35,7 +35,7 @@ export type EffectiveAssetFilter = {
 };
 
 const dayBefore = (date: Date | string): string => {
-  const d = new Date(date as unknown as Date);
+  const d = new Date(date as Date);
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 };

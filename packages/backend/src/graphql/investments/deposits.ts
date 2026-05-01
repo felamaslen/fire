@@ -35,6 +35,7 @@ export class InvestmentDeposit {
     private readonly currency_: string,
     /** Short label for the deposit (e.g. "Q2 dividend", "Tax relief"). @gqlField */
     public readonly name: string,
+    private readonly runningBalanceMinor_: number | null = null,
   ) {}
 
   static load(row: typeof InvestmentDeposits.$inferSelect): InvestmentDeposit {
@@ -51,6 +52,13 @@ export class InvestmentDeposit {
   /** Signed cash amount. Positive = credit to the wrapper (the common case); negative = a withdrawal that isn't paired with a unit trade. @gqlField */
   amount(): Money {
     return Money.fromMinorDenomination(this.amountMinor, this.currency_);
+  }
+
+  /** Wrapper cash balance after this row — cumulative sum of every cash-affecting contribution (deposits, planning transfers, non-DRIP trades) up to and including this entry, in oldest-first order. `null` outside the cash-contributions feed. @gqlField */
+  runningBalance(): Money | null {
+    return this.runningBalanceMinor_ === null
+      ? null
+      : Money.fromMinorDenomination(this.runningBalanceMinor_, this.currency_);
   }
 
   /** Wrapper this deposit is booked into. @gqlField */

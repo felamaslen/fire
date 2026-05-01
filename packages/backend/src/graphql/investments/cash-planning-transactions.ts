@@ -1,10 +1,14 @@
 import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { unionAll } from "drizzle-orm/pg-core";
 import { GraphQLError } from "graphql";
-import type { ID, Int } from "grats";
+import type { Float, ID, Int } from "grats";
 
 import { db } from "@/db";
-import { InvestmentDeposits } from "@/db/schema/investments";
+import {
+  InvestmentDeposits,
+  Investments,
+  InvestmentTransactions,
+} from "@/db/schema/investments";
 import {
   NetWorthCategoryAssets,
   NetWorthEntries,
@@ -50,6 +54,7 @@ export class AssetCashPlanningTransaction {
     private readonly fromAccountId: string,
     /** True when the transaction is a user-authored draft — modelled in the planner's balance projections but not part of the wrapper's actual cash float. Provisional transactions are excluded from `cashContributions` server-side; this field exists so the planning grid can render them with a distinguishing style. @gqlField */
     public readonly isProvisional: boolean,
+    private readonly runningBalanceMinor_: number | null = null,
   ) {}
 
   /** Signed cash amount from the wrapper's perspective: positive = deposit into the wrapper, negative = withdrawal from the wrapper. Every consumer of `cashContributions` sees the same convention regardless of source. @gqlField */
@@ -60,9 +65,45 @@ export class AssetCashPlanningTransaction {
     );
   }
 
+  /** Wrapper cash balance after this row — cumulative sum of every cash-affecting contribution (deposits, planning transfers, non-DRIP trades) up to and including this entry, in oldest-first order. `null` outside the cash-contributions feed. @gqlField */
+  runningBalance(): Money | null {
+    return this.runningBalanceMinor_ === null
+      ? null
+      : Money.fromMinorDenomination(this.runningBalanceMinor_, this.currency_);
+  }
+
   /** Source cash planning account the contribution flows from / to. @gqlField */
   fromAccount(): PlanningAccount {
     return PlanningAccount.fromId(this.fromAccountId);
+  }
+}
+
+/** A non-DRIP unit-trade booked against this wrapper, surfaced inline in the cash-contributions ledger as a pseudo-deposit so the running cash balance reflects the cash spent on the buy (or received from a sell), inclusive of taxes and broker fees. Read-only from this feed — edit the underlying `InvestmentTransaction` directly to change. DRIP rows are excluded since they don't move cash. @gqlType */
+export class InvestmentTradePseudoTransaction {
+  constructor(
+    /** Composite `trade:<uuid>` id formed from the underlying `InvestmentTransaction.id`. @gqlField */
+    public readonly id: ID,
+    /** Calendar date the trade was executed. @gqlField */
+    public readonly date: CalendarDate,
+    /** Display label for the security — its ticker (e.g. `SMT.L`), falling back to the investment's display name when no ticker is set (i.e. funds). @gqlField */
+    public readonly name: string,
+    /** Signed units traded. Positive = buy, negative = sell. Mirrors the underlying `InvestmentTransaction.units`. @gqlField */
+    public readonly units: Float,
+    private readonly amountMinor: number,
+    private readonly currency_: string,
+    private readonly runningBalanceMinor_: number | null,
+  ) {}
+
+  /** Signed cash impact on the wrapper, including taxes and broker fees. Negative for buys (cash leaves the wrapper to cover units, taxes, and fees), positive for sells. @gqlField */
+  amount(): Money {
+    return Money.fromMinorDenomination(this.amountMinor, this.currency_);
+  }
+
+  /** Wrapper cash balance after this row — cumulative sum of every cash-affecting contribution (deposits, planning transfers, non-DRIP trades) up to and including this entry, in oldest-first order. `null` outside the cash-contributions feed. @gqlField */
+  runningBalance(): Money | null {
+    return this.runningBalanceMinor_ === null
+      ? null
+      : Money.fromMinorDenomination(this.runningBalanceMinor_, this.currency_);
   }
 }
 
@@ -75,18 +116,21 @@ export class AssetValueSnapshot {
     public readonly date: CalendarDate,
     /** Recorded value at this entry. `null` when this row is the synthetic defunct marker, signalling the wrapper has no active value at the latest entry. Named `value` (not `amount`) so a `... on AssetValueSnapshot { value }` selection in the same `cashContributions` query as `... on InvestmentDeposit { amount }` doesn't collide on a non-null vs. nullable `amount` field across the union. @gqlField */
     public readonly value: Money | null,
+    /** Wrapper cash balance at this snapshot — cumulative sum of every cash-affecting contribution (deposits, planning transfers, non-DRIP trades) up to and including this date. `null` for the synthetic defunct marker and outside the cash-contributions feed. @gqlField */
+    public readonly runningBalance: Money | null = null,
   ) {}
 }
 
-/** A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …), a manual `AssetCashPlanningTransaction` originating in a planning cash account, or an `AssetValueSnapshot` separator surfacing a `NetWorthEntries` checkpoint. @gqlUnion */
+/** A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, …), a manual `AssetCashPlanningTransaction` originating in a planning cash account, an `InvestmentTradePseudoTransaction` mirroring a non-DRIP unit trade as its cash impact, or an `AssetValueSnapshot` separator surfacing a `NetWorthEntries` checkpoint. @gqlUnion */
 export type CashContribution =
   | InvestmentDeposit
   | AssetCashPlanningTransaction
+  | InvestmentTradePseudoTransaction
   | AssetValueSnapshot;
 
 const DEFAULT_PAGE_SIZE = 20;
 
-/** Paginated, date-desc list of every cash contribution for the wrapper — external deposits, planning cash transfers, and `NetWorthEntries` snapshot checkpoints, interleaved by date. One SQL via `unionAll`: each source table projects to a common shape (with a `kind:rowId` sort key), the cursor's `(date, sortKey)` is applied as a `WHERE` predicate so we never overfetch, and the page is sliced + `LIMIT first + 1` server-side.
+/** Paginated, date-desc list of every cash contribution for the wrapper — external deposits, planning cash transfers, non-DRIP unit trades surfaced as their cash impact, and `NetWorthEntries` snapshot checkpoints, interleaved by date. Built as a `unionAll` of four branches projecting a common shape (with a `kind:rowId` sort key), wrapped in a per-row running-balance window function (cumulative cash flow oldest-first; snapshot rows contribute zero so they carry forward the latest flow balance), then filtered by the cursor's `(date, sortKey)` and sliced server-side at `LIMIT first + 1`.
  *
  * On the first page (no cursor), if the wrapper has been recorded historically but is missing from the latest `NetWorthEntries`, a synthetic defunct-marker `AssetValueSnapshot` is prepended at the date of the first entry that omitted it. The marker is never returned on subsequent pages.
  */
@@ -98,34 +142,18 @@ export async function loadAssetCashContributionsConnection(
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const cursor = after ? decodeCursor(after) : null;
 
-  // Three branches with matching projection shape so `unionAll` types align.
-  // `kind` discriminates the source table; `sortKey = kind || ':' || id`
-  // (built in SQL) gives a deterministic deep-tie-break that's unique across
-  // all three tables.
-  //
-  // Cursor predicate is pushed *down* into each branch (instead of wrapping
-  // the union in an outer `WHERE`) so each branch's predicate touches only
-  // its own columns. That lets Postgres pick the per-table `(assetId, date)`
-  // index up front, rather than scanning + materialising the full union and
-  // filtering afterwards.
-  const cursorDate = cursor ? new Date(cursor.c) : null;
-  const cursorSortKey = cursor ? cursor.i : null;
+  // The synthetic defunct marker (if any) consumes one slot on the first
+  // page only; reduce the SQL limit to keep the total node count at `limit`.
+  const defunct = cursor === null ? await loadDefunctMarker(assetId) : null;
+  const realLimit = defunct ? Math.max(0, limit - 1) : limit;
 
-  function branchCursorPredicate(
-    dateCol:
-      | typeof InvestmentDeposits.date
-      | typeof PlanningTransactions.date
-      | typeof NetWorthEntries.date,
-    sortKeyExpr: ReturnType<typeof sql>,
-  ) {
-    if (!cursorDate || cursorSortKey == null) return undefined;
-    return or(
-      lt(dateCol, cursorDate),
-      and(eq(dateCol, cursorDate), lt(sortKeyExpr, cursorSortKey)),
-    );
-  }
-
-  type Kind = "deposit" | "tx" | "snapshot";
+  type Kind = "deposit" | "tx" | "trade" | "snapshot";
+  // Each branch projects the same 12-column shape so `unionAll` types align.
+  // `flow` is the per-row cash impact (zero on snapshot rows so they don't
+  // perturb the running balance). `amount` carries the source-specific
+  // signed amount (wrapper-POV cash for flow rows; the recorded snapshot
+  // value for snapshots). `units` and `snapshot*` are populated only on
+  // their owning branch.
   const depositsBranch = db
     .select({
       kind: sql<Kind>`'deposit'`.as("kind"),
@@ -135,20 +163,16 @@ export async function loadAssetCashContributionsConnection(
       ),
       date: InvestmentDeposits.date,
       name: InvestmentDeposits.name,
-      amount: InvestmentDeposits.amount,
+      amount: sql<number>`${InvestmentDeposits.amount}::bigint`.as("amount"),
+      flow: sql<number>`${InvestmentDeposits.amount}::bigint`.as("flow"),
       currency: InvestmentDeposits.currency,
       accountId: sql<string | null>`NULL::uuid`.as("accountId"),
+      units: sql<number | null>`NULL::float8`.as("units"),
+      snapshotAmount: sql<number | null>`NULL::bigint`.as("snapshotAmount"),
+      snapshotCurrency: sql<string | null>`NULL::text`.as("snapshotCurrency"),
     })
     .from(InvestmentDeposits)
-    .where(
-      and(
-        eq(InvestmentDeposits.assetId, assetId),
-        branchCursorPredicate(
-          InvestmentDeposits.date,
-          sql`'deposit:' || ${InvestmentDeposits.id}::text`,
-        ),
-      ),
-    );
+    .where(eq(InvestmentDeposits.assetId, assetId));
 
   const txBranch = db
     .select({
@@ -159,11 +183,17 @@ export async function loadAssetCashContributionsConnection(
       ),
       date: PlanningTransactions.date,
       name: PlanningTransactions.name,
-      amount: PlanningTransactions.amount,
+      amount: sql<number>`(-${PlanningTransactions.amount})::bigint`.as(
+        "amount",
+      ),
+      flow: sql<number>`(-${PlanningTransactions.amount})::bigint`.as("flow"),
       currency: PlanningTransactions.currency,
       accountId: sql<string | null>`${PlanningTransactions.accountId}`.as(
         "accountId",
       ),
+      units: sql<number | null>`NULL::float8`.as("units"),
+      snapshotAmount: sql<number | null>`NULL::bigint`.as("snapshotAmount"),
+      snapshotCurrency: sql<string | null>`NULL::text`.as("snapshotCurrency"),
     })
     .from(PlanningTransactions)
     .where(
@@ -174,10 +204,44 @@ export async function loadAssetCashContributionsConnection(
         // outflows yet, so they don't belong on the "actual cash
         // contributions" feed.
         eq(PlanningTransactions.isProvisional, false),
-        branchCursorPredicate(
-          PlanningTransactions.date,
-          sql`'tx:' || ${PlanningTransactions.id}::text`,
-        ),
+      ),
+    );
+
+  // Cash impact of a unit trade including taxes & fees:
+  // `-(round(units*price) + taxes + fees)`. Buys (units > 0) are negative
+  // (cash leaves the wrapper to pay the broker); sells (units < 0) are
+  // positive (proceeds, reduced by taxes & fees).
+  const tradeCashImpact = sql<number>`(-(ROUND(${InvestmentTransactions.units} * ${InvestmentTransactions.price})::bigint + ${InvestmentTransactions.taxes} + ${InvestmentTransactions.fees}))::bigint`;
+  const tradeBranch = db
+    .select({
+      kind: sql<Kind>`'trade'`.as("kind"),
+      rowId: sql<string>`${InvestmentTransactions.id}::text`.as("rowId"),
+      sortKey: sql<string>`'trade:' || ${InvestmentTransactions.id}::text`.as(
+        "sortKey",
+      ),
+      date: InvestmentTransactions.date,
+      name: sql<string>`COALESCE(${Investments.stockCode}, ${Investments.name})`.as(
+        "name",
+      ),
+      amount: tradeCashImpact.as("amount"),
+      flow: tradeCashImpact.as("flow"),
+      currency: InvestmentTransactions.currency,
+      accountId: sql<string | null>`NULL::uuid`.as("accountId"),
+      units: sql<number | null>`${InvestmentTransactions.units}`.as("units"),
+      snapshotAmount: sql<number | null>`NULL::bigint`.as("snapshotAmount"),
+      snapshotCurrency: sql<string | null>`NULL::text`.as("snapshotCurrency"),
+    })
+    .from(InvestmentTransactions)
+    .innerJoin(
+      Investments,
+      eq(Investments.id, InvestmentTransactions.investmentId),
+    )
+    .where(
+      and(
+        eq(InvestmentTransactions.assetId, assetId),
+        // DRIPs reinvest dividends back into units without moving cash, so
+        // they don't surface here.
+        eq(InvestmentTransactions.drip, false),
       ),
     );
 
@@ -190,11 +254,26 @@ export async function loadAssetCashContributionsConnection(
       ),
       date: NetWorthEntries.date,
       // `name` is unused for snapshot rows; project an empty string so the
-      // branch shape lines up with the deposit / tx branches.
+      // branch shape lines up with the flow branches.
       name: sql<string>`''`.as("name"),
-      amount: NetWorthValueAmounts.amount,
+      // `amount` is unread for snapshot rows (the union member exposes
+      // `value` instead), but pad the shape with the recorded value so the
+      // column stays bigint across all four branches. `flow` is zero so
+      // snapshots leave the running balance unchanged.
+      amount: sql<number>`${NetWorthValueAmounts.amount}::bigint`.as("amount"),
+      flow: sql<number>`0::bigint`.as("flow"),
       currency: NetWorthValueAmounts.currency,
       accountId: sql<string | null>`NULL::uuid`.as("accountId"),
+      units: sql<number | null>`NULL::float8`.as("units"),
+      snapshotAmount: sql<
+        number | null
+      >`${NetWorthValueAmounts.amount}::bigint`.as("snapshotAmount"),
+      // Cast `CurrencyCode` to `text` so the union with the other branches'
+      // `NULL::text` doesn't trip Postgres's "UNION types ... cannot be
+      // matched" check.
+      snapshotCurrency: sql<
+        string | null
+      >`${NetWorthValueAmounts.currency}::text`.as("snapshotCurrency"),
     })
     .from(NetWorthValues)
     .innerJoin(
@@ -202,64 +281,121 @@ export async function loadAssetCashContributionsConnection(
       eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
     )
     .innerJoin(NetWorthEntries, eq(NetWorthEntries.id, NetWorthValues.entryId))
-    .where(
-      and(
-        eq(NetWorthValues.categoryAssetId, assetId),
-        branchCursorPredicate(
-          NetWorthEntries.date,
-          sql`'snapshot:' || ${NetWorthValueAmounts.id}::text`,
+    .where(eq(NetWorthValues.categoryAssetId, assetId));
+
+  const allRows = unionAll(
+    depositsBranch,
+    txBranch,
+    tradeBranch,
+    snapshotBranch,
+  ).as("all_rows");
+
+  // Layer the running-balance window function on top of the union. The
+  // cursor predicate has to apply *after* the window function — pushing it
+  // into the union branches would make the window see only a tail of the
+  // history and break per-page balance continuity.
+  const withBalance = db
+    .select({
+      kind: allRows.kind,
+      rowId: allRows.rowId,
+      sortKey: allRows.sortKey,
+      date: allRows.date,
+      name: allRows.name,
+      amount: allRows.amount,
+      currency: allRows.currency,
+      accountId: allRows.accountId,
+      units: allRows.units,
+      snapshotAmount: allRows.snapshotAmount,
+      snapshotCurrency: allRows.snapshotCurrency,
+      balance:
+        sql<number>`SUM(${allRows.flow}) OVER (ORDER BY ${allRows.date} ASC, ${allRows.sortKey} ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`.as(
+          "balance",
         ),
-      ),
-    );
+    })
+    .from(allRows)
+    .as("with_balance");
 
-  const contributions = unionAll(depositsBranch, txBranch, snapshotBranch).as(
-    "contributions",
-  );
-
-  // The synthetic defunct marker (if any) consumes one slot on the first
-  // page only; reduce the SQL limit to keep the total node count at `limit`.
-  const defunct = cursor === null ? await loadDefunctMarker(assetId) : null;
-  const realLimit = defunct ? Math.max(0, limit - 1) : limit;
+  const cursorWhere =
+    cursor !== null
+      ? or(
+          lt(withBalance.date, new Date(cursor.c)),
+          and(
+            eq(withBalance.date, new Date(cursor.c)),
+            lt(withBalance.sortKey, cursor.i),
+          ),
+        )
+      : undefined;
 
   const rows = await db
     .select()
-    .from(contributions)
-    .orderBy(desc(contributions.date), desc(contributions.sortKey))
+    .from(withBalance)
+    .where(cursorWhere)
+    .orderBy(desc(withBalance.date), desc(withBalance.sortKey))
     .limit(realLimit + 1);
 
   const hasNextPage = rows.length > realLimit;
   const page = hasNextPage ? rows.slice(0, realLimit) : rows;
 
   const realNodes: CashContribution[] = page.map((r) => {
+    const balanceMinor = r.balance === null ? null : Number(r.balance);
     if (r.kind === "deposit") {
       return new InvestmentDeposit(
         r.rowId as ID,
         assetId,
         r.date,
-        r.amount,
+        Number(r.amount),
         r.currency,
         r.name,
+        balanceMinor,
       );
     }
     if (r.kind === "snapshot") {
+      const snapshotMoney =
+        r.snapshotAmount !== null && r.snapshotCurrency !== null
+          ? Money.fromMinorDenomination(
+              Number(r.snapshotAmount),
+              r.snapshotCurrency,
+            )
+          : null;
+      const balanceMoney =
+        balanceMinor === null
+          ? null
+          : Money.fromMinorDenomination(balanceMinor, r.currency);
       return new AssetValueSnapshot(
         `snapshot:${r.rowId}` as ID,
         r.date,
-        Money.fromMinorDenomination(r.amount, r.currency),
+        snapshotMoney,
+        balanceMoney,
       );
     }
-    // `tx` branch — `accountId` is non-null in this branch, and the where
-    // clause excludes provisional rows so `isProvisional` is always false
-    // here. We still pass it through explicitly so the constructor stays
-    // truthful if the filter ever changes.
+    if (r.kind === "trade") {
+      return new InvestmentTradePseudoTransaction(
+        `trade:${r.rowId}` as ID,
+        r.date,
+        r.name,
+        (r.units ?? 0) as Float,
+        Number(r.amount),
+        r.currency,
+        balanceMinor,
+      );
+    }
+    // `tx` branch — `accountId` is non-null and the where clause excludes
+    // provisional rows so `isProvisional` is always false here. We still
+    // pass it through explicitly so the constructor stays truthful if the
+    // filter ever changes.
     return new AssetCashPlanningTransaction(
       encodePlanningTransactionId({ kind: "tx", id: r.rowId }),
       r.date,
       r.name,
-      r.amount,
+      // The `tx` branch projects `amount = -storedAmount` (wrapper POV),
+      // but the class constructor expects the raw cash-account-POV amount
+      // and negates again inside `amount()`. Flip the sign back so the
+      // GraphQL field lands on the wrapper-POV value.
+      -Number(r.amount),
       r.currency,
       r.accountId!,
       false,
+      balanceMinor,
     );
   });
 

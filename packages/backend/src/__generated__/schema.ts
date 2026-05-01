@@ -8,7 +8,7 @@ import type { Date as DateInternal } from "./../graphql/date";
 import type { DateTime as DateTimeInternal } from "./../graphql/date-time";
 import type { Upload as UploadInternal } from "./../graphql/upload";
 import { GraphQLSchema, GraphQLDirective, DirectiveLocation, GraphQLString, GraphQLInt, specifiedDirectives, GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLID, GraphQLFloat, GraphQLScalarType, GraphQLEnumType, GraphQLUnionType, GraphQLBoolean, defaultFieldResolver, GraphQLInterfaceType, GraphQLInputObjectType } from "graphql";
-import { AssetCashPlanningTransaction as AssetCashPlanningTransactionClass, AssetValueSnapshot as AssetValueSnapshotClass, assetCashTransactionCreate as mutationAssetCashTransactionCreateResolver, assetCashTransactionDelete as mutationAssetCashTransactionDeleteResolver, assetCashTransactionUpdate as mutationAssetCashTransactionUpdateResolver } from "./../graphql/investments/cash-planning-transactions";
+import { AssetCashPlanningTransaction as AssetCashPlanningTransactionClass, AssetValueSnapshot as AssetValueSnapshotClass, InvestmentTradePseudoTransaction as InvestmentTradePseudoTransactionClass, assetCashTransactionCreate as mutationAssetCashTransactionCreateResolver, assetCashTransactionDelete as mutationAssetCashTransactionDeleteResolver, assetCashTransactionUpdate as mutationAssetCashTransactionUpdateResolver } from "./../graphql/investments/cash-planning-transactions";
 import { InvestmentDeposit as InvestmentDepositClass, investmentDepositCreate as mutationInvestmentDepositCreateResolver, investmentDepositDelete as mutationInvestmentDepositDeleteResolver, investmentDepositUpdate as mutationInvestmentDepositUpdateResolver } from "./../graphql/investments/deposits";
 import { investmentAllocationsForAsset as netWorthCategoryAssetInvestmentAllocationsResolver, investmentAllocations as queryInvestmentAllocationsResolver, investmentAllocationsSet as mutationInvestmentAllocationsSetResolver, investmentCashAllocationSet as mutationInvestmentCashAllocationSetResolver } from "./../graphql/investments/allocations";
 import { bills as queryBillsResolver, billCreate as mutationBillCreateResolver, billDelete as mutationBillDeleteResolver, billUpdate as mutationBillUpdateResolver } from "./../graphql/planning/bills";
@@ -118,6 +118,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 name: {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                runningBalance: {
+                    description: "Wrapper cash balance after this row \u2014 cumulative sum of every cash-affecting contribution (deposits, planning transfers, non-DRIP trades) up to and including this entry, in oldest-first order. `null` outside the cash-contributions feed.",
+                    name: "runningBalance",
+                    type: MoneyType
                 }
             };
         }
@@ -136,6 +141,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Composite identifier \u2014 either `snapshot:<NetWorthValueAmounts.id>` for a recorded value, or `defunct:<assetId>` for a synthetic defunct marker.",
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
+                },
+                runningBalance: {
+                    description: "Wrapper cash balance at this snapshot \u2014 cumulative sum of every cash-affecting contribution (deposits, planning transfers, non-DRIP trades) up to and including this date. `null` for the synthetic defunct marker and outside the cash-contributions feed.",
+                    name: "runningBalance",
+                    type: MoneyType
                 },
                 value: {
                     description: "Recorded value at this entry. `null` when this row is the synthetic defunct marker, signalling the wrapper has no active value at the latest entry. Named `value` (not `amount`) so a `... on AssetValueSnapshot { value }` selection in the same `cashContributions` query as `... on InvestmentDeposit { amount }` doesn't collide on a non-null vs. nullable `amount` field across the union.",
@@ -173,15 +183,58 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Short label for the deposit (e.g. \"Q2 dividend\", \"Tax relief\").",
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
+                },
+                runningBalance: {
+                    description: "Wrapper cash balance after this row \u2014 cumulative sum of every cash-affecting contribution (deposits, planning transfers, non-DRIP trades) up to and including this entry, in oldest-first order. `null` outside the cash-contributions feed.",
+                    name: "runningBalance",
+                    type: MoneyType
+                }
+            };
+        }
+    });
+    const InvestmentTradePseudoTransactionType: GraphQLObjectType = new GraphQLObjectType({
+        name: "InvestmentTradePseudoTransaction",
+        description: "A non-DRIP unit-trade booked against this wrapper, surfaced inline in the cash-contributions ledger as a pseudo-deposit so the running cash balance reflects the cash spent on the buy (or received from a sell), inclusive of taxes and broker fees. Read-only from this feed \u2014 edit the underlying `InvestmentTransaction` directly to change. DRIP rows are excluded since they don't move cash.",
+        fields() {
+            return {
+                amount: {
+                    description: "Signed cash impact on the wrapper, including taxes and broker fees. Negative for buys (cash leaves the wrapper to cover units, taxes, and fees), positive for sells.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                date: {
+                    description: "Calendar date the trade was executed.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                id: {
+                    description: "Composite `trade:<uuid>` id formed from the underlying `InvestmentTransaction.id`.",
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                name: {
+                    description: "Display label for the security \u2014 its ticker (e.g. `SMT.L`), falling back to the investment's display name when no ticker is set (i.e. funds).",
+                    name: "name",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                runningBalance: {
+                    description: "Wrapper cash balance after this row \u2014 cumulative sum of every cash-affecting contribution (deposits, planning transfers, non-DRIP trades) up to and including this entry, in oldest-first order. `null` outside the cash-contributions feed.",
+                    name: "runningBalance",
+                    type: MoneyType
+                },
+                units: {
+                    description: "Signed units traded. Positive = buy, negative = sell. Mirrors the underlying `InvestmentTransaction.units`.",
+                    name: "units",
+                    type: new GraphQLNonNull(GraphQLFloat)
                 }
             };
         }
     });
     const CashContributionType: GraphQLUnionType = new GraphQLUnionType({
         name: "CashContribution",
-        description: "A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, \u2026), a manual `AssetCashPlanningTransaction` originating in a planning cash account, or an `AssetValueSnapshot` separator surfacing a `NetWorthEntries` checkpoint.",
+        description: "A single row in the per-wrapper cash-contributions ledger. Either an external `InvestmentDeposit` (dividend, tax relief, \u2026), a manual `AssetCashPlanningTransaction` originating in a planning cash account, an `InvestmentTradePseudoTransaction` mirroring a non-DRIP unit trade as its cash impact, or an `AssetValueSnapshot` separator surfacing a `NetWorthEntries` checkpoint.",
         types() {
-            return [AssetCashPlanningTransactionType, AssetValueSnapshotType, InvestmentDepositType];
+            return [AssetCashPlanningTransactionType, AssetValueSnapshotType, InvestmentDepositType, InvestmentTradePseudoTransactionType];
         },
         resolveType
     });
@@ -5086,13 +5139,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }
 const typeNameMap = new Map();
 typeNameMap.set(AssetCashPlanningTransactionClass, "AssetCashPlanningTransaction");
 typeNameMap.set(AssetValueSnapshotClass, "AssetValueSnapshot");
 typeNameMap.set(InvestmentDepositClass, "InvestmentDeposit");
+typeNameMap.set(InvestmentTradePseudoTransactionClass, "InvestmentTradePseudoTransaction");
 function resolveType(obj: any): string {
     if (typeof obj.__typename === "string") {
         return obj.__typename;

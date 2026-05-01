@@ -79,6 +79,10 @@ const CashContributionsListDocument = graphql(`
                 amount
                 currency
               }
+              runningBalance {
+                amount
+                currency
+              }
             }
             ... on AssetCashPlanningTransaction {
               id
@@ -92,11 +96,33 @@ const CashContributionsListDocument = graphql(`
                 id
                 name
               }
+              runningBalance {
+                amount
+                currency
+              }
+            }
+            ... on InvestmentTradePseudoTransaction {
+              id
+              date
+              name
+              units
+              amount {
+                amount
+                currency
+              }
+              runningBalance {
+                amount
+                currency
+              }
             }
             ... on AssetValueSnapshot {
               id
               date
               value {
+                amount
+                currency
+              }
+              runningBalance {
                 amount
                 currency
               }
@@ -405,6 +431,7 @@ function ManageDialog({
                 <TableHead>Description</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="text-right">Balance</TableHead>
                 <TableHead className="w-24" />
               </TableRow>
             </TableHeader>
@@ -427,6 +454,14 @@ function ManageDialog({
                           node.amount.currency,
                           node.amount.amount,
                         )}
+                      </TableCell>
+                      <TableCell className="align-middle text-right tabular-nums text-muted-foreground">
+                        {node.runningBalance
+                          ? formatAccountingMoney(
+                              node.runningBalance.currency,
+                              node.runningBalance.amount,
+                            )
+                          : "—"}
                       </TableCell>
                       <TableCell className="align-middle text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -465,11 +500,54 @@ function ManageDialog({
                       className="bg-muted/30 hover:bg-muted/40"
                     >
                       <TableCell
-                        colSpan={5}
+                        colSpan={4}
                         className="text-center text-xs uppercase tracking-wide text-muted-foreground"
                       >
                         — {label} —
                       </TableCell>
+                      <TableCell className="align-middle text-right tabular-nums text-muted-foreground">
+                        {node.runningBalance
+                          ? formatAccountingMoney(
+                              node.runningBalance.currency,
+                              node.runningBalance.amount,
+                            )
+                          : "—"}
+                      </TableCell>
+                      <TableCell />
+                    </TableRow>
+                  );
+                }
+                if (node.__typename === "InvestmentTradePseudoTransaction") {
+                  const action = node.units >= 0 ? "BOUGHT" : "SOLD";
+                  return (
+                    <TableRow
+                      key={node.id}
+                      className="bg-muted/10 hover:bg-muted/20"
+                    >
+                      <TableCell className="align-middle tabular-nums">
+                        {node.date}
+                      </TableCell>
+                      <TableCell className="align-middle text-xs uppercase tracking-wide text-muted-foreground">
+                        {action} {Math.abs(node.units)}
+                      </TableCell>
+                      <TableCell className="align-middle text-xs text-muted-foreground italic">
+                        {node.name}
+                      </TableCell>
+                      <TableCell className="align-middle text-right tabular-nums">
+                        {formatAccountingMoney(
+                          node.amount.currency,
+                          node.amount.amount,
+                        )}
+                      </TableCell>
+                      <TableCell className="align-middle text-right tabular-nums text-muted-foreground">
+                        {node.runningBalance
+                          ? formatAccountingMoney(
+                              node.runningBalance.currency,
+                              node.runningBalance.amount,
+                            )
+                          : "—"}
+                      </TableCell>
+                      <TableCell />
                     </TableRow>
                   );
                 }
@@ -490,6 +568,14 @@ function ManageDialog({
                           node.amount.currency,
                           node.amount.amount,
                         )}
+                      </TableCell>
+                      <TableCell className="align-middle text-right tabular-nums text-muted-foreground">
+                        {node.runningBalance
+                          ? formatAccountingMoney(
+                              node.runningBalance.currency,
+                              node.runningBalance.amount,
+                            )
+                          : "—"}
                       </TableCell>
                       <TableCell className="align-middle text-right">
                         <div className="flex items-center justify-end gap-1">

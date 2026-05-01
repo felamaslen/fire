@@ -68,7 +68,7 @@ type SnapshotRow = {
 };
 
 /**
- * Sum of cash contributions and trades per `(assetId, currency, kind)` over the full history. Three branches: `PlanningTransactions` flipped to the wrapper's perspective and `InvestmentDeposits` tagged `C` for contributions, non-DRIP `InvestmentTransactions` as `-round(units × price)` tagged `T` for trades.
+ * Sum of cash contributions and trades per `(assetId, currency, kind)` over the full history. Three branches: `PlanningTransactions` flipped to the wrapper's perspective and `InvestmentDeposits` tagged `C` for contributions, non-DRIP `InvestmentTransactions` as `-(round(units × price) + taxes + fees)` tagged `T` for trades.
  */
 async function fetchFlows(
   assetIds: string[] | null,
@@ -130,8 +130,13 @@ async function fetchFlows(
     .select({
       assetId: InvestmentTransactions.assetId,
       currency: InvestmentTransactions.currency,
+      // Cash impact of a non-DRIP trade is `-(round(units*price) + taxes +
+      // fees)` — buys leave the wrapper minus the broker's full take, sells
+      // credit the wrapper with proceeds net of taxes & fees. Excluding
+      // taxes / fees here makes the cash float drift apart from the
+      // per-row running balance shown on the cash-contributions ledger.
       value:
-        sql<number>`(-ROUND(${InvestmentTransactions.units} * ${InvestmentTransactions.price}))::bigint`.as(
+        sql<number>`(-(ROUND(${InvestmentTransactions.units} * ${InvestmentTransactions.price})::bigint + ${InvestmentTransactions.taxes} + ${InvestmentTransactions.fees}))::bigint`.as(
           "value",
         ),
       kind: sql<"C" | "T">`'T'`.as("kind"),

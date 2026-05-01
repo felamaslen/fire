@@ -460,6 +460,137 @@ describe("NetWorthCategoryAsset.cashContributions", () => {
     ).toEqual(["2026-04-30 DEFUNCT", "2026-03-31 £1100", "2026-02-28 £1000"]);
   });
 
+  it("interleaves InvestmentTradePseudoTransaction rows with cash impact = -(units*price + taxes + fees), excludes DRIPs, and computes a running balance oldest-first", async () => {
+    const isa = await createStockAsset("ISA");
+    const stock = await (async () => {
+      const data = await runGql(
+        graphql(`
+          mutation {
+            investmentCreate(
+              name: "Scottish Mortgage"
+              currency: "GBP"
+              asset: { stock: { code: "SMT.L" } }
+            ) {
+              id
+            }
+          }
+        `),
+        {},
+      );
+      return data.investmentCreate.id;
+    })();
+
+    const { db } = await import("@/db");
+    const { InvestmentDeposits, InvestmentTransactions } =
+      await import("@/db/schema/investments");
+
+    // 2026-01-10: external deposit of £1,000 to seed the wrapper.
+    await db.insert(InvestmentDeposits).values({
+      assetId: isa,
+      date: new Date("2026-01-10"),
+      amount: 100_000,
+      currency: "GBP",
+      name: "Seed",
+    });
+    // 2026-02-15: buy 100 units @ 150p with £5 fees and £2 taxes —
+    // cash impact = -(100*150 + 200 + 500) = -15,700p (= -£157.00).
+    await db.insert(InvestmentTransactions).values({
+      investmentId: stock,
+      assetId: isa,
+      date: new Date("2026-02-15"),
+      units: 100,
+      price: 150,
+      taxes: 200,
+      fees: 500,
+      currency: "GBP",
+      drip: false,
+    });
+    // 2026-03-01: DRIP — must NOT surface as a pseudo-tx (no cash moved).
+    await db.insert(InvestmentTransactions).values({
+      investmentId: stock,
+      assetId: isa,
+      date: new Date("2026-03-01"),
+      units: 5,
+      price: 160,
+      taxes: 0,
+      fees: 0,
+      currency: "GBP",
+      drip: true,
+    });
+    // 2026-04-01: sell 30 units @ 200p with £3 fees, no taxes —
+    // cash impact = -(-30*200 + 0 + 300) = +5,700p (= +£57.00).
+    await db.insert(InvestmentTransactions).values({
+      investmentId: stock,
+      assetId: isa,
+      date: new Date("2026-04-01"),
+      units: -30,
+      price: 200,
+      taxes: 0,
+      fees: 300,
+      currency: "GBP",
+      drip: false,
+    });
+
+    const data = await runGql(
+      graphql(`
+        query ($id: ID!) {
+          netWorthCategoryAsset(id: $id) {
+            cashContributions(first: 50) {
+              edges {
+                node {
+                  __typename
+                  ... on InvestmentDeposit {
+                    name
+                    amount {
+                      amount
+                    }
+                    runningBalance {
+                      amount
+                    }
+                  }
+                  ... on InvestmentTradePseudoTransaction {
+                    name
+                    units
+                    amount {
+                      amount
+                    }
+                    runningBalance {
+                      amount
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `),
+      { id: isa },
+    );
+    const nodes =
+      data.netWorthCategoryAsset?.cashContributions?.edges.map((e) => e.node) ??
+      [];
+
+    // Date-desc: sell 2026-04-01, buy 2026-02-15, deposit 2026-01-10.
+    // The DRIP row at 2026-03-01 is filtered out. Running balance is
+    // cumulative oldest-first, so the deposit row reads £1,000, the buy
+    // row reads £1,000 - £157 = £843, the sell row reads £843 + £57 = £900.
+    expect(
+      nodes.map((n) => {
+        if (n.__typename === "InvestmentTradePseudoTransaction") {
+          return `trade ${n.units > 0 ? "BUY" : "SELL"} ${n.name} amount=${n.amount.amount} balance=${n.runningBalance?.amount}`;
+        }
+        if (n.__typename === "InvestmentDeposit") {
+          return `deposit ${n.name} amount=${n.amount.amount} balance=${n.runningBalance?.amount}`;
+        }
+        return n.__typename;
+      }),
+    ).toEqual([
+      "trade SELL SMT.L amount=57 balance=900",
+      "trade BUY SMT.L amount=-157 balance=843",
+      "deposit Seed amount=1000 balance=1000",
+    ]);
+  });
+
   it("flipping a row to provisional via update removes it from the list", async () => {
     await seedYear();
     const cash = await createCashAsset("Current");

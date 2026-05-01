@@ -90,7 +90,7 @@ export function createApolloClient() {
 
   const isSubscription = (op: { query: { kind: string } }) => {
     const def = getMainDefinition(
-      op.query as unknown as Parameters<typeof getMainDefinition>[0],
+      op.query as Parameters<typeof getMainDefinition>[0],
     );
     return (
       def.kind === Kind.OPERATION_DEFINITION &&
