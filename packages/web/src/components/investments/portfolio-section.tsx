@@ -411,11 +411,13 @@ function PortfolioChartLoader({
               points: typeof seriesPoints;
             }[] = [];
             if (pre.length > 0) {
+              // Generic "Pre-transfer" label rather than the source's name —
+              // the grey segment may also include the destination's own
+              // pre-transfer activity, so naming a single source is
+              // misleading. The transfer-in arrow / yellow header already
+              // surface which source(s) flowed in.
               split.push({
-                label:
-                  transfersIn.length === 1
-                    ? transfersIn[0].assetFrom.name
-                    : "Pre-transfer",
+                label: "Pre-transfer",
                 color: "#9ca3af",
                 points: pre,
               });
