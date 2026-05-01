@@ -433,6 +433,183 @@ export function PortfolioChart({
 
       {lines &&
         lines.length > 0 &&
+        stacked &&
+        (() => {
+          // Stacked-mode hover preview. Mirrors the line-mode block below
+          // but sums each layer's own contribution out of the cumulative
+          // top-y. Series are listed top-of-stack first so the legend
+          // reads in the same order the eye scans down the chart.
+          const bottomPoints = lines[0].points;
+          const snapped =
+            lineHoverX !== null && bottomPoints.length > 0
+              ? findClosestPoint(bottomPoints, lineHoverX)
+              : null;
+          const plotW = width - AXIS_PAD_LEFT - AXIS_PAD_RIGHT;
+          return (
+            <>
+              <rect
+                x={AXIS_PAD_LEFT}
+                y={AXIS_PAD_TOP}
+                width={plotW}
+                height={height - AXIS_PAD_TOP - AXIS_PAD_BOTTOM}
+                fill="transparent"
+                onPointerMove={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  if (rect.width === 0) return;
+                  const ratio = (e.clientX - rect.left) / rect.width;
+                  const xRange = xMax - xMin || 1;
+                  setLineHoverX(xMin + ratio * xRange);
+                }}
+                onPointerLeave={() => setLineHoverX(null)}
+              />
+              {snapped &&
+                (() => {
+                  const cx = xScale(snapped.x);
+                  // Per-layer own value: top of layer i minus top of layer
+                  // i-1. Drop layers contributing zero at this x so the
+                  // legend doesn't list 24 series with "—" against them.
+                  type LayerEntry = {
+                    label: string;
+                    color: string;
+                    own: number;
+                    topY: number;
+                  };
+                  const perLayer: LayerEntry[] = [];
+                  for (let i = 0; i < lines.length; i++) {
+                    const top = findClosestPoint(lines[i].points, snapped.x);
+                    if (!top) continue;
+                    const below =
+                      i > 0
+                        ? findClosestPoint(lines[i - 1].points, snapped.x)
+                        : null;
+                    const own = top.y - (below?.y ?? 0);
+                    if (own === 0) continue;
+                    perLayer.push({
+                      label: lines[i].label,
+                      color: lines[i].color,
+                      own,
+                      topY: yScale(top.y),
+                    });
+                  }
+                  // Top of stack first.
+                  perLayer.reverse();
+                  const topPoint = findClosestPoint(
+                    lines[lines.length - 1].points,
+                    snapped.x,
+                  );
+                  const total = topPoint?.y ?? 0;
+                  const rowH = 14;
+                  const headerH = 32;
+                  const padY = 8;
+                  const boxW = 196;
+                  const boxH = headerH + perLayer.length * rowH + padY;
+                  const gap = 10;
+                  const plotRight = width - AXIS_PAD_RIGHT;
+                  const preferRight = cx + gap + boxW <= plotRight;
+                  const boxX = preferRight
+                    ? cx + gap
+                    : Math.max(AXIS_PAD_LEFT, cx - gap - boxW);
+                  // Anchor the box near the top of the stack so it doesn't
+                  // float over an empty plot region.
+                  const anchorY = perLayer.length
+                    ? perLayer[0].topY
+                    : AXIS_PAD_TOP;
+                  const boxY = Math.max(
+                    AXIS_PAD_TOP,
+                    Math.min(
+                      height - AXIS_PAD_BOTTOM - boxH,
+                      anchorY - boxH / 2,
+                    ),
+                  );
+                  const d = initialDate
+                    ? new Date(
+                        initialDate.getTime() +
+                          Math.round(snapped.x) * 86400 * 1000,
+                      )
+                    : null;
+                  return (
+                    <g pointerEvents="none">
+                      <line
+                        x1={cx}
+                        x2={cx}
+                        y1={AXIS_PAD_TOP}
+                        y2={height - AXIS_PAD_BOTTOM}
+                        stroke="currentColor"
+                        strokeOpacity={0.2}
+                        strokeDasharray="2 2"
+                      />
+                      <rect
+                        x={boxX}
+                        y={boxY}
+                        width={boxW}
+                        height={boxH}
+                        rx={6}
+                        className="fill-popover stroke-border"
+                        strokeWidth={1}
+                      />
+                      <g className="fill-foreground text-[22px] sm:text-[14px] md:text-[12px] lg:text-[11px] tabular-nums">
+                        {d && (
+                          <text
+                            x={boxX + 8}
+                            y={boxY + 14}
+                            className="font-medium"
+                          >
+                            {fullDate(d)}
+                          </text>
+                        )}
+                        <text
+                          x={boxX + boxW - 8}
+                          y={boxY + 28}
+                          textAnchor="end"
+                          className="font-medium"
+                        >
+                          {formatAccountingMoneyRounded(currency, total)}
+                        </text>
+                        {perLayer.map((pl, i) => {
+                          const y = boxY + headerH + i * rowH + 10;
+                          // Reserve enough space on the right for the value
+                          // text. The label sits inside a foreignObject so
+                          // CSS text-overflow can clip long investment
+                          // names with an ellipsis (SVG `text` doesn't
+                          // honour text-overflow).
+                          const labelX = boxX + 20;
+                          const labelMaxW = boxW - 20 - 8 - 70;
+                          return (
+                            <g key={pl.label} fontSize="9">
+                              <rect
+                                x={boxX + 8}
+                                y={y - 7}
+                                width={8}
+                                height={8}
+                                rx={1}
+                                fill={pl.color}
+                              />
+                              <foreignObject
+                                x={labelX}
+                                y={y - 9}
+                                width={labelMaxW}
+                                height={rowH}
+                              >
+                                <div className="truncate text-[9px] text-muted-foreground leading-[14px]">
+                                  {pl.label}
+                                </div>
+                              </foreignObject>
+                              <text x={boxX + boxW - 8} y={y} textAnchor="end">
+                                {formatAccountingMoneyRounded(currency, pl.own)}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </g>
+                    </g>
+                  );
+                })()}
+            </>
+          );
+        })()}
+
+      {lines &&
+        lines.length > 0 &&
         !stacked &&
         (() => {
           // Snap to the nearest point across every line, not just the
