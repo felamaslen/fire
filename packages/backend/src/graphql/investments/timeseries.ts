@@ -291,24 +291,30 @@ export const loadTimeseries = contextAwareDataLoader(
         return keys.map<PortfolioTimeseries | null>((key, keyIndex) => {
           const series = seriesByKey.get(keyIndex);
           if (!series || series.size === 0) {
-            // No IVP rows matched this key. Return a flat-zero series so
-            // `Query.portfolios` can emit a stacked edge per investment
-            // without erroring on dormant ones.
-            return {
-              currency,
-              initialDate,
-              points: sampledDates.map((d) => ({
-                x: differenceInDays(new Date(d), initialDate),
-                y: 0,
-              })),
-            };
+            // No IVP rows match this key — the investment had no holdings
+            // in scope at any point in the chart's date range. Skip the
+            // edge entirely (`Query.portfolios` filters nulls out).
+            return null;
           }
-          // Forward-fill: when a sample date has no IVP row (e.g. weekend),
-          // carry the last known value forward.
+          // Forward-fill: for each sampled date `d`, `lastKnown` is the
+          // most recent series entry whose date is ≤ `d`. Walk
+          // `sortedSeries` forward in lock-step with the sampled-dates
+          // loop so values that fall between sample points still get
+          // surfaced (a stride of 12 days otherwise misses an
+          // investment whose only IVP rows are within that stride).
+          const sortedSeries = [...series.entries()].sort((a, b) =>
+            a[0].localeCompare(b[0]),
+          );
+          let cursor = 0;
           let lastKnown = 0;
           const ys = sampledDates.map((d) => {
-            const v = series.get(d);
-            if (v !== undefined) lastKnown = v;
+            while (
+              cursor < sortedSeries.length &&
+              sortedSeries[cursor][0] <= d
+            ) {
+              lastKnown = sortedSeries[cursor][1];
+              cursor++;
+            }
             return lastKnown;
           });
           // Live overlay on the last point.
@@ -316,6 +322,14 @@ export const loadTimeseries = contextAwareDataLoader(
           if (liveTotal !== null) {
             ys[ys.length - 1] = liveTotal;
           }
+          // Drop the series if every sampled point is zero — for the
+          // stacked view that means the investment held nothing across
+          // the entire chart period (e.g. fully sold long before the
+          // window). Only the chart period matters, so an investment
+          // sold in 2019 contributes to a 1y chart only if its IVP
+          // rows landed in the last year (they don't), and shows up in
+          // an ALL-period chart (rises 2018, falls 2019, then 0).
+          if (ys.every((v) => v === 0)) return null;
           return {
             currency,
             initialDate,

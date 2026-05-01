@@ -286,6 +286,7 @@ export type InvestmentInitialTransactionInput = {
 
 /** Create a new investment, optionally booking one or more initial transactions in the same round-trip. @gqlMutationField */
 export async function investmentCreate(
+  ctx: Context,
   name: string,
   /** ISO-4217 currency code every price and transaction for this investment will be quoted in. */
   currency: string,
@@ -304,6 +305,7 @@ export async function investmentCreate(
     if (transactions && transactions.length > 0) {
       for (const tx of transactions) {
         await investmentTransactionCreate(
+          ctx,
           row.id as ID,
           tx.assetId,
           tx.date,

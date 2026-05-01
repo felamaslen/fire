@@ -4270,8 +4270,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLList(new GraphQLNonNull(InvestmentInitialTransactionInputType))
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentCreateResolver(args.name, args.currency, args.asset, args.transactions);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentCreateResolver(context, args.name, args.currency, args.asset, args.transactions);
                     }
                 },
                 investmentDelete: {
@@ -4437,8 +4437,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLFloat)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentTransactionCreateResolver(args.investmentId, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentTransactionCreateResolver(context, args.investmentId, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
                     }
                 },
                 investmentTransactionDelete: {
@@ -4450,8 +4450,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: new GraphQLNonNull(GraphQLID)
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentTransactionDeleteResolver(args.id);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentTransactionDeleteResolver(context, args.id);
                     }
                 },
                 investmentTransactionUpdate: {
@@ -4484,8 +4484,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: GraphQLFloat
                         }
                     },
-                    resolve(_source, args) {
-                        return mutationInvestmentTransactionUpdateResolver(args.id, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                    resolve(_source, args, context) {
+                        return mutationInvestmentTransactionUpdateResolver(context, args.id, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
                     }
                 },
                 investmentUpdate: {

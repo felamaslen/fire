@@ -12,6 +12,7 @@ import {
 } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import {
   getMoneyInputFractionalAmount,
@@ -127,8 +128,16 @@ async function assertInvestmentCurrency(
   }
 }
 
+function invalidateTransactionReachable(ctx: Context): void {
+  ctx.invalidate({ typename: "InvestmentTransaction", id: null });
+  ctx.invalidate({ typename: "Investment", id: null });
+  ctx.invalidate({ typename: "NetWorthCategoryAsset", id: null });
+  ctx.invalidate({ typename: "Portfolio", id: null });
+}
+
 /** Book a new buy, sell, or dividend-reinvestment against an investment. @gqlMutationField */
 export async function investmentTransactionCreate(
+  ctx: Context,
   investmentId: ID,
   /** Wrapper to book the trade into. Must be a `STOCK` or `PENSION` net-worth asset. */
   assetId: ID,
@@ -194,6 +203,7 @@ export async function investmentTransactionCreate(
       .where(eq(InvestmentAllocations.assetId, assetId));
     invalidateAllocationsForAsset(assetId);
   }
+  invalidateTransactionReachable(ctx);
   return InvestmentTransaction.load(row);
 }
 
@@ -212,6 +222,7 @@ function assertSameCurrency(
 
 /** Partial update to a transaction. Omitted / null fields are left unchanged. @gqlMutationField */
 export async function investmentTransactionUpdate(
+  ctx: Context,
   id: ID,
   assetId?: ID | null,
   date?: CalendarDate | null,
@@ -263,14 +274,19 @@ export async function investmentTransactionUpdate(
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(InvestmentTransactions.id, id))
     .returning();
+  invalidateTransactionReachable(ctx);
   return InvestmentTransaction.load(row);
 }
 
 /** Delete a transaction. @gqlMutationField */
-export async function investmentTransactionDelete(id: ID): Promise<Void> {
+export async function investmentTransactionDelete(
+  ctx: Context,
+  id: ID,
+): Promise<Void> {
   await db
     .delete(InvestmentTransactions)
     .where(eq(InvestmentTransactions.id, id));
+  invalidateTransactionReachable(ctx);
   return VOID;
 }
 
