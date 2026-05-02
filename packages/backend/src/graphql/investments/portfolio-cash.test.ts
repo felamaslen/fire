@@ -472,6 +472,65 @@ describe("Portfolio.cash", () => {
     expect(p.cash.amount).toBe(0);
   });
 
+  it("aggregate folds in transfer-source pre-cap flows when no asset filter is set, clamping per wrapper", async () => {
+    // Three wrappers:
+    //   src   — transferred-out; pure negative float pre-transfer (a buy with
+    //           no contributions: -£600).
+    //   dst   — receives src's transfer; own deposit +£100. With src's pre-cap
+    //           flows folded in, dst's combined float is -£500 → clamps to £0.
+    //   other — independent; +£500.
+    //
+    // Unfiltered cash must equal £500 (the sum of per-wrapper clamped floats:
+    // 0 + 0 + 500). The previous null-filter path skipped src's flows (defunct
+    // — no positive snapshot at the latest entry) and surfaced dst's standalone
+    // +£100 as live cash, summing 600.
+    const src = await createStockAsset("Old ISA");
+    const dst = await createStockAsset("New ISA");
+    const other = await createStockAsset("Other ISA");
+    const aapl = await createStock("Apple", "AAPL");
+
+    await buy(aapl, src, 60, 10); // src: −£600, no contribution
+    await recordDeposit(dst, 100, "dst funding"); // dst: +£100
+    await recordDeposit(other, 500, "other funding"); // other: +£500
+
+    // Transfer date sits after every flow row above so they all fall inside
+    // src's pre-cap window (`<= transferDate − 1 = 2026-04-14`).
+    await runGql(
+      graphql(`
+        mutation ($from: ID!, $to: ID!, $date: Date!) {
+          assetStockTransferCreate(
+            assetIdFrom: $from
+            assetIdTo: $to
+            date: $date
+          ) {
+            id
+          }
+        }
+      `),
+      { from: src, to: dst, date: "2026-04-15" },
+    );
+
+    // Latest entry: dst and other tracked positive; src omitted (defunct).
+    await recordNetWorthEntry(
+      [
+        { assetId: dst, amountMajor: 5_000 },
+        { assetId: other, amountMajor: 500 },
+      ],
+      "2026-04-20",
+    );
+
+    const all = await queryPortfolio(null);
+    expect(all.cash.amount).toBe(500);
+
+    // Per-wrapper sanity: dst's own +£100 is wiped by src's −£600 carry-over;
+    // other stands alone at +£500. The unfiltered total above must equal
+    // their sum.
+    const onlyDst = await queryPortfolio([dst]);
+    expect(onlyDst.cash.amount).toBe(0);
+    const onlyOther = await queryPortfolio([other]);
+    expect(onlyOther.cash.amount).toBe(500);
+  });
+
   it("excludes contributions denominated in a non-portfolio currency", async () => {
     const isa = await createStockAsset("ISA");
     await recordDeposit(isa, 500, "GBP", "GBP");

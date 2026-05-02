@@ -106,6 +106,13 @@ export class PortfolioAllocation {
   }
 }
 
+/** Day before `date` as an ISO `YYYY-MM-DD` string. Used to cap pre-transfer flows at the day before the transfer crosses the wrapper boundary. */
+function dayBefore(date: Date | string): string {
+  const d = new Date(date as Date);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 type Filters = {
   filterAssetIdIn: string[] | null;
   filterInvestmentIdIn: string[] | null;
@@ -284,11 +291,6 @@ export class Portfolio {
         effective.push(filter[i]);
       }
       const effectiveSet = new Set(effective);
-      const dayBefore = (date: Date | string): string => {
-        const d = new Date(date as Date);
-        d.setUTCDate(d.getUTCDate() - 1);
-        return d.toISOString().slice(0, 10);
-      };
       const extrasByAsset = new Map<
         string,
         ReadonlyArray<{ assetId: string; dateCap: string }>
@@ -396,18 +398,10 @@ export class Portfolio {
     return Money.fromMinorDenomination(invested, this.currency);
   }
 
-  /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. A transferred-out wrapper also reads zero — its cash moved across with the holdings. A transferred-into wrapper folds in each source's pre-transfer cash flows. */
+  /** Cash sits at the wrapper level; when the portfolio is scoped to specific investments (`filterInvestmentIdIn`) the cash float isn't attributable to any one investment, so we surface zero rather than double-counting it across each investment slice. Otherwise hands the wrapper filter (or `null` for every `STOCK` / `PENSION` wrapper) to `loadPortfolioCashMinor`, which resolves the transfer-aware per-wrapper float in one SQL query and returns the clamped sum. */
   private async cashMinor(ctx: Context): Promise<number> {
     if (this.filterInvestmentIdIn) return 0;
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
-    if (dateCap) return 0;
-    const extraScopes = await this.loadExtraScopesUnion(ctx);
-    return loadPortfolioCashMinor(
-      ctx,
-      effectiveAssetIds,
-      this.currency,
-      extraScopes,
-    );
+    return loadPortfolioCashMinor(ctx, this.filterAssetIdIn, this.currency);
   }
 
   private async totalInvestedMinor(ctx: Context): Promise<number> {
