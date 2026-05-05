@@ -220,6 +220,8 @@ const augmentPensionContributions = augmentWithSyntheticMonthly;
 
 /**
  * Append synthetic monthly rows (one per month across `EWMA_LOOKBACK_MONTHS`) to the map, keyed by id. Used to turn a predicted monthly amount into EWMA-friendly history so the engine's `ewma` averages to (nearly) the right figure rather than getting diluted against an under-filled window. Sign matches real tx rows (outflows stored negative).
+ *
+ * Months that already contain at least one real row are skipped — the EWMA sums every row in a month, so adding a synthetic row alongside a real one would double-count that month. Synthetic rows only backfill months with no real activity.
  */
 function augmentWithSyntheticMonthly(
   original: Map<string, readonly LiabilityTx[] | LiabilityTx[]>,
@@ -231,11 +233,21 @@ function augmentWithSyntheticMonthly(
   if (monthlyById.size === 0) return out;
   for (const [id, monthly] of monthlyById) {
     if (monthly <= 0) continue;
+    const existing = out.get(id) ?? [];
+    const monthsWithReal = new Set<number>();
+    for (const tx of existing) {
+      monthsWithReal.add(
+        Date.UTC(tx.date.getUTCFullYear(), tx.date.getUTCMonth(), 1),
+      );
+    }
     const synthetic: LiabilityTx[] = [];
     for (let i = 1; i <= EWMA_LOOKBACK_MONTHS; i++) {
-      synthetic.push({ date: addMonths(asOfMonthStart, -i), amount: -monthly });
+      const date = addMonths(asOfMonthStart, -i);
+      const key = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+      if (monthsWithReal.has(key)) continue;
+      synthetic.push({ date, amount: -monthly });
     }
-    out.set(id, [...(out.get(id) ?? []), ...synthetic]);
+    out.set(id, [...existing, ...synthetic]);
   }
   return out;
 }
