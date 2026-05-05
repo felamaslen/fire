@@ -941,6 +941,38 @@ type InvestmentWrapper {
 }
 
 """
+Per-loan inputs the loan-overpayment calculator needs in one shot: a default `startingBalance` / `monthlyRepayment` / `interestRate` for the projection, plus the home-currency balance history. The default starting balance and monthly repayment are derived from the loan's actual historic repayments — clients let users override either one.
+"""
+type LoanCalculatorRow {
+  """
+  Recorded balances at every `NetWorthEntry` that includes a value for this loan, in chronological order.
+  """
+  history: [LoanHistoryPoint!]!
+  """Annual interest rate (decimal, e.g. `0.045` = 4.5%/yr)."""
+  interestRate: Float!
+  """The loan liability — exposes `id`, `name`, etc."""
+  liability: NetWorthCategoryLiability!
+  """
+  Default monthly repayment for the projection (home currency), derived from actual historic repayments against the loan.
+  """
+  monthlyRepayment: Money!
+  """
+  Default starting balance for the projection (home currency, positive magnitude), derived from the latest recorded balance.
+  """
+  startingBalance: Money!
+}
+
+"""
+One home-currency balance point on a loan's recorded history — one entry per `NetWorthEntry` that includes a value for the loan.
+"""
+type LoanHistoryPoint {
+  """Recorded balance in the home currency, as a positive magnitude."""
+  balance: Money!
+  """Date of the underlying `NetWorthEntry`."""
+  date: Date!
+}
+
+"""
 A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for £123.45).
 """
 type Money {
@@ -2535,6 +2567,10 @@ type Query {
     first: Int
     sort: InvestmentSort
   ): InvestmentConnection @semanticNonNull
+  """
+  Per-loan inputs for the loan-overpayment calculator on the home page. Returns one row per `LOAN` liability that has a value in the latest `NetWorthEntry` AND that has enough recorded history to derive a default monthly repayment, alongside the loan's full home-currency balance history.
+  """
+  loanCalculator: [LoanCalculatorRow!] @semanticNonNull
   """
   Return the current session's auth info, or `null` if the request is anonymous. Used by the web app on boot to decide whether to send the user to the login screen or straight to the dashboard.
   """

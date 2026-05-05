@@ -941,6 +941,34 @@ type InvestmentWrapper {
 }
 
 """
+Per-loan inputs the loan-overpayment calculator needs in one shot: forecast-derived `startingBalance` / `monthlyRepayment` / `interestRate`, plus the home-currency balance history.
+"""
+type LoanCalculatorRow {
+  """
+  Recorded balances at every `NetWorthEntry` that includes a value for this loan, in chronological order.
+  """
+  history: [LoanHistoryPoint!]!
+  """Annual interest rate (decimal, e.g. `0.045` = 4.5%/yr)."""
+  interestRate: Float!
+  """The loan liability — exposes `id`, `name`, etc."""
+  liability: NetWorthCategoryLiability!
+  """EWMA-derived total monthly repayment (home currency)."""
+  monthlyRepayment: Money!
+  """Forecast starting balance (home currency, positive magnitude)."""
+  startingBalance: Money!
+}
+
+"""
+One home-currency balance point on a loan's recorded history — one entry per `NetWorthEntry` that includes a value for the loan.
+"""
+type LoanHistoryPoint {
+  """Recorded balance in the home currency, as a positive magnitude."""
+  balance: Money!
+  """Date of the underlying `NetWorthEntry`."""
+  date: Date!
+}
+
+"""
 A monetary value with an ISO-4217 currency. `amount` is in major units (e.g. 123.45 for £123.45).
 """
 type Money {
@@ -2535,6 +2563,10 @@ type Query {
     first: Int
     sort: InvestmentSort
   ): InvestmentConnection @semanticNonNull
+  """
+  Per-loan inputs for the loan-overpayment calculator on the home page. Returns one row per `LOAN` liability that has a value in the latest `NetWorthEntry` AND that the forecast engine can project (i.e. has an `interestRate` and enough history to derive a monthly repayment). Each row bundles the forecast starting balance, monthly repayment and interest rate together with the loan's full home-currency balance history, so the client can render the calculator without fanning out across `netWorth(last: N).edges.node.loans`.
+  """
+  loanCalculator: [LoanCalculatorRow!]! @semanticNonNull
   """
   Return the current session's auth info, or `null` if the request is anonymous. Used by the web app on boot to decide whether to send the user to the login screen or straight to the dashboard.
   """
