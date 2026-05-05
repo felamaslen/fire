@@ -1568,6 +1568,35 @@ type NetWorthCurrencyRate {
   rate: Float!
 }
 
+"""
+Predicted net worth at "today" — same shape as a `NetWorthHistoryPoint`, plus a `breakdown` of where the change from the previous snapshot came from (income, bills, investment growth, loan interest, etc.).
+"""
+type NetWorthCurrent {
+  """Gross assets total, in the home currency."""
+  assets: Money!
+  """Gross assets at this point, grouped by asset type."""
+  assetsByType: [NetWorthHistoryAssetBucket!]!
+  """
+  Per-source signed contributions to the change between the previous snapshot and the predicted current value. The sum is approximately the net delta (off-by-zero contributions from washes such as cash → wrapper transfers and loan repayments are intentionally not surfaced).
+  """
+  breakdown: [NetWorthCurrentBreakdown!]!
+  date: Date!
+  """Total liabilities (positive magnitude), in the home currency."""
+  liabilities: Money!
+  """Net worth: `assets − liabilities`."""
+  net: Money!
+}
+
+"""
+A single line in the breakdown of the change between the previous net-worth snapshot and the predicted current value — e.g. "Income: +£1,200", "Loan interest: -£42". Positive means the line increased net worth, negative means it decreased it.
+"""
+type NetWorthCurrentBreakdown {
+  """Signed amount in the home currency."""
+  amount: Money!
+  """Human-readable label naming the source of the change."""
+  label: String!
+}
+
 """One net-worth snapshot for a single month."""
 type NetWorthEntry {
   """Exchange rates captured for this entry."""
@@ -2531,6 +2560,12 @@ type Query {
   ): NetWorthCategoryConnection @semanticNonNull
   """Look up an asset category by id. Returns `null` when no row matches."""
   netWorthCategoryAsset(id: ID!): NetWorthCategoryAsset
+  """
+  Predicted net worth at "today" — the latest `NetWorthEntries` rolled forward to today by replaying actual / forecast cash flows, applying cached close-price growth to held investments, and accruing daily interest on loans. Never triggers a live price refetch.
+  
+  Returns `null` when an entry already exists in the current calendar month or when there is no prior entry to roll forward from.
+  """
+  netWorthCurrent: NetWorthCurrent
   """Look up a single net-worth entry by id."""
   netWorthEntry(id: ID!): NetWorthEntry
   """

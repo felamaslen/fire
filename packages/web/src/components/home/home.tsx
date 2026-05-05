@@ -14,6 +14,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { graphql } from "@/graphql";
 import { cn } from "@/lib/cn";
 import { formatAccountingMoneyRounded } from "@/lib/format";
@@ -49,6 +54,35 @@ const HomeDocument = graphql(
         net {
           amount
           currency
+        }
+      }
+      netWorthCurrent {
+        date
+        assetsByType {
+          type
+          amount {
+            amount
+            currency
+          }
+        }
+        assets {
+          amount
+          currency
+        }
+        liabilities {
+          amount
+          currency
+        }
+        net {
+          amount
+          currency
+        }
+        breakdown {
+          label
+          amount {
+            amount
+            currency
+          }
         }
       }
       retirementSettings {
@@ -262,6 +296,7 @@ export function Home() {
     onRetirementYearChange(year);
   };
   const history = data.netWorthHistory ?? [];
+  const current = data.netWorthCurrent ?? null;
   const forecastPoints = showForecast
     ? (data.netWorthForecast?.points ?? [])
     : [];
@@ -275,8 +310,21 @@ export function Home() {
   const historyPoints = cutoff
     ? history.filter((h) => h.date < cutoff)
     : history;
-  const combined = [...historyPoints, ...forecastPoints];
-  const forecastStart = showForecast ? historyPoints.length : undefined;
+  // Insert the predicted-current point between history and forecast. It
+  // shares its month with `forecastPoints[0]` (engine `asOfMonthStart`),
+  // so drop that first forecast point to avoid stacking two "now" markers
+  // on top of each other.
+  const trimmedForecast =
+    current && forecastPoints.length > 0
+      ? forecastPoints.slice(1)
+      : forecastPoints;
+  const middle = current ? [current] : [];
+  const combined = [...historyPoints, ...middle, ...trimmedForecast];
+  // The forecast region starts after the last recorded entry — i.e. at the
+  // first non-historical point. That's `current` when we have a prediction,
+  // otherwise the first real forecast point.
+  const forecastStart =
+    showForecast || current ? historyPoints.length : undefined;
 
   // Place a retirement marker at the first forecast point whose month is
   // inside the retirement year. Interpolate between its predecessor and
@@ -373,14 +421,43 @@ export function Home() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <div className="text-2xl font-semibold tabular-nums sm:text-3xl">
+              <span className="text-2xl font-semibold tabular-nums sm:text-3xl">
                 {latest
                   ? formatAccountingMoneyRounded(
                       latest.net.currency,
                       latest.net.amount,
                     )
                   : "—"}
-              </div>
+              </span>
+              {current && latest && (
+                <>
+                  <span
+                    className="text-2xl font-semibold text-muted-foreground sm:text-3xl"
+                    aria-hidden
+                  >
+                    →
+                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="cursor-help text-2xl font-semibold tabular-nums text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground sm:text-3xl"
+                      >
+                        {formatAccountingMoneyRounded(
+                          current.net.currency,
+                          current.net.amount,
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <PredictedBreakdown
+                        currency={current.net.currency}
+                        breakdown={current.breakdown}
+                      />
+                    </TooltipContent>
+                  </Tooltip>
+                </>
+              )}
               {latest && <NetWorthBlockMapButton />}
               {latest && <LoanOverpaymentCalculatorButton />}
             </div>
@@ -773,6 +850,49 @@ function ForecastSettingsDialog(props: ForecastControlsProps) {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PredictedBreakdown({
+  currency,
+  breakdown,
+}: {
+  currency: string;
+  breakdown: readonly { label: string; amount: { amount: number } }[];
+}) {
+  if (breakdown.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground">
+        No movement since the previous entry.
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      <div className="font-medium">Change since last entry</div>
+      <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 tabular-nums">
+        {breakdown.map((b) => {
+          const positive = b.amount.amount > 0;
+          return (
+            <div key={b.label} className="contents">
+              <dt>{b.label}</dt>
+              <dd
+                className={
+                  positive
+                    ? "text-emerald-400"
+                    : b.amount.amount < 0
+                      ? "text-red-400"
+                      : ""
+                }
+              >
+                {positive ? "+" : ""}
+                {formatAccountingMoneyRounded(currency, b.amount.amount)}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </div>
   );
 }
 

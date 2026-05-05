@@ -20,6 +20,7 @@ import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCr
 import { investmentPortfolios as queryInvestmentPortfoliosResolver, investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, amountHome as netWorthValueAmountHomeResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, loans as netWorthEntryLoansResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
 import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategoryAsset as queryNetWorthCategoryAssetResolver, netWorthCategoryCreate as mutationNetWorthCategoryCreateResolver, netWorthCategoryDelete as mutationNetWorthCategoryDeleteResolver, netWorthCategoryUpdate as mutationNetWorthCategoryUpdateResolver } from "./../graphql/net-worth/categories";
+import { netWorthCurrent as queryNetWorthCurrentResolver } from "./../graphql/net-worth/current";
 import { netWorthForecast as queryNetWorthForecastResolver } from "./../graphql/net-worth/forecast";
 import { netWorthHistory as queryNetWorthHistoryResolver } from "./../graphql/net-worth/history";
 import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
@@ -1667,6 +1668,61 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const NetWorthCurrentBreakdownType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCurrentBreakdown",
+        description: "A single line in the breakdown of the change between the previous net-worth snapshot and the predicted current value \u2014 e.g. \"Income: +\u00A31,200\", \"Loan interest: -\u00A342\". Positive means the line increased net worth, negative means it decreased it.",
+        fields() {
+            return {
+                amount: {
+                    description: "Signed amount in the home currency.",
+                    name: "amount",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                label: {
+                    description: "Human-readable label naming the source of the change.",
+                    name: "label",
+                    type: new GraphQLNonNull(GraphQLString)
+                }
+            };
+        }
+    });
+    const NetWorthCurrentType: GraphQLObjectType = new GraphQLObjectType({
+        name: "NetWorthCurrent",
+        description: "Predicted net worth at \"today\" \u2014 same shape as a `NetWorthHistoryPoint`, plus a `breakdown` of where the change from the previous snapshot came from (income, bills, investment growth, loan interest, etc.).",
+        fields() {
+            return {
+                assets: {
+                    description: "Gross assets total, in the home currency.",
+                    name: "assets",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                assetsByType: {
+                    description: "Gross assets at this point, grouped by asset type.",
+                    name: "assetsByType",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthHistoryAssetBucketType)))
+                },
+                breakdown: {
+                    description: "Per-source signed contributions to the change between the previous snapshot and the predicted current value. The sum is approximately the net delta (off-by-zero contributions from washes such as cash \u2192 wrapper transfers and loan repayments are intentionally not surfaced).",
+                    name: "breakdown",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthCurrentBreakdownType)))
+                },
+                date: {
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                liabilities: {
+                    description: "Total liabilities (positive magnitude), in the home currency.",
+                    name: "liabilities",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                net: {
+                    description: "Net worth: `assets \u2212 liabilities`.",
+                    name: "net",
+                    type: new GraphQLNonNull(MoneyType)
+                }
+            };
+        }
+    });
     const NetWorthHistoryPointType: GraphQLObjectType = new GraphQLObjectType({
         name: "NetWorthHistoryPoint",
         description: "A single point on the net-worth history timeline \u2014 one entry per recorded month.",
@@ -2973,6 +3029,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return queryNetWorthCategoryAssetResolver(args.id);
+                    }
+                },
+                netWorthCurrent: {
+                    description: "Predicted net worth at \"today\" \u2014 the latest `NetWorthEntries` rolled forward to today by replaying actual / forecast cash flows, applying cached close-price growth to held investments, and accruing daily interest on loans. Never triggers a live price refetch.\n\nReturns `null` when an entry already exists in the current calendar month or when there is no prior entry to roll forward from.",
+                    name: "netWorthCurrent",
+                    type: NetWorthCurrentType,
+                    resolve(_source, _args, context) {
+                        return queryNetWorthCurrentResolver(context);
                     }
                 },
                 netWorthEntry: {
@@ -5139,7 +5203,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }
 const typeNameMap = new Map();
