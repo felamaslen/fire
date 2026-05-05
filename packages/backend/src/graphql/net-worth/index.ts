@@ -1,6 +1,18 @@
 import { strict as assert } from "node:assert";
 
-import { and, asc, desc, eq, gt, lt, notInArray, or, sql } from "drizzle-orm";
+import DataLoader from "dataloader";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  lt,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
 
@@ -118,22 +130,44 @@ export async function values(entry: NetWorthEntry): Promise<NetWorthValue[]> {
 }
 
 /** Subset of `values` whose `liability` is a `LOAN` — the line items that contribute to the loan-overpayment view. Saves clients from fetching every asset / option line just to filter to loans. @gqlField */
-export async function loans(entry: NetWorthEntry): Promise<NetWorthValue[]> {
-  const rows = await db
-    .select({ value: NetWorthValues })
-    .from(NetWorthValues)
-    .innerJoin(
-      NetWorthCategoryLiabilities,
-      eq(NetWorthCategoryLiabilities.id, NetWorthValues.categoryLiabilityId),
-    )
-    .where(
-      and(
-        eq(NetWorthValues.entryId, entry.id),
-        eq(NetWorthCategoryLiabilities.type, "LOAN"),
-      ),
-    );
-  return rows.map((r) => toNetWorthValue(r.value));
+export async function loans(
+  entry: NetWorthEntry,
+  ctx: Context,
+): Promise<NetWorthValue[]> {
+  return loansByEntryLoader(ctx).load(entry.id);
 }
+
+/** Per-request batched loader for `NetWorthEntry.loans`. One SQL fetches every loan value across the requested entries with `entryId IN (…)`, then partitions back per entry. Collapses the `loans` field on a `netWorth(last:N)` connection from N round-trips to one. */
+const loansByEntryLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, NetWorthValue[]>(async (entryIds) => {
+      const ids = [...entryIds];
+      const rows = await db
+        .select({ value: NetWorthValues })
+        .from(NetWorthValues)
+        .innerJoin(
+          NetWorthCategoryLiabilities,
+          eq(
+            NetWorthCategoryLiabilities.id,
+            NetWorthValues.categoryLiabilityId,
+          ),
+        )
+        .where(
+          and(
+            inArray(NetWorthValues.entryId, ids),
+            eq(NetWorthCategoryLiabilities.type, "LOAN"),
+          ),
+        );
+      const byEntry = new Map<string, NetWorthValue[]>();
+      for (const r of rows) {
+        const v = toNetWorthValue(r.value);
+        const list = byEntry.get(v.entryId);
+        if (list) list.push(v);
+        else byEntry.set(v.entryId, [v]);
+      }
+      return ids.map((id) => byEntry.get(id) ?? []);
+    }),
+);
 
 type EntryTotals = { assetsMinor: number; liabilitiesMinor: number };
 
@@ -256,13 +290,50 @@ export async function totalNet(
   );
 }
 
-const loadEntryRateMap = contextAwareDataLoader(
-  (_ctx: Context, entryId: string) =>
-    db
-      .select()
-      .from(NetWorthCurrencyRates)
-      .where(eq(NetWorthCurrencyRates.entryId, entryId))
-      .then(buildRateToHome),
+/** Per-request batched loader for an entry's `currency → home` rate map. One SQL fetches all `NetWorthCurrencyRates` with `entryId IN (…)`, then groups back into one `Map` per entry. Used by `amountHome` (which fires once per loan/asset/option value). */
+const entryRateMapLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, Map<string, number>>(async (entryIds) => {
+      const ids = [...entryIds];
+      const rows = await db
+        .select()
+        .from(NetWorthCurrencyRates)
+        .where(inArray(NetWorthCurrencyRates.entryId, ids));
+      const byEntry = new Map<
+        string,
+        (typeof NetWorthCurrencyRates.$inferSelect)[]
+      >();
+      for (const r of rows) {
+        const list = byEntry.get(r.entryId);
+        if (list) list.push(r);
+        else byEntry.set(r.entryId, [r]);
+      }
+      return ids.map((id) => buildRateToHome(byEntry.get(id) ?? []));
+    }),
+);
+
+/** Per-request batched loader for a value's `NetWorthValueAmounts` rows. One SQL fetches all amounts with `valueId IN (…)`, then groups back per value. Powers both `amounts` and `amountHome`. */
+const amountsByValueLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, (typeof NetWorthValueAmounts.$inferSelect)[]>(
+      async (valueIds) => {
+        const ids = [...valueIds];
+        const rows = await db
+          .select()
+          .from(NetWorthValueAmounts)
+          .where(inArray(NetWorthValueAmounts.valueId, ids));
+        const byValue = new Map<
+          string,
+          (typeof NetWorthValueAmounts.$inferSelect)[]
+        >();
+        for (const r of rows) {
+          const list = byValue.get(r.valueId);
+          if (list) list.push(r);
+          else byValue.set(r.valueId, [r]);
+        }
+        return ids.map((id) => byValue.get(id) ?? []);
+      },
+    ),
 );
 
 /**
@@ -274,11 +345,10 @@ export async function amountHome(
   value: NetWorthValue,
   ctx: Context,
 ): Promise<Money> {
-  const rateMap = await loadEntryRateMap(ctx, value.entryId);
-  const rows = await db
-    .select()
-    .from(NetWorthValueAmounts)
-    .where(eq(NetWorthValueAmounts.valueId, value.id));
+  const [rateMap, rows] = await Promise.all([
+    entryRateMapLoader(ctx).load(value.entryId),
+    amountsByValueLoader(ctx).load(value.id),
+  ]);
   let totalMinor = 0;
   for (const row of rows) {
     totalMinor += convertToHomeMinor(row.amount, row.currency, rateMap);
@@ -287,11 +357,11 @@ export async function amountHome(
 }
 
 /** Monetary amounts for this line item — at most one per currency. @gqlField */
-export async function amounts(value: NetWorthValue): Promise<Money[]> {
-  const rows = await db
-    .select()
-    .from(NetWorthValueAmounts)
-    .where(eq(NetWorthValueAmounts.valueId, value.id));
+export async function amounts(
+  value: NetWorthValue,
+  ctx: Context,
+): Promise<Money[]> {
+  const rows = await amountsByValueLoader(ctx).load(value.id);
   return rows.map((row) =>
     Money.fromMinorDenomination(row.amount, row.currency),
   );

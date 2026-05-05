@@ -1438,8 +1438,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Monetary amounts for this line item \u2014 at most one per currency.",
                     name: "amounts",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MoneyType))),
-                    resolve(source) {
-                        return netWorthValueAmountsResolver(source);
+                    resolve(source, _args, context) {
+                        return netWorthValueAmountsResolver(source, context);
                     }
                 },
                 asset: {
@@ -1499,8 +1499,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Subset of `values` whose `liability` is a `LOAN` \u2014 the line items that contribute to the loan-overpayment view. Saves clients from fetching every asset / option line just to filter to loans.",
                     name: "loans",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthValueType))),
-                    resolve(source) {
-                        return netWorthEntryLoansResolver(source);
+                    resolve(source, _args, context) {
+                        return netWorthEntryLoansResolver(source, context);
                     }
                 },
                 totalAssets: {
