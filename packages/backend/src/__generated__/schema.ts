@@ -1583,8 +1583,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "The line-item values recorded for this entry.",
                     name: "values",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthValueType))),
-                    resolve(source) {
-                        return netWorthEntryValuesResolver(source);
+                    resolve(source, _args, context) {
+                        return netWorthEntryValuesResolver(source, context);
                     }
                 }
             };

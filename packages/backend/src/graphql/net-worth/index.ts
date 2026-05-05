@@ -121,13 +121,32 @@ export async function currencyRates(
 }
 
 /** The line-item values recorded for this entry. @gqlField */
-export async function values(entry: NetWorthEntry): Promise<NetWorthValue[]> {
-  const rows = await db
-    .select()
-    .from(NetWorthValues)
-    .where(eq(NetWorthValues.entryId, entry.id));
-  return rows.map(toNetWorthValue);
+export async function values(
+  entry: NetWorthEntry,
+  ctx: Context,
+): Promise<NetWorthValue[]> {
+  return valuesByEntryLoader(ctx).load(entry.id);
 }
+
+/** Per-request batched loader for `NetWorthEntry.values`. One SQL fetches every value across the requested entries with `entryId IN (…)`, then partitions back per entry. Crucially, returning `values()` for all entries in a single tick keeps downstream loaders (`amountHome`'s rate-map / amounts) in one batch — otherwise per-entry timing offsets would split them. */
+const valuesByEntryLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, NetWorthValue[]>(async (entryIds) => {
+      const ids = [...entryIds];
+      const rows = await db
+        .select()
+        .from(NetWorthValues)
+        .where(inArray(NetWorthValues.entryId, ids));
+      const byEntry = new Map<string, NetWorthValue[]>();
+      for (const r of rows) {
+        const v = toNetWorthValue(r);
+        const list = byEntry.get(v.entryId);
+        if (list) list.push(v);
+        else byEntry.set(v.entryId, [v]);
+      }
+      return ids.map((id) => byEntry.get(id) ?? []);
+    }),
+);
 
 /** Subset of `values` whose `liability` is a `LOAN` — the line items that contribute to the loan-overpayment view. Saves clients from fetching every asset / option line just to filter to loans. @gqlField */
 export async function loans(
@@ -200,52 +219,61 @@ export function convertToHomeMinor(
   return Math.round(homeMajor * 10 ** CURRENCIES[HOME_CURRENCY].scale);
 }
 
-async function loadTotals(entryId: string): Promise<EntryTotals> {
-  const valueRows = await db
-    .select({
-      categoryLiabilityId: NetWorthValues.categoryLiabilityId,
-      liabilitySkip: NetWorthCategoryLiabilities.skip,
-      amount: NetWorthValueAmounts.amount,
-      currency: NetWorthValueAmounts.currency,
-    })
-    .from(NetWorthValues)
-    .leftJoin(
-      NetWorthValueAmounts,
-      eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
-    )
-    .leftJoin(
-      NetWorthCategoryLiabilities,
-      eq(NetWorthCategoryLiabilities.id, NetWorthValues.categoryLiabilityId),
-    )
-    .where(eq(NetWorthValues.entryId, entryId));
-
-  const rateRows = await db
-    .select()
-    .from(NetWorthCurrencyRates)
-    .where(eq(NetWorthCurrencyRates.entryId, entryId));
-  const rateMap = buildRateToHome(rateRows);
-
-  let assetsMinor = 0;
-  let liabilitiesMinor = 0;
-  for (const row of valueRows) {
-    if (row.amount == null || row.currency == null) continue;
-    const homeMinor = convertToHomeMinor(row.amount, row.currency, rateMap);
-    if (row.categoryLiabilityId) {
-      if (row.liabilitySkip) continue;
-      // Liability value amounts are stored signed (typically negative — "you
-      // owe £X" is entered as -X). We surface liabilities as a positive
-      // magnitude, so take abs here and subtract in `totalNet`.
-      liabilitiesMinor += Math.abs(homeMinor);
-    } else {
-      assetsMinor += homeMinor;
-    }
-  }
-
-  return { assetsMinor, liabilitiesMinor };
-}
-
-const computeTotals = contextAwareDataLoader((_ctx: Context, entryId: string) =>
-  loadTotals(entryId),
+/** Per-request batched loader for `(totalAssets, totalLiabilities, totalNet)`. One SQL joins every requested entry's values with their amounts and the parent liability's `skip` flag; rates come from `entryRateMapLoader` (one batched SQL across the same entry ids). Aggregates per-entry totals in JS. */
+const computeTotals = contextAwareDataLoader(
+  (ctx: Context) =>
+    new DataLoader<string, EntryTotals>(async (entryIds) => {
+      const ids = [...entryIds];
+      const [valueRows, rateMaps] = await Promise.all([
+        db
+          .select({
+            entryId: NetWorthValues.entryId,
+            categoryLiabilityId: NetWorthValues.categoryLiabilityId,
+            liabilitySkip: NetWorthCategoryLiabilities.skip,
+            amount: NetWorthValueAmounts.amount,
+            currency: NetWorthValueAmounts.currency,
+          })
+          .from(NetWorthValues)
+          .leftJoin(
+            NetWorthValueAmounts,
+            eq(NetWorthValueAmounts.valueId, NetWorthValues.id),
+          )
+          .leftJoin(
+            NetWorthCategoryLiabilities,
+            eq(
+              NetWorthCategoryLiabilities.id,
+              NetWorthValues.categoryLiabilityId,
+            ),
+          )
+          .where(inArray(NetWorthValues.entryId, ids)),
+        Promise.all(ids.map((id) => entryRateMapLoader(ctx).load(id))),
+      ]);
+      const rateMapByEntry = new Map<string, Map<string, number>>(
+        ids.map((id, i) => [id, rateMaps[i]]),
+      );
+      const totalsByEntry = new Map<string, EntryTotals>();
+      for (const id of ids) {
+        totalsByEntry.set(id, { assetsMinor: 0, liabilitiesMinor: 0 });
+      }
+      for (const row of valueRows) {
+        if (row.amount == null || row.currency == null) continue;
+        const rateMap = rateMapByEntry.get(row.entryId);
+        if (!rateMap) continue;
+        const totals = totalsByEntry.get(row.entryId);
+        if (!totals) continue;
+        const homeMinor = convertToHomeMinor(row.amount, row.currency, rateMap);
+        if (row.categoryLiabilityId) {
+          if (row.liabilitySkip) continue;
+          // Liability value amounts are stored signed (typically negative —
+          // "you owe £X" is entered as -X). We surface liabilities as a
+          // positive magnitude, so take abs here and subtract in `totalNet`.
+          totals.liabilitiesMinor += Math.abs(homeMinor);
+        } else {
+          totals.assetsMinor += homeMinor;
+        }
+      }
+      return ids.map((id) => totalsByEntry.get(id)!);
+    }),
 );
 
 /**
@@ -257,7 +285,7 @@ export async function totalAssets(
   entry: NetWorthEntry,
   ctx: Context,
 ): Promise<Money> {
-  const { assetsMinor } = await computeTotals(ctx, entry.id);
+  const { assetsMinor } = await computeTotals(ctx).load(entry.id);
   return Money.fromMinorDenomination(assetsMinor, HOME_CURRENCY);
 }
 
@@ -270,7 +298,7 @@ export async function totalLiabilities(
   entry: NetWorthEntry,
   ctx: Context,
 ): Promise<Money> {
-  const { liabilitiesMinor } = await computeTotals(ctx, entry.id);
+  const { liabilitiesMinor } = await computeTotals(ctx).load(entry.id);
   return Money.fromMinorDenomination(liabilitiesMinor, HOME_CURRENCY);
 }
 
@@ -283,7 +311,9 @@ export async function totalNet(
   entry: NetWorthEntry,
   ctx: Context,
 ): Promise<Money> {
-  const { assetsMinor, liabilitiesMinor } = await computeTotals(ctx, entry.id);
+  const { assetsMinor, liabilitiesMinor } = await computeTotals(ctx).load(
+    entry.id,
+  );
   return Money.fromMinorDenomination(
     assetsMinor - liabilitiesMinor,
     HOME_CURRENCY,
