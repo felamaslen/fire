@@ -226,8 +226,10 @@ it("attaches the imported file to a transaction created with the returned fileKe
     { investmentId, assetId: wrapperId, fileKey: parsed.fileKey },
   );
 
-  // The signed URL is path-prefixed `/files/<key>?…sig…` — surface as truthy.
-  expect(created.investmentTransactionCreate.fileUrl).toMatch(/^\/files\//);
+  // Absolute signed URL pointing back at the API origin (`API_URL` env).
+  expect(created.investmentTransactionCreate.fileUrl).toMatch(
+    /^https?:\/\/[^/]+\/files\//,
+  );
 });
 
 it("preserves sub-penny precision in the unit price — a 15.66392p quote round-trips as 0.1566392 GBP", async () => {

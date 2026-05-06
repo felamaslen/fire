@@ -551,6 +551,10 @@ type ContractNoteImportResult {
   """
   fees: Money
   """
+  Storage key for the uploaded contract-note file. The frontend re-passes this to `investmentTransactionCreate.fileKey` on submit so the file is attached to the resulting transaction without a second upload.
+  """
+  fileKey: String!
+  """
   Investment we believe this contract note refers to, matched against the supplied candidate list by ticker / fund name. `null` when nothing matched (the UI then asks the user to pick). When the resolver was called with an explicit `investmentId`, this is always populated with that investment.
   """
   investment: Investment
@@ -918,6 +922,10 @@ type InvestmentTransaction {
   drip: Boolean!
   """Broker / platform fees paid on the trade."""
   fees: Money!
+  """
+  Signed, short-lived URL to the uploaded contract-note file (PDF), or `null` if none was uploaded or the current session isn't allowed to read it. The URL's signature covers the storage key + expiry so the `/files/*` endpoint can serve it without the browser attaching an `Authorization` header.
+  """
+  fileUrl: String
   id: ID!
   """Unit price at execution."""
   price: Money!
@@ -1322,6 +1330,14 @@ type Mutation {
     Broker / platform fees paid. Must match the investment's currency. Defaults to 0.
     """
     fees: MoneyInput
+    """
+    Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket, scoped to the caller's session; the resolved key is persisted on the row. Mutually exclusive with `fileKey`.
+    """
+    file: Upload
+    """
+    Already-stored upload key (returned by `investmentContractNoteImport.fileKey`) to attach to the new transaction without re-uploading. Mutually exclusive with `file`.
+    """
+    fileKey: String
     investmentId: ID!
     """Unit price at execution. Must match the investment's currency."""
     price: MoneyInput!
@@ -1338,8 +1354,25 @@ type Mutation {
   investmentTransactionDelete(id: ID!): Void!
   """
   Partial update to a transaction. Omitted / null fields are left unchanged.
+  
+  Pass `file` to attach (or replace) the contract-note PDF; pass `clearFile: true` to remove an existing one. `file` and `clearFile` are mutually exclusive — pass one or the other, not both.
   """
-  investmentTransactionUpdate(assetId: ID, date: Date, drip: Boolean, fees: MoneyInput, id: ID!, price: MoneyInput, taxes: MoneyInput, units: Float): InvestmentTransaction!
+  investmentTransactionUpdate(
+    assetId: ID
+    """
+    Clear an existing contract-note attachment. Mutually exclusive with `file`.
+    """
+    clearFile: Boolean
+    date: Date
+    drip: Boolean
+    fees: MoneyInput
+    """Replacement contract-note upload."""
+    file: Upload
+    id: ID!
+    price: MoneyInput
+    taxes: MoneyInput
+    units: Float
+  ): InvestmentTransaction!
   """
   Partially update an investment. Omitted (or `null`) fields are left unchanged.
   """

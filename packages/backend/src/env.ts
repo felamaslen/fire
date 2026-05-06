@@ -15,6 +15,8 @@ const schema = z.object({
   UPLOADS_DIR: z.string().min(1),
   /** Port the fastify server listens on when started as an entry point (not used in tests). */
   PORT: z.coerce.number().int().positive().default(4000),
+  /** Public absolute URL the backend is reachable at (no trailing slash). Prepended to signed file links so the SPA — served from a different origin in local dev (`http://localhost:4001`) — can resolve them. In dev set this to `http://localhost:4000`; in prod set it to the public origin of the API (often the same host as the SPA when sharing a single domain, in which case relative links would also work). */
+  API_URL: z.string().url().default("http://localhost:4000"),
   /** Turns the OpenTelemetry SDK on / off. Defaults to off outside of `development` so tests and prod don't silently depend on a running collector. */
   OTEL_ENABLED: z.stringbool().default(process.env.NODE_ENV === "development"),
   /** Base URL of the OTLP/HTTP collector (no trailing path — `/v1/traces` and `/v1/logs` are appended per signal). Matches the collector service defined in `docker-compose.yml`. Signal-specific overrides below win when set. */

@@ -6,12 +6,12 @@ import type { Session } from "@/graphql/context";
 /** Short — these URLs live only long enough for the browser to load the iframe / image. 1 hour keeps an already-rendered page working across a refresh without handing out a durable credential. */
 const DOWNLOAD_TTL_SECONDS = 60 * 60;
 
-/** Turn a storage key into a `/files/<key>?sig=...&exp=...` URL the `/files/*` handler will accept. The sig covers `key + exp` so the key can't be swapped. Returns the key unchanged if it's already absolute (e.g. a legacy `http://…`). */
+/** Turn a storage key into an absolute `<API_URL>/files/<key>?sig=…&exp=…` URL the `/files/*` handler will accept. The sig covers `key + exp` so the key can't be swapped. The host comes from `env.API_URL` (e.g. `http://localhost:4000` in dev) so SPA-served links resolve back to the API origin even when the two sit on different hosts. */
 export function signFileUrl(key: string, now: Date = new Date()): string {
   const exp = Math.floor(now.getTime() / 1000) + DOWNLOAD_TTL_SECONDS;
   const sig = hmac(`${key}.${exp}`);
   const encoded = key.split("/").map(encodeURIComponent).join("/");
-  return `/files/${encoded}?exp=${exp}&sig=${sig}`;
+  return `${env.API_URL.replace(/\/$/, "")}/files/${encoded}?exp=${exp}&sig=${sig}`;
 }
 
 /** Verify that `sig` was produced from `key + exp` via our secret, and that `exp` hasn't passed yet. Returns `false` on any mismatch — callers treat it as "404". */
