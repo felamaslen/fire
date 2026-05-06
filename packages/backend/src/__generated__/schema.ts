@@ -3264,8 +3264,8 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             type: GraphQLBoolean
                         }
                     },
-                    resolve(_source, args) {
-                        return assertNonNull(queryPortfoliosResolver(args.filterAssetIdIn, args.currency, args.first, args.after, args.skipLive));
+                    resolve(_source, args, context) {
+                        return assertNonNull(queryPortfoliosResolver(context, args.filterAssetIdIn, args.currency, args.first, args.after, args.skipLive));
                     }
                 },
                 retirementSettings: {
