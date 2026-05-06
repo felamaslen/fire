@@ -283,6 +283,7 @@ export async function loadAssetSoldOutCaps(
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
   private effectiveFilterPromise: Promise<EffectiveFilter> | null = null;
+  private realisedGainMinorPromise: Promise<number> | null = null;
 
   constructor(
     /** ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers. @gqlField */
@@ -557,28 +558,31 @@ export class Portfolio {
     );
   }
 
-  /** Aggregate realised gain in minor units. Walks every investment in scope via `loadInvestmentLots` (one batched SQL across the request). Uses the transfer-only cap so wind-down sells flow through realised gain rather than being silently dropped by the chart's sold-out cap. */
-  private async realisedGainMinor(ctx: Context): Promise<number> {
-    const investmentIds = await loadInvestmentIdsInScope(
-      await this.filtersWithExtras(ctx),
-    );
-    if (investmentIds.length === 0) return 0;
-    const { effectiveAssetIds, transferDateCap } =
-      await this.loadEffectiveFilter(ctx);
-    const extraScopes = await this.loadExtraScopesUnion(ctx);
-    const perInvestment = await Promise.all(
-      investmentIds.map((investmentId) =>
-        loadInvestmentLots(ctx, {
-          investmentId,
-          ...(effectiveAssetIds && effectiveAssetIds.length > 0
-            ? { assetIds: effectiveAssetIds }
-            : {}),
-          ...(transferDateCap ? { dateCap: transferDateCap } : {}),
-          ...(extraScopes.length > 0 ? { extraScopes } : {}),
-        }),
-      ),
-    );
-    return perInvestment.reduce((a, l) => a + l.realisedGainMinor, 0);
+  /** Aggregate realised gain in minor units. Walks every investment in scope via `loadInvestmentLots` (one batched SQL across the request). Uses the transfer-only cap so wind-down sells flow through realised gain rather than being silently dropped by the chart's sold-out cap. Memoised on the `Portfolio` instance so `realisedGain` and `unrealisedGain` (both consumers) share a single `loadInvestmentIdsInScope` SQL. */
+  private realisedGainMinor(ctx: Context): Promise<number> {
+    this.realisedGainMinorPromise ??= (async () => {
+      const investmentIds = await loadInvestmentIdsInScope(
+        await this.filtersWithExtras(ctx),
+      );
+      if (investmentIds.length === 0) return 0;
+      const { effectiveAssetIds, transferDateCap } =
+        await this.loadEffectiveFilter(ctx);
+      const extraScopes = await this.loadExtraScopesUnion(ctx);
+      const perInvestment = await Promise.all(
+        investmentIds.map((investmentId) =>
+          loadInvestmentLots(ctx, {
+            investmentId,
+            ...(effectiveAssetIds && effectiveAssetIds.length > 0
+              ? { assetIds: effectiveAssetIds }
+              : {}),
+            ...(transferDateCap ? { dateCap: transferDateCap } : {}),
+            ...(extraScopes.length > 0 ? { extraScopes } : {}),
+          }),
+        ),
+      );
+      return perInvestment.reduce((a, l) => a + l.realisedGainMinor, 0);
+    })();
+    return this.realisedGainMinorPromise;
   }
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
