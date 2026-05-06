@@ -1,7 +1,7 @@
 import assert from "node:assert";
 
 import DataLoader from "dataloader";
-import { differenceInDays, formatISO } from "date-fns";
+import { formatISO } from "date-fns";
 import {
   and,
   eq,
@@ -58,6 +58,19 @@ const cacheKeyFn = (key: TimeseriesKey): string =>
   `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}|${extraScopesFingerprint(key.extraScopes)}`;
 
 const MAX_POINTS = 300;
+
+/** Convert an ISO `YYYY-MM-DD` string to whole days since the Unix epoch (UTC midnight). Equivalent to `differenceInCalendarDays(d, '1970-01-01')` for a UTC `d`, but skips the `Date` allocation + DST-aware bookkeeping that date-fns does per call. */
+function daysSinceEpoch(s: string): number {
+  // `s` is always the canonical `YYYY-MM-DD` shape that Postgres emits via
+  // `date::text`; we don't validate it here.
+  return (
+    Date.UTC(
+      Number(s.slice(0, 4)),
+      Number(s.slice(5, 7)) - 1,
+      Number(s.slice(8, 10)),
+    ) / 86_400_000
+  );
+}
 
 /** Build the `WHERE` for a `(assetId | investmentId, optional dateCap)` slice over `InvestmentValuePoints`. Combined with the batch-level `currency` filter and date-range bounds in the caller. The slice's `dateCap` is applied to `ivp.date` *only* for the main scope — extra scopes drop it (see the comment at the call site). */
 function sliceCondition(slice: {
@@ -437,6 +450,14 @@ export const loadTimeseries = contextAwareDataLoader(
         );
 
         const initialDate = new Date(sampledDates[0]);
+        // Pre-compute the X-axis (days since `sampledDates[0]`) once for the
+        // whole batch — the values are the same for every key, and parsing
+        // `YYYY-MM-DD` directly via `Date.UTC` skips the DST-aware
+        // `differenceInDays(new Date(d), initialDate)` work date-fns does
+        // per-call (~9% of the request's wall time per Pyroscope).
+        const xs = sampledDates.map(daysSinceEpoch);
+        const x0 = xs[0];
+        for (let i = 0; i < xs.length; i++) xs[i] -= x0;
 
         return keys.map<PortfolioTimeseries | null>((key, keyIndex) => {
           const series = seriesByKey.get(keyIndex);
@@ -483,8 +504,8 @@ export const loadTimeseries = contextAwareDataLoader(
           return {
             currency,
             initialDate,
-            points: sampledDates.map((d, i) => ({
-              x: differenceInDays(new Date(d), initialDate),
+            points: xs.map((x, i) => ({
+              x,
               y: Math.round(
                 Money.fromMinorDenomination(ys[i], currency).amount,
               ),
