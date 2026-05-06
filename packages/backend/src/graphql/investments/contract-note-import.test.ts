@@ -34,6 +34,7 @@ const ImportMutation = graphql(`
       date
       units
       drip
+      fileKey
       price {
         amount
         currency
@@ -180,6 +181,53 @@ it("parses Gemini's response, matches investment + wrapper, and converts GBp pri
   expect(result.fees).toEqual({ amount: 4.99, currency: "GBP" });
   // No history, so DRIP stays false.
   expect(result.drip).toBe(false);
+  // The upload was persisted to the bucket; we get back an opaque key the
+  // frontend re-passes to `investmentTransactionCreate.fileKey`.
+  expect(result.fileKey).toMatch(/contract-note\.pdf$/);
+});
+
+it("attaches the imported file to a transaction created with the returned fileKey", async () => {
+  const investmentId = await createInvestment({
+    name: "Apple",
+    ticker: "AAPL",
+  });
+  const wrapperId = await createWrapper("ISA", "STOCK", investmentId);
+
+  mockGeminiResponse({
+    direction: "BUY",
+    units: 1,
+    price: { amount: 100, currency: "GBP" },
+    date: "2025-01-01",
+    investmentId,
+    assetId: wrapperId,
+  });
+
+  const { investmentContractNoteImport: parsed } = await runGql(
+    ImportMutation,
+    { file: new TestUpload(FIXTURE_PATH), investmentId: null },
+  );
+
+  const created = await runGql(
+    graphql(`
+      mutation ($investmentId: ID!, $assetId: ID!, $fileKey: String!) {
+        investmentTransactionCreate(
+          investmentId: $investmentId
+          assetId: $assetId
+          date: "2025-01-01"
+          units: 1
+          price: { amount: 1, currency: "GBP" }
+          fileKey: $fileKey
+        ) {
+          id
+          fileUrl
+        }
+      }
+    `),
+    { investmentId, assetId: wrapperId, fileKey: parsed.fileKey },
+  );
+
+  // The signed URL is path-prefixed `/files/<key>?…sig…` — surface as truthy.
+  expect(created.investmentTransactionCreate.fileUrl).toMatch(/^\/files\//);
 });
 
 it("preserves sub-penny precision in the unit price — a 15.66392p quote round-trips as 0.1566392 GBP", async () => {

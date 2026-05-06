@@ -3450,6 +3450,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "fees",
                     type: MoneyType
                 },
+                fileKey: {
+                    description: "Storage key for the uploaded contract-note file. The frontend re-passes this to `investmentTransactionCreate.fileKey` on submit so the file is attached to the resulting transaction without a second upload.",
+                    name: "fileKey",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
                 investment: {
                     description: "Investment we believe this contract note refers to, matched against the supplied candidate list by ticker / fund name. `null` when nothing matched (the UI then asks the user to pick). When the resolver was called with an explicit `investmentId`, this is always populated with that investment.",
                     name: "investment",

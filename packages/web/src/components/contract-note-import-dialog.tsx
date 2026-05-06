@@ -76,6 +76,7 @@ const ContractNoteImportDocument = graphql(`
       date
       units
       drip
+      fileKey
       price {
         amount
         currency
@@ -102,6 +103,7 @@ const TransactionCreateDocument = graphql(`
     $taxes: MoneyInput
     $fees: MoneyInput
     $drip: Boolean
+    $fileKey: String
   ) {
     investmentTransactionCreate(
       investmentId: $investmentId
@@ -112,6 +114,7 @@ const TransactionCreateDocument = graphql(`
       taxes: $taxes
       fees: $fees
       drip: $drip
+      fileKey: $fileKey
     ) {
       id
     }
@@ -360,6 +363,7 @@ function ReviewContent({
           taxes: taxesAmount ? { amount: Number(taxesAmount), currency } : null,
           fees: feesAmount ? { amount: Number(feesAmount), currency } : null,
           drip,
+          fileKey: parsed.fileKey,
         },
       });
       toast.success("Transaction added");

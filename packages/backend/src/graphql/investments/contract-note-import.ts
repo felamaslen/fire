@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
@@ -25,6 +26,7 @@ import { Investments, InvestmentTransactions } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 import { env } from "@/env";
 import { log } from "@/log";
+import { storeUpload } from "@/uploads";
 
 import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
@@ -52,6 +54,8 @@ export class ContractNoteImportResult {
     public readonly fees: Money | null,
     /** True when the consideration looks small enough relative to the recent DRIP / contribution history that this is most likely a dividend reinvestment rather than a cash buy. @gqlField */
     public readonly drip: boolean,
+    /** Storage key for the uploaded contract-note file. The frontend re-passes this to `investmentTransactionCreate.fileKey` on submit so the file is attached to the resulting transaction without a second upload. @gqlField */
+    public readonly fileKey: string,
   ) {}
 }
 
@@ -260,6 +264,23 @@ export async function investmentContractNoteImport(
   const sha = createHash("sha256").update(buffer).digest("hex");
   const cacheKey = `${sha}:${investmentId ?? ""}`;
 
+  // Persist the upload to the bucket so the frontend can re-pass `fileKey`
+  // when it submits the resulting `investmentTransactionCreate`. We stream
+  // from the already-collected buffer (the FileUpload's stream may be
+  // single-use depending on size threshold) so this can't fail on a second
+  // `createReadStream()` call.
+  const fileKey = await storeUpload(
+    {
+      filename: resolved.filename,
+      mimetype: resolved.mimetype,
+      encoding: resolved.encoding,
+      // `storeUpload` only calls `createReadStream` — feeding it a fresh
+      // stream over the same bytes is enough.
+      createReadStream: () => Readable.from(buffer),
+    },
+    ctx.session,
+  );
+
   const investmentRows = await db
     .select()
     .from(Investments)
@@ -376,6 +397,7 @@ export async function investmentContractNoteImport(
         )
       : null,
     drip,
+    fileKey,
   );
 }
 
