@@ -151,7 +151,7 @@ describe("Query.portfolio aggregates", () => {
     expect(data.portfolio?.percentGain).toBeCloseTo(20 / 100);
   });
 
-  it("counts net capital-at-stake in totalCost; held investments use held value only", async () => {
+  it("uses gross-deployed-capital convention for totalCost (independent of sells); held value only for totalValue", async () => {
     const asset = await createAsset();
     const a = await createStock("A", "AAA");
     // Bought 10 @ £5 = £50 in. Sold 4 @ £7 = £28 out. Still holds 6.
@@ -175,15 +175,66 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
-    // Held value: 6 × £8 = £48. totalCost: net in (50 − 28) = £22. Cash float
-    // would be -£22 (buys minus the partial sell, no deposits) but is
-    // floored at zero, so totalValue = 48 + 0. totalGain = held − cost = 26.
+    // Held value: 6 × £8 = £48. totalCost: gross deployed capital = £50
+    // (independent of how much's been sold). Cash float would be -£22 but is
+    // floored at zero. totalGain = held + sellProceeds − cost = 48 + 28 − 50 = 26.
     expect(data.portfolio?.totalValue?.amount).toBeCloseTo(48);
-    expect(data.portfolio?.totalCost?.amount).toBeCloseTo(22);
+    expect(data.portfolio?.totalCost?.amount).toBeCloseTo(50);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(26);
   });
 
-  it("keeps totalValue = held-only for a fully-sold investment; realised gain surfaces via totalCost going negative", async () => {
+  it("on a wound-down wrapper, totalGain reflects realised gain; totalValue stays frozen at pre-sell-off peak (chart cap)", async () => {
+    // Mirrors the Evelyn HL LISA scenario: a wrapper with a single
+    // investment that was bought and then fully sold. The chart's
+    // sold-out cap freezes `totalValue` at the pre-sell-off peak; the
+    // total-return numbers must still see the wind-down sells so
+    // realised gain doesn't read as 0.
+    const lisa = await createAsset("HL LISA");
+    const a = await createStock("A", "AAA");
+    await buy(a, lisa, "2024-01-01", 10, 5); // £50 in
+    await setPrice(a, "2024-06-01", 1000); // £10/share peak — frozen view
+    await buy(a, lisa, "2024-07-01", -10, 12); // sold 10 @ £12 = £120 out
+
+    const doc = graphql(`
+      query ($lisaId: ID!) {
+        portfolio(filterAssetIdIn: [$lisaId], skipLive: true) {
+          totalValue {
+            amount
+          }
+          totalCost {
+            amount
+          }
+          totalGain {
+            amount
+          }
+          realisedGain {
+            amount
+          }
+          unrealisedGain {
+            amount
+          }
+          feesAndTaxes {
+            amount
+          }
+        }
+      }
+    `);
+    const data = await runGql(doc, { lisaId: lisa });
+    const p = data.portfolio;
+    // Headline `totalValue`: chart cap → frozen at peak (10 × £10 = £100).
+    expect(p?.totalValue?.amount).toBeCloseTo(100);
+    // totalCost: gross deployed = £50 (no fees). transferDateCap-only,
+    // so it sees the full buy history.
+    expect(p?.totalCost?.amount).toBeCloseTo(50);
+    // Total return at "today": £0 held + £120 sold − £50 = £70 realised.
+    expect(p?.totalGain?.amount).toBeCloseTo(70);
+    // Breakdown: every penny is realised; nothing is still on the table.
+    expect(p?.realisedGain?.amount).toBeCloseTo(70);
+    expect(p?.unrealisedGain?.amount).toBeCloseTo(0);
+    expect(p?.feesAndTaxes?.amount).toBeCloseTo(0);
+  });
+
+  it("keeps totalValue = held-only for a fully-sold investment; realised gain surfaces via totalGain (totalCost stays at gross deployed)", async () => {
     const asset = await createAsset();
     const a = await createStock("A", "AAA");
     // Bought 10 @ £5 = £50 in; sold all 10 @ £7 = £70 out. No held units.
@@ -206,14 +257,10 @@ describe("Query.portfolio aggregates", () => {
       }
     `);
     const data = await runGql(doc, {});
-    // Held = 0. Cash float would be +£20 from the realised gain, but with
-    // no deposit / planning contributions the wrapper isn't
-    // contribution-tracked (see `portfolio-cash` test of the same shape),
-    // so cash is gated to 0 — the realised proceeds may have been
-    // withdrawn. `totalGain` still surfaces the realised £20 via the
-    // negative `totalCost`.
+    // Held = 0; totalCost stays at gross-deployed £50; the £20 realised gain
+    // surfaces directly via totalGain = 0 + 70 − 50 = 20.
     expect(data.portfolio?.totalValue?.amount).toBe(0);
-    expect(data.portfolio?.totalCost?.amount).toBeCloseTo(-20);
+    expect(data.portfolio?.totalCost?.amount).toBeCloseTo(50);
     expect(data.portfolio?.totalGain?.amount).toBeCloseTo(20);
   });
 

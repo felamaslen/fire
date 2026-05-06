@@ -22,6 +22,7 @@ import {
 } from "../pagination";
 import { loadCandlestick } from "./candlestick";
 import { Investment } from "./index";
+import { loadInvestmentLots } from "./lots";
 import { loadPortfolioCashMinor } from "./portfolio-cash";
 import { computePortfolioXirr } from "./portfolio-xirr";
 import {
@@ -133,6 +134,11 @@ type EffectiveFilter = {
     string,
     ReadonlyArray<{ assetId: string; dateCap: string }>
   >;
+  /** Cap from a wrapper having been transferred away. Always applied — there's no further history past this date. `null` unless every effective asset is transferred-out. */
+  transferDateCap: string | null;
+  /** Cap from a wrapper having been wound down (every position netted to zero). Applied only to chart-shaped resolvers (`timeseries`, `candlestick`, `allocations`) so the last bucket shows pre-sell-off value rather than dropping to zero. Total-return resolvers ignore this so realised gain reflects the wind-down sells. `null` unless every effective asset is sold-out. */
+  soldOutDateCap: string | null;
+  /** Convenience: `transferDateCap ?? soldOutDateCap`. Use this for chart-shaped resolvers; total-return resolvers should read `transferDateCap` only. */
   dateCap: string | null;
 };
 
@@ -277,6 +283,7 @@ export async function loadAssetSoldOutCaps(
 /** Aggregated view of the portfolio, optionally filtered by wrappers and/or investments. All money values are expressed in `currency`; investments in any other currency are excluded. @gqlType */
 export class Portfolio {
   private effectiveFilterPromise: Promise<EffectiveFilter> | null = null;
+  private realisedGainMinorPromise: Promise<number> | null = null;
 
   constructor(
     /** ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers. @gqlField */
@@ -295,6 +302,8 @@ export class Portfolio {
         return {
           effectiveAssetIds: null,
           extrasByAsset: new Map(),
+          transferDateCap: null,
+          soldOutDateCap: null,
           dateCap: null,
         };
       }
@@ -343,25 +352,38 @@ export class Portfolio {
       // Per-asset "defunct cap": either an outgoing transfer (cap =
       // transferDate − 1, by construction the destination isn't in the
       // filter) or an entirely sold-out wrapper (every position netted to
-      // zero). When *every* effective asset has a cap, freeze the chart at
-      // the latest such date so it ends on the last day with non-zero
-      // holdings instead of dragging zero candles to today.
-      const perAssetCap = (assetId: string): string | null => {
-        const t = outgoing[filter.indexOf(assetId)];
-        if (t) return dayBefore(t.date);
-        return soldOutCaps.get(assetId) ?? null;
-      };
-      let dateCap: string | null = null;
+      // zero). Track the two flavours separately — the chart uses either
+      // (whichever is present), but total-return resolvers ignore sold-out
+      // so realised gain reflects the wind-down sells.
+      let transferDateCap: string | null = null;
+      let soldOutDateCap: string | null = null;
       if (effective.length >= 1) {
-        const caps = effective.flatMap((id) => {
-          const c = perAssetCap(id);
-          return c ? [c] : [];
-        });
-        if (caps.length === effective.length) {
-          dateCap = caps.reduce((acc, d) => (d > acc ? d : acc));
+        const transferCaps: string[] = [];
+        const soldCaps: string[] = [];
+        for (const id of effective) {
+          const t = outgoing[filter.indexOf(id)];
+          if (t) {
+            transferCaps.push(dayBefore(t.date));
+            continue;
+          }
+          const sold = soldOutCaps.get(id);
+          if (sold) soldCaps.push(sold);
+        }
+        if (transferCaps.length === effective.length) {
+          transferDateCap = transferCaps.reduce((acc, d) =>
+            d > acc ? d : acc,
+          );
+        } else if (soldCaps.length === effective.length) {
+          soldOutDateCap = soldCaps.reduce((acc, d) => (d > acc ? d : acc));
         }
       }
-      return { effectiveAssetIds: effective, extrasByAsset, dateCap };
+      return {
+        effectiveAssetIds: effective,
+        extrasByAsset,
+        transferDateCap,
+        soldOutDateCap,
+        dateCap: transferDateCap ?? soldOutDateCap,
+      };
     })();
     return this.effectiveFilterPromise;
   }
@@ -425,7 +447,7 @@ export class Portfolio {
     return Investment.load(row);
   }
 
-  /** Current market value of the held positions in the filtered portfolio — `Σ unitsHeld_in_filter × priceLatest_investment`. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) — a holdings + cash combined number conflates investment performance with deposit timing. @gqlField */
+  /** Current market value of the held positions in the filtered portfolio — `Σ unitsHeld_in_filter × priceLatest_investment`. Fully-sold positions contribute nothing on the today-flavoured view; for a wound-down wrapper we use the chart cap so the headline matches the frozen pre-sell-off chart end value. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) — a holdings + cash combined number conflates investment performance with deposit timing. @gqlField */
   async totalValue(ctx: Context): Promise<Money | null> {
     const invested = await this.totalInvestedMinor(ctx);
     return Money.fromMinorDenomination(invested, this.currency);
@@ -437,8 +459,11 @@ export class Portfolio {
     return loadPortfolioCashMinor(ctx, this.filterAssetIdIn, this.currency);
   }
 
-  private async totalInvestedMinor(ctx: Context): Promise<number> {
-    const slices = await this.loadStats(ctx);
+  private async totalInvestedMinor(
+    ctx: Context,
+    cap: "chart" | "transfer" = "chart",
+  ): Promise<number> {
+    const slices = await this.loadStats(ctx, cap);
     let total = 0;
     for (const s of slices) {
       // `totalValueMinor` is `null` when any contributing held investment is
@@ -455,41 +480,122 @@ export class Portfolio {
     return Money.fromMinorDenomination(minor, this.currency);
   }
 
-  /** Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes. @gqlField */
+  /** Gross capital deployed: cumulative buy cost across every investment (excluding DRIP — reinvested dividends are not new capital), plus paid fees and taxes (real outlays that reduce return). Independent of how much has subsequently been sold; never goes negative. @gqlField */
   async totalCost(ctx: Context): Promise<Money> {
-    const slices = await this.loadStats(ctx);
+    const slices = await this.loadStats(ctx, "transfer");
     let total = 0;
-    for (const s of slices) total += s.unitsPriceSum;
+    for (const s of slices)
+      total += s.buyCostSum - s.reinvestedCostSum + s.feesSum + s.taxesSum;
     return Money.fromMinorDenomination(total, this.currency);
   }
 
-  /** Total return (realised + unrealised) on the held positions — `totalValue − totalCost`. `totalValue` already excludes cash, so freshly-deposited funds don't read as a gain. @gqlField */
+  /** Total return (realised + unrealised) on the portfolio — `marketValueOfHeld + realisedSellProceeds − totalCost`. DRIP shares contribute their full market value (zero cost via `totalCost`); fees and taxes detract via `totalCost`. Cash float is excluded from `totalValue`, so freshly-deposited funds don't read as a gain. @gqlField */
   async totalGain(ctx: Context): Promise<Money | null> {
-    const invested = await this.totalInvestedMinor(ctx);
-    const cost = await this.totalCost(ctx);
-    const costMinor = Math.round(cost.amount * 10 ** this.scale);
-    return Money.fromMinorDenomination(invested - costMinor, this.currency);
+    const invested = await this.totalInvestedMinor(ctx, "transfer");
+    const slices = await this.loadStats(ctx, "transfer");
+    let costMinor = 0;
+    let proceedsMinor = 0;
+    for (const s of slices) {
+      costMinor += s.buyCostSum - s.reinvestedCostSum + s.feesSum + s.taxesSum;
+      proceedsMinor += s.sellValueSum;
+    }
+    return Money.fromMinorDenomination(
+      invested + proceedsMinor - costMinor,
+      this.currency,
+    );
   }
 
   /** Total return as a fraction of `totalCost`, computed from invested value only (cash float excluded). For a more robust performance number that accounts for the timing of deposits and withdrawals, use `xirr`. `null` when `totalCost` is zero. @gqlField */
   async percentGain(ctx: Context): Promise<Float | null> {
-    const invested = await this.totalInvestedMinor(ctx);
-    const cost = await this.totalCost(ctx);
-    const costMinor = Math.round(cost.amount * 10 ** this.scale);
+    const invested = await this.totalInvestedMinor(ctx, "transfer");
+    const slices = await this.loadStats(ctx, "transfer");
+    let costMinor = 0;
+    let proceedsMinor = 0;
+    for (const s of slices) {
+      costMinor += s.buyCostSum - s.reinvestedCostSum + s.feesSum + s.taxesSum;
+      proceedsMinor += s.sellValueSum;
+    }
     if (costMinor === 0) return null;
-    return ((invested - costMinor) / costMinor) as Float;
+    return ((invested + proceedsMinor - costMinor) / costMinor) as Float;
+  }
+
+  /** Total fees and taxes paid across every transaction in the portfolio scope. Detracts from `totalGain`: the breakdown `unrealisedGain + realisedGain − feesAndTaxes` reconciles to `totalGain`. @gqlField */
+  async feesAndTaxes(ctx: Context): Promise<Money> {
+    const slices = await this.loadStats(ctx, "transfer");
+    let total = 0;
+    for (const s of slices) total += s.feesSum + s.taxesSum;
+    return Money.fromMinorDenomination(total, this.currency);
+  }
+
+  /** Cumulative realised P&L from sells across every investment in the portfolio, under FIFO lot accounting (oldest buys consumed first; DRIP lots at zero cost). Sums to `totalGain` together with `unrealisedGain` minus `feesAndTaxes`. @gqlField */
+  async realisedGain(ctx: Context): Promise<Money> {
+    const total = await this.realisedGainMinor(ctx);
+    return Money.fromMinorDenomination(total, this.currency);
+  }
+
+  /** Unrealised P&L on currently-held positions: `marketValueOfHeld − costOfRemainingFifoLots` summed across the portfolio (DRIP lots at zero cost). `null` when at least one held position has no known price (the FIFO breakdown can't be reconciled without a price for every lot). @gqlField */
+  async unrealisedGain(ctx: Context): Promise<Money | null> {
+    const slices = await this.loadStats(ctx, "transfer");
+    // Mirror the null-propagation in `totalInvestedMinor`: if any contributing
+    // held investment is missing a price, market value is unknown and so is
+    // unrealised. Realised side stays valid and is exposed separately.
+    for (const s of slices) {
+      if (s.totalValueMinor === null) return null;
+    }
+    const invested = await this.totalInvestedMinor(ctx, "transfer");
+    const realised = await this.realisedGainMinor(ctx);
+    let costMinor = 0;
+    let proceedsMinor = 0;
+    for (const s of slices) {
+      costMinor += s.buyCostSum - s.reinvestedCostSum;
+      proceedsMinor += s.sellValueSum;
+    }
+    // unrealised = totalGainBeforeFees − realised
+    //            = (invested + proceeds − costNonDRIP) − realised.
+    return Money.fromMinorDenomination(
+      invested + proceedsMinor - costMinor - realised,
+      this.currency,
+    );
+  }
+
+  /** Aggregate realised gain in minor units. Walks every investment in scope via `loadInvestmentLots` (one batched SQL across the request). Uses the transfer-only cap so wind-down sells flow through realised gain rather than being silently dropped by the chart's sold-out cap. Memoised on the `Portfolio` instance so `realisedGain` and `unrealisedGain` (both consumers) share a single `loadInvestmentIdsInScope` SQL. */
+  private realisedGainMinor(ctx: Context): Promise<number> {
+    this.realisedGainMinorPromise ??= (async () => {
+      const investmentIds = await loadInvestmentIdsInScope(
+        await this.filtersWithExtras(ctx),
+      );
+      if (investmentIds.length === 0) return 0;
+      const { effectiveAssetIds, transferDateCap } =
+        await this.loadEffectiveFilter(ctx);
+      const extraScopes = await this.loadExtraScopesUnion(ctx);
+      const perInvestment = await Promise.all(
+        investmentIds.map((investmentId) =>
+          loadInvestmentLots(ctx, {
+            investmentId,
+            ...(effectiveAssetIds && effectiveAssetIds.length > 0
+              ? { assetIds: effectiveAssetIds }
+              : {}),
+            ...(transferDateCap ? { dateCap: transferDateCap } : {}),
+            ...(extraScopes.length > 0 ? { extraScopes } : {}),
+          }),
+        ),
+      );
+      return perInvestment.reduce((a, l) => a + l.realisedGainMinor, 0);
+    })();
+    return this.realisedGainMinorPromise;
   }
 
   /** Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price. @gqlField */
   async xirr(ctx: Context): Promise<Float | null> {
-    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
+    const { effectiveAssetIds, transferDateCap } =
+      await this.loadEffectiveFilter(ctx);
     const extraScopes = await this.loadExtraScopesUnion(ctx);
     return (await computePortfolioXirr(ctx, {
       currency: this.currency,
       assetIds: effectiveAssetIds,
       investmentIds: this.filterInvestmentIdIn,
       skipLive: this.skipLive,
-      ...(dateCap ? { dateCap } : {}),
+      ...(transferDateCap ? { dateCap: transferDateCap } : {}),
       ...(extraScopes.length > 0 ? { extraScopes } : {}),
     })) as Float | null;
   }
@@ -537,10 +643,18 @@ export class Portfolio {
    * `filterInvestmentIdIn` — coalesces into one SQL regardless of how many
    * stats fields are selected or how many `Portfolio` instances the
    * request touches.
+   *
+   * `cap` selects which `dateCap` flavour to apply:
+   * - `"chart"` (default): both transfer-out and sold-out caps. Use for chart-shaped resolvers (`timeseries`, `candlestick`, `allocations`, `cash`) where the sold-out cap freezes the last bucket at peak rather than dragging it to zero.
+   * - `"transfer"`: only the transfer-out cap. Use for "today"-flavoured resolvers (`totalGain`, `realisedGain`, `unrealisedGain`, `totalCost`, `percentGain`, `feesAndTaxes`, `xirr`, `dailyGain*`, `totalValue`) — a wound-down wrapper has zero held value today, and the wind-down sells should flow through realised gain.
    */
-  private async loadStats(ctx: Context): Promise<InvestmentStats[]> {
-    const { effectiveAssetIds, extrasByAsset, dateCap } =
+  private async loadStats(
+    ctx: Context,
+    cap: "chart" | "transfer" = "chart",
+  ): Promise<InvestmentStats[]> {
+    const { effectiveAssetIds, extrasByAsset, transferDateCap, dateCap } =
       await this.loadEffectiveFilter(ctx);
+    const effectiveCap = cap === "chart" ? dateCap : transferDateCap;
     const investments = this.filterInvestmentIdIn;
     const baseCommon = {
       currency: this.currency,
@@ -551,7 +665,7 @@ export class Portfolio {
       return {
         ...baseCommon,
         assetIds: [assetId],
-        ...(dateCap ? { dateCap } : {}),
+        ...(effectiveCap ? { dateCap: effectiveCap } : {}),
         ...(extras && extras.length > 0 ? { extraScopes: extras } : {}),
       };
     };

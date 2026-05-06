@@ -71,6 +71,10 @@ const InvestmentDetailDocument = graphql(
               totalValue {
                 ...Figure
               }
+              realisedValue {
+                amount
+                ...Figure
+              }
               reinvested {
                 cost {
                   ...Figure
@@ -80,6 +84,16 @@ const InvestmentDetailDocument = graphql(
                 }
               }
               totalGain {
+                ...Figure
+              }
+              realisedGain {
+                ...Figure
+              }
+              unrealisedGain {
+                ...Figure
+              }
+              feesAndTaxes {
+                amount
                 ...Figure
               }
               percentGain
@@ -382,6 +396,7 @@ function InvestmentDetail({
           <Stat label="Units" value={investment.position.units.toString()} />
           <Stat
             label="Cost basis"
+            tooltip="Average price per held share under FIFO lot accounting (oldest buys consumed first by sells). DRIP shares are counted at zero cost — the dividend was already received as income."
             value={
               investment.position.costBasis ? (
                 <Figure data={investment.position.costBasis} />
@@ -399,6 +414,13 @@ function InvestmentDetail({
                 "—"
               )
             }
+            sub={
+              investment.position.realisedValue.amount > 0 ? (
+                <>
+                  <Figure data={investment.position.realisedValue} /> realised
+                </>
+              ) : null
+            }
           />
           <Stat
             label="Reinvested"
@@ -415,7 +437,28 @@ function InvestmentDetail({
             }
           />
           <Stat
-            label="Gain"
+            label="Total return"
+            tooltip={
+              <span className="space-y-1">
+                <span className="block">
+                  Unrealised:{" "}
+                  {investment.position.unrealisedGain ? (
+                    <Figure data={investment.position.unrealisedGain} />
+                  ) : (
+                    "—"
+                  )}
+                </span>
+                <span className="block">
+                  Realised: <Figure data={investment.position.realisedGain} />
+                </span>
+                {investment.position.feesAndTaxes.amount > 0 && (
+                  <span className="block">
+                    Fees & taxes: −
+                    <Figure data={investment.position.feesAndTaxes} />
+                  </span>
+                )}
+              </span>
+            }
             value={
               investment.position.totalGain ? (
                 <Figure data={investment.position.totalGain} />
@@ -1192,11 +1235,38 @@ function ContractNoteFileField({
   );
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+function Stat({
+  label,
+  value,
+  tooltip,
+  sub,
+}: {
+  label: string;
+  value: React.ReactNode;
+  tooltip?: React.ReactNode;
+  sub?: React.ReactNode;
+}) {
+  const labelEl = tooltip ? (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help border-b border-dotted border-muted-foreground/40">
+            {label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{tooltip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  ) : (
+    label
+  );
   return (
     <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dt className="text-xs text-muted-foreground">{labelEl}</dt>
       <dd className="tabular-nums">{value}</dd>
+      {sub ? (
+        <dd className="text-xs tabular-nums text-muted-foreground">{sub}</dd>
+      ) : null}
     </div>
   );
 }

@@ -30,7 +30,11 @@ export type EffectiveAssetFilter = {
   effectiveAssetIds: string[] | null;
   /** Union across surviving assets: each effective asset's inbound transfers' source, capped at the day before the transfer. Source assets may include the dropped ones (that's the whole point of dropping them). */
   extraScopes: ReadonlyArray<{ assetId: string; dateCap: string }>;
-  /** `transferDate − 1` (transfer-out) or `lastSellOfWindDown − 1` (sold-out) when *every* effective asset is defunct. `null` otherwise. Multiplexes both reasons because the chart's freeze-at-end behaviour is the same in both cases. */
+  /** Cap from a wrapper having been transferred away (`transferDate − 1`). Always applied — there's no further history past this date because the wrapper itself is gone. `null` unless every effective asset is transferred-out. */
+  transferDateCap: string | null;
+  /** Cap from a wrapper having been wound down (`firstSellOfClosingSequence − 1` from `loadAssetSoldOutCaps`). Applied only to chart-shaped resolvers (`timeseries`, `candlestick`, `allocations`) so the last bucket shows pre-sell-off value rather than dropping to zero. Total-return resolvers ignore this cap so realised gain reflects the wind-down sells. `null` unless every effective asset is sold-out. */
+  soldOutDateCap: string | null;
+  /** Convenience: `transferDateCap ?? soldOutDateCap`. Use this for chart-shaped resolvers that want the wrapper frozen for either reason. Total-return resolvers should read `transferDateCap` only. */
   dateCap: string | null;
 };
 
@@ -45,7 +49,13 @@ async function computeEffectiveFilter(
   filterAssetIdIn: readonly string[] | null,
 ): Promise<EffectiveAssetFilter> {
   if (!filterAssetIdIn || filterAssetIdIn.length === 0) {
-    return { effectiveAssetIds: null, extraScopes: [], dateCap: null };
+    return {
+      effectiveAssetIds: null,
+      extraScopes: [],
+      transferDateCap: null,
+      soldOutDateCap: null,
+      dateCap: null,
+    };
   }
   const filterSet = new Set(filterAssetIdIn);
   // Three round-trips fan out in parallel against `filterAssetIdIn` rather
@@ -85,19 +95,38 @@ async function computeEffectiveFilter(
       extras.push({ assetId: t.assetIdFrom, dateCap: cap });
     }
   }
-  let dateCap: string | null = null;
+  // Track each cap by source so total-return resolvers can ignore the
+  // sold-out flavour (see `EffectiveAssetFilter.soldOutDateCap` docstring).
+  // A merged cap is set only when *every* effective asset is defunct under
+  // the same flavour — a mix of transferred-out + sold-out wouldn't share
+  // either flavour's semantics, so we leave both null in that case.
+  let transferDateCap: string | null = null;
+  let soldOutDateCap: string | null = null;
   if (effective.length >= 1) {
-    const caps = effective.flatMap((id) => {
+    const transferCaps: string[] = [];
+    const soldCaps: string[] = [];
+    for (const id of effective) {
       const t = outgoing[filterAssetIdIn.indexOf(id)];
-      if (t) return [dayBefore(t.date)];
+      if (t) {
+        transferCaps.push(dayBefore(t.date));
+        continue;
+      }
       const sold = soldOutCaps.get(id);
-      return sold ? [sold] : [];
-    });
-    if (caps.length === effective.length) {
-      dateCap = caps.reduce((acc, d) => (d > acc ? d : acc));
+      if (sold) soldCaps.push(sold);
+    }
+    if (transferCaps.length === effective.length) {
+      transferDateCap = transferCaps.reduce((acc, d) => (d > acc ? d : acc));
+    } else if (soldCaps.length === effective.length) {
+      soldOutDateCap = soldCaps.reduce((acc, d) => (d > acc ? d : acc));
     }
   }
-  return { effectiveAssetIds: effective, extraScopes: extras, dateCap };
+  return {
+    effectiveAssetIds: effective,
+    extraScopes: extras,
+    transferDateCap,
+    soldOutDateCap,
+    dateCap: transferDateCap ?? soldOutDateCap,
+  };
 }
 
 // "No asset filter at all" is a distinct shape from `[]`; use a sentinel

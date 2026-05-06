@@ -794,11 +794,11 @@ All money values are in the parent investment's currency.
 """
 type InvestmentPosition {
   """
-  Average price paid per share currently held, excluding fees and taxes. `null` when no units are held.
+  Average price paid per share currently held under FIFO lot accounting (oldest buys consumed first by sells). DRIP buys carry zero cost — the dividend was already income, so reinvested shares contribute their full market value to total return rather than appearing as new capital. Computed against the chart-frozen units (so for a wound-down wrapper this reports the per-share basis at the pre-sell-off peak). `null` when no units are held at the chart cap.
   """
   costBasis: Money
   """
-  Average price paid per share currently held, including fees and taxes. `null` when no units are held.
+  `costBasis` plus a flat `(taxes + fees) / unitsHeld` charge per held unit. Fees and taxes are not lot-tracked, so this approximation overstates fees per remaining unit when there have been sells. `null` when no units are held.
   """
   costBasisWithFees: Money
   """
@@ -810,25 +810,41 @@ type InvestmentPosition {
   """
   dailyGainValue: Money
   """
-  Total return as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.
+  Total fees and taxes paid across every transaction in the today-flavoured slice. Detracts from `totalGain`: the breakdown `unrealisedGain + realisedGain − feesAndTaxes` reconciles to `totalGain`.
+  """
+  feesAndTaxes: Money!
+  """
+  Total return as a fraction of `totalCost` (gross deployed capital, DRIP excluded). `null` until at least one price is known, or when `totalCost` is zero.
   """
   percentGain: Float
+  """
+  Realised P&L from sells under FIFO accounting: each sell's proceeds minus the cost of the lots it consumed (DRIP lots at zero cost). Cumulative across all sells in the today-flavoured slice; `0` when no sells have happened.
+  """
+  realisedGain: Money!
+  """
+  Cumulative realised proceeds from sells (sum of `|units| × price` over every sell tx in the today-flavoured slice, in pre-future-split currency). Surfaced beneath `totalValue` so a position that's been trimmed shows both what's still in the market and what's already been taken out.
+  """
+  realisedValue: Money!
   """DRIP (dividend-reinvestment) activity on this position."""
   reinvested: InvestmentReinvested!
   """
-  Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it. For a fully-sold position this is gross buy cost.
+  Gross capital deployed — cumulative buy cost excluding DRIP (DRIP buys are reinvested dividends, not new capital), plus paid fees and taxes. Independent of how much has subsequently been sold; never goes negative even when realised proceeds exceed deployed capital.
   """
   totalCost: Money!
   """
-  Total return (realised + unrealised) on the position — `totalValue - totalCost`. `null` until at least one price is known.
+  Total return (realised + unrealised) on the position. Equivalent to `marketValueOfHeld + realisedValue − totalCost` evaluated at "today" (transfer cap only). `null` until a price is known for a still-held position.
   """
   totalGain: Money
   """
-  Current market value of units held — or, for a fully-sold position, the realised sell proceeds. `null` until at least one price is known for the investment.
+  Current market value of units held — or, for a fully-sold position, the realised sell proceeds. For a wound-down wrapper viewed via the chart cap this freezes at the pre-sell-off peak. `null` until at least one price is known for the investment.
   """
   totalValue: Money
   """Net units held."""
   units: Float!
+  """
+  Unrealised P&L on currently-held units: `marketValueOfHeld − costOfRemainingLots` (FIFO, DRIP at zero cost) at "today". For a wound-down wrapper this is `0` even though the headline `totalValue` is frozen at peak — the breakdown answers "what's still on the table", which post-wind-down is nothing. `null` when held units have no known price.
+  """
+  unrealisedGain: Money
 }
 
 """
@@ -2449,6 +2465,10 @@ type Portfolio {
   """
   dailyGainValue: Money
   """
+  Total fees and taxes paid across every transaction in the portfolio scope. Detracts from `totalGain`: the breakdown `unrealisedGain + realisedGain − feesAndTaxes` reconciles to `totalGain`.
+  """
+  feesAndTaxes: Money!
+  """
   Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities — otherwise Apollo would merge them and the first response's values would be clobbered by the second.
   """
   id: ID!
@@ -2461,21 +2481,29 @@ type Portfolio {
   """
   percentGain: Float
   """
+  Cumulative realised P&L from sells across every investment in the portfolio, under FIFO lot accounting (oldest buys consumed first; DRIP lots at zero cost). Sums to `totalGain` together with `unrealisedGain` minus `feesAndTaxes`.
+  """
+  realisedGain: Money!
+  """
   Daily-sampled line series of portfolio total over the requested period.
   """
   timeseries(length: Int, period: PortfolioTimePeriod!): PortfolioTimeseries
   """
-  Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes.
+  Gross capital deployed: cumulative buy cost across every investment (excluding DRIP — reinvested dividends are not new capital), plus paid fees and taxes (real outlays that reduce return). Independent of how much has subsequently been sold; never goes negative.
   """
   totalCost: Money!
   """
-  Total return (realised + unrealised) on the held positions — `totalValue − totalCost`. `totalValue` already excludes cash, so freshly-deposited funds don't read as a gain.
+  Total return (realised + unrealised) on the portfolio — `marketValueOfHeld + realisedSellProceeds − totalCost`. DRIP shares contribute their full market value (zero cost via `totalCost`); fees and taxes detract via `totalCost`. Cash float is excluded from `totalValue`, so freshly-deposited funds don't read as a gain.
   """
   totalGain: Money
   """
-  Current market value of the held positions in the filtered portfolio — `Σ unitsHeld_in_filter × priceLatest_investment`. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) — a holdings + cash combined number conflates investment performance with deposit timing.
+  Current market value of the held positions in the filtered portfolio — `Σ unitsHeld_in_filter × priceLatest_investment`. Fully-sold positions contribute nothing on the today-flavoured view; for a wound-down wrapper we use the chart cap so the headline matches the frozen pre-sell-off chart end value. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) — a holdings + cash combined number conflates investment performance with deposit timing.
   """
   totalValue: Money
+  """
+  Unrealised P&L on currently-held positions: `marketValueOfHeld − costOfRemainingFifoLots` summed across the portfolio (DRIP lots at zero cost). `null` when at least one held position has no known price (the FIFO breakdown can't be reconciled without a price for every lot).
+  """
+  unrealisedGain: Money
   """
   Annualised rate of return on the filtered portfolio computed from the full cash-flow history (every buy as a negative flow, every sell as a positive one) plus today's held market value as the terminal flow. Roughly what a spreadsheet's `XIRR` returns. Expressed as a decimal (`0.08` = 8 % / year). `null` when there aren't enough cash flows to solve or when the solver doesn't converge. Honours the instance-level `skipLive` — with `skipLive`, the terminal flow uses the most recent cached close instead of the live price.
   """

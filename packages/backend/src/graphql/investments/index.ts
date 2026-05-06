@@ -154,11 +154,18 @@ export class Investment {
     /** When set and non-empty, used to derive a frozen-pre-transfer view: a single transferred-out wrapper caps the price at its transfer date. Has no other effect on the price itself (which is investment-level). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<Money | null> {
-    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
+    // Only the transfer-out cap applies to price-of-instrument fields:
+    // a transferred-away wrapper has no live price (the wrapper is gone),
+    // but a sold-out wrapper's underlying instrument still trades, so the
+    // user sees today's live/cached close.
+    const { transferDateCap } = await effectiveAssetFilter(
+      ctx,
+      filterAssetIdIn,
+    );
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       currency: this.currency,
-      ...(dateCap ? { dateCap } : {}),
+      ...(transferDateCap ? { dateCap: transferDateCap } : {}),
     });
     if (s.priceLatest === null || s.currency === null) return null;
     return Money.fromMinorDenomination(s.priceLatest, s.currency);
@@ -170,11 +177,18 @@ export class Investment {
     /** When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<DateTime | null> {
-    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
+    // Only the transfer-out cap applies to price-of-instrument fields:
+    // a transferred-away wrapper has no live price (the wrapper is gone),
+    // but a sold-out wrapper's underlying instrument still trades, so the
+    // user sees today's live/cached close.
+    const { transferDateCap } = await effectiveAssetFilter(
+      ctx,
+      filterAssetIdIn,
+    );
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       currency: this.currency,
-      ...(dateCap ? { dateCap } : {}),
+      ...(transferDateCap ? { dateCap: transferDateCap } : {}),
     });
     return (s.priceLatestCachedAt as DateTime | null) ?? null;
   }
@@ -185,11 +199,18 @@ export class Investment {
     /** When set, used to derive a frozen-pre-transfer view (see `unitPriceCached`). */
     filterAssetIdIn?: ID[] | null,
   ): Promise<CalendarDate | null> {
-    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
+    // Only the transfer-out cap applies to price-of-instrument fields:
+    // a transferred-away wrapper has no live price (the wrapper is gone),
+    // but a sold-out wrapper's underlying instrument still trades, so the
+    // user sees today's live/cached close.
+    const { transferDateCap } = await effectiveAssetFilter(
+      ctx,
+      filterAssetIdIn,
+    );
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       currency: this.currency,
-      ...(dateCap ? { dateCap } : {}),
+      ...(transferDateCap ? { dateCap: transferDateCap } : {}),
     });
     return s.priceLatestCachedDate ?? null;
   }
@@ -201,8 +222,14 @@ export class Investment {
     filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPriceLatest | null> {
     if (!(this.asset instanceof InvestmentStock)) return null;
-    const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
-    if (dateCap) return null;
+    // Same rule as the cached-price family: live overlay suppressed only
+    // when the wrapper has been transferred away. A sold-out wrapper still
+    // shows the live price.
+    const { transferDateCap } = await effectiveAssetFilter(
+      ctx,
+      filterAssetIdIn,
+    );
+    if (transferDateCap) return null;
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
       currency: this.currency,
@@ -221,7 +248,7 @@ export class Investment {
     /** When set and non-empty, scopes the position to the union of these wrappers. */
     filterAssetIdIn?: ID[] | null,
   ): Promise<InvestmentPosition> {
-    const { effectiveAssetIds, extraScopes, dateCap } =
+    const { effectiveAssetIds, extraScopes, transferDateCap, dateCap } =
       await effectiveAssetFilter(ctx, filterAssetIdIn);
     // Pass `currency` so the stats DataLoader's `cacheKeyFn` matches the key
     // used by `Portfolio.timeseries`'s per-investment live overlay (which
@@ -239,7 +266,16 @@ export class Investment {
       ...(dateCap ? { dateCap } : {}),
       ...(extraScopes.length > 0 ? { extraScopes } : {}),
     });
-    return new InvestmentPosition(s);
+    return new InvestmentPosition(s, {
+      ctx,
+      investmentId: this.id,
+      ...(effectiveAssetIds && effectiveAssetIds.length > 0
+        ? { assetIds: effectiveAssetIds }
+        : {}),
+      ...(transferDateCap ? { transferDateCap } : {}),
+      ...(dateCap ? { chartDateCap: dateCap } : {}),
+      ...(extraScopes.length > 0 ? { extraScopes } : {}),
+    });
   }
 
   /** Per-wrapper breakdown of the investment. One entry per `(investment, asset)` pairing with at least one recorded transaction.
@@ -408,6 +444,7 @@ export async function investments(
   const {
     effectiveAssetIds,
     extraScopes,
+    transferDateCap,
     dateCap: dateCapIso,
   } = await effectiveAssetFilter(ctx, filterAssetIdIn);
   const limit = first ?? DEFAULT_PAGE_SIZE;
@@ -529,19 +566,37 @@ export async function investments(
         }))
       : await Promise.all(
           rows.map(async (row) => {
+            // Sort key picks the cap flavour: `value` mirrors the table's
+            // displayed `totalValue` (chart-flavoured — frozen at peak for
+            // wound-down wrappers). `gainAbs` / `gainPercent` mirror the
+            // displayed `totalGain` (transfer-flavoured — wind-down sells
+            // flow through realised gain).
+            const sortCap =
+              key === "value"
+                ? (dateCapIso ?? null)
+                : (transferDateCap ?? null);
             const s = await loadInvestmentStats(ctx, {
               investmentId: row.id,
               assetIds: wrapperFilter ?? undefined,
-              ...(dateCapIso ? { dateCap: dateCapIso } : {}),
+              ...(sortCap ? { dateCap: sortCap } : {}),
               ...(extraScopes.length > 0 ? { extraScopes } : {}),
             });
             const totalValue = s.totalValueMinor;
+            // Total return uses the same convention as
+            // `Portfolio.totalCost` / `InvestmentPosition.totalCost`: gross
+            // buy cost excluding DRIP (DRIP buys are dividends-as-shares, not
+            // new capital), plus fees and taxes (real outlays that reduce
+            // return). Counting DRIPs as cost would double-count the dividend.
+            const totalCost =
+              s.buyCostSum - s.reinvestedCostSum + s.feesSum + s.taxesSum;
             const totalGain =
-              totalValue === null ? null : totalValue - s.unitsPriceSum;
-            const percentGain =
-              totalGain === null || s.unitsPriceSum === 0
+              totalValue === null
                 ? null
-                : totalGain / s.unitsPriceSum;
+                : totalValue + s.sellValueSum - totalCost;
+            const percentGain =
+              totalGain === null || totalCost === 0
+                ? null
+                : totalGain / totalCost;
             const sortable =
               key === "value"
                 ? (totalValue ?? Number.NEGATIVE_INFINITY)

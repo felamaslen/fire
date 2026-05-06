@@ -107,7 +107,19 @@ const AGG_QUERY = graphql(`
             totalValue {
               amount
             }
+            realisedValue {
+              amount
+            }
             totalGain {
+              amount
+            }
+            realisedGain {
+              amount
+            }
+            unrealisedGain {
+              amount
+            }
+            feesAndTaxes {
               amount
             }
             percentGain
@@ -189,22 +201,36 @@ describe("Investment aggregates and wrappers", () => {
     });
   });
 
-  it("reduces cost basis after a partial sell at profit", async () => {
+  it("uses FIFO cost basis after a partial sell — remaining lots keep their original buy price, not the net-cash-per-unit", async () => {
     const id = await createStock();
     const assetId = await createAsset();
+    // Two buy lots at different prices, then a partial sell that under FIFO
+    // consumes from the oldest lot first. Net-cash-per-unit and FIFO disagree
+    // here, which is the whole point of switching.
     await buy(id, assetId, "2024-01-01", 10, 5);
-    await buy(id, assetId, "2024-02-01", -4, 7);
-    await setPrice(id, "2024-02-01", 700);
+    await buy(id, assetId, "2024-01-15", 10, 8);
+    await buy(id, assetId, "2024-02-01", -4, 9);
+    await setPrice(id, "2024-02-01", 900);
 
     const data = await runGql(AGG_QUERY, {});
     const p = firstInvestment(data)?.position;
-    expect(p?.units).toBe(6);
-    expect(p?.costBasis?.amount).toBeCloseTo((10 * 5 - 4 * 7) / 6);
-    expect(p?.totalCost?.amount).toBeCloseTo(10 * 5 - 4 * 7);
-    expect(p?.totalValue?.amount).toBeCloseTo(6 * 7);
+    expect(p?.units).toBe(16);
+    // FIFO: sell 4 consumes 4 of the £5 lot. Remaining lots: 6 @ £5 + 10 @ £8.
+    // costOfRemaining = 30 + 80 = 110, costBasis = 110/16 = 6.875.
+    expect(p?.costBasis?.amount).toBeCloseTo(110 / 16);
+    // totalCost = gross deployed (no fees here) — independent of sells.
+    expect(p?.totalCost?.amount).toBeCloseTo(10 * 5 + 10 * 8);
+    expect(p?.totalValue?.amount).toBeCloseTo(16 * 9);
+    expect(p?.realisedValue?.amount).toBeCloseTo(4 * 9);
+    // realised = sellProceeds − costOfConsumed = 4×9 − 4×5 = 16
+    expect(p?.realisedGain?.amount).toBeCloseTo(16);
+    // unrealised = market − costOfRemaining = 16×9 − 110 = 34
+    expect(p?.unrealisedGain?.amount).toBeCloseTo(34);
+    // total = unrealised + realised − fees/taxes = 34 + 16 − 0 = 50
+    expect(p?.totalGain?.amount).toBeCloseTo(50);
   });
 
-  it("includes taxes and fees in costBasisWithFees only", async () => {
+  it("includes taxes and fees in totalCost (and surfaces them on feesAndTaxes), reducing total return", async () => {
     const id = await createStock();
     const assetId = await createAsset();
     await buy(id, assetId, "2024-01-01", 10, 5, {
@@ -217,9 +243,15 @@ describe("Investment aggregates and wrappers", () => {
     const p = firstInvestment(data)?.position;
     expect(p?.costBasis?.amount).toBe(5);
     expect(p?.costBasisWithFees?.amount).toBe((10 * 5 + 0.5 + 1) / 10);
+    // totalCost = gross buys (50) + fees (1) + taxes (0.5) = 51.5
+    expect(p?.totalCost?.amount).toBeCloseTo(51.5);
+    // totalValue = held × price = 50; totalGain = 50 + 0 − 51.5 = −1.5
+    expect(p?.totalValue?.amount).toBeCloseTo(50);
+    expect(p?.totalGain?.amount).toBeCloseTo(-1.5);
+    expect(p?.feesAndTaxes?.amount).toBeCloseTo(1.5);
   });
 
-  it("aggregates DRIP reinvestments", async () => {
+  it("aggregates DRIP reinvestments and treats them as zero-cost for total return", async () => {
     const id = await createStock();
     const assetId = await createAsset();
     await buy(id, assetId, "2024-01-01", 10, 5);
@@ -227,11 +259,22 @@ describe("Investment aggregates and wrappers", () => {
     await setPrice(id, "2024-06-01", 600);
 
     const data = await runGql(AGG_QUERY, {});
-    expect(firstInvestment(data)?.position?.reinvested).toEqual({
+    const p = firstInvestment(data)?.position;
+    expect(p?.reinvested).toEqual({
       units: 2,
       cost: { amount: 12 },
       value: { amount: 12 },
     });
+    // 12 held, FIFO costOfRemaining = 50 (DRIP lot at 0) → costBasis = 50/12.
+    expect(p?.costBasis?.amount).toBeCloseTo(50 / 12);
+    // totalCost = buys (62) − DRIP buys (12) = 50.
+    expect(p?.totalCost?.amount).toBeCloseTo(50);
+    // totalValue = 12 × £6 = 72; totalGain = 72 + 0 − 50 = 22 (reinvested
+    // dividends contribute their full market value to return).
+    expect(p?.totalValue?.amount).toBeCloseTo(72);
+    expect(p?.totalGain?.amount).toBeCloseTo(22);
+    expect(p?.unrealisedGain?.amount).toBeCloseTo(22);
+    expect(p?.realisedGain?.amount).toBeCloseTo(0);
   });
 
   it("splits aggregates across multiple wrappers", async () => {
@@ -303,8 +346,32 @@ describe("Investment aggregates and wrappers", () => {
     expect(p?.units).toBe(0);
     expect(p?.totalCost?.amount).toBeCloseTo(50);
     expect(p?.totalValue?.amount).toBeCloseTo(70);
+    expect(p?.realisedValue?.amount).toBeCloseTo(70);
+    expect(p?.realisedGain?.amount).toBeCloseTo(20);
+    expect(p?.unrealisedGain?.amount).toBeCloseTo(0);
     expect(p?.totalGain?.amount).toBeCloseTo(20);
     expect(p?.percentGain).toBeCloseTo(0.4);
+  });
+
+  it("keeps cost basis non-negative and surfaces realised gain when sells exceed total invested", async () => {
+    const id = await createStock();
+    const assetId = await createAsset();
+    // Buy 100 @ £1 (£100 in). Stock 10×; sell 50 @ £5 (£250 out — already
+    // recouped 2.5× the original capital). Still hold 50.
+    await buy(id, assetId, "2024-01-01", 100, 1);
+    await buy(id, assetId, "2024-06-01", -50, 5);
+    await setPrice(id, "2024-06-01", 500);
+
+    const data = await runGql(AGG_QUERY, {});
+    const p = firstInvestment(data)?.position;
+    expect(p?.units).toBe(50);
+    // FIFO: sell 50 consumes 50 of the £1 lot. Remaining 50 @ £1, cost 50.
+    expect(p?.costBasis?.amount).toBeCloseTo(1);
+    expect(p?.totalCost?.amount).toBeCloseTo(100);
+    // realisedGain = 50×5 − 50×1 = 200; unrealised = 50×5 − 50 = 200.
+    expect(p?.realisedGain?.amount).toBeCloseTo(200);
+    expect(p?.unrealisedGain?.amount).toBeCloseTo(200);
+    expect(p?.totalGain?.amount).toBeCloseTo(400);
   });
 
   it("returns null daily gain when fewer than two prices exist", async () => {

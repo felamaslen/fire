@@ -827,7 +827,7 @@ function InvestmentsList({
               </TableHead>
               <TableHead className="text-right sm:hidden">
                 <SortHeader
-                  label="Value / Gain"
+                  label="Value / return"
                   kind="value"
                   sort={sort}
                   onToggle={toggle}
@@ -843,7 +843,7 @@ function InvestmentsList({
               </TableHead>
               <TableHead className="hidden text-right sm:table-cell">
                 <SortHeader
-                  label="Gain"
+                  label="Total return"
                   kind="gainAbs"
                   sort={sort}
                   onToggle={toggle}
