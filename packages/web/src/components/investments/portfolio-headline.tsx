@@ -2,6 +2,12 @@ import { useQuery, useSubscription } from "@apollo/client/react";
 import { useEffect, useRef, useState } from "react";
 
 import { Figure, FigureDocument } from "@/components/figure";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { formatAccountingMoney } from "@/lib/format";
 
@@ -20,6 +26,16 @@ export const PortfolioHeadlineFragment = graphql(
         currency
       }
       totalGain {
+        amount
+        ...Figure
+      }
+      realisedGain {
+        ...Figure
+      }
+      unrealisedGain {
+        ...Figure
+      }
+      feesAndTaxes {
         amount
         ...Figure
       }
@@ -195,7 +211,29 @@ export function PortfolioHeadline({
         {portfolio?.totalValue ? <Figure data={portfolio.totalValue} /> : "—"}
       </Stat>
       <Stat
-        label="Total gain"
+        label="Total return"
+        labelTooltip={
+          portfolio ? (
+            <span className="space-y-1">
+              <span className="block">
+                Unrealised:{" "}
+                {portfolio.unrealisedGain ? (
+                  <Figure data={portfolio.unrealisedGain} />
+                ) : (
+                  "—"
+                )}
+              </span>
+              <span className="block">
+                Realised: <Figure data={portfolio.realisedGain} />
+              </span>
+              {portfolio.feesAndTaxes.amount > 0 && (
+                <span className="block">
+                  Fees & taxes: −<Figure data={portfolio.feesAndTaxes} />
+                </span>
+              )}
+            </span>
+          ) : null
+        }
         colorSign={portfolio?.totalGain?.amount}
         sub={
           portfolio?.xirr != null
@@ -237,6 +275,7 @@ function signColor(amount: number | null | undefined): string {
 
 function Stat({
   label,
+  labelTooltip,
   sub,
   subMuted,
   flash,
@@ -244,6 +283,8 @@ function Stat({
   children,
 }: {
   label: string;
+  /** Optional rich tooltip surfaced from a dotted underline on the label — used to break a headline figure down (e.g. the realised / unrealised / fees split for total return). */
+  labelTooltip?: React.ReactNode;
   sub?: string | null;
   /** When `true`, render `sub` in the muted-foreground colour rather than tracking the parent's gain/loss colour. Used for the cash sub-line on `Value`, where the cash float doesn't have a sign-coloured meaning. */
   subMuted?: boolean;
@@ -251,6 +292,20 @@ function Stat({
   colorSign?: number | null;
   children: React.ReactNode;
 }) {
+  const labelEl = labelTooltip ? (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help border-b border-dotted border-muted-foreground/40 text-xs text-muted-foreground">
+            {label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{labelTooltip}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  ) : (
+    <span className="text-xs text-muted-foreground">{label}</span>
+  );
   return (
     <div
       className={cn(
@@ -260,7 +315,7 @@ function Stat({
         flash === "same" && "bg-yellow-400/20 dark:bg-yellow-400/30",
       )}
     >
-      <span className="text-xs text-muted-foreground">{label}</span>
+      {labelEl}
       <span className={cn("font-semibold tabular-nums", signColor(colorSign))}>
         {children}
       </span>
