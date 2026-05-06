@@ -723,8 +723,8 @@ type CandleData = {
 const ONE_DAY_MS = 86400 * 1000;
 /** Scaling factor turning a wheel-event `deltaY` into a zoom-span multiplier via `exp(deltaY × ZOOM_RATE)`. Calibrated by feel: a single notch of a discrete mouse wheel (`deltaY ≈ 100`) zooms by ~1.6×; a trackpad pinch fires many small `deltaY ≈ 1–4` events per second, so the per-frame integration ends up smooth rather than blowing past several years on a single gesture. */
 const ZOOM_RATE = 0.005;
-/** Wait 1 s after the user stops zooming before firing the wider-range fetch. Every zoom event resets this timer, so a long continuous pinch only triggers a single network call once the user settles. */
-const BACKFILL_DEBOUNCE_MS = 1000;
+/** Wait x ms after the user stops zooming before firing the wider-range fetch. Every zoom event resets this timer, so a long continuous pinch only triggers a single network call once the user settles. */
+const BACKFILL_DEBOUNCE_MS = 250;
 
 /** Per-`(unit, length)` cap on the chart's visible range, in days. The server enforces a similar limit + small allowance; the client mirrors it so the zoom UX clamps cleanly instead of letting the user pinch into a server-rejected request. */
 const ZOOM_LIMIT_DAYS: Record<string, number> = {

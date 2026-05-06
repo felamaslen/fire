@@ -292,14 +292,24 @@ export const loadTimeseries = contextAwareDataLoader(
         const now =
           keys[0].dateCap ?? formatISO(new Date(), { representation: "date" });
 
-        // Earliest in-scope IVP date with a non-zero value across the
-        // whole batch — anchors the X-axis for `period: "ALL"` and clamps
-        // the lower bound for finite periods. Filtering on `value > 0`
-        // here skips leading days where the only contribution is from a
-        // sold-out wrapper's explicit value=0 rows (those are meaningful
-        // mid-chart, where a held position dropped to zero, but as
-        // leading rows they just push the chart's `initialDate` back into
-        // an empty period).
+        // `firstDate`: earliest in-scope IVP date with a non-zero value
+        // across the whole batch — anchors the X-axis for `period: "ALL"`
+        // and clamps the lower bound for finite periods. Filtering on
+        // `value > 0` here skips leading days where the only contribution
+        // is from a sold-out wrapper's explicit value=0 rows (those are
+        // meaningful mid-chart, where a held position dropped to zero, but
+        // as leading rows they just push the chart's `initialDate` back
+        // into an empty period).
+        //
+        // We inline `firstDate` as a scalar subquery in the main query's
+        // `WHERE date >= …` rather than `SELECT min(date)`-then-roundtrip:
+        // saves one network roundtrip per batch (~3–8 ms on the profiled
+        // PortfolioChart) and Postgres still scans IVP just twice (the
+        // subquery and the outer scan), the same as before. When the
+        // subquery resolves to `NULL` (no matching rows), `date >= NULL`
+        // excludes everything, the outer query returns no rows, and the
+        // existing "empty result → null per key" branch in
+        // `fetchTimeseriesRows`'s callers handles it.
         const allKeyAssetIds = (() => {
           if (!keys.every((k) => k.assetId !== undefined)) return null;
           const set = new Set<string>();
@@ -314,8 +324,8 @@ export const loadTimeseries = contextAwareDataLoader(
         )
           ? [...new Set(keys.map((k) => k.investmentId as string))]
           : null;
-        const firstDateRows = await db
-          .select({ minDate: min(InvestmentValuePoints.date) })
+        const firstDateExpr = sql<string>`(${db
+          .select({ d: min(InvestmentValuePoints.date) })
           .from(InvestmentValuePoints)
           .where(
             and(
@@ -331,24 +341,18 @@ export const loadTimeseries = contextAwareDataLoader(
                   )
                 : undefined,
             ),
-          );
-        const firstDateStr = firstDateRows[0]?.minDate;
-        if (!firstDateStr) {
-          // No matching IVP rows — every key gets `null`. Common when a
-          // wrapper is filtered down to investments that never traded in it.
-          return keys.map(() => null);
-        }
+          )})`;
 
         const startDate: SQL<string> = (() => {
           switch (keys[0].period) {
             case "ALL":
-              return sql<string>`${firstDateStr}::date`;
+              return sql<string>`${firstDateExpr}::date`;
             case "YEAR":
-              return sql<string>`greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} year')::date, ${firstDateStr}::date)`;
+              return sql<string>`greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} year')::date, ${firstDateExpr}::date)`;
             case "MONTH":
-              return sql<string>`greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} month')::date, ${firstDateStr}::date)`;
+              return sql<string>`greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} month')::date, ${firstDateExpr}::date)`;
             case "YTD":
-              return sql<string>`greatest(date_trunc('year', ${now}::timestamptz)::date, ${firstDateStr}::date)`;
+              return sql<string>`greatest(date_trunc('year', ${now}::timestamptz)::date, ${firstDateExpr}::date)`;
             default:
               throw new UnreachableCaseError(keys[0].period);
           }
