@@ -1,7 +1,6 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
-  FileText,
   Loader2,
   Paperclip,
   Pencil,
@@ -22,7 +21,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -829,7 +827,6 @@ export function PayslipFormFields({
     </>
   );
 }
-
 
 function FileField({
   file,

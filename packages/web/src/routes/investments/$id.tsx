@@ -5,8 +5,8 @@ import {
   useNavigate,
   useSearch,
 } from "@tanstack/react-router";
-import { FileText, Plus, Trash2 } from "lucide-react";
-import { Suspense, useState } from "react";
+import { FileText, Paperclip, Plus, Trash2, Upload, X } from "lucide-react";
+import { Suspense, useId, useState } from "react";
 import { toast } from "sonner";
 
 import { ContractNoteImportDialog } from "@/components/contract-note-import-dialog";
@@ -15,6 +15,7 @@ import {
   InvestmentForm,
   InvestmentFormDocument,
 } from "@/components/investments/investment-form";
+import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -189,6 +190,7 @@ const InvestmentTransactionsDocument = graphql(
                     amount
                     ...Figure
                   }
+                  fileUrl
                   asset {
                     id
                     name
@@ -218,6 +220,7 @@ const InvestmentTransactionCreateDocument = graphql(`
     $taxes: MoneyInput
     $fees: MoneyInput
     $drip: Boolean
+    $file: Upload
   ) {
     investmentTransactionCreate(
       investmentId: $investmentId
@@ -228,6 +231,7 @@ const InvestmentTransactionCreateDocument = graphql(`
       taxes: $taxes
       fees: $fees
       drip: $drip
+      file: $file
     ) {
       id
     }
@@ -244,6 +248,8 @@ const InvestmentTransactionUpdateDocument = graphql(`
     $taxes: MoneyInput
     $fees: MoneyInput
     $drip: Boolean
+    $file: Upload
+    $clearFile: Boolean
   ) {
     investmentTransactionUpdate(
       id: $id
@@ -254,6 +260,8 @@ const InvestmentTransactionUpdateDocument = graphql(`
       taxes: $taxes
       fees: $fees
       drip: $drip
+      file: $file
+      clearFile: $clearFile
     ) {
       id
     }
@@ -564,6 +572,29 @@ function TransactionsSection({
 
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<TransactionRow | null>(null);
+  const [updateTx] = useMutation(InvestmentTransactionUpdateDocument, {
+    refetchQueries: [
+      "InvestmentTransactions",
+      "InvestmentDetail",
+      "InvestmentsList",
+    ],
+    awaitRefetchQueries: true,
+  });
+  const attachFile = async (id: string, file: File) => {
+    if (
+      file.type !== "application/pdf" &&
+      !file.name.toLowerCase().endsWith(".pdf")
+    ) {
+      toast.error("Only PDF files are supported.");
+      return;
+    }
+    try {
+      await updateTx({ variables: { id, file } });
+      toast.success("Attached contract note");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  };
   const [contractNoteFile, setContractNoteFile] = useState<File | null>(null);
   const [contractNoteOpen, setContractNoteOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -690,32 +721,13 @@ function TransactionsSection({
       ) : (
         <ul className="max-h-[45vh] divide-y overflow-y-auto rounded border">
           {transactions.map((t) => (
-            <li key={t.id}>
-              <button
-                type="button"
-                onClick={() => onEdit(t)}
-                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
-              >
-                <span className="flex min-w-0 items-baseline gap-2 text-sm">
-                  <span className="tabular-nums">{t.date}</span>
-                  <span className="truncate text-muted-foreground">
-                    {t.asset.name}
-                  </span>
-                </span>
-                <span className="shrink-0 text-sm tabular-nums">
-                  <span className="hidden text-muted-foreground sm:inline">
-                    {formatAccountingMoney(currency, t.units * t.price.amount)}
-                    {" · "}
-                  </span>
-                  {t.units}u @ <Figure data={t.price} />
-                  {t.drip && (
-                    <span className="ml-1 text-xs text-muted-foreground">
-                      DRIP
-                    </span>
-                  )}
-                </span>
-              </button>
-            </li>
+            <TransactionRowItem
+              key={t.id}
+              t={t}
+              currency={currency}
+              onEdit={() => onEdit(t)}
+              onAttach={(file) => attachFile(t.id, file)}
+            />
           ))}
         </ul>
       )}
@@ -778,6 +790,12 @@ function TransactionForm({
     awaitRefetchQueries: true,
   });
 
+  // Pending file selection (separate from the rest of the form state since
+  // `useForm` defaults stay JSON-ish and `File` doesn't round-trip well).
+  // `clearFile` only matters on update — toggles the existing attachment off.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [clearFile, setClearFile] = useState(false);
+
   const form = useForm({
     defaultValues: {
       assetId: existing?.asset.id ?? defaultAssetId,
@@ -805,6 +823,8 @@ function TransactionForm({
               taxes: { amount: Number(value.taxesAmount), currency },
               fees: { amount: Number(value.feesAmount), currency },
               drip: value.drip,
+              file: pendingFile,
+              clearFile: pendingFile ? null : clearFile || null,
             },
           });
           toast.success("Transaction updated");
@@ -819,6 +839,7 @@ function TransactionForm({
               taxes: { amount: Number(value.taxesAmount), currency },
               fees: { amount: Number(value.feesAmount), currency },
               drip: value.drip,
+              file: pendingFile,
             },
           });
           toast.success("Transaction added");
@@ -967,6 +988,18 @@ function TransactionForm({
           </label>
         )}
       </form.Field>
+      <ContractNoteFileField
+        existingUrl={existing?.fileUrl ?? null}
+        pendingFile={pendingFile}
+        onPick={(f) => {
+          setPendingFile(f);
+          setClearFile(false);
+        }}
+        onClear={() => {
+          setPendingFile(null);
+          setClearFile(true);
+        }}
+      />
       <div className="col-span-full flex items-center justify-end gap-2">
         {onDelete && (
           <Button
@@ -993,6 +1026,169 @@ function TransactionForm({
         </form.Subscribe>
       </div>
     </form>
+  );
+}
+
+function TransactionRowItem({
+  t,
+  currency,
+  onEdit,
+  onAttach,
+}: {
+  t: TransactionRow;
+  currency: string;
+  onEdit: () => void;
+  onAttach: (file: File) => void;
+}) {
+  const inputId = useId();
+  const [dragOver, setDragOver] = useState(false);
+  return (
+    <li
+      onDragOver={(e) => {
+        // Stop the section-level import dropzone from also lighting up — a
+        // drop on a row should attach to that row, not open the import dialog.
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+        const f = e.dataTransfer.files?.[0];
+        if (f) onAttach(f);
+      }}
+      className={
+        dragOver ? "bg-accent/60 outline outline-1 outline-foreground" : ""
+      }
+    >
+      <div className="flex items-center gap-2 px-3 py-2">
+        <button
+          type="button"
+          onClick={onEdit}
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
+        >
+          <span className="flex min-w-0 items-baseline gap-2 text-sm">
+            <span className="tabular-nums">{t.date}</span>
+            <span className="truncate text-muted-foreground">
+              {t.asset.name}
+            </span>
+          </span>
+          <span className="shrink-0 text-sm tabular-nums">
+            <span className="hidden text-muted-foreground sm:inline">
+              {formatAccountingMoney(currency, t.units * t.price.amount)}
+              {" · "}
+            </span>
+            {t.units}u @ <Figure data={t.price} />
+            {t.drip && (
+              <span className="ml-1 text-xs text-muted-foreground">DRIP</span>
+            )}
+          </span>
+        </button>
+        <input
+          id={inputId}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onAttach(f);
+            e.target.value = "";
+          }}
+        />
+        {t.fileUrl ? (
+          <PdfPreviewDialog
+            url={t.fileUrl}
+            label={`Contract note for ${t.date} ${t.asset.name}`}
+          >
+            <button
+              type="button"
+              title="Preview contract note"
+              className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+            >
+              <Paperclip className="size-3.5" />
+            </button>
+          </PdfPreviewDialog>
+        ) : (
+          <label
+            htmlFor={inputId}
+            title="Attach contract note (or drop a PDF on this row)"
+            className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent/40 hover:text-foreground"
+          >
+            <Upload className="size-3.5" />
+          </label>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function ContractNoteFileField({
+  existingUrl,
+  pendingFile,
+  onPick,
+  onClear,
+}: {
+  existingUrl: string | null;
+  pendingFile: File | null;
+  onPick: (file: File) => void;
+  onClear: () => void;
+}) {
+  const inputId = useId();
+  return (
+    <div className="space-y-1 sm:col-span-2">
+      <Label>Contract note</Label>
+      <div className="flex items-center gap-2">
+        <input
+          id={inputId}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onPick(f);
+            e.target.value = "";
+          }}
+        />
+        {pendingFile ? (
+          <span className="flex min-w-0 flex-1 items-center gap-2 truncate text-sm">
+            <Paperclip className="size-4 shrink-0" />
+            <span className="truncate">{pendingFile.name}</span>
+          </span>
+        ) : existingUrl ? (
+          <PdfPreviewDialog url={existingUrl} label="Contract note">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 truncate text-sm text-foreground hover:underline"
+            >
+              <Paperclip className="size-4 shrink-0" />
+              View attached PDF
+            </button>
+          </PdfPreviewDialog>
+        ) : (
+          <span className="flex-1 text-sm text-muted-foreground">
+            No file attached.
+          </span>
+        )}
+        <Button asChild size="sm" variant="outline">
+          <label htmlFor={inputId} className="cursor-pointer">
+            {existingUrl || pendingFile ? "Replace" : "Attach"}
+          </label>
+        </Button>
+        {(existingUrl || pendingFile) && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={onClear}
+            aria-label="Remove attachment"
+          >
+            <X className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
