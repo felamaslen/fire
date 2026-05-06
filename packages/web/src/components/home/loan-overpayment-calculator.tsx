@@ -81,9 +81,9 @@ function addMonths(d: Date, n: number): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
 }
 
-type LoanRow = ResultOf<
-  typeof LoanOverpaymentDocument
->["loanCalculator"][number];
+type LoanRow = NonNullable<
+  ResultOf<typeof LoanOverpaymentDocument>["loanCalculator"]
+>[number];
 
 function buildLoans(rows: LoanRow[]): Loan[] {
   return rows.map((r) => ({
@@ -199,12 +199,12 @@ function CalculatorBody() {
   const { data, loading, error } = useQuery(LoanOverpaymentDocument);
 
   const loans = useMemo<Loan[]>(() => {
-    if (!data) return [];
+    if (!data?.loanCalculator) return [];
     return buildLoans(data.loanCalculator);
   }, [data]);
 
   const currency =
-    data?.loanCalculator[0]?.startingBalance.currency ??
+    data?.loanCalculator?.[0]?.startingBalance.currency ??
     data?.currencyDefault ??
     "GBP";
 

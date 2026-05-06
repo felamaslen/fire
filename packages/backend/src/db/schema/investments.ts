@@ -82,6 +82,8 @@ export const InvestmentTransactions = pgTable(
     date: date("date", { mode: "date" }).notNull(),
     /** True when this row represents a dividend reinvestment (not a cash buy). */
     drip: boolean("drip").notNull().default(false),
+    /** Optional storage key for the broker contract-note PDF that backs this transaction. Set by the contract-note import flow and surfaced on the GraphQL `fileUrl` field as a signed URL. */
+    fileUrl: text("fileUrl"),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),

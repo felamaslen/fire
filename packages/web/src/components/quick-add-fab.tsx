@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { HandCoins, Plus, Wallet, X } from "lucide-react";
+import { FileText, HandCoins, Plus, Wallet, X } from "lucide-react";
 import { Suspense, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/cn";
 
+import { ContractNoteImportDialog } from "./contract-note-import-dialog";
 import { QuickNetWorthDialog } from "./quick-net-worth-dialog";
 import { QuickPayslipDialog } from "./quick-payslip-dialog";
 
@@ -59,9 +60,10 @@ export function QuickAddFab() {
   // it; the router's location reflects it.
   const { quick, w } = parseHash(location.hash);
 
-  // The payslip flow needs a `File`, which can't go in the URL. We hold it in
-  // a ref so opening the picker (a user gesture) can pass it to the dialog
-  // without forcing the dialog to live in this component's render tree.
+  // The payslip / contract-note flows need a `File`, which can't go in the
+  // URL. We hold it in a ref so opening the picker (a user gesture) can pass
+  // it to the dialog without forcing the dialog to live in this component's
+  // render tree.
   const pendingFileRef = useRef<File | null>(null);
 
   const writeHash = (
@@ -101,6 +103,10 @@ export function QuickAddFab() {
             pendingFileRef.current = file;
             writeHash({ quick: "payslip" });
           }}
+          onContractNoteFile={(file) => {
+            pendingFileRef.current = file;
+            writeHash({ quick: "contract-note" });
+          }}
         />
       )}
       {quick === "net-worth" && (
@@ -122,6 +128,15 @@ export function QuickAddFab() {
           />
         </Suspense>
       )}
+      {quick === "contract-note" && (
+        <Suspense fallback={null}>
+          <ContractNoteImportDialog
+            initialFile={pendingFileRef.current}
+            lockedInvestmentId={null}
+            onClose={closeModal}
+          />
+        </Suspense>
+      )}
     </>
   );
 }
@@ -129,14 +144,17 @@ export function QuickAddFab() {
 function FabTrigger({
   onWizard,
   onPayslipFile,
+  onContractNoteFile,
 }: {
   onWizard: () => void;
   onPayslipFile: (file: File) => void;
+  onContractNoteFile: (file: File) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const fileInputId = useId();
+  const payslipInputId = useId();
+  const contractNoteInputId = useId();
 
-  const handleFile = (file: File | undefined) => {
+  const handlePayslipFile = (file: File | undefined) => {
     if (!file) return;
     if (
       file.type !== "application/pdf" &&
@@ -147,6 +165,19 @@ function FabTrigger({
     }
     setOpen(false);
     onPayslipFile(file);
+  };
+
+  const handleContractNoteFile = (file: File | undefined) => {
+    if (!file) return;
+    if (
+      file.type !== "application/pdf" &&
+      !file.name.toLowerCase().endsWith(".pdf")
+    ) {
+      toast.error("Only PDF files are supported.");
+      return;
+    }
+    setOpen(false);
+    onContractNoteFile(file);
   };
 
   return (
@@ -169,18 +200,33 @@ function FabTrigger({
       >
         <div className="flex flex-col">
           <input
-            id={fileInputId}
+            id={payslipInputId}
             type="file"
             accept="application/pdf"
             className="hidden"
             onChange={(e) => {
-              handleFile(e.target.files?.[0]);
+              handlePayslipFile(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <input
+            id={contractNoteInputId}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={(e) => {
+              handleContractNoteFile(e.target.files?.[0]);
               e.target.value = "";
             }}
           />
           <Button variant="ghost" className="justify-start" asChild>
-            <label htmlFor={fileInputId} className="cursor-pointer">
+            <label htmlFor={payslipInputId} className="cursor-pointer">
               <HandCoins /> Add payslip
+            </label>
+          </Button>
+          <Button variant="ghost" className="justify-start" asChild>
+            <label htmlFor={contractNoteInputId} className="cursor-pointer">
+              <FileText /> Import contract note
             </label>
           </Button>
           <Button

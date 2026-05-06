@@ -4,6 +4,7 @@ import { and, asc, desc, eq, lt, or } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import type { Float, ID, Int } from "grats";
 
+import { sessionMayReadKey, signFileUrl } from "@/auth/file-url";
 import { db } from "@/db";
 import {
   InvestmentAllocations,
@@ -11,6 +12,7 @@ import {
   InvestmentTransactions,
 } from "@/db/schema/investments";
 import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
+import { storeUpload } from "@/uploads";
 
 import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
@@ -27,6 +29,7 @@ import {
   decodeCursor,
   encodeCursor,
 } from "../pagination";
+import type { Upload } from "../upload";
 import { VOID, type Void } from "../void";
 import { invalidateAllocationsForAsset } from "./allocations";
 
@@ -47,6 +50,8 @@ export class InvestmentTransaction {
     public readonly date: CalendarDate,
     /** True when this transaction represents a dividend reinvestment rather than a cash buy. @gqlField */
     public readonly drip: boolean,
+    /** Bare storage key for the uploaded contract-note file, or `null` if none. The `fileUrl` GraphQL field wraps this in a short-lived signed URL per request. */
+    private readonly fileKey: string | null,
   ) {}
 
   static load(
@@ -63,7 +68,15 @@ export class InvestmentTransaction {
       row.currency,
       row.date,
       row.drip,
+      row.fileUrl,
     );
+  }
+
+  /** Signed, short-lived URL to the uploaded contract-note file (PDF), or `null` if none was uploaded or the current session isn't allowed to read it. The URL's signature covers the storage key + expiry so the `/files/*` endpoint can serve it without the browser attaching an `Authorization` header. @gqlField */
+  fileUrl(ctx: Context): string | null {
+    if (!this.fileKey) return null;
+    if (!sessionMayReadKey(ctx.session, this.fileKey)) return null;
+    return signFileUrl(this.fileKey);
   }
 
   /** Unit price at execution. @gqlField */
@@ -153,6 +166,10 @@ export async function investmentTransactionCreate(
   fees?: MoneyInput | null,
   /** Set `true` to mark this as a dividend reinvestment rather than a cash buy. Defaults to `false`. */
   drip?: boolean | null,
+  /** Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket, scoped to the caller's session; the resolved key is persisted on the row. Mutually exclusive with `fileKey`. */
+  file?: Upload | null,
+  /** Already-stored upload key (returned by `investmentContractNoteImport.fileKey`) to attach to the new transaction without re-uploading. Mutually exclusive with `file`. */
+  fileKey?: string | null,
 ): Promise<InvestmentTransaction> {
   await assertAssetIsStockOrPension(assetId);
   const { currency, amount: priceMinor } =
@@ -183,6 +200,15 @@ export async function investmentTransactionCreate(
     .limit(1);
   const isFirstInWrapper = !firstInWrapper;
 
+  if (file && fileKey) {
+    throw new GraphQLError(
+      "Pass either `file` (new upload) or `fileKey` (already-stored), not both.",
+    );
+  }
+  const resolvedFileKey = file
+    ? await storeUpload(await file, ctx.session)
+    : (fileKey ?? null);
+
   const [row] = await db
     .insert(InvestmentTransactions)
     .values({
@@ -195,6 +221,7 @@ export async function investmentTransactionCreate(
       fees: feesMinor,
       currency,
       drip: drip ?? false,
+      fileUrl: resolvedFileKey,
     })
     .returning();
   if (isFirstInWrapper) {
@@ -220,7 +247,12 @@ function assertSameCurrency(
   return input;
 }
 
-/** Partial update to a transaction. Omitted / null fields are left unchanged. @gqlMutationField */
+/** Partial update to a transaction. Omitted / null fields are left unchanged.
+ *
+ * Pass `file` to attach (or replace) the contract-note PDF; pass `clearFile: true` to remove an existing one. `file` and `clearFile` are mutually exclusive — pass one or the other, not both.
+ *
+ * @gqlMutationField
+ */
 export async function investmentTransactionUpdate(
   ctx: Context,
   id: ID,
@@ -231,6 +263,10 @@ export async function investmentTransactionUpdate(
   taxes?: MoneyInput | null,
   fees?: MoneyInput | null,
   drip?: boolean | null,
+  /** Replacement contract-note upload. */
+  file?: Upload | null,
+  /** Clear an existing contract-note attachment. Mutually exclusive with `file`. */
+  clearFile?: boolean | null,
 ): Promise<InvestmentTransaction> {
   const [existing] = await db
     .select()
@@ -266,6 +302,16 @@ export async function investmentTransactionUpdate(
     patch.fees = amount;
   }
   if (drip != null) patch.drip = drip;
+  if (file && clearFile) {
+    throw new GraphQLError(
+      "Pass either `file` (replace) or `clearFile: true` (remove), not both.",
+    );
+  }
+  if (file) {
+    patch.fileUrl = await storeUpload(await file, ctx.session);
+  } else if (clearFile) {
+    patch.fileUrl = null;
+  }
   if (Object.keys(patch).length === 0) {
     return InvestmentTransaction.load(existing);
   }

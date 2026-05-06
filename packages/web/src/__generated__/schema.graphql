@@ -532,6 +532,44 @@ type CashContributionEdge {
   node: CashContribution!
 }
 
+"""
+The result of pushing a broker contract note PDF through Gemini — every field is the model's best guess and is intended to pre-populate the regular add-transaction form for the user to review before saving.
+"""
+type ContractNoteImportResult {
+  """
+  Wrapper (a `STOCK` or `PENSION` net-worth asset) we believe the trade books into, matched against asset names. `null` when no plausible match was found.
+  """
+  asset: NetWorthCategoryAsset
+  """Calendar date the trade was executed."""
+  date: Date!
+  """
+  True when the consideration looks small enough relative to the recent DRIP / contribution history that this is most likely a dividend reinvestment rather than a cash buy.
+  """
+  drip: Boolean!
+  """
+  Sum of all non-tax fee lines on the contract note (broker commission, FX fee, etc.), in the investment's currency. `null` when the note doesn't show any fees.
+  """
+  fees: Money
+  """
+  Storage key for the uploaded contract-note file. The frontend re-passes this to `investmentTransactionCreate.fileKey` on submit so the file is attached to the resulting transaction without a second upload.
+  """
+  fileKey: String!
+  """
+  Investment we believe this contract note refers to, matched against the supplied candidate list by ticker / fund name. `null` when nothing matched (the UI then asks the user to pick). When the resolver was called with an explicit `investmentId`, this is always populated with that investment.
+  """
+  investment: Investment
+  """
+  Unit price at execution, in the investment's currency. For UK stocks quoted in pence, this is normalised back into pounds (e.g. a 152p tick becomes `{ amount: 1.52, currency: "GBP" }`).
+  """
+  price: Money!
+  """
+  Sum of all tax lines on the contract note (PTM levy, stamp duty, etc.), in the investment's currency. `null` when the note doesn't show any taxes.
+  """
+  taxes: Money
+  """Signed number of units traded. Positive = buy / DRIP, negative = sell."""
+  units: Float!
+}
+
 """Metadata for a currency supported by the server."""
 type Currency {
   """ISO-4217 three-letter code (e.g. `"USD"`)."""
@@ -884,6 +922,10 @@ type InvestmentTransaction {
   drip: Boolean!
   """Broker / platform fees paid on the trade."""
   fees: Money!
+  """
+  Signed, short-lived URL to the uploaded contract-note file (PDF), or `null` if none was uploaded or the current session isn't allowed to read it. The URL's signature covers the storage key + expiry so the `/files/*` endpoint can serve it without the browser attaching an `Authorization` header.
+  """
+  fileUrl: String
   id: ID!
   """Unit price at execution."""
   price: Money!
@@ -941,7 +983,7 @@ type InvestmentWrapper {
 }
 
 """
-Per-loan inputs the loan-overpayment calculator needs in one shot: forecast-derived `startingBalance` / `monthlyRepayment` / `interestRate`, plus the home-currency balance history.
+Per-loan inputs the loan-overpayment calculator needs in one shot: a default `startingBalance` / `monthlyRepayment` / `interestRate` for the projection, plus the home-currency balance history. The default starting balance and monthly repayment are derived from the loan's actual historic repayments — clients let users override either one.
 """
 type LoanCalculatorRow {
   """
@@ -952,9 +994,13 @@ type LoanCalculatorRow {
   interestRate: Float!
   """The loan liability — exposes `id`, `name`, etc."""
   liability: NetWorthCategoryLiability!
-  """EWMA-derived total monthly repayment (home currency)."""
+  """
+  Default monthly repayment for the projection (home currency), derived from actual historic repayments against the loan.
+  """
   monthlyRepayment: Money!
-  """Forecast starting balance (home currency, positive magnitude)."""
+  """
+  Default starting balance for the projection (home currency, positive magnitude), derived from the latest recorded balance.
+  """
   startingBalance: Money!
 }
 
@@ -1193,6 +1239,22 @@ type Mutation {
   """
   investmentCashAllocationSet(amount: MoneyInput!): Money!
   """
+  Extract direction, units, price, taxes, fees, date, investment, and wrapper from a broker contract note PDF using Gemini Flash. Does not create a transaction record — the UI shows the returned values for the user to review / adjust before submitting.
+  
+  Pass `investmentId` when the caller already knows which investment this note is for (e.g. the dialog was opened from an investment's editor); the resolver then skips the candidate-match step and locks the investment to that id.
+  
+  The `drip` flag is not asked of the model — it's inferred from the consideration relative to recent reinvestment / contribution history: a small consideration relative to the EWMA of the last 20 DRIPs (or, if there are none, the last 20 non-DRIP contributions) is treated as a dividend reinvestment.
+  
+  Gated to `real` sessions: demo sessions would otherwise burn Gemini tokens on synthetic data with no upside.
+  """
+  investmentContractNoteImport(
+    file: Upload!
+    """
+    When set, the resolver assumes the contract note is for this investment and skips the LLM-side candidate matching. Useful when the dialog is opened from an investment's editor — the investment is already known and the user only needs to review the trade fields.
+    """
+    investmentId: ID
+  ): ContractNoteImportResult!
+  """
   Create a new investment, optionally booking one or more initial transactions in the same round-trip.
   """
   investmentCreate(
@@ -1268,6 +1330,14 @@ type Mutation {
     Broker / platform fees paid. Must match the investment's currency. Defaults to 0.
     """
     fees: MoneyInput
+    """
+    Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket, scoped to the caller's session; the resolved key is persisted on the row. Mutually exclusive with `fileKey`.
+    """
+    file: Upload
+    """
+    Already-stored upload key (returned by `investmentContractNoteImport.fileKey`) to attach to the new transaction without re-uploading. Mutually exclusive with `file`.
+    """
+    fileKey: String
     investmentId: ID!
     """Unit price at execution. Must match the investment's currency."""
     price: MoneyInput!
@@ -1284,8 +1354,25 @@ type Mutation {
   investmentTransactionDelete(id: ID!): Void!
   """
   Partial update to a transaction. Omitted / null fields are left unchanged.
+  
+  Pass `file` to attach (or replace) the contract-note PDF; pass `clearFile: true` to remove an existing one. `file` and `clearFile` are mutually exclusive — pass one or the other, not both.
   """
-  investmentTransactionUpdate(assetId: ID, date: Date, drip: Boolean, fees: MoneyInput, id: ID!, price: MoneyInput, taxes: MoneyInput, units: Float): InvestmentTransaction!
+  investmentTransactionUpdate(
+    assetId: ID
+    """
+    Clear an existing contract-note attachment. Mutually exclusive with `file`.
+    """
+    clearFile: Boolean
+    date: Date
+    drip: Boolean
+    fees: MoneyInput
+    """Replacement contract-note upload."""
+    file: Upload
+    id: ID!
+    price: MoneyInput
+    taxes: MoneyInput
+    units: Float
+  ): InvestmentTransaction!
   """
   Partially update an investment. Omitted (or `null`) fields are left unchanged.
   """
@@ -2564,9 +2651,9 @@ type Query {
     sort: InvestmentSort
   ): InvestmentConnection @semanticNonNull
   """
-  Per-loan inputs for the loan-overpayment calculator on the home page. Returns one row per `LOAN` liability that has a value in the latest `NetWorthEntry` AND that the forecast engine can project (i.e. has an `interestRate` and enough history to derive a monthly repayment). Each row bundles the forecast starting balance, monthly repayment and interest rate together with the loan's full home-currency balance history, so the client can render the calculator without fanning out across `netWorth(last: N).edges.node.loans`.
+  Per-loan inputs for the loan-overpayment calculator on the home page. Returns one row per `LOAN` liability that has a value in the latest `NetWorthEntry` AND that has enough recorded history to derive a default monthly repayment, alongside the loan's full home-currency balance history.
   """
-  loanCalculator: [LoanCalculatorRow!]! @semanticNonNull
+  loanCalculator: [LoanCalculatorRow!] @semanticNonNull
   """
   Return the current session's auth info, or `null` if the request is anonymous. Used by the web app on boot to decide whether to send the user to the login screen or straight to the dashboard.
   """

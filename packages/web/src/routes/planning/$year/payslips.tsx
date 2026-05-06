@@ -1,7 +1,6 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
-  FileText,
   Loader2,
   Paperclip,
   Pencil,
@@ -15,13 +14,13 @@ import { toast } from "sonner";
 
 import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
+import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -826,42 +825,6 @@ export function PayslipFormFields({
         onChange={(file) => patch({ file })}
       />
     </>
-  );
-}
-
-function PdfPreviewDialog({
-  url,
-  label,
-  children,
-}: {
-  url: string;
-  label: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        {children ?? (
-          <Button variant="ghost" size="icon" aria-label={label}>
-            <FileText className="size-4" />
-          </Button>
-        )}
-      </DialogTrigger>
-      <DialogContent className="max-w-4xl p-0 sm:max-w-4xl">
-        <DialogHeader className="flex-row items-center justify-between gap-2 space-y-0 border-b px-4 py-3">
-          <DialogTitle className="text-sm">{label}</DialogTitle>
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="mr-8 text-xs underline underline-offset-2"
-          >
-            Open in new tab
-          </a>
-        </DialogHeader>
-        <iframe src={url} title={label} className="h-[80vh] w-full" />
-      </DialogContent>
-    </Dialog>
   );
 }
 
