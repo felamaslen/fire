@@ -31,6 +31,7 @@ import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResol
 import { retirementSettings as queryRetirementSettingsResolver, retirementSettingsUpdate as mutationRetirementSettingsUpdateResolver } from "./../graphql/retirement";
 import { transactionAssetsFrequent as queryTransactionAssetsFrequentResolver, transactionLiabilitiesFrequent as queryTransactionLiabilitiesFrequentResolver, transactionCreate as mutationTransactionCreateResolver, transactionDelete as mutationTransactionDeleteResolver, transactionUpdate as mutationTransactionUpdateResolver } from "./../graphql/planning/transactions";
 import { assetStockTransferCreate as mutationAssetStockTransferCreateResolver, assetStockTransferDelete as mutationAssetStockTransferDeleteResolver, assetStockTransferUpdate as mutationAssetStockTransferUpdateResolver } from "./../graphql/investments/transfers";
+import { investmentContractNoteImport as mutationInvestmentContractNoteImportResolver } from "./../graphql/investments/contract-note-import";
 import { investmentStockSplitCreate as mutationInvestmentStockSplitCreateResolver, investmentStockSplitDelete as mutationInvestmentStockSplitDeleteResolver, investmentStockSplitUpdate as mutationInvestmentStockSplitUpdateResolver } from "./../graphql/investments/stock-splits";
 import { investmentTransactionCreate as mutationInvestmentTransactionCreateResolver, investmentTransactionDelete as mutationInvestmentTransactionDeleteResolver, investmentTransactionUpdate as mutationInvestmentTransactionUpdateResolver } from "./../graphql/investments/transactions";
 import { payslipParse as mutationPayslipParseResolver } from "./../graphql/planning/payslip-parse";
@@ -3416,6 +3417,59 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const ContractNoteImportResultType: GraphQLObjectType = new GraphQLObjectType({
+        name: "ContractNoteImportResult",
+        description: "The result of pushing a broker contract note PDF through Gemini \u2014 every field is the model's best guess and is intended to pre-populate the regular add-transaction form for the user to review before saving.",
+        fields() {
+            return {
+                asset: {
+                    description: "Wrapper (a `STOCK` or `PENSION` net-worth asset) we believe the trade books into, matched against asset names. `null` when no plausible match was found.",
+                    name: "asset",
+                    type: NetWorthCategoryAssetType
+                },
+                date: {
+                    description: "Calendar date the trade was executed.",
+                    name: "date",
+                    type: new GraphQLNonNull(DateType)
+                },
+                drip: {
+                    description: "True when the consideration looks small enough relative to the recent DRIP / contribution history that this is most likely a dividend reinvestment rather than a cash buy.",
+                    name: "drip",
+                    type: new GraphQLNonNull(GraphQLBoolean)
+                },
+                fees: {
+                    description: "Sum of all non-tax fee lines on the contract note (broker commission, FX fee, etc.), in the investment's currency. `null` when the note doesn't show any fees.",
+                    name: "fees",
+                    type: MoneyType
+                },
+                investment: {
+                    description: "Investment we believe this contract note refers to, matched against the supplied candidate list by ticker / fund name. `null` when nothing matched (the UI then asks the user to pick). When the resolver was called with an explicit `investmentId`, this is always populated with that investment.",
+                    name: "investment",
+                    type: InvestmentType
+                },
+                price: {
+                    description: "Unit price at execution, in the investment's currency. For UK stocks quoted in pence, this is normalised back into pounds (e.g. a 152p tick becomes `{ amount: 1.52, currency: \"GBP\" }`).",
+                    name: "price",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                taxes: {
+                    description: "Sum of all tax lines on the contract note (PTM levy, stamp duty, etc.), in the investment's currency. `null` when the note doesn't show any taxes.",
+                    name: "taxes",
+                    type: MoneyType
+                },
+                units: {
+                    description: "Signed number of units traded. Positive = buy / DRIP, negative = sell.",
+                    name: "units",
+                    type: new GraphQLNonNull(GraphQLFloat)
+                }
+            };
+        }
+    });
+    const UploadType: GraphQLScalarType = new GraphQLScalarType({
+        description: "A multipart file upload, per the graphql-multipart-request-spec. Resolves to a `FileUpload` (`createReadStream`, `filename`, `mimetype`, `encoding`).",
+        name: "Upload",
+        ...config.scalars.Upload
+    });
     const InvestmentFundInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
         name: "InvestmentFundInput",
         fields() {
@@ -3862,11 +3916,6 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 }
             };
         }
-    });
-    const UploadType: GraphQLScalarType = new GraphQLScalarType({
-        description: "A multipart file upload, per the graphql-multipart-request-spec. Resolves to a `FileUpload` (`createReadStream`, `filename`, `mimetype`, `encoding`).",
-        name: "Upload",
-        ...config.scalars.Upload
     });
     const PayslipParseAdjustmentType: GraphQLObjectType = new GraphQLObjectType({
         name: "PayslipParseAdjustment",
@@ -4447,6 +4496,23 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return mutationInvestmentCashAllocationSetResolver(args.amount);
+                    }
+                },
+                investmentContractNoteImport: {
+                    description: "Extract direction, units, price, taxes, fees, date, investment, and wrapper from a broker contract note PDF using Gemini Flash. Does not create a transaction record \u2014 the UI shows the returned values for the user to review / adjust before submitting.\n\nPass `investmentId` when the caller already knows which investment this note is for (e.g. the dialog was opened from an investment's editor); the resolver then skips the candidate-match step and locks the investment to that id.\n\nThe `drip` flag is not asked of the model \u2014 it's inferred from the consideration relative to recent reinvestment / contribution history: a small consideration relative to the EWMA of the last 20 DRIPs (or, if there are none, the last 20 non-DRIP contributions) is treated as a dividend reinvestment.\n\nGated to `real` sessions: demo sessions would otherwise burn Gemini tokens on synthetic data with no upside.",
+                    name: "investmentContractNoteImport",
+                    type: new GraphQLNonNull(ContractNoteImportResultType),
+                    args: {
+                        file: {
+                            type: new GraphQLNonNull(UploadType)
+                        },
+                        investmentId: {
+                            description: "When set, the resolver assumes the contract note is for this investment and skips the LLM-side candidate matching. Useful when the dialog is opened from an investment's editor \u2014 the investment is already known and the user only needs to review the trade fields.",
+                            type: GraphQLID
+                        }
+                    },
+                    resolve(_source, args, context) {
+                        return mutationInvestmentContractNoteImportResolver(context, args.file, args.investmentId);
                     }
                 },
                 investmentCreate: {
@@ -5263,7 +5329,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, LoanCalculatorRowType, LoanHistoryPointType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, ContractNoteImportResultType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, LoanCalculatorRowType, LoanHistoryPointType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }
 const typeNameMap = new Map();
