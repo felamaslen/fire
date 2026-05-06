@@ -18,60 +18,31 @@ import { NetWorthChart } from "./net-worth-chart";
 
 const LoanOverpaymentDocument = graphql(`
   query LoanOverpayment {
-    netWorth(last: 120) {
-      edges {
-        node {
-          id
-          date
-          loans {
-            id
-            amountHome {
-              amount
-              currency
-            }
-            liability {
-              id
-              name
-            }
-          }
-        }
+    loanCalculator {
+      liability {
+        id
+        name
       }
-    }
-    netWorthForecast(years: 1, limit: 5) {
-      workings {
-        categories {
-          __typename
-          ... on NetWorthForecastLoan {
-            category {
-              id
-              name
-            }
-            startingBalance {
-              amount
-              currency
-            }
-            interestRate
-            monthlyRepayment {
-              amount
-              currency
-            }
-          }
+      startingBalance {
+        amount
+        currency
+      }
+      interestRate
+      monthlyRepayment {
+        amount
+        currency
+      }
+      history {
+        date
+        balance {
+          amount
+          currency
         }
       }
     }
     currencyDefault
   }
 `);
-
-type Result = ResultOf<typeof LoanOverpaymentDocument>;
-type Entry = NonNullable<Result["netWorth"]>["edges"][number]["node"];
-type ForecastCategory = NonNullable<
-  Result["netWorthForecast"]
->["workings"]["categories"][number];
-type LoanForecast = Extract<
-  ForecastCategory,
-  { __typename: "NetWorthForecastLoan" }
->;
 
 /** Saturated, dark-readable palette for individual loan lines. Picked deterministically from the loan id so a given loan keeps its colour across reloads and across hide/show toggles. */
 const LOAN_COLORS = [
@@ -110,44 +81,22 @@ function addMonths(d: Date, n: number): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
 }
 
-function buildLoans(entries: Entry[], forecasts: LoanForecast[]): Loan[] {
-  const historyByLoan = new Map<string, { date: Date; balance: number }[]>();
-  for (const e of entries) {
-    const date = new Date(`${e.date}T00:00:00Z`);
-    for (const v of e.loans) {
-      if (!v.liability) continue;
-      const arr = historyByLoan.get(v.liability.id) ?? [];
-      arr.push({ date, balance: Math.abs(v.amountHome.amount) });
-      historyByLoan.set(v.liability.id, arr);
-    }
-  }
-  // A loan that's absent from the most recent net-worth entry is treated
-  // as paid off — the user has implicitly cleared it by no longer
-  // recording a balance, so it shouldn't keep being projected forward.
-  const latestEntry = entries[entries.length - 1];
-  const liveLoanIds = new Set<string>();
-  if (latestEntry) {
-    for (const v of latestEntry.loans) {
-      if (v.liability) liveLoanIds.add(v.liability.id);
-    }
-  }
-  const loans: Loan[] = [];
-  for (const f of forecasts) {
-    if (!liveLoanIds.has(f.category.id)) continue;
-    const history = (historyByLoan.get(f.category.id) ?? []).sort(
-      (a, b) => a.date.getTime() - b.date.getTime(),
-    );
-    loans.push({
-      id: f.category.id,
-      name: f.category.name,
-      startingBalance: f.startingBalance.amount,
-      interestRate: f.interestRate,
-      monthlyRepayment: f.monthlyRepayment.amount,
-      history,
-    });
-  }
-  loans.sort((a, b) => b.startingBalance - a.startingBalance);
-  return loans;
+type LoanRow = ResultOf<
+  typeof LoanOverpaymentDocument
+>["loanCalculator"][number];
+
+function buildLoans(rows: LoanRow[]): Loan[] {
+  return rows.map((r) => ({
+    id: r.liability.id,
+    name: r.liability.name,
+    startingBalance: r.startingBalance.amount,
+    interestRate: r.interestRate,
+    monthlyRepayment: r.monthlyRepayment.amount,
+    history: r.history.map((h) => ({
+      date: new Date(`${h.date}T00:00:00Z`),
+      balance: h.balance.amount,
+    })),
+  }));
 }
 
 /** Maximum number of months to project forward — caps long-running interest-only loans (rate > repayment) so the chart x-axis stays bounded. */
@@ -251,18 +200,11 @@ function CalculatorBody() {
 
   const loans = useMemo<Loan[]>(() => {
     if (!data) return [];
-    const entries = data.netWorth?.edges.map((e) => e.node) ?? [];
-    const cats = data.netWorthForecast?.workings.categories ?? [];
-    const forecasts = cats.filter(
-      (c): c is LoanForecast => c.__typename === "NetWorthForecastLoan",
-    );
-    return buildLoans(entries, forecasts);
+    return buildLoans(data.loanCalculator);
   }, [data]);
 
   const currency =
-    data?.netWorthForecast?.workings.categories.find(
-      (c): c is LoanForecast => c.__typename === "NetWorthForecastLoan",
-    )?.startingBalance.currency ??
+    data?.loanCalculator[0]?.startingBalance.currency ??
     data?.currencyDefault ??
     "GBP";
 

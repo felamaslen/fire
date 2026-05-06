@@ -80,3 +80,21 @@ if (process.env.OTEL_ENABLED === "true" || process.env.OTEL_ENABLED === "1") {
     });
   }
 }
+
+// Continuous CPU + heap profiling, separate from traces/logs because Pyroscope
+// pushes its own format on its own port (`4040` by default). Gated on its
+// own env so a CI run that only wants traces doesn't have to drag in
+// `@datadog/pprof`'s native binding. The local-dev compose file flips this on
+// against the `otel-lgtm` sidecar (which bundles a Pyroscope server).
+if (
+  process.env.PYROSCOPE_ENABLED === "true" ||
+  process.env.PYROSCOPE_ENABLED === "1"
+) {
+  const Pyroscope = (await import("@pyroscope/nodejs")).default;
+  Pyroscope.init({
+    serverAddress:
+      process.env.PYROSCOPE_SERVER_ADDRESS || "http://localhost:4040",
+    appName: "fire-backend",
+  });
+  Pyroscope.start();
+}

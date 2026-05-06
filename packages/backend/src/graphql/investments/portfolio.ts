@@ -195,6 +195,39 @@ async function fetchSoldOutCaps(
   return out;
 }
 
+/** Per-request, per-currency loader for the sorted list of `Investments.id` rows in that currency. Shared by `Query.portfolios` (which iterates the list to build connection edges) and `Portfolio.timeseries` (which uses the list to fan out the unfiltered case into per-investment timeseries keys, so the parent's batch coalesces with the children's per-edge timeseries calls instead of running its own separate roundtrip).
+ *
+ * Returns an empty array for currencies with no investments. The result is sorted by `id` so cursor pagination on `Query.portfolios` is stable.
+ */
+const investmentIdsByCurrencyLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<keyof typeof CURRENCIES, string[], string>(
+      async (currencies) => {
+        const rows = await db
+          .select({ id: Investments.id, currency: Investments.currency })
+          .from(Investments)
+          .where(inArray(Investments.currency, [...currencies]))
+          .orderBy(Investments.id);
+        const byCurrency = new Map<string, string[]>();
+        for (const r of rows) {
+          const list = byCurrency.get(r.currency) ?? [];
+          list.push(r.id);
+          byCurrency.set(r.currency, list);
+        }
+        return currencies.map((c) => byCurrency.get(c) ?? []);
+      },
+      { cacheKeyFn: (k) => k },
+    ),
+);
+
+/** Resolve the sorted list of `Investments.id` rows held in `currency`. See `investmentIdsByCurrencyLoader` for caching shape. */
+function loadInvestmentIdsForCurrency(
+  ctx: Context,
+  currency: keyof typeof CURRENCIES,
+): Promise<string[]> {
+  return investmentIdsByCurrencyLoader(ctx).load(currency);
+}
+
 /** Per-request batched loader for sold-out caps. Keys are `(assetId, currency)`; the batch fn buckets by currency (typically just `HOME_CURRENCY`) and runs one SQL per bucket covering every requested asset id. */
 const soldOutCapLoader = contextAwareDataLoader(
   () =>
@@ -643,6 +676,28 @@ export class Portfolio {
         ),
       );
     }
+    // No filter at all — fan out across every investment in the portfolio's
+    // currency rather than issuing a single unscoped key. The keys we emit
+    // here exactly match the per-investment keys each `Query.portfolios`
+    // edge's `node.timeseries` will request, so DataLoader's cache collapses
+    // them across ticks: the parent's batch (this tick) and the children's
+    // (next tick, after `Query.portfolios` resolves) share one SQL roundtrip
+    // instead of two.
+    if (this.currency in CURRENCIES) {
+      const investmentIds = await loadInvestmentIdsForCurrency(
+        ctx,
+        this.currency as keyof typeof CURRENCIES,
+      );
+      if (investmentIds.length === 0) return null;
+      return combineSeries(
+        await loader.loadMany(
+          investmentIds.map((investmentId) => ({
+            ...baseOptions,
+            investmentId,
+          })),
+        ),
+      );
+    }
     return loader.load(baseOptions);
   }
 
@@ -753,6 +808,7 @@ const DEFAULT_PAGE_SIZE = 50;
  * @gqlAnnotate semanticNonNull
  */
 export async function portfolios(
+  ctx: Context,
   filterAssetIdIn?: ID[] | null,
   /** ISO-4217 code to express all aggregates in. Investments held in any other currency are excluded. Defaults to the server's home currency. */
   currency?: string | null,
@@ -766,7 +822,11 @@ export async function portfolios(
   const limit = first ?? DEFAULT_PAGE_SIZE;
   const afterCursor = after ? decodeCursor(after) : null;
 
-  const conditions = [sql`${Investments.currency} = ${target}`];
+  // No-filter case shares its result with `Portfolio.timeseries` via
+  // `loadInvestmentIdsForCurrency` so the per-investment timeseries batch the
+  // children fan out into is also primed by the unfiltered parent's
+  // `Portfolio.timeseries` (see the loader's docstring).
+  let ids: string[];
   if (filterAssetIdIn && filterAssetIdIn.length > 0) {
     const rowsInWrapper = await db
       .selectDistinct({ investmentId: InvestmentTransactions.investmentId })
@@ -774,21 +834,19 @@ export async function portfolios(
       .where(
         inArray(InvestmentTransactions.assetId, filterAssetIdIn as string[]),
       );
-    const ids = rowsInWrapper.map((r) => r.investmentId);
-    if (ids.length === 0) {
+    const inWrapper = new Set(rowsInWrapper.map((r) => r.investmentId));
+    if (inWrapper.size === 0) {
       return buildConnection<Portfolio>([], () => "" as ID, {
         hasNextPage: false,
         hasPreviousPage: afterCursor != null,
       });
     }
-    conditions.push(inArray(Investments.id, ids));
+    const all = await loadInvestmentIdsForCurrency(ctx, target);
+    ids = all.filter((id) => inWrapper.has(id));
+  } else {
+    ids = await loadInvestmentIdsForCurrency(ctx, target);
   }
-
-  const rows = await db
-    .select({ id: Investments.id })
-    .from(Investments)
-    .where(and(...conditions))
-    .orderBy(Investments.id);
+  const rows = ids.map((id) => ({ id }));
 
   let startIndex = 0;
   if (afterCursor) {

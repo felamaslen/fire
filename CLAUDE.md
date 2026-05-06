@@ -29,6 +29,28 @@ Monorepo for a personal net worth tracker.
 - Vitest runs with `globals: true`. Never import `describe`, `it`, `test`, `expect`, `beforeAll`, `beforeEach`, `afterAll`, `afterEach`, `vi`, etc. from `vitest` — use them as globals. The types come from `"vitest/globals"` in `tsconfig.json`.
 - **All GraphQL error-message assertions use inline snapshots.** When a test expects a GraphQL operation to fail, capture the thrown / returned error message with `toThrowErrorMatchingInlineSnapshot` (for `await expect(...).rejects.…`) or `toMatchInlineSnapshot` (for error strings pulled out of a response body). Regex `toMatch(/.../)` is not enough — the exact wording is part of the test's contract and changes to it should surface as snapshot diffs, not silent passes.
 
+### Writing database queries
+
+- Prefer to use Drizzle, instead of raw SQL, where possible:
+
+**Bad**:
+
+```ts
+const rows = await db.execute(sql`
+    select *
+    from ${InvestmentValuePoints}
+    where date >= ${startDate}
+`);
+```
+
+**Good**:
+
+```ts
+const rows = await db.select()
+    .from(InvestmentValuePoints)
+    .where(gte(InvestmentValuePoints.date, startDate))
+```
+
 ## Skills to use proactively
 
 - **`commit`** (`.claude/skills/commit/SKILL.md`) — conventional commit format (`feat(scope): …`, `fix(scope): …`, etc.). Use on every commit.

@@ -1,7 +1,7 @@
 import assert from "node:assert";
 
 import DataLoader from "dataloader";
-import { differenceInDays, formatISO } from "date-fns";
+import { formatISO } from "date-fns";
 import {
   and,
   eq,
@@ -13,6 +13,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
+import { unionAll } from "drizzle-orm/pg-core";
 
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
@@ -58,6 +59,19 @@ const cacheKeyFn = (key: TimeseriesKey): string =>
 
 const MAX_POINTS = 300;
 
+/** Convert an ISO `YYYY-MM-DD` string to whole days since the Unix epoch (UTC midnight). Equivalent to `differenceInCalendarDays(d, '1970-01-01')` for a UTC `d`, but skips the `Date` allocation + DST-aware bookkeeping that date-fns does per call. */
+function daysSinceEpoch(s: string): number {
+  // `s` is always the canonical `YYYY-MM-DD` shape that Postgres emits via
+  // `date::text`; we don't validate it here.
+  return (
+    Date.UTC(
+      Number(s.slice(0, 4)),
+      Number(s.slice(5, 7)) - 1,
+      Number(s.slice(8, 10)),
+    ) / 86_400_000
+  );
+}
+
 /** Build the `WHERE` for a `(assetId | investmentId, optional dateCap)` slice over `InvestmentValuePoints`. Combined with the batch-level `currency` filter and date-range bounds in the caller. The slice's `dateCap` is applied to `ivp.date` *only* for the main scope — extra scopes drop it (see the comment at the call site). */
 function sliceCondition(slice: {
   assetId?: string;
@@ -75,6 +89,192 @@ function sliceCondition(slice: {
     parts.push(lte(InvestmentValuePoints.date, sql`${slice.dateCap}::date`));
   }
   return parts.length === 0 ? sql`true` : (and(...parts) as SQL);
+}
+
+/**
+ * Issue the per-batch SQL that returns one `(keyIndex, date, value)` row per
+ * date per key. Splits into a fast path and a fallback:
+ *
+ * - **Fast path** — when every key shares the same simple scope shape
+ *   (no `extraScopes`, no `dateCap`, and either *all* keys are scoped only by
+ *   `assetId`, *all* only by `investmentId`, or *all* unscoped): emit a single
+ *   `WHERE assetId|investmentId IN (...)` query and re-tag rows back to their
+ *   key indices in JS. Postgres plans one bitmap scan instead of N independent
+ *   index seeks, and the parser doesn't chew through N copies of the
+ *   currency/date predicates — the dominant `Portfolio.timeseries` batch (24
+ *   per-investment keys for a stacked chart) drops from ~40 ms to ~20 ms on
+ *   our prod-shaped data.
+ *
+ * - **Fallback** — when the batch mixes scope shapes, has `extraScopes`, or
+ *   has a `dateCap`: emit the existing `UNION ALL` of per-key branches.
+ *   Postgres can't fold those into one scan because each branch may have a
+ *   different `WHERE` (different cap, different OR-of-extras shape).
+ */
+async function fetchTimeseriesRows(
+  keys: ReadonlyArray<TimeseriesKey>,
+  range: {
+    currency: typeof HOME_CURRENCY;
+    startDate: SQL<string>;
+    now: string;
+  },
+): Promise<Array<{ keyIndex: number; date: string; y: string }>> {
+  const { currency, startDate, now } = range;
+  const noExtras = keys.every(
+    (k) => !k.extraScopes || k.extraScopes.length === 0,
+  );
+  const noDateCap = keys.every((k) => !k.dateCap);
+  const allUnscoped =
+    noExtras &&
+    noDateCap &&
+    keys.every((k) => k.assetId === undefined && k.investmentId === undefined);
+  const allInvestmentOnly =
+    noExtras &&
+    noDateCap &&
+    keys.every((k) => k.investmentId !== undefined && k.assetId === undefined);
+  const allAssetOnly =
+    noExtras &&
+    noDateCap &&
+    keys.every((k) => k.assetId !== undefined && k.investmentId === undefined);
+
+  const dateRange = and(
+    eq(InvestmentValuePoints.currency, currency),
+    gte(InvestmentValuePoints.date, startDate),
+    lte(InvestmentValuePoints.date, sql<string>`${now}::date`),
+  );
+
+  // The two fast-path queries below run their drizzle `select(...)` through
+  // `db.execute(qb)` rather than awaiting the builder directly. Both shapes
+  // emit the same SQL, but `db.execute` returns the raw driver result without
+  // drizzle's per-row column-name re-hydration — which adds ~20 ms over the
+  // ~20–30k rows these queries return on a real portfolio (measured ~37 ms →
+  // ~58 ms span time on the dominant per-investment query when we let
+  // drizzle hydrate). We still want the builder for SQL composition and
+  // type-safety on the column references; we just skip the row mapper.
+  if (allUnscoped) {
+    // Every key has the same WHERE — read once and broadcast to every key.
+    // (DataLoader's `cacheKeyFn` already de-dupes identical keys, so in
+    // practice `keys.length` is 1 here, but broadcasting keeps us correct
+    // either way.)
+    const result = await db.execute<{ date: string; y: string }>(
+      db
+        .select({
+          date: sql<string>`${InvestmentValuePoints.date}::text`.as("date"),
+          y: sql<string>`SUM(${InvestmentValuePoints.value})::bigint`.as("y"),
+        })
+        .from(InvestmentValuePoints)
+        .where(dateRange)
+        .groupBy(InvestmentValuePoints.date)
+        .orderBy(InvestmentValuePoints.date),
+    );
+    const rows = result.rows ?? result;
+    const out: Array<{ keyIndex: number; date: string; y: string }> = [];
+    for (const row of rows) {
+      for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+        out.push({ keyIndex, date: row.date, y: row.y });
+      }
+    }
+    return out;
+  }
+
+  if (allInvestmentOnly || allAssetOnly) {
+    const col = allInvestmentOnly
+      ? InvestmentValuePoints.investmentId
+      : InvestmentValuePoints.assetId;
+    const idByKeyIndex = keys.map((k) =>
+      allInvestmentOnly ? (k.investmentId as string) : (k.assetId as string),
+    );
+    const ids = [...new Set(idByKeyIndex)];
+    // Multiple keys could resolve to the same id (DataLoader's cache normally
+    // collapses these, but defending against it is cheap).
+    const keyIndexById = new Map<string, number[]>();
+    idByKeyIndex.forEach((id, i) => {
+      const list = keyIndexById.get(id) ?? [];
+      list.push(i);
+      keyIndexById.set(id, list);
+    });
+    // `id: sql\`...\`.as("id")` instead of `id: col` so the raw driver result
+    // (which keys rows by SQL column name, not by the builder's JS-side
+    // shape) lands on `row.id` rather than `row.investmentId` / `row.assetId`.
+    const result = await db.execute<{ id: string; date: string; y: string }>(
+      db
+        .select({
+          id: sql<string>`${col}`.as("id"),
+          date: sql<string>`${InvestmentValuePoints.date}::text`.as("date"),
+          y: sql<string>`SUM(${InvestmentValuePoints.value})::bigint`.as("y"),
+        })
+        .from(InvestmentValuePoints)
+        .where(and(dateRange, inArray(col, ids)))
+        .groupBy(col, InvestmentValuePoints.date)
+        .orderBy(col, InvestmentValuePoints.date),
+    );
+    const rows = result.rows ?? result;
+    const out: Array<{ keyIndex: number; date: string; y: string }> = [];
+    for (const row of rows) {
+      const indices = keyIndexById.get(row.id);
+      if (!indices) continue;
+      for (const keyIndex of indices) {
+        out.push({ keyIndex, date: row.date, y: row.y });
+      }
+    }
+    return out;
+  }
+
+  // Fallback — UNION ALL of per-key branches. Used when the batch mixes
+  // shapes, or any key has `extraScopes` / `dateCap` (each of which makes the
+  // branch's `WHERE` different from the others, so a single IN-list can't
+  // express it).
+  const branchSelects = keys.flatMap((key, keyIndex) => {
+    const slices: {
+      assetId?: string;
+      investmentId?: string;
+      dateCap?: string | null;
+    }[] = [
+      {
+        ...(key.assetId !== undefined ? { assetId: key.assetId } : {}),
+        ...(key.investmentId !== undefined
+          ? { investmentId: key.investmentId }
+          : {}),
+        ...(key.dateCap !== undefined ? { dateCap: key.dateCap } : {}),
+      },
+      ...(key.extraScopes ?? []).map((s) => ({
+        assetId: s.assetId,
+        ...(key.investmentId !== undefined
+          ? { investmentId: key.investmentId }
+          : {}),
+      })),
+    ];
+    return slices.map((slice) =>
+      db
+        .select({
+          keyIndex: sql<number>`${sql.raw(keyIndex.toString())}::int`.as(
+            "keyIndex",
+          ),
+          date: InvestmentValuePoints.date,
+          value: InvestmentValuePoints.value,
+        })
+        .from(InvestmentValuePoints)
+        .where(and(dateRange, sliceCondition(slice))),
+    );
+  });
+  // `unionAll(a, b, ...rest)` is variadic — assert there's at least one
+  // branch (DataLoader never invokes the batch fn with zero keys, and every
+  // key contributes at least the main slice).
+  assert(branchSelects.length > 0, "expected at least one timeseries branch");
+  const [first, second, ...rest] = branchSelects;
+  const branches = db
+    .$with("branches")
+    .as(second === undefined ? first : unionAll(first, second, ...rest));
+  const rows = await db
+    .with(branches)
+    .select({
+      keyIndex: branches.keyIndex,
+      date: sql<string>`${branches.date}::text`.as("date"),
+      y: sql<string>`SUM(${branches.value})::bigint`.as("y"),
+    })
+    .from(branches)
+    .groupBy(branches.keyIndex, branches.date)
+    .orderBy(branches.keyIndex, branches.date);
+  return rows;
 }
 
 /**
@@ -105,14 +305,24 @@ export const loadTimeseries = contextAwareDataLoader(
         const now =
           keys[0].dateCap ?? formatISO(new Date(), { representation: "date" });
 
-        // Earliest in-scope IVP date with a non-zero value across the
-        // whole batch — anchors the X-axis for `period: "ALL"` and clamps
-        // the lower bound for finite periods. Filtering on `value > 0`
-        // here skips leading days where the only contribution is from a
-        // sold-out wrapper's explicit value=0 rows (those are meaningful
-        // mid-chart, where a held position dropped to zero, but as
-        // leading rows they just push the chart's `initialDate` back into
-        // an empty period).
+        // `firstDate`: earliest in-scope IVP date with a non-zero value
+        // across the whole batch — anchors the X-axis for `period: "ALL"`
+        // and clamps the lower bound for finite periods. Filtering on
+        // `value > 0` here skips leading days where the only contribution
+        // is from a sold-out wrapper's explicit value=0 rows (those are
+        // meaningful mid-chart, where a held position dropped to zero, but
+        // as leading rows they just push the chart's `initialDate` back
+        // into an empty period).
+        //
+        // We inline `firstDate` as a scalar subquery in the main query's
+        // `WHERE date >= …` rather than `SELECT min(date)`-then-roundtrip:
+        // saves one network roundtrip per batch (~3–8 ms on the profiled
+        // PortfolioChart) and Postgres still scans IVP just twice (the
+        // subquery and the outer scan), the same as before. When the
+        // subquery resolves to `NULL` (no matching rows), `date >= NULL`
+        // excludes everything, the outer query returns no rows, and the
+        // existing "empty result → null per key" branch in
+        // `fetchTimeseriesRows`'s callers handles it.
         const allKeyAssetIds = (() => {
           if (!keys.every((k) => k.assetId !== undefined)) return null;
           const set = new Set<string>();
@@ -127,8 +337,8 @@ export const loadTimeseries = contextAwareDataLoader(
         )
           ? [...new Set(keys.map((k) => k.investmentId as string))]
           : null;
-        const firstDateRows = await db
-          .select({ minDate: min(InvestmentValuePoints.date) })
+        const firstDateExpr = sql<string>`(${db
+          .select({ d: min(InvestmentValuePoints.date) })
           .from(InvestmentValuePoints)
           .where(
             and(
@@ -144,24 +354,18 @@ export const loadTimeseries = contextAwareDataLoader(
                   )
                 : undefined,
             ),
-          );
-        const firstDateStr = firstDateRows[0]?.minDate;
-        if (!firstDateStr) {
-          // No matching IVP rows — every key gets `null`. Common when a
-          // wrapper is filtered down to investments that never traded in it.
-          return keys.map(() => null);
-        }
+          )})`;
 
         const startDate: SQL<string> = (() => {
           switch (keys[0].period) {
             case "ALL":
-              return sql<string>`${firstDateStr}::date`;
+              return sql<string>`${firstDateExpr}::date`;
             case "YEAR":
-              return sql<string>`greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} year')::date, ${firstDateStr}::date)`;
+              return sql<string>`greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} year')::date, ${firstDateExpr}::date)`;
             case "MONTH":
-              return sql<string>`greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} month')::date, ${firstDateStr}::date)`;
+              return sql<string>`greatest((${now}::timestamptz - interval '${sql.raw(keys[0].length.toString())} month')::date, ${firstDateExpr}::date)`;
             case "YTD":
-              return sql<string>`greatest(date_trunc('year', ${now}::timestamptz)::date, ${firstDateStr}::date)`;
+              return sql<string>`greatest(date_trunc('year', ${now}::timestamptz)::date, ${firstDateExpr}::date)`;
             default:
               throw new UnreachableCaseError(keys[0].period);
           }
@@ -184,58 +388,17 @@ export const loadTimeseries = contextAwareDataLoader(
         // upstream: `effectiveAssetFilter` only emits extras for
         // `InvestmentTransfers` source wrappers, which by codebase
         // convention are not booked against after the transfer.
-        const branches: SQL[] = [];
-        keys.forEach((key, keyIndex) => {
-          const slices: {
-            assetId?: string;
-            investmentId?: string;
-            dateCap?: string | null;
-          }[] = [
-            {
-              ...(key.assetId !== undefined ? { assetId: key.assetId } : {}),
-              ...(key.investmentId !== undefined
-                ? { investmentId: key.investmentId }
-                : {}),
-              ...(key.dateCap !== undefined ? { dateCap: key.dateCap } : {}),
-            },
-            ...(key.extraScopes ?? []).map((s) => ({
-              assetId: s.assetId,
-              ...(key.investmentId !== undefined
-                ? { investmentId: key.investmentId }
-                : {}),
-            })),
-          ];
-          for (const slice of slices) {
-            branches.push(sql`
-              SELECT ${sql.raw(keyIndex.toString())}::int AS "keyIndex",
-                     ${InvestmentValuePoints.date} AS "date",
-                     ${InvestmentValuePoints.value} AS "value"
-              FROM ${InvestmentValuePoints}
-              WHERE ${eq(InvestmentValuePoints.currency, currency)}
-                AND ${gte(InvestmentValuePoints.date, startDate)}
-                AND ${lte(InvestmentValuePoints.date, sql`${now}::date`)}
-                AND ${sliceCondition(slice)}
-            `);
-          }
-        });
-        const unionAll = sql.join(branches, sql` UNION ALL `);
-
         type Row = { keyIndex: number; date: string; y: string };
-        const rows = await db.execute<Row>(sql`
-          WITH branches AS (${unionAll})
-          SELECT
-            "keyIndex",
-            "date"::text AS "date",
-            SUM("value")::bigint AS "y"
-          FROM branches
-          GROUP BY "keyIndex", "date"
-          ORDER BY "keyIndex", "date"
-        `);
+        const decoded = await fetchTimeseriesRows(keys, {
+          currency,
+          startDate,
+          now,
+        });
 
         // Build per-key (date → y) maps for cheap downsampling lookup.
         const seriesByKey = new Map<number, Map<string, number>>();
         const allDates = new Set<string>();
-        for (const r of rows.rows ?? rows) {
+        for (const r of decoded as Row[]) {
           let m = seriesByKey.get(r.keyIndex);
           if (!m) {
             m = new Map();
@@ -287,6 +450,14 @@ export const loadTimeseries = contextAwareDataLoader(
         );
 
         const initialDate = new Date(sampledDates[0]);
+        // Pre-compute the X-axis (days since `sampledDates[0]`) once for the
+        // whole batch — the values are the same for every key, and parsing
+        // `YYYY-MM-DD` directly via `Date.UTC` skips the DST-aware
+        // `differenceInDays(new Date(d), initialDate)` work date-fns does
+        // per-call (~9% of the request's wall time per Pyroscope).
+        const xs = sampledDates.map(daysSinceEpoch);
+        const x0 = xs[0];
+        for (let i = 0; i < xs.length; i++) xs[i] -= x0;
 
         return keys.map<PortfolioTimeseries | null>((key, keyIndex) => {
           const series = seriesByKey.get(keyIndex);
@@ -333,8 +504,8 @@ export const loadTimeseries = contextAwareDataLoader(
           return {
             currency,
             initialDate,
-            points: sampledDates.map((d, i) => ({
-              x: differenceInDays(new Date(d), initialDate),
+            points: xs.map((x, i) => ({
+              x,
               y: Math.round(
                 Money.fromMinorDenomination(ys[i], currency).amount,
               ),

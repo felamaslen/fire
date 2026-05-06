@@ -157,6 +157,7 @@ export class Investment {
     const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
+      currency: this.currency,
       ...(dateCap ? { dateCap } : {}),
     });
     if (s.priceLatest === null || s.currency === null) return null;
@@ -172,6 +173,7 @@ export class Investment {
     const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
+      currency: this.currency,
       ...(dateCap ? { dateCap } : {}),
     });
     return (s.priceLatestCachedAt as DateTime | null) ?? null;
@@ -186,6 +188,7 @@ export class Investment {
     const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
+      currency: this.currency,
       ...(dateCap ? { dateCap } : {}),
     });
     return s.priceLatestCachedDate ?? null;
@@ -200,7 +203,10 @@ export class Investment {
     if (!(this.asset instanceof InvestmentStock)) return null;
     const { dateCap } = await effectiveAssetFilter(ctx, filterAssetIdIn);
     if (dateCap) return null;
-    const s = await loadInvestmentStats(ctx, { investmentId: this.id });
+    const s = await loadInvestmentStats(ctx, {
+      investmentId: this.id,
+      currency: this.currency,
+    });
     if (!s.live) return null;
     return new InvestmentPriceLatest(
       Money.fromMinorDenomination(s.live.priceMinor, s.live.currency),
@@ -217,8 +223,15 @@ export class Investment {
   ): Promise<InvestmentPosition> {
     const { effectiveAssetIds, extraScopes, dateCap } =
       await effectiveAssetFilter(ctx, filterAssetIdIn);
+    // Pass `currency` so the stats DataLoader's `cacheKeyFn` matches the key
+    // used by `Portfolio.timeseries`'s per-investment live overlay (which
+    // always passes `currency: HOME_CURRENCY`). Without it, the same
+    // `(investmentId)` slice gets two distinct cache slots and fires twice
+    // per request — once when the chart resolves the live overlay, again
+    // here when each `node.investment.position` runs in a later tick.
     const s = await loadInvestmentStats(ctx, {
       investmentId: this.id,
+      currency: this.currency,
       assetIds:
         effectiveAssetIds && effectiveAssetIds.length > 0
           ? effectiveAssetIds

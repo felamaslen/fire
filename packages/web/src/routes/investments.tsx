@@ -794,7 +794,7 @@ function InvestmentsList({
             type="checkbox"
             checked={hideSold}
             onChange={(e) => setHideSold(e.target.checked)}
-            className="accent-foreground"
+            className="md:accent-foreground"
           />
           Hide sold or transferred investments
         </label>
