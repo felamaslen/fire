@@ -359,12 +359,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 costBasis: {
-                    description: "Average price paid per share currently held, excluding fees and taxes. `null` when no units are held.",
+                    description: "Average price paid per share currently held under FIFO lot accounting (oldest buys consumed first by sells). DRIP buys carry zero cost \u2014 the dividend was already income, so reinvested shares contribute their full market value to total return rather than appearing as new capital. Computed against the chart-frozen units (so for a wound-down wrapper this reports the per-share basis at the pre-sell-off peak). `null` when no units are held at the chart cap.",
                     name: "costBasis",
                     type: MoneyType
                 },
                 costBasisWithFees: {
-                    description: "Average price paid per share currently held, including fees and taxes. `null` when no units are held.",
+                    description: "`costBasis` plus a flat `(taxes + fees) / unitsHeld` charge per held unit. Fees and taxes are not lot-tracked, so this approximation overstates fees per remaining unit when there have been sells. `null` when no units are held.",
                     name: "costBasisWithFees",
                     type: MoneyType
                 },
@@ -378,10 +378,25 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "dailyGainValue",
                     type: MoneyType
                 },
+                feesAndTaxes: {
+                    description: "Total fees and taxes paid across every transaction in the today-flavoured slice. Detracts from `totalGain`: the breakdown `unrealisedGain + realisedGain \u2212 feesAndTaxes` reconciles to `totalGain`.",
+                    name: "feesAndTaxes",
+                    type: new GraphQLNonNull(MoneyType)
+                },
                 percentGain: {
-                    description: "Total return as a fraction of `totalCost`. `null` until at least one price is known, or when `totalCost` is zero.",
+                    description: "Total return as a fraction of `totalCost` (gross deployed capital, DRIP excluded). `null` until at least one price is known, or when `totalCost` is zero.",
                     name: "percentGain",
                     type: GraphQLFloat
+                },
+                realisedGain: {
+                    description: "Realised P&L from sells under FIFO accounting: each sell's proceeds minus the cost of the lots it consumed (DRIP lots at zero cost). Cumulative across all sells in the today-flavoured slice; `0` when no sells have happened.",
+                    name: "realisedGain",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                realisedValue: {
+                    description: "Cumulative realised proceeds from sells (sum of `|units| \u00D7 price` over every sell tx in the today-flavoured slice, in pre-future-split currency). Surfaced beneath `totalValue` so a position that's been trimmed shows both what's still in the market and what's already been taken out.",
+                    name: "realisedValue",
+                    type: new GraphQLNonNull(MoneyType)
                 },
                 reinvested: {
                     description: "DRIP (dividend-reinvestment) activity on this position.",
@@ -389,17 +404,17 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(InvestmentReinvestedType)
                 },
                 totalCost: {
-                    description: "Net capital-in for the units currently held (excluding fees and taxes): each buy adds its consideration, each sell subtracts it. For a fully-sold position this is gross buy cost.",
+                    description: "Gross capital deployed \u2014 cumulative buy cost excluding DRIP (DRIP buys are reinvested dividends, not new capital), plus paid fees and taxes. Independent of how much has subsequently been sold; never goes negative even when realised proceeds exceed deployed capital.",
                     name: "totalCost",
                     type: new GraphQLNonNull(MoneyType)
                 },
                 totalGain: {
-                    description: "Total return (realised + unrealised) on the position \u2014 `totalValue - totalCost`. `null` until at least one price is known.",
+                    description: "Total return (realised + unrealised) on the position. Equivalent to `marketValueOfHeld + realisedValue \u2212 totalCost` evaluated at \"today\" (transfer cap only). `null` until a price is known for a still-held position.",
                     name: "totalGain",
                     type: MoneyType
                 },
                 totalValue: {
-                    description: "Current market value of units held \u2014 or, for a fully-sold position, the realised sell proceeds. `null` until at least one price is known for the investment.",
+                    description: "Current market value of units held \u2014 or, for a fully-sold position, the realised sell proceeds. For a wound-down wrapper viewed via the chart cap this freezes at the pre-sell-off peak. `null` until at least one price is known for the investment.",
                     name: "totalValue",
                     type: MoneyType
                 },
@@ -407,6 +422,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     description: "Net units held.",
                     name: "units",
                     type: new GraphQLNonNull(GraphQLFloat)
+                },
+                unrealisedGain: {
+                    description: "Unrealised P&L on currently-held units: `marketValueOfHeld \u2212 costOfRemainingLots` (FIFO, DRIP at zero cost) at \"today\". For a wound-down wrapper this is `0` even though the headline `totalValue` is frozen at peak \u2014 the breakdown answers \"what's still on the table\", which post-wind-down is nothing. `null` when held units have no known price.",
+                    name: "unrealisedGain",
+                    type: MoneyType
                 }
             };
         }
@@ -2748,6 +2768,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return source.dailyGainValue(context);
                     }
                 },
+                feesAndTaxes: {
+                    description: "Total fees and taxes paid across every transaction in the portfolio scope. Detracts from `totalGain`: the breakdown `unrealisedGain + realisedGain \u2212 feesAndTaxes` reconciles to `totalGain`.",
+                    name: "feesAndTaxes",
+                    type: new GraphQLNonNull(MoneyType),
+                    resolve(source, _args, context) {
+                        return source.feesAndTaxes(context);
+                    }
+                },
                 id: {
                     description: "Synthetic, stable identifier derived from the filters + currency + `skipLive`. Used for client-side cache normalisation; not meaningful as an external key. `skipLive` is part of the id so a page that reads both the cached-close snapshot and the live snapshot keeps them as separate entities \u2014 otherwise Apollo would merge them and the first response's values would be clobbered by the second.",
                     name: "id",
@@ -2764,6 +2792,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: GraphQLFloat,
                     resolve(source, _args, context) {
                         return source.percentGain(context);
+                    }
+                },
+                realisedGain: {
+                    description: "Cumulative realised P&L from sells across every investment in the portfolio, under FIFO lot accounting (oldest buys consumed first; DRIP lots at zero cost). Sums to `totalGain` together with `unrealisedGain` minus `feesAndTaxes`.",
+                    name: "realisedGain",
+                    type: new GraphQLNonNull(MoneyType),
+                    resolve(source, _args, context) {
+                        return source.realisedGain(context);
                     }
                 },
                 timeseries: {
@@ -2783,7 +2819,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 totalCost: {
-                    description: "Net capital at stake: gross buys minus gross sells across every investment, including ones that are now fully sold (whose sell proceeds drag the number down or even negative when realised gains exceed gross bought). Excludes fees and taxes.",
+                    description: "Gross capital deployed: cumulative buy cost across every investment (excluding DRIP \u2014 reinvested dividends are not new capital), plus paid fees and taxes (real outlays that reduce return). Independent of how much has subsequently been sold; never goes negative.",
                     name: "totalCost",
                     type: new GraphQLNonNull(MoneyType),
                     resolve(source, _args, context) {
@@ -2791,7 +2827,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 totalGain: {
-                    description: "Total return (realised + unrealised) on the held positions \u2014 `totalValue \u2212 totalCost`. `totalValue` already excludes cash, so freshly-deposited funds don't read as a gain.",
+                    description: "Total return (realised + unrealised) on the portfolio \u2014 `marketValueOfHeld + realisedSellProceeds \u2212 totalCost`. DRIP shares contribute their full market value (zero cost via `totalCost`); fees and taxes detract via `totalCost`. Cash float is excluded from `totalValue`, so freshly-deposited funds don't read as a gain.",
                     name: "totalGain",
                     type: MoneyType,
                     resolve(source, _args, context) {
@@ -2799,11 +2835,19 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 totalValue: {
-                    description: "Current market value of the held positions in the filtered portfolio \u2014 `\u03A3 unitsHeld_in_filter \u00D7 priceLatest_investment`. Fully-sold positions contribute nothing; their realised gain is reflected by pulling `totalCost` down. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) \u2014 a holdings + cash combined number conflates investment performance with deposit timing.",
+                    description: "Current market value of the held positions in the filtered portfolio \u2014 `\u03A3 unitsHeld_in_filter \u00D7 priceLatest_investment`. Fully-sold positions contribute nothing on the today-flavoured view; for a wound-down wrapper we use the chart cap so the headline matches the frozen pre-sell-off chart end value. Positions with no known price contribute zero rather than nulling the whole aggregate. Cash held in the wrapper is *not* added in here (use `Portfolio.cash` separately) \u2014 a holdings + cash combined number conflates investment performance with deposit timing.",
                     name: "totalValue",
                     type: MoneyType,
                     resolve(source, _args, context) {
                         return source.totalValue(context);
+                    }
+                },
+                unrealisedGain: {
+                    description: "Unrealised P&L on currently-held positions: `marketValueOfHeld \u2212 costOfRemainingFifoLots` summed across the portfolio (DRIP lots at zero cost). `null` when at least one held position has no known price (the FIFO breakdown can't be reconciled without a price for every lot).",
+                    name: "unrealisedGain",
+                    type: MoneyType,
+                    resolve(source, _args, context) {
+                        return source.unrealisedGain(context);
                     }
                 },
                 xirr: {

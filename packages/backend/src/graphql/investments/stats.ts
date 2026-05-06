@@ -736,41 +736,45 @@ function triggerLiveRefreshes(rows: SliceRow[]): void {
 
 // ---- Derived helpers -----------------------------------------------------
 //
-// Used by the single-investment-scoped `InvestmentPosition` resolver, which
-// wants the "position" convention — a fully-sold investment reports its
-// realised proceeds as `totalValue` and its gross buy-cost as `totalCost`.
-// Multi-investment slices should use `totalValueMinor` / `unitsPriceSum`
-// directly.
+// Total return is computed from aggregate slice numbers, not lot-level FIFO
+// ordering — the breakdown into realised vs unrealised depends on FIFO, but
+// the *sum* (realised + unrealised) only needs `totalValue + sellProceeds −
+// gross-buy-cost-excluding-DRIP`. DRIP buys are excluded from `totalCost`
+// because the underlying dividend was already income; treating reinvested
+// shares as new capital would double-count the dividend.
 
 export function isFullySold(s: InvestmentStats): boolean {
   return s.unitsHeld === 0 && (s.buyCostSum > 0 || s.sellValueSum > 0);
 }
 
-export function costBasis(s: InvestmentStats): number | null {
-  if (s.unitsHeld === 0) return null;
-  return s.unitsPriceSum / s.unitsHeld;
+/** Gross capital deployed: cumulative buy cost (excluding DRIP — those are dividends-as-shares, not new capital), plus paid fees and taxes (real outlays that reduce return). Independent of how much has subsequently been sold; never goes negative. */
+export function totalCostPosition(s: InvestmentStats): number {
+  return s.buyCostSum - s.reinvestedCostSum + s.feesSum + s.taxesSum;
 }
 
-export function costBasisWithFees(s: InvestmentStats): number | null {
-  if (s.unitsHeld === 0) return null;
-  return (s.unitsPriceSum + s.taxesSum + s.feesSum) / s.unitsHeld;
-}
-
+/** Current market value of held units; for a fully-sold position falls back to realised sell proceeds so a closed-out investment still has a meaningful "value" headline. `null` until at least one price is known for a still-held position. */
 export function totalValuePosition(s: InvestmentStats): number | null {
   if (isFullySold(s)) return s.sellValueSum;
   if (s.priceLatest === null) return null;
   return s.unitsHeld * s.priceLatest;
 }
 
-export function totalCostPosition(s: InvestmentStats): number {
-  if (isFullySold(s)) return s.buyCostSum;
-  return s.unitsPriceSum;
+/** Market value of currently-held units only (no fully-sold fallback). Used as the unrealised side of total return. `null` when held units have no known price; `0` when no units are held. */
+function heldMarketValue(s: InvestmentStats): number | null {
+  if (s.unitsHeld === 0) return 0;
+  if (s.priceLatest === null) return null;
+  return s.unitsHeld * s.priceLatest;
 }
 
+/**
+ * Total return = unrealised + realised. Equivalent to `marketValueOfHeld + sellProceeds − totalCost` — DRIPs at zero cost are baked in via `totalCost`.
+ *
+ * `null` only when there's no price for a still-held position (so unrealised value is unknown). Returns 0 for an empty investment.
+ */
 export function totalGainPosition(s: InvestmentStats): number | null {
-  const v = totalValuePosition(s);
-  if (v === null) return null;
-  return v - totalCostPosition(s);
+  const m = heldMarketValue(s);
+  if (m === null) return null;
+  return m + s.sellValueSum - totalCostPosition(s);
 }
 
 export function percentGainPosition(s: InvestmentStats): number | null {
