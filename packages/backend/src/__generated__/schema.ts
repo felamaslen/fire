@@ -458,6 +458,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "fees",
                     type: new GraphQLNonNull(MoneyType)
                 },
+                fileUrl: {
+                    description: "Signed, short-lived URL to the uploaded contract-note file (PDF), or `null` if none was uploaded or the current session isn't allowed to read it. The URL's signature covers the storage key + expiry so the `/files/*` endpoint can serve it without the browser attaching an `Authorization` header.",
+                    name: "fileUrl",
+                    type: GraphQLString,
+                    resolve(source, _args, context) {
+                        return source.fileUrl(context);
+                    }
+                },
                 id: {
                     name: "id",
                     type: new GraphQLNonNull(GraphQLID)
@@ -4687,6 +4695,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                             description: "Broker / platform fees paid. Must match the investment's currency. Defaults to 0.",
                             type: MoneyInputType
                         },
+                        file: {
+                            description: "Multipart file upload (per graphql-multipart-request-spec). Stored in the uploads bucket, scoped to the caller's session; the resolved key is persisted on the row. Mutually exclusive with `fileKey`.",
+                            type: UploadType
+                        },
+                        fileKey: {
+                            description: "Already-stored upload key (returned by `investmentContractNoteImport.fileKey`) to attach to the new transaction without re-uploading. Mutually exclusive with `file`.",
+                            type: GraphQLString
+                        },
                         investmentId: {
                             type: new GraphQLNonNull(GraphQLID)
                         },
@@ -4704,7 +4720,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args, context) {
-                        return mutationInvestmentTransactionCreateResolver(context, args.investmentId, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                        return mutationInvestmentTransactionCreateResolver(context, args.investmentId, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip, args.file, args.fileKey);
                     }
                 },
                 investmentTransactionDelete: {
@@ -4721,12 +4737,16 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     }
                 },
                 investmentTransactionUpdate: {
-                    description: "Partial update to a transaction. Omitted / null fields are left unchanged.",
+                    description: "Partial update to a transaction. Omitted / null fields are left unchanged.\n\nPass `file` to attach (or replace) the contract-note PDF; pass `clearFile: true` to remove an existing one. `file` and `clearFile` are mutually exclusive \u2014 pass one or the other, not both.",
                     name: "investmentTransactionUpdate",
                     type: new GraphQLNonNull(InvestmentTransactionType),
                     args: {
                         assetId: {
                             type: GraphQLID
+                        },
+                        clearFile: {
+                            description: "Clear an existing contract-note attachment. Mutually exclusive with `file`.",
+                            type: GraphQLBoolean
                         },
                         date: {
                             type: DateType
@@ -4736,6 +4756,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         },
                         fees: {
                             type: MoneyInputType
+                        },
+                        file: {
+                            description: "Replacement contract-note upload.",
+                            type: UploadType
                         },
                         id: {
                             type: new GraphQLNonNull(GraphQLID)
@@ -4751,7 +4775,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args, context) {
-                        return mutationInvestmentTransactionUpdateResolver(context, args.id, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip);
+                        return mutationInvestmentTransactionUpdateResolver(context, args.id, args.assetId, args.date, args.units, args.price, args.taxes, args.fees, args.drip, args.file, args.clearFile);
                     }
                 },
                 investmentUpdate: {
