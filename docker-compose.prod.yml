@@ -14,6 +14,7 @@ services:
       UPLOADS_DIR: /data/uploads
       YAHOO_CACHE_PATH: /data/cache/yahoo.json
       PORT: 4000
+      API_URL: ${API_URL:-}
       # OTel config flows in from the host's `.env` (or shell). Defaults to
       # off so the backend doesn't silently depend on a running collector.
       # Point `OTEL_EXPORTER_OTLP_ENDPOINT` at a hosted collector (e.g.
