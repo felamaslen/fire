@@ -356,8 +356,9 @@ export async function investmentContractNoteImport(
     asset,
     new Date(`${parsed.date}T00:00:00Z`),
     signedUnits as Float,
+    // No rounding: UK contract notes routinely quote sub-penny precision (e.g. 15.66392p) and the on-disk `InvestmentTransactions.price` column is `double precision`, so we surface every digit Gemini extracted and let the user decide what to keep on review.
     Money.fromMinorDenomination(
-      Math.round(priceMajor.amount * 10 ** scaleOf(priceMajor.currency)),
+      priceMajor.amount * 10 ** scaleOf(priceMajor.currency),
       priceMajor.currency,
     ),
     parsed.taxes

@@ -182,6 +182,38 @@ it("parses Gemini's response, matches investment + wrapper, and converts GBp pri
   expect(result.drip).toBe(false);
 });
 
+it("preserves sub-penny precision in the unit price — a 15.66392p quote round-trips as 0.1566392 GBP", async () => {
+  const investmentId = await createInvestment({
+    name: "Apple",
+    ticker: "AAPL",
+  });
+
+  mockGeminiResponse({
+    direction: "BUY",
+    units: 100,
+    // Real-world example: a fractional-share platform fills at sub-penny
+    // tick sizes. The resolver must surface every digit so the review form
+    // shows what's printed on the contract note (and the float-precision
+    // `InvestmentTransactions.price` column can store it without rounding).
+    price: { amount: 15.66392, currency: "GBp" },
+    date: "2025-04-12",
+    investmentId,
+    assetId: null,
+  });
+
+  const { investmentContractNoteImport: result } = await runGql(
+    ImportMutation,
+    {
+      file: new TestUpload(FIXTURE_PATH),
+      investmentId: null,
+    },
+  );
+
+  // 15.66392 GBp = 0.1566392 GBP — no rounding to 0.16.
+  expect(result.price.currency).toBe("GBP");
+  expect(result.price.amount).toBeCloseTo(0.1566392, 10);
+});
+
 it("locks investment when an explicit investmentId is supplied, even if Gemini suggests a different match", async () => {
   const target = await createInvestment({ name: "Apple", ticker: "AAPL" });
   const other = await createInvestment({ name: "Microsoft", ticker: "MSFT" });
