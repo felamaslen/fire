@@ -6,7 +6,7 @@
 # to disk on either side.
 #
 # Usage:
-#   scripts/copy-prod-db.sh --host myserver [--location /opt/fire] [--yes]
+#   scripts/pull-prod-db.sh --host myserver [--location /opt/fire] [--yes]
 #
 # `--host` is passed straight to `ssh`, so any alias from `~/.ssh/config` works.
 # `--yes` skips the "are you sure" prompt (useful for scripted runs).
