@@ -12,7 +12,10 @@
     "typecheck": "pnpm -r typecheck"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["libpq"]
+    "onlyBuiltDependencies": [
+      "libpq",
+      "@datadog/pprof"
+    ]
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -36,6 +36,7 @@
     "@opentelemetry/sdk-node": "^0.215.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "@opentelemetry/winston-transport": "^0.25.0",
+    "@pyroscope/nodejs": "^0.4.11",
     "dataloader": "^2.2.3",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.45.2",
