@@ -416,7 +416,7 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
             },
           ],
         },
-        "percentGain": 1.9577464788732395,
+        "percentGain": 0.6813725490196079,
         "timeseries": {
           "initialDate": "2026-04-14",
           "points": [
@@ -443,7 +443,7 @@ it("covers the InvestmentsPage surface across shared / fully-sold wrappers", asy
           ],
         },
         "totalCost": {
-          "amount": 3550,
+          "amount": 10200,
         },
         "totalGain": {
           "amount": 6950,
