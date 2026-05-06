@@ -5,10 +5,11 @@ import {
   useNavigate,
   useSearch,
 } from "@tanstack/react-router";
-import { Plus, Trash2 } from "lucide-react";
+import { FileText, Plus, Trash2 } from "lucide-react";
 import { Suspense, useState } from "react";
 import { toast } from "sonner";
 
+import { ContractNoteImportDialog } from "@/components/contract-note-import-dialog";
 import { Figure, FigureDocument } from "@/components/figure";
 import {
   InvestmentForm,
@@ -563,7 +564,23 @@ function TransactionsSection({
 
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<TransactionRow | null>(null);
+  const [contractNoteFile, setContractNoteFile] = useState<File | null>(null);
+  const [contractNoteOpen, setContractNoteOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const onEdit = (t: TransactionRow) => setEditing(t);
+
+  const handleDroppedFile = (file: File | undefined) => {
+    if (!file) return;
+    if (
+      file.type !== "application/pdf" &&
+      !file.name.toLowerCase().endsWith(".pdf")
+    ) {
+      toast.error("Only PDF files are supported.");
+      return;
+    }
+    setContractNoteFile(file);
+    setContractNoteOpen(true);
+  };
   const [deleteTx] = useMutation(InvestmentTransactionDeleteDocument, {
     refetchQueries: [
       "InvestmentTransactions",
@@ -575,13 +592,59 @@ function TransactionsSection({
   });
 
   return (
-    <section className="space-y-2">
+    <section
+      className="space-y-2"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        handleDroppedFile(e.dataTransfer.files?.[0]);
+      }}
+    >
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold">Transactions</h3>
-        <Button size="sm" onClick={() => setAdding(true)}>
-          <Plus className="mr-1 h-4 w-4" /> Add
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setContractNoteFile(null);
+              setContractNoteOpen(true);
+            }}
+          >
+            <FileText className="mr-1 h-4 w-4" /> Import contract note
+          </Button>
+          <Button size="sm" onClick={() => setAdding(true)}>
+            <Plus className="mr-1 h-4 w-4" /> Add
+          </Button>
+        </div>
       </div>
+      <div
+        className={`rounded border-2 border-dashed px-3 py-2 text-center text-xs transition-colors ${
+          dragOver
+            ? "border-foreground bg-accent/40 text-foreground"
+            : "border-muted-foreground/30 text-muted-foreground"
+        }`}
+      >
+        Drop a contract note PDF here to import it.
+      </div>
+      {contractNoteOpen && (
+        <Suspense fallback={null}>
+          <ContractNoteImportDialog
+            initialFile={contractNoteFile}
+            lockedInvestmentId={investmentId}
+            onClose={() => {
+              setContractNoteOpen(false);
+              setContractNoteFile(null);
+            }}
+            onSaved={onMutate}
+          />
+        </Suspense>
+      )}
 
       {adding && (
         <TransactionForm
