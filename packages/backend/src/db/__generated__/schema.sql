@@ -172,6 +172,7 @@ CREATE TABLE "InvestmentTransactions" (
   "currency" "CurrencyCode" NOT NULL,
   "date" date NOT NULL,
   "drip" boolean DEFAULT FALSE NOT NULL,
+  "fileUrl" text,
   "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT "InvestmentTransactions_price_ck" CHECK ("InvestmentTransactions"."price" >= 0),
