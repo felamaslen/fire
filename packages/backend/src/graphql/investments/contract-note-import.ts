@@ -3,7 +3,18 @@ import { createHash } from "node:crypto";
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  exists,
+  gt,
+  inArray,
+  notExists,
+  or,
+  sql,
+  sum,
+} from "drizzle-orm";
 import type { Float, ID } from "grats";
 import { LRUCache } from "lru-cache";
 import { z } from "zod";
@@ -249,11 +260,42 @@ export async function investmentContractNoteImport(
   const sha = createHash("sha256").update(buffer).digest("hex");
   const cacheKey = `${sha}:${investmentId ?? ""}`;
 
-  const investmentRows = await db.select().from(Investments);
+  const investmentRows = await db
+    .select()
+    .from(Investments)
+    .where(
+      or(
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(InvestmentTransactions)
+            .where(eq(InvestmentTransactions.investmentId, Investments.id)),
+        ),
+        gt(
+          db
+            .select({ sum: sum(InvestmentTransactions.units) })
+            .from(InvestmentTransactions)
+            .where(eq(InvestmentTransactions.investmentId, Investments.id)),
+          0,
+        ),
+      ),
+    );
   const wrapperRows = await db
     .select()
     .from(NetWorthCategoryAssets)
-    .where(inArray(NetWorthCategoryAssets.type, ["STOCK", "PENSION"]));
+    .where(
+      and(
+        inArray(NetWorthCategoryAssets.type, ["STOCK", "PENSION"]),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(InvestmentTransactions)
+            .where(
+              eq(InvestmentTransactions.assetId, NetWorthCategoryAssets.id),
+            ),
+        ),
+      ),
+    );
 
   const investmentsForPrompt = investmentRows.map((r) => ({
     id: r.id,
@@ -323,13 +365,13 @@ export async function investmentContractNoteImport(
           Math.round(
             parsed.taxes.amount * 10 ** scaleOf(parsed.taxes.currency),
           ),
-          parsed.taxes.currency,
+          parsed.taxes.currency.toUpperCase(),
         )
       : null,
     parsed.fees
       ? Money.fromMinorDenomination(
           Math.round(parsed.fees.amount * 10 ** scaleOf(parsed.fees.currency)),
-          parsed.fees.currency,
+          parsed.fees.currency.toUpperCase(),
         )
       : null,
     drip,

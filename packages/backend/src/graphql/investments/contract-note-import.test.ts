@@ -79,6 +79,8 @@ async function createInvestment(opts: {
 async function createWrapper(
   name: string,
   type: "STOCK" | "PENSION" = "STOCK",
+  /** When set, books a tiny seed transaction against this investment so the wrapper qualifies as a candidate (the resolver only surfaces wrappers that already have at least one `InvestmentTransaction`). */
+  seedInvestmentId?: string,
 ): Promise<string> {
   const data = await runGql(
     graphql(`
@@ -90,7 +92,17 @@ async function createWrapper(
     `),
     { name, type },
   );
-  return data.netWorthCategoryCreate.id;
+  const wrapperId = data.netWorthCategoryCreate.id;
+  if (seedInvestmentId) {
+    await bookTransaction({
+      investmentId: seedInvestmentId,
+      assetId: wrapperId,
+      date: "2020-01-01",
+      units: 1,
+      priceAmount: 1,
+    });
+  }
+  return wrapperId;
 }
 
 async function bookTransaction(opts: {
@@ -137,7 +149,7 @@ it("parses Gemini's response, matches investment + wrapper, and converts GBp pri
     name: "Apple",
     ticker: "AAPL",
   });
-  const wrapperId = await createWrapper("ISA", "STOCK");
+  const wrapperId = await createWrapper("ISA", "STOCK", investmentId);
 
   mockGeminiResponse({
     direction: "BUY",
