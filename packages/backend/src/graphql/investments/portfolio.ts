@@ -21,6 +21,10 @@ import {
   encodeCursor,
 } from "../pagination";
 import { loadCandlestick } from "./candlestick";
+import {
+  loadPortfolioContributions,
+  type PortfolioContributions,
+} from "./contributions-series";
 import { Investment } from "./index";
 import { loadInvestmentLots } from "./lots";
 import { loadPortfolioCashMinor } from "./portfolio-cash";
@@ -813,6 +817,25 @@ export class Portfolio {
       );
     }
     return loader.load(baseOptions);
+  }
+
+  /** Step-line view of cumulative invested capital over the same period as `timeseries` — non-DRIP contributions and a "with DRIPs added on top" overlay. Returns `null` when the scope has no transactions. @gqlField */
+  async contributions(
+    ctx: Context,
+    period: PortfolioTimePeriod,
+    length?: Int | null,
+  ): Promise<PortfolioContributions | null> {
+    const { effectiveAssetIds, dateCap } = await this.loadEffectiveFilter(ctx);
+    const extras = await this.loadExtraScopesUnion(ctx);
+    return loadPortfolioContributions(ctx).load({
+      currency: this.currency,
+      filterAssetIdIn: effectiveAssetIds,
+      filterInvestmentIdIn: this.filterInvestmentIdIn,
+      extras,
+      dateCap: dateCap ?? null,
+      period,
+      length: length ?? 1,
+    });
   }
 
   /** Candlestick buckets of portfolio total over the requested window. @gqlField */

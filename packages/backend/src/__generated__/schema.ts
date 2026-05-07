@@ -2647,21 +2647,29 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
-    const PortfolioTimeseriesType: GraphQLObjectType = new GraphQLObjectType({
-        name: "PortfolioTimeseries",
-        description: "Daily-valued time series of portfolio total, downsampled to at most 300 points while always preserving the first and last sample.",
+    const PortfolioContributionsType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioContributions",
+        description: "Step-line view of cumulative invested capital for the portfolio scope, split into out-of-pocket contributions and dividend reinvestments (DRIPs). Both series are evaluated at end-of-day for each date the running total changes; render as a step-before line drawing horizontally to the next point and then jumping vertically. The values are raw `units \u00D7 price` from the booked transactions (buys add, sells subtract); stock splits are intentionally not folded in \u2014 the line tracks the cash actually transacted, not the present-day equivalent.",
         fields() {
             return {
+                contributions: {
+                    description: "Cumulative `units \u00D7 price` over non-DRIP transactions in scope. Always begins with an `x = 0` anchor whose `y` carries any pre-window total, followed by one entry per in-window date that moved the running total.",
+                    name: "contributions",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioTimeseriesPointType)))
+                },
                 currency: {
+                    description: "ISO-4217 code the values are expressed in.",
                     name: "currency",
                     type: new GraphQLNonNull(GraphQLString)
                 },
                 initialDate: {
+                    description: "Calendar anchor for the series \u2014 `x = 0` corresponds to this date. Mirrors the period/length-clamped left edge of the matching `Portfolio.timeseries` so the two series can be plotted on the same X axis.",
                     name: "initialDate",
                     type: new GraphQLNonNull(DateType)
                 },
-                points: {
-                    name: "points",
+                withDrips: {
+                    description: "Same as `contributions` but with DRIP buys layered on top of the non-DRIP running total. By construction sits at-or-above `contributions`; the gap reads as \"value of dividends reinvested\".",
+                    name: "withDrips",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioTimeseriesPointType)))
                 }
             };
@@ -2683,6 +2691,26 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             YTD: {
                 value: "YTD"
             }
+        }
+    });
+    const PortfolioTimeseriesType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PortfolioTimeseries",
+        description: "Daily-valued time series of portfolio total, downsampled to at most 300 points while always preserving the first and last sample.",
+        fields() {
+            return {
+                currency: {
+                    name: "currency",
+                    type: new GraphQLNonNull(GraphQLString)
+                },
+                initialDate: {
+                    name: "initialDate",
+                    type: new GraphQLNonNull(DateType)
+                },
+                points: {
+                    name: "points",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PortfolioTimeseriesPointType)))
+                }
+            };
         }
     });
     const PortfolioType: GraphQLObjectType = new GraphQLObjectType({
@@ -2745,6 +2773,22 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(MoneyType),
                     resolve(source, _args, context) {
                         return source.cash(context);
+                    }
+                },
+                contributions: {
+                    description: "Step-line view of cumulative invested capital over the same period as `timeseries` \u2014 non-DRIP contributions and a \"with DRIPs added on top\" overlay. Returns `null` when the scope has no transactions.",
+                    name: "contributions",
+                    type: PortfolioContributionsType,
+                    args: {
+                        length: {
+                            type: GraphQLInt
+                        },
+                        period: {
+                            type: new GraphQLNonNull(PortfolioTimePeriodType)
+                        }
+                    },
+                    resolve(source, args, context) {
+                        return source.contributions(context, args.period, args.length);
                     }
                 },
                 currency: {
@@ -5402,7 +5446,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, ContractNoteImportResultType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, LoanCalculatorRowType, LoanHistoryPointType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, ContractNoteImportResultType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, LoanCalculatorRowType, LoanHistoryPointType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioContributionsType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }
 const typeNameMap = new Map();
