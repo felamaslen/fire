@@ -1,4 +1,5 @@
 import { useQuery } from "@apollo/client/react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, LayoutGrid } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -253,7 +254,12 @@ function formatMonth(date: string): string {
 }
 
 export function NetWorthBlockMapButton() {
-  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: (l) => l.pathname });
+  const open = pathname === "/composition";
+  const setOpen = (next: boolean) => {
+    void navigate({ to: next ? "/composition" : "/" });
+  };
   return (
     <>
       <button
