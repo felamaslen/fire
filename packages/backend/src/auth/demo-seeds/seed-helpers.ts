@@ -17,6 +17,7 @@ import {
   PlanningAccounts,
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsGrossPay,
   PlanningMonths,
   PlanningYears,
   PlanningYearUKTaxRates,
@@ -97,7 +98,7 @@ export type BillSpec = {
 
 export type EarningsSpec = {
   name: string;
-  /** Gross annual pay in pence. `PlanningEarnings.amountGross` is per-year, not per-pay-period. */
+  /** Gross annual pay in pence. Stored as the initial `PlanningEarningsGrossPay` row for the seeded earning — per year, not per-pay-period. */
   yearly: Pence;
 };
 
@@ -271,13 +272,20 @@ export async function applyFlavour(
 
   // ── Earnings streams ─────────────────────────────────────────────────────
   for (const e of spec.earnings) {
-    await db.insert(PlanningEarnings).values({
-      name: e.name,
-      start: addMonths(today, -24),
+    const [inserted] = await db
+      .insert(PlanningEarnings)
+      .values({
+        name: e.name,
+        start: addMonths(today, -24),
+        countryCode: "GB",
+        toAccountId: defaultPlanningAccountId,
+      })
+      .returning();
+    await db.insert(PlanningEarningsGrossPay).values({
+      earningsId: inserted.id,
+      startDate: null,
       amountGross: e.yearly,
       currency: "GBP",
-      countryCode: "GB",
-      toAccountId: defaultPlanningAccountId,
     });
   }
 

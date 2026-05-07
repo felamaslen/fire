@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 
-import { and, asc, desc, eq, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
 import type { Float, ID, Int } from "grats";
 
 import { db } from "@/db";
@@ -8,6 +8,7 @@ import { model } from "@/db/drizzle-model";
 import { assertCountryCode } from "@/db/schema/country";
 import {
   PlanningEarnings,
+  PlanningEarningsGrossPay,
   PlanningEarningsParentalLeave,
   PlanningEarningsUKTaxCodes,
 } from "@/db/schema/planning";
@@ -42,8 +43,6 @@ export class PlanningEarning {
     public readonly start: CalendarDate,
     /** @gqlField */
     public readonly end: CalendarDate | null,
-    /** @gqlField */
-    public readonly amountGross: Money,
     /** ISO-3166-1 alpha-2 country where the earnings are taxed. @gqlField */
     public readonly countryCode: string,
     /** Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `"5% salary sacrifice, 3% net pay pension, student loan plan 2"`). Empty string if none apply. @gqlField */
@@ -67,7 +66,6 @@ export class PlanningEarning {
       row.name,
       row.start,
       row.end,
-      Money.fromMinorDenomination(row.amountGross, row.currency),
       row.countryCode,
       formatAttributes({
         pensionSalarySacrifice: row.pensionSalarySacrifice,
@@ -83,6 +81,28 @@ export class PlanningEarning {
       row.studentLoanLiabilityId,
       row.pensionAssetId,
     );
+  }
+
+  /** Annual gross pay rate currently in effect (today), pulled from the most recent `PlanningEarningGrossPay` whose `startDate` has arrived (or the initial null-startDate row when no dated entries apply yet). @gqlField */
+  async amountGross(): Promise<Money> {
+    const rows = await loadGrossPayRows(this.id);
+    const active = activeGrossPay(rows, new Date());
+    assert(active, `No gross-pay row for earning ${this.id}`);
+    return Money.fromMinorDenomination(active.amountGross, active.currency);
+  }
+
+  /** Initial annual gross pay rate — the `PlanningEarningGrossPay` entry with no `startDate`, in effect from the earning's `start` until the first dated rise/cut takes over. Distinct from `amountGross`, which resolves to the rate active *today*. Useful for displaying both endpoints (e.g. `£50k → £60k`) when a pay rise has already kicked in. @gqlField */
+  async amountGrossInitial(): Promise<Money> {
+    const rows = await loadGrossPayRows(this.id);
+    const initial = rows.find((r) => r.startDate == null);
+    assert(initial, `No initial gross-pay row for earning ${this.id}`);
+    return Money.fromMinorDenomination(initial.amountGross, initial.currency);
+  }
+
+  /** All gross-pay entries for this earning, sorted with the initial null-startDate entry first (when present), then by `startDate` ascending. Each subsequent entry represents a pay rise or cut effective from its date. @gqlField */
+  async grossPays(): Promise<PlanningEarningGrossPay[]> {
+    const rows = await loadGrossPayRows(this.id);
+    return sortGrossPayRows(rows).map((r) => PlanningEarningGrossPay.load(r));
   }
 
   /** Liability the predicted student-loan deduction pays down. Null when `studentLoanPlan2` is false or no liability has been linked. @gqlField */
@@ -136,6 +156,71 @@ export class PlanningEarning {
       .where(eq(PlanningEarningsParentalLeave.earningsId, this.id))
       .orderBy(asc(PlanningEarningsParentalLeave.start));
     return rows.map((r) => PlanningEarningParentalLeave.load(r));
+  }
+}
+
+/** Pick the gross-pay row in effect on `asOf` from the supplied list — the row with the latest `startDate <= asOf`, falling back to the initial row whose `startDate` is null. Returns `null` only when the list is empty. */
+export function activeGrossPay<T extends { startDate: Date | null }>(
+  rows: readonly T[],
+  asOf: Date,
+): T | null {
+  let best: T | null = null;
+  let bestTime = -Infinity;
+  let nullRow: T | null = null;
+  const cutoff = asOf.getTime();
+  for (const r of rows) {
+    if (r.startDate == null) {
+      nullRow = r;
+      continue;
+    }
+    const t = r.startDate.getTime();
+    if (t <= cutoff && t > bestTime) {
+      best = r;
+      bestTime = t;
+    }
+  }
+  return best ?? nullRow;
+}
+
+/** Stable display order for gross-pay rows: the initial null-startDate row first (when present), then dated rows ascending by `startDate`. */
+export function sortGrossPayRows<T extends { startDate: Date | null }>(
+  rows: readonly T[],
+): T[] {
+  return [...rows].sort((a, b) => {
+    if (a.startDate == null) return b.startDate == null ? 0 : -1;
+    if (b.startDate == null) return 1;
+    return a.startDate.getTime() - b.startDate.getTime();
+  });
+}
+
+async function loadGrossPayRows(
+  earningsId: string,
+): Promise<(typeof PlanningEarningsGrossPay.$inferSelect)[]> {
+  return db
+    .select()
+    .from(PlanningEarningsGrossPay)
+    .where(eq(PlanningEarningsGrossPay.earningsId, earningsId));
+}
+
+/** A single gross-pay rate effective from `startDate` until the next entry (or indefinitely if it's the latest). Pay rises and cuts on a `PlanningEarning` are modelled as additional rows on this list. The entry with `startDate = null` is the initial rate, used until the first dated entry takes over; at most one such row exists per earning. @gqlType */
+export class PlanningEarningGrossPay {
+  constructor(
+    /** @gqlField */
+    public readonly id: ID,
+    /** First day this rate takes effect. Null on the single initial-rate entry — it applies from the earning's `start` until superseded by the first dated entry. @gqlField */
+    public readonly startDate: CalendarDate | null,
+    /** Annual gross pay at this rate. @gqlField */
+    public readonly amountGross: Money,
+  ) {}
+
+  static load(
+    row: typeof PlanningEarningsGrossPay.$inferSelect,
+  ): PlanningEarningGrossPay {
+    return new PlanningEarningGrossPay(
+      row.id as ID,
+      row.startDate,
+      Money.fromMinorDenomination(row.amountGross, row.currency),
+    );
   }
 }
 
@@ -223,6 +308,42 @@ export type PlanningEarningParentalLeaveInput = {
   isSPP?: boolean | null;
 };
 
+/** A dated gross-pay rise/cut to attach to a `PlanningEarning`. Rows are upserted by (earnings, startDate). The initial (null-startDate) rate is set via the earning's top-level `amountGross` argument and is not represented here. @gqlInput */
+export type PlanningEarningGrossPayInput = {
+  /** First day this rate takes effect. */
+  startDate: CalendarDate;
+  amountGross: MoneyInput;
+};
+
+async function writeDatedGrossPays(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  earningsId: string,
+  rises: PlanningEarningGrossPayInput[],
+): Promise<void> {
+  // Replace-all semantics for the dated entries — the null-startDate row
+  // (set via the earning's top-level `amountGross`) is left untouched.
+  await tx
+    .delete(PlanningEarningsGrossPay)
+    .where(
+      and(
+        eq(PlanningEarningsGrossPay.earningsId, earningsId),
+        isNotNull(PlanningEarningsGrossPay.startDate),
+      ),
+    );
+  if (rises.length === 0) return;
+  await tx.insert(PlanningEarningsGrossPay).values(
+    rises.map((r) => {
+      const { currency, amount } = getMoneyInputFractionalAmount(r.amountGross);
+      return {
+        earningsId,
+        startDate: r.startDate,
+        amountGross: amount,
+        currency,
+      };
+    }),
+  );
+}
+
 async function writeParentalLeaves(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   earningsId: string,
@@ -301,6 +422,8 @@ export async function earningsCreate(
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
   /** Parental-leave stages affecting predicted gross during their date ranges. Provide one row per stage of an enhanced scheme (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid). */
   parentalLeaves?: PlanningEarningParentalLeaveInput[] | null,
+  /** Pay rises and cuts effective from each `startDate`. The earning's top-level `amountGross` defines the initial rate; entries here add subsequent dated rates. Replace-all semantics: the supplied list becomes the complete set of dated entries. */
+  grossPays?: PlanningEarningGrossPayInput[] | null,
 ): Promise<PlanningEarning> {
   assertCountryCode(countryCode);
   const slp2 = studentLoanPlan2 ?? false;
@@ -324,8 +447,6 @@ export async function earningsCreate(
         name,
         start,
         end: end ?? null,
-        amountGross: amount,
-        currency,
         countryCode,
         pensionSalarySacrifice: pensionSalarySacrifice ?? null,
         pensionReliefAtSource: pensionReliefAtSource ?? null,
@@ -336,9 +457,17 @@ export async function earningsCreate(
         toAccountId: toAccountId,
       })
       .returning();
+    await tx.insert(PlanningEarningsGrossPay).values({
+      earningsId: inserted.id,
+      startDate: null,
+      amountGross: amount,
+      currency,
+    });
     if (ukTaxCodes != null) await writeTaxCodes(tx, inserted.id, ukTaxCodes);
     if (parentalLeaves != null)
       await writeParentalLeaves(tx, inserted.id, parentalLeaves);
+    if (grossPays != null)
+      await writeDatedGrossPays(tx, inserted.id, grossPays);
     return inserted;
   });
   return PlanningEarning.load(row);
@@ -369,6 +498,8 @@ export async function earningsUpdate(
   ukTaxCodes?: PlanningEarningUKTaxCodeInput[] | null,
   /** New full parental-leave history; pass to replace the existing list (every supplied row is upserted, and any rows not in the list are removed). Omit to leave the history untouched. */
   parentalLeaves?: PlanningEarningParentalLeaveInput[] | null,
+  /** New full set of dated pay rises/cuts; pass to replace the existing list. Each entry's `startDate` must be set — the initial null-date rate is patched via `amountGross`. Omit to leave the history untouched. */
+  grossPays?: PlanningEarningGrossPayInput[] | null,
 ): Promise<PlanningEarning> {
   const [existing] = await db
     .select()
@@ -419,16 +550,43 @@ export async function earningsUpdate(
     amountGross != null ? getMoneyInputFractionalAmount(amountGross) : null;
 
   const row = await db.transaction(async (tx) => {
+    if (moneyPatch) {
+      // `amountGross` on an earning patches the initial (null-startDate) gross-
+      // pay row in place. Dated rises/cuts are managed via the dedicated
+      // `earningsGrossPaySet` / `earningsGrossPayDelete` mutations.
+      const existing = await tx
+        .select({ id: PlanningEarningsGrossPay.id })
+        .from(PlanningEarningsGrossPay)
+        .where(
+          and(
+            eq(PlanningEarningsGrossPay.earningsId, id),
+            isNull(PlanningEarningsGrossPay.startDate),
+          ),
+        );
+      if (existing.length > 0) {
+        await tx
+          .update(PlanningEarningsGrossPay)
+          .set({
+            amountGross: moneyPatch.amount,
+            currency: moneyPatch.currency,
+            updatedAt: new Date(),
+          })
+          .where(eq(PlanningEarningsGrossPay.id, existing[0].id));
+      } else {
+        await tx.insert(PlanningEarningsGrossPay).values({
+          earningsId: id,
+          startDate: null,
+          amountGross: moneyPatch.amount,
+          currency: moneyPatch.currency,
+        });
+      }
+    }
     const [updated] = await tx
       .update(PlanningEarnings)
       .set({
         ...(name != null && { name }),
         ...(start != null && { start }),
         ...(end !== undefined && { end }),
-        ...(moneyPatch && {
-          amountGross: moneyPatch.amount,
-          currency: moneyPatch.currency,
-        }),
         ...(narrowedCountry != null && { countryCode: narrowedCountry }),
         ...(pensionSalarySacrifice !== undefined && {
           pensionSalarySacrifice,
@@ -454,8 +612,84 @@ export async function earningsUpdate(
     if (ukTaxCodes != null) await writeTaxCodes(tx, id, ukTaxCodes);
     if (parentalLeaves != null)
       await writeParentalLeaves(tx, id, parentalLeaves);
+    if (grossPays != null) await writeDatedGrossPays(tx, id, grossPays);
     return updated;
   });
+  return PlanningEarning.load(row);
+}
+
+/**
+ * Add or replace a gross-pay rate on an earning. When `startDate` is null, the row is the *initial* rate (only one such row may exist per earning); when a date is given, the row represents a pay rise or cut taking effect that day. Re-supplying the same `(earningsId, startDate)` overwrites the existing entry.
+ *
+ * @gqlMutationField
+ */
+export async function earningsGrossPaySet(
+  earningsId: ID,
+  amountGross: MoneyInput,
+  /** First day this rate applies. Pass null only for the initial entry — at most one null-startDate row may exist per earning. */
+  startDate?: CalendarDate | null,
+): Promise<PlanningEarning> {
+  const { currency, amount } = getMoneyInputFractionalAmount(amountGross);
+  await db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: PlanningEarningsGrossPay.id })
+      .from(PlanningEarningsGrossPay)
+      .where(
+        and(
+          eq(PlanningEarningsGrossPay.earningsId, earningsId),
+          startDate == null
+            ? isNull(PlanningEarningsGrossPay.startDate)
+            : eq(PlanningEarningsGrossPay.startDate, startDate),
+        ),
+      );
+    if (existing.length > 0) {
+      await tx
+        .update(PlanningEarningsGrossPay)
+        .set({
+          amountGross: amount,
+          currency,
+          updatedAt: new Date(),
+        })
+        .where(eq(PlanningEarningsGrossPay.id, existing[0].id));
+    } else {
+      await tx.insert(PlanningEarningsGrossPay).values({
+        earningsId,
+        startDate: startDate ?? null,
+        amountGross: amount,
+        currency,
+      });
+    }
+  });
+  const [row] = await db
+    .select()
+    .from(PlanningEarnings)
+    .where(eq(PlanningEarnings.id, earningsId));
+  assert(row, `Earning ${earningsId} not found`);
+  return PlanningEarning.load(row);
+}
+
+/**
+ * Remove a gross-pay entry by `(earningsId, startDate)`. The initial null-startDate row cannot be deleted — every earning must keep its initial rate; use `earningsUpdate` with a new `amountGross` to revise it instead.
+ *
+ * @gqlMutationField
+ */
+export async function earningsGrossPayDelete(
+  earningsId: ID,
+  startDate: CalendarDate,
+): Promise<PlanningEarning> {
+  await db
+    .delete(PlanningEarningsGrossPay)
+    .where(
+      and(
+        eq(PlanningEarningsGrossPay.earningsId, earningsId),
+        eq(PlanningEarningsGrossPay.startDate, startDate),
+      ),
+    );
+  const [row] = await db
+    .select()
+    .from(PlanningEarnings)
+    .where(eq(PlanningEarnings.id, earningsId));
+  assert(row, `Earning ${earningsId} not found`);
   return PlanningEarning.load(row);
 }
 

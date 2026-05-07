@@ -44,6 +44,7 @@ import {
 import {
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsGrossPay,
   PlanningEarningsUKTaxCodes,
   PlanningPayslipAdjustments,
   PlanningPayslips,
@@ -56,6 +57,7 @@ import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { Money } from "../money";
 import { collectionDayInMonth } from "../planning/balance";
+import { activeGrossPay } from "../planning/earnings";
 import { computeUKTake } from "../planning/tax";
 import type { NetWorthAssetType } from "./categories";
 import type { NetWorthHistoryAssetBucket } from "./history";
@@ -223,24 +225,45 @@ export async function netWorthCurrent(
   // look up the most recent payslip ever for that account; if today is at or
   // past that day-of-month within the current month, credit a full month's
   // predicted net (computed from the active GB earnings on this account).
-  const earnings = await db
-    .select({
-      earning: PlanningEarnings,
-      taxCode: PlanningEarningsUKTaxCodes,
-    })
-    .from(PlanningEarnings)
-    .leftJoin(
-      PlanningEarningsUKTaxCodes,
-      eq(PlanningEarningsUKTaxCodes.earningsId, PlanningEarnings.id),
-    )
-    .where(
-      and(
-        lte(PlanningEarnings.start, today),
-        or(isNull(PlanningEarnings.end), gte(PlanningEarnings.end, today)),
-        eq(PlanningEarnings.currency, HOME_CURRENCY),
-        eq(PlanningEarnings.countryCode, "GB"),
-      ),
-    );
+  const activeEarningsWhere = and(
+    lte(PlanningEarnings.start, today),
+    or(isNull(PlanningEarnings.end), gte(PlanningEarnings.end, today)),
+    eq(PlanningEarnings.countryCode, "GB"),
+  );
+  // Gross pays are joined to PlanningEarnings only to scope the fetch to
+  // currently-active GB earnings — kept in a separate query so we don't
+  // cross-multiply against the tax-code join.
+  const [earnings, allGrossPays] = await Promise.all([
+    db
+      .select({
+        earning: PlanningEarnings,
+        taxCode: PlanningEarningsUKTaxCodes,
+      })
+      .from(PlanningEarnings)
+      .leftJoin(
+        PlanningEarningsUKTaxCodes,
+        eq(PlanningEarningsUKTaxCodes.earningsId, PlanningEarnings.id),
+      )
+      .where(activeEarningsWhere),
+    db
+      .select({ row: PlanningEarningsGrossPay })
+      .from(PlanningEarningsGrossPay)
+      .innerJoin(
+        PlanningEarnings,
+        eq(PlanningEarnings.id, PlanningEarningsGrossPay.earningsId),
+      )
+      .where(activeEarningsWhere)
+      .then((rows) => rows.map((r) => r.row)),
+  ]);
+  const grossPaysByEarning = new Map<
+    string,
+    (typeof PlanningEarningsGrossPay.$inferSelect)[]
+  >();
+  for (const g of allGrossPays) {
+    const arr = grossPaysByEarning.get(g.earningsId) ?? [];
+    arr.push(g);
+    grossPaysByEarning.set(g.earningsId, arr);
+  }
   const earningsByAccount = new Map<
     string,
     {
@@ -295,8 +318,14 @@ export async function netWorthCurrent(
         // Pay day is in (dE, today] for this month — credit predicted net.
         const group = earningsByAccount.get(accountId) ?? [];
         for (const { earning, taxCodes } of group) {
+          const activePay = activeGrossPay(
+            grossPaysByEarning.get(earning.id) ?? [],
+            today,
+          );
+          if (!activePay) continue;
+          if (activePay.currency !== HOME_CURRENCY) continue;
           const take = computeUKTake({
-            gross: earning.amountGross,
+            gross: activePay.amountGross,
             pension: {
               sacrifice: earning.pensionSalarySacrifice,
               netPay: earning.pensionNetPay ?? 0,

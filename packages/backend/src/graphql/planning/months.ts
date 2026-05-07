@@ -99,7 +99,7 @@ export type ParentalLeaveStage = {
  *
  * Each day of the month contributes `0` if outside the earning range, `1` if fully worked, or the leave's effective fraction `max(stage.fractionOfGross, statutoryFloorFraction)` if covered by a parental-leave stage. The statutory floor is `min(statutoryWeeklyRate / weeklyGross, 0.9)` when `statutoryEligible`, else `0`.
  *
- * Multiply the result by `earning.amountGross` to get the effective annual gross for `computeUKTake` for this month — divide that take by 12 to get the month's projection.
+ * Multiply the result by the active gross-pay rate's annual gross to get the effective annual gross for `computeUKTake` for this month — divide that take by 12 to get the month's projection.
  */
 export function effectiveMonthGrossFraction(
   earningStart: Date,

@@ -20,6 +20,7 @@ import {
 import {
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsGrossPay,
   PlanningEarningsUKTaxCodes,
   PlanningPayslipAdjustments,
   PlanningPayslips,
@@ -34,6 +35,7 @@ import {
   buildRateToHome,
   convertToHomeMinor,
 } from "../graphql/net-worth/index";
+import { activeGrossPay } from "../graphql/planning/earnings";
 import { computeUKTake } from "../graphql/planning/tax";
 import { type ForecastCategory, type ForecastInputs } from "./engine";
 import {
@@ -563,6 +565,7 @@ type PredictedEarningsSql = {
     earning: typeof PlanningEarnings.$inferSelect;
     taxCode: typeof PlanningEarningsUKTaxCodes.$inferSelect | null;
   }[];
+  grossPays: (typeof PlanningEarningsGrossPay.$inferSelect)[];
   rates: typeof PlanningYearUKTaxRates.$inferSelect | null;
 };
 
@@ -578,7 +581,11 @@ async function loadPredictedEarningsSql(
       ? asOfDate.getUTCFullYear()
       : asOfDate.getUTCFullYear() - 1;
 
-  const [earningRows, rates] = await Promise.all([
+  const activeEarningWhere = and(
+    lte(PlanningEarnings.start, asOfDate),
+    or(isNull(PlanningEarnings.end), gte(PlanningEarnings.end, asOfDate)),
+  );
+  const [earningRows, grossPays, rates] = await Promise.all([
     db
       .select({
         earning: PlanningEarnings,
@@ -589,13 +596,21 @@ async function loadPredictedEarningsSql(
         PlanningEarningsUKTaxCodes,
         eq(PlanningEarningsUKTaxCodes.earningsId, PlanningEarnings.id),
       )
-      .where(
-        and(
-          lte(PlanningEarnings.start, asOfDate),
-          or(isNull(PlanningEarnings.end), gte(PlanningEarnings.end, asOfDate)),
-          eq(PlanningEarnings.currency, HOME_CURRENCY),
-        ),
-      ),
+      .where(activeEarningWhere),
+    // Gross-pay history is fetched in its own query (and joined to
+    // `PlanningEarnings` only to filter to currently-active earnings) rather
+    // than left-joined onto the tax-code select above — three-way left joins
+    // cross-multiply on the earning row, ballooning the result for any
+    // earning with several tax codes and several pay rises.
+    db
+      .select({ row: PlanningEarningsGrossPay })
+      .from(PlanningEarningsGrossPay)
+      .innerJoin(
+        PlanningEarnings,
+        eq(PlanningEarnings.id, PlanningEarningsGrossPay.earningsId),
+      )
+      .where(activeEarningWhere)
+      .then((rows) => rows.map((r) => r.row)),
     db
       .select()
       .from(PlanningYearUKTaxRates)
@@ -603,7 +618,7 @@ async function loadPredictedEarningsSql(
       .limit(1)
       .then((rows) => rows[0] ?? null),
   ]);
-  return { earningRows, rates };
+  return { earningRows, grossPays, rates };
 }
 
 /**
@@ -617,10 +632,19 @@ async function loadPredictedEarningsSql(
  */
 function computePredictedEarningsForecast(
   asOfDate: Date,
-  { earningRows, rates }: PredictedEarningsSql,
+  { earningRows, grossPays, rates }: PredictedEarningsSql,
   /** Manual (user-recorded) pension contribs routed to a PENSION asset, keyed by the source cash account id. Used to attribute the RAS basic-rate gross-up + self-assessment higher-rate relief to the earning paid into that account. Amounts are raw (negative) cash outflows — the owner's net contribution before HMRC's 25% top-up. */
   manualPensionContribsByAccount: Map<string, readonly LiabilityTx[]>,
 ): PredictedEarningsForecast {
+  const grossPaysByEarning = new Map<
+    string,
+    (typeof PlanningEarningsGrossPay.$inferSelect)[]
+  >();
+  for (const g of grossPays) {
+    const arr = grossPaysByEarning.get(g.earningsId) ?? [];
+    arr.push(g);
+    grossPaysByEarning.set(g.earningsId, arr);
+  }
   const monthlyPensionByAssetId = new Map<string, number>();
   const monthlyStudentLoanByLiabilityId = new Map<string, number>();
   let annualSelfAssessmentRefund = 0;
@@ -653,11 +677,18 @@ function computePredictedEarningsForecast(
   let monthlyIncome = 0;
   for (const { earning, taxCodes } of grouped.values()) {
     if (earning.countryCode !== "GB") continue;
+    const activePay = activeGrossPay(
+      grossPaysByEarning.get(earning.id) ?? [],
+      asOfDate,
+    );
+    if (!activePay) continue;
+    if (activePay.currency !== HOME_CURRENCY) continue;
+    const annualGross = activePay.amountGross;
     const sacFrac = earning.pensionSalarySacrifice ?? 0;
     const netPayFrac = earning.pensionNetPay ?? 0;
     const reliefFrac = earning.pensionReliefAtSource ?? 0;
     const take = computeUKTake({
-      gross: earning.amountGross,
+      gross: annualGross,
       pension: {
         sacrifice: earning.pensionSalarySacrifice,
         netPay: netPayFrac,
@@ -690,8 +721,8 @@ function computePredictedEarningsForecast(
       //   - Net pay: the full netPay deduction (pre-tax from gross).
       //   - Relief at source: the employee's net contribution grossed up
       //     by the basic-rate relief HMRC adds directly to the pot.
-      const sac = Math.round(earning.amountGross * sacFrac);
-      const postSacrifice = earning.amountGross - sac;
+      const sac = Math.round(annualGross * sacFrac);
+      const postSacrifice = annualGross - sac;
       const netPayAmt = Math.round(postSacrifice * netPayFrac);
       const reliefAmt = Math.round(postSacrifice * reliefFrac);
       rasGrossedUpFromEarning = reliefAmt * rasGrossUp;
@@ -721,7 +752,7 @@ function computePredictedEarningsForecast(
       rasGrossedUpFromEarning + manualAnnualRasGrossedUp;
     if (totalRasGrossedUp > 0) {
       const takeSa = computeUKTake({
-        gross: earning.amountGross,
+        gross: annualGross,
         pension: {
           sacrifice: earning.pensionSalarySacrifice,
           netPay: netPayFrac,

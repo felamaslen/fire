@@ -26,6 +26,7 @@ import {
   PlanningAccounts,
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsGrossPay,
   PlanningEarningsParentalLeave,
   PlanningEarningsUKTaxCodes,
   PlanningMonthBills,
@@ -39,6 +40,7 @@ import { ewma } from "@/forecast/growth";
 
 import { Money } from "../money";
 import { NetWorthCategoryAsset } from "../net-worth/categories";
+import { activeGrossPay } from "./earnings";
 import { PlanningTransaction } from "./index";
 import {
   addMonthsUTC,
@@ -59,6 +61,7 @@ type AdjustmentRow = typeof PlanningPayslipAdjustments.$inferSelect;
 type EarningRow = typeof PlanningEarnings.$inferSelect;
 type TaxCodeRow = typeof PlanningEarningsUKTaxCodes.$inferSelect;
 type ParentalLeaveRow = typeof PlanningEarningsParentalLeave.$inferSelect;
+type GrossPayRow = typeof PlanningEarningsGrossPay.$inferSelect;
 type BillRow = typeof PlanningBills.$inferSelect;
 type OverrideRow = typeof PlanningMonthBills.$inferSelect;
 type RateRow = typeof PlanningYearUKTaxRates.$inferSelect;
@@ -95,6 +98,7 @@ export type PlanningYearData = {
     earning: EarningRow;
     taxCodes: TaxCodeRow[];
     parentalLeaves: ParentalLeaveRow[];
+    grossPays: GrossPayRow[];
   }>;
   bills: Array<{
     bill: BillRow;
@@ -152,6 +156,7 @@ export async function loadPlanningYearData(
     payslipJoin,
     earningJoin,
     parentalLeaveRows,
+    grossPayRows,
     billJoin,
     rates,
     snapshotRows,
@@ -228,6 +233,17 @@ export async function loadPlanningYearData(
           )
           .then((rows) => rows.map((r) => r.PlanningEarningsParentalLeave))
       : Promise.resolve<ParentalLeaveRow[]>([]),
+    hasAccounts
+      ? db
+          .select()
+          .from(PlanningEarningsGrossPay)
+          .innerJoin(
+            PlanningEarnings,
+            eq(PlanningEarnings.id, PlanningEarningsGrossPay.earningsId),
+          )
+          .where(inArray(PlanningEarnings.toAccountId, assetIds))
+          .then((rows) => rows.map((r) => r.PlanningEarningsGrossPay))
+      : Promise.resolve<GrossPayRow[]>([]),
     hasAccounts
       ? db
           .select({ bill: PlanningBills, override: PlanningMonthBills })
@@ -328,6 +344,7 @@ export async function loadPlanningYearData(
       earning: EarningRow;
       taxCodes: TaxCodeRow[];
       parentalLeaves: ParentalLeaveRow[];
+      grossPays: GrossPayRow[];
     }
   >();
   for (const r of earningJoin) {
@@ -335,6 +352,7 @@ export async function loadPlanningYearData(
       earning: r.earning,
       taxCodes: [],
       parentalLeaves: [],
+      grossPays: [],
     };
     if (r.taxCode) entry.taxCodes.push(r.taxCode);
     earningsById.set(r.earning.id, entry);
@@ -342,6 +360,10 @@ export async function loadPlanningYearData(
   for (const leave of parentalLeaveRows) {
     const entry = earningsById.get(leave.earningsId);
     if (entry) entry.parentalLeaves.push(leave);
+  }
+  for (const gp of grossPayRows) {
+    const entry = earningsById.get(gp.earningsId);
+    if (entry) entry.grossPays.push(gp);
   }
 
   const snapshots: PlanningYearData["snapshots"] = [];
@@ -553,15 +575,25 @@ export function monthTransactionsFor(
 
   // 3) Earnings predictions (skipped when a payslip covers this account+month)
   if (!hasPayslip && data.rates) {
-    for (const { earning: e, taxCodes, parentalLeaves } of data.earnings) {
+    for (const {
+      earning: e,
+      taxCodes,
+      parentalLeaves,
+      grossPays,
+    } of data.earnings) {
       if (e.toAccountId !== assetId) continue;
       assert(e.countryCode === "GB", "Only GB earnings supported");
+      const activePay = activeGrossPay(grossPays, monthStart);
+      if (!activePay) continue;
+      const annualGross = activePay.amountGross;
+      const payCurrency = activePay.currency;
       // The month's effective annual gross folds together any partial-month
       // coverage at the earning's start/end *and* any parental-leave stages
       // that overlap. When fully worked at full pay this equals
-      // `e.amountGross`; when partially covered or partly on leave it scales
-      // down accordingly. Tax / NIC / student loan are then computed on the
-      // effective annual and divided by 12 to give this month's projection.
+      // the active rate's annual gross; when partially covered or partly on
+      // leave it scales down accordingly. Tax / NIC / student loan are then
+      // computed on the effective annual and divided by 12 to give this
+      // month's projection.
       const fraction = effectiveMonthGrossFraction(
         e.start,
         e.end,
@@ -571,12 +603,12 @@ export function monthTransactionsFor(
           fractionOfGross: l.fractionOfGross,
           statutoryEligible: l.isSMP || l.isSPP,
         })),
-        e.amountGross / 52,
+        annualGross / 52,
         data.rates.statutoryParentalPayWeekly,
         monthStart,
       );
       if (fraction === 0) continue;
-      const effectiveAnnualGross = Math.round(e.amountGross * fraction);
+      const effectiveAnnualGross = Math.round(annualGross * fraction);
       const take = computeUKTake({
         gross: effectiveAnnualGross,
         pension: {
@@ -599,7 +631,10 @@ export function monthTransactionsFor(
             monthId: monthKey,
           }),
           name: `${e.name} — ${monthYearLabel(monthStart)}`,
-          amount: Money.fromMinorDenomination(perMonth(take.gross), e.currency),
+          amount: Money.fromMinorDenomination(
+            perMonth(take.gross),
+            payCurrency,
+          ),
           isProjected: true,
           isEditable: true,
           isPayslipGross: true,
@@ -620,7 +655,7 @@ export function monthTransactionsFor(
             name: `${e.name} — income tax`,
             amount: Money.fromMinorDenomination(
               -perMonth(take.incomeTax),
-              e.currency,
+              payCurrency,
             ),
             isProjected: true,
             isEditable: true,
@@ -643,7 +678,7 @@ export function monthTransactionsFor(
             name: `${e.name} — NIC`,
             amount: Money.fromMinorDenomination(
               -perMonth(take.nic),
-              e.currency,
+              payCurrency,
             ),
             isProjected: true,
             isEditable: true,
@@ -666,7 +701,7 @@ export function monthTransactionsFor(
             name: `${e.name} — student loan`,
             amount: Money.fromMinorDenomination(
               -perMonth(take.studentLoan),
-              e.currency,
+              payCurrency,
             ),
             isProjected: true,
             isEditable: true,
@@ -689,7 +724,7 @@ export function monthTransactionsFor(
             name: `${e.name} — pension`,
             amount: Money.fromMinorDenomination(
               -perMonth(take.pensionEmployee),
-              e.currency,
+              payCurrency,
             ),
             isProjected: true,
             isEditable: true,
