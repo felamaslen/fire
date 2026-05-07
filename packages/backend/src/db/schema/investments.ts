@@ -95,6 +95,14 @@ export const InvestmentTransactions = pgTable(
     check("InvestmentTransactions_price_ck", sql`${t.price} >= 0`),
     check("InvestmentTransactions_taxes_ck", sql`${t.taxes} >= 0`),
     check("InvestmentTransactions_fees_ck", sql`${t.fees} >= 0`),
+    // DRIPs represent dividend reinvestments — always a buy of fresh units. A
+    // negative-units DRIP would be a "DRIP sell", which the codebase doesn't
+    // model anywhere (cost-basis math, contributions, reinvested-units stats,
+    // etc. all assume DRIP rows are buys), so we forbid the row outright.
+    check(
+      "InvestmentTransactions_drip_units_ck",
+      sql`NOT ${t.drip} OR ${t.units} > 0`,
+    ),
     index("InvestmentTransactions_investmentId_idx").on(t.investmentId),
     index("InvestmentTransactions_assetId_idx").on(t.assetId),
     index("InvestmentTransactions_date").on(t.date),
