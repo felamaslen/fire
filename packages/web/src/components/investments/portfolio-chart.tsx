@@ -303,7 +303,13 @@ export function PortfolioChart({
       viewBox={`0 0 ${width} ${height}`}
       className={cn(
         "overflow-visible",
-        onPan && "cursor-grab select-none active:cursor-grabbing",
+        // `touch-pan-y`: the browser keeps owning vertical-scroll gestures
+        // (so the user can still scroll the page when their finger lands on
+        // the chart) but hands every horizontal-component touch to us — the
+        // default `touch-action: auto` cancels pointer events after ~10 px
+        // of horizontal travel, which on mobile capped panning at well under
+        // a single candle.
+        onPan && "cursor-grab touch-pan-y select-none active:cursor-grabbing",
         className,
       )}
       style={{ aspectRatio: `${width} / ${height}` }}
