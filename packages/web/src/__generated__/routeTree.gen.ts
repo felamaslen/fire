@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './../routes/__root'
 import { Route as NetWorthRouteImport } from './../routes/net-worth'
 import { Route as LoginRouteImport } from './../routes/login'
+import { Route as LoanCalculatorRouteImport } from './../routes/loan-calculator'
 import { Route as InvestmentsRouteImport } from './../routes/investments'
 import { Route as CompositionRouteImport } from './../routes/composition'
 import { Route as IndexRouteImport } from './../routes/index'
@@ -35,6 +36,11 @@ const NetWorthRoute = NetWorthRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoanCalculatorRoute = LoanCalculatorRouteImport.update({
+  id: '/loan-calculator',
+  path: '/loan-calculator',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InvestmentsRoute = InvestmentsRouteImport.update({
@@ -117,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/composition': typeof CompositionRoute
   '/investments': typeof InvestmentsRouteWithChildren
+  '/loan-calculator': typeof LoanCalculatorRoute
   '/login': typeof LoginRoute
   '/net-worth': typeof NetWorthRouteWithChildren
   '/investments/$id': typeof InvestmentsIdRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/composition': typeof CompositionRoute
   '/investments': typeof InvestmentsRouteWithChildren
+  '/loan-calculator': typeof LoanCalculatorRoute
   '/login': typeof LoginRoute
   '/net-worth': typeof NetWorthRouteWithChildren
   '/investments/$id': typeof InvestmentsIdRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/composition': typeof CompositionRoute
   '/investments': typeof InvestmentsRouteWithChildren
+  '/loan-calculator': typeof LoanCalculatorRoute
   '/login': typeof LoginRoute
   '/net-worth': typeof NetWorthRouteWithChildren
   '/investments/$id': typeof InvestmentsIdRoute
@@ -177,6 +186,7 @@ export interface FileRouteTypes {
     | '/'
     | '/composition'
     | '/investments'
+    | '/loan-calculator'
     | '/login'
     | '/net-worth'
     | '/investments/$id'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/'
     | '/composition'
     | '/investments'
+    | '/loan-calculator'
     | '/login'
     | '/net-worth'
     | '/investments/$id'
@@ -215,6 +226,7 @@ export interface FileRouteTypes {
     | '/'
     | '/composition'
     | '/investments'
+    | '/loan-calculator'
     | '/login'
     | '/net-worth'
     | '/investments/$id'
@@ -235,6 +247,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CompositionRoute: typeof CompositionRoute
   InvestmentsRoute: typeof InvestmentsRouteWithChildren
+  LoanCalculatorRoute: typeof LoanCalculatorRoute
   LoginRoute: typeof LoginRoute
   NetWorthRoute: typeof NetWorthRouteWithChildren
   PlanningYearRoute: typeof PlanningYearRouteWithChildren
@@ -255,6 +268,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/loan-calculator': {
+      id: '/loan-calculator'
+      path: '/loan-calculator'
+      fullPath: '/loan-calculator'
+      preLoaderRoute: typeof LoanCalculatorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/investments': {
@@ -429,6 +449,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CompositionRoute: CompositionRoute,
   InvestmentsRoute: InvestmentsRouteWithChildren,
+  LoanCalculatorRoute: LoanCalculatorRoute,
   LoginRoute: LoginRoute,
   NetWorthRoute: NetWorthRouteWithChildren,
   PlanningYearRoute: PlanningYearRouteWithChildren,

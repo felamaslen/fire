@@ -1015,6 +1015,10 @@ type LoanCalculatorRow {
   """
   monthlyRepayment: Money!
   """
+  Per-month aggregated payments that have been made against this loan to date — every `PlanningTransaction` and payslip deduction with this loan as `liabilityId`, summed by calendar month and ordered chronologically. Months with no payments are omitted.
+  """
+  paymentHistory: [LoanPaymentMonth!]!
+  """
   Default starting balance for the projection (home currency, positive magnitude), derived from the latest recorded balance.
   """
   startingBalance: Money!
@@ -1028,6 +1032,18 @@ type LoanHistoryPoint {
   balance: Money!
   """Date of the underlying `NetWorthEntry`."""
   date: Date!
+}
+
+"""
+Total payments made against a loan during a single calendar month — the sum of every recorded `PlanningTransaction` (with this loan as `liabilityId`) and every payslip deduction tagged to this loan that fell in that month.
+"""
+type LoanPaymentMonth {
+  """
+  Total magnitude of payments made against the loan that month, in the home currency.
+  """
+  amount: Money!
+  """First day of the month."""
+  month: Date!
 }
 
 """
@@ -2599,7 +2615,7 @@ type PortfolioContributions {
   """
   initialDate: Date!
   """
-  Same as `contributions` but with DRIP transactions added on top of the non-DRIP running total. By construction sits at-or-above `contributions`; the gap reads as "value of dividends reinvested".
+  Same as `contributions` but with DRIP buys layered on top of the non-DRIP running total. By construction sits at-or-above `contributions`; the gap reads as "value of dividends reinvested".
   """
   withDrips: [PortfolioTimeseriesPoint!]!
 }
