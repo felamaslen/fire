@@ -22,6 +22,7 @@ import { UnreachableCaseError } from "@/errors";
 
 import { contextAwareDataLoader } from "../context";
 import { Money } from "../money";
+import { daysSinceEpoch } from "./period-start";
 import { PortfolioTimePeriod, PortfolioTimeseries } from "./portfolio";
 import { loadInvestmentStats } from "./stats";
 
@@ -58,19 +59,6 @@ const cacheKeyFn = (key: TimeseriesKey): string =>
   `${key.period}|${key.length}|${key.assetId ?? ""}|${key.investmentId ?? ""}|${key.skipLive ? "1" : "0"}|${key.dateCap ?? ""}|${extraScopesFingerprint(key.extraScopes)}`;
 
 const MAX_POINTS = 300;
-
-/** Convert an ISO `YYYY-MM-DD` string to whole days since the Unix epoch (UTC midnight). Equivalent to `differenceInCalendarDays(d, '1970-01-01')` for a UTC `d`, but skips the `Date` allocation + DST-aware bookkeeping that date-fns does per call. */
-function daysSinceEpoch(s: string): number {
-  // `s` is always the canonical `YYYY-MM-DD` shape that Postgres emits via
-  // `date::text`; we don't validate it here.
-  return (
-    Date.UTC(
-      Number(s.slice(0, 4)),
-      Number(s.slice(5, 7)) - 1,
-      Number(s.slice(8, 10)),
-    ) / 86_400_000
-  );
-}
 
 /** Build the `WHERE` for a `(assetId | investmentId, optional dateCap)` slice over `InvestmentValuePoints`. Combined with the batch-level `currency` filter and date-range bounds in the caller. The slice's `dateCap` is applied to `ivp.date` *only* for the main scope — extra scopes drop it (see the comment at the call site). */
 function sliceCondition(slice: {

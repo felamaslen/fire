@@ -11,6 +11,12 @@ export type LineSeries = {
   tooltip?: string;
   color: string;
   points: { x: number; y: number }[];
+  /** Render as a step-before path (horizontal then vertical between points), so the segment between two points carries the earlier point's `y`. Used for cumulative series whose backend only emits points where the value changes. */
+  step?: boolean;
+  /** Render the stroke as a dashed line (round caps on zero-length dashes — every dot is a circle of stroke-width diameter). */
+  dashed?: boolean;
+  /** Stroke width in user units. Defaults to `1.5`. */
+  strokeWidth?: number;
 };
 
 export type CandleSeries = {
@@ -297,7 +303,13 @@ export function PortfolioChart({
       viewBox={`0 0 ${width} ${height}`}
       className={cn(
         "overflow-visible",
-        onPan && "cursor-grab select-none active:cursor-grabbing",
+        // `touch-pan-y`: the browser keeps owning vertical-scroll gestures
+        // (so the user can still scroll the page when their finger lands on
+        // the chart) but hands every horizontal-component touch to us — the
+        // default `touch-action: auto` cancels pointer events after ~10 px
+        // of horizontal travel, which on mobile capped panning at well under
+        // a single candle.
+        onPan && "cursor-grab touch-pan-y select-none active:cursor-grabbing",
         className,
       )}
       style={{ aspectRatio: `${width} / ${height}` }}
@@ -622,9 +634,16 @@ export function PortfolioChart({
             );
           }
           const d = line.points
-            .map(
-              (p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.x)} ${yScale(p.y)}`,
-            )
+            .map((p, i) => {
+              const sx = xScale(p.x);
+              const sy = yScale(p.y);
+              if (i === 0) return `M ${sx} ${sy}`;
+              // Step-before: hold the previous y until reaching the new x,
+              // then jump to the new y. The next iteration's `M`-less `L`
+              // continues from `(sx, sy)`.
+              if (line.step) return `H ${sx} V ${sy}`;
+              return `L ${sx} ${sy}`;
+            })
             .join(" ");
           return (
             <path
@@ -632,7 +651,9 @@ export function PortfolioChart({
               d={d}
               fill="none"
               stroke={line.color}
-              strokeWidth={1.5}
+              strokeWidth={line.strokeWidth ?? 1.5}
+              strokeDasharray={line.dashed ? "3 5" : undefined}
+              strokeLinecap={line.dashed ? "round" : undefined}
             />
           );
         })}
@@ -862,11 +883,19 @@ export function PortfolioChart({
                     const minX = l.points[0].x;
                     const maxX = l.points[l.points.length - 1].x;
                     if (snapped.x < minX || snapped.x > maxX) return [];
+                    // Step lines hold the previous y until the next change
+                    // point, so the visually-correct value at hover x is the
+                    // last point with x ≤ hover.x — *not* the geometrically
+                    // nearest, which can pull values from the next change in
+                    // the future. For continuous lines we keep the nearest-
+                    // neighbour snap (the rendered path interpolates).
                     return [
                       {
                         label: l.label,
                         color: l.color,
-                        point: findClosestPoint(l.points, snapped.x),
+                        point: l.step
+                          ? findStepFloor(l.points, snapped.x)
+                          : findClosestPoint(l.points, snapped.x),
                       },
                     ];
                   });
@@ -1026,6 +1055,16 @@ export function PortfolioChart({
       })}
     </svg>
   );
+}
+
+/** Floor lookup for a step-line series sorted by `x` ascending: the rightmost point with `x ≤ target`, or the first point as a fallback when `target` precedes the series (the chart already filters by visible range so this is just a safety belt). */
+function findStepFloor<T extends { x: number }>(points: T[], x: number): T {
+  let best = points[0];
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].x <= x) best = points[i];
+    else break;
+  }
+  return best;
 }
 
 function findClosestPoint<T extends { x: number }>(points: T[], x: number): T {

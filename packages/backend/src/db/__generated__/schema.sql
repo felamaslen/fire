@@ -177,7 +177,11 @@ CREATE TABLE "InvestmentTransactions" (
   "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT "InvestmentTransactions_price_ck" CHECK ("InvestmentTransactions"."price" >= 0),
   CONSTRAINT "InvestmentTransactions_taxes_ck" CHECK ("InvestmentTransactions"."taxes" >= 0),
-  CONSTRAINT "InvestmentTransactions_fees_ck" CHECK ("InvestmentTransactions"."fees" >= 0)
+  CONSTRAINT "InvestmentTransactions_fees_ck" CHECK ("InvestmentTransactions"."fees" >= 0),
+  CONSTRAINT "InvestmentTransactions_drip_units_ck" CHECK (
+    NOT "InvestmentTransactions"."drip"
+    OR "InvestmentTransactions"."units" > 0
+  )
 );
 
 CREATE TABLE "InvestmentTransfers" (

@@ -200,6 +200,7 @@ const InvestmentsPageDocument = graphql(
       $candleLength: Int!
       $candlestick: Boolean!
       $stack: Boolean!
+      $contributionsLine: Boolean!
       $skipLive: Boolean!
       $filterAssetIdIn: [ID!]
       $filterIsSold: Boolean
@@ -391,6 +392,10 @@ const investmentsSearchSchema = z.object({
   candle: z.enum(CANDLE_SLUGS).optional().catch(undefined),
   mode: z.enum(["line", "candle"]).optional().catch(undefined),
   stack: z.coerce.boolean().optional().catch(undefined),
+  // `noContribs` (presence = hide overlay) instead of `contribs` because the
+  // overlay is on by default — encoding the off-state keeps the URL clean
+  // for the common case.
+  noContribs: z.coerce.boolean().optional().catch(undefined),
   sort: z.enum(["value", "gainAbs", "gainPercent"]).optional().catch(undefined),
   dir: z.enum(["asc", "desc"]).optional().catch(undefined),
   "filter-portfolio-id": z.string().min(1).optional().catch(undefined),
@@ -457,12 +462,16 @@ function searchToChart(s: InvestmentsSearch): PortfolioChartSettings {
     candleIdx: CANDLE_SLUGS.indexOf(candle),
     mode: s.mode === "candle" ? "candlestick" : "line",
     stack: s.stack ?? false,
+    showContribs: !(s.noContribs ?? false),
   };
 }
 
 function chartToSearch(
   c: PortfolioChartSettings,
-): Pick<InvestmentsSearch, "range" | "candle" | "mode" | "stack"> {
+): Pick<
+  InvestmentsSearch,
+  "range" | "candle" | "mode" | "stack" | "noContribs"
+> {
   const range = RANGES[c.periodIdx] ?? "5y";
   const candle = CANDLE_SLUGS[c.candleIdx] ?? "1w";
   return {
@@ -470,6 +479,7 @@ function chartToSearch(
     candle: candle === "1w" ? undefined : candle,
     mode: c.mode === "candlestick" ? "candle" : undefined,
     stack: c.stack ? true : undefined,
+    noContribs: c.showContribs ? undefined : true,
   };
 }
 
@@ -636,6 +646,7 @@ function InvestmentsPageContent() {
       candleLength,
       candlestick: c.mode === "candlestick",
       stack: c.stack,
+      contributionsLine: c.mode !== "candlestick" && !c.stack && c.showContribs,
       skipLive: true,
       filterAssetIdIn: ids.length > 0 ? ids : null,
       filterIsSold: loadHideSold() ? false : null,
