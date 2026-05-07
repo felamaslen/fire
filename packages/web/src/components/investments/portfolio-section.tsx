@@ -3,10 +3,22 @@ import {
   useQuery,
   useSuspenseQuery,
 } from "@apollo/client/react";
+import {
+  CandlestickChart,
+  Layers,
+  LineChart as LineChartIcon,
+  PiggyBank,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDeferredValue } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { colorForKey } from "@/lib/color-for-key";
 
@@ -177,6 +189,8 @@ export type PortfolioChartSettings = {
   candleIdx: number;
   mode: "line" | "candlestick";
   stack: boolean;
+  /** Render the dashed cumulative-contributions / +DRIPs overlay on top of the line view. Ignored in candlestick / stacked modes (where the overlay isn't fetched anyway). */
+  showContribs: boolean;
 };
 
 export function PortfolioSection({
@@ -205,7 +219,7 @@ export function PortfolioSection({
     assetFrom: { name: string };
   }>;
 }) {
-  const { periodIdx, candleIdx, mode, stack } = settings;
+  const { periodIdx, candleIdx, mode, stack, showContribs } = settings;
   const update = (patch: Partial<PortfolioChartSettings>) =>
     onChange({ ...settings, ...patch });
 
@@ -258,33 +272,40 @@ export function PortfolioSection({
                 </Button>
               ))}
         </div>
-        <div className="flex flex-wrap gap-0.5 text-xs sm:gap-1">
-          <Button
-            size="sm"
-            variant={mode === "line" ? "default" : "outline"}
-            onClick={() => update({ mode: "line" })}
-            className="h-6 px-1.5 text-[10px] sm:h-8 sm:px-3 sm:text-xs"
-          >
-            Line
-          </Button>
-          <Button
-            size="sm"
-            variant={mode === "candlestick" ? "default" : "outline"}
-            onClick={() => update({ mode: "candlestick" })}
-            className="h-6 px-1.5 text-[10px] sm:h-8 sm:px-3 sm:text-xs"
-          >
-            Candle
-          </Button>
-          <Button
-            size="sm"
-            variant={stack ? "default" : "outline"}
-            disabled={mode === "candlestick"}
-            onClick={() => update({ stack: !stack })}
-            className="h-6 px-1.5 text-[10px] sm:h-8 sm:px-3 sm:text-xs"
-          >
-            Stacked
-          </Button>
-        </div>
+        <TooltipProvider delayDuration={150}>
+          {/* Mobile: float in the section's top-right corner so the icons
+              don't push the period button row down a line. The section is
+              already `relative`. Desktop: revert to normal flow inside the
+              header's flex-row layout. */}
+          <div className="absolute right-0.5 top-0.5 flex flex-wrap gap-0.5 text-xs sm:static sm:gap-1">
+            <ChartModeIconButton
+              label="Line"
+              icon={<LineChartIcon className="size-3.5" />}
+              active={mode === "line"}
+              onClick={() => update({ mode: "line" })}
+            />
+            <ChartModeIconButton
+              label="Candlestick"
+              icon={<CandlestickChart className="size-3.5" />}
+              active={mode === "candlestick"}
+              onClick={() => update({ mode: "candlestick" })}
+            />
+            <ChartModeIconButton
+              label="Stacked"
+              icon={<Layers className="size-3.5" />}
+              active={stack}
+              disabled={mode === "candlestick"}
+              onClick={() => update({ stack: !stack })}
+            />
+            <ChartModeIconButton
+              label="Show contributions"
+              icon={<PiggyBank className="size-3.5" />}
+              active={showContribs}
+              disabled={mode === "candlestick" || stack}
+              onClick={() => update({ showContribs: !showContribs })}
+            />
+          </div>
+        </TooltipProvider>
       </header>
       <PortfolioChartLoader
         period={p.period}
@@ -293,6 +314,7 @@ export function PortfolioSection({
         candleLength={candle.length}
         candlestick={mode === "candlestick"}
         stack={stack}
+        showContribs={showContribs}
         filterAssetIds={filterAssetIds}
         selectedLabel={selectedLabel}
         transferOut={transferOut ?? null}
@@ -303,6 +325,40 @@ export function PortfolioSection({
   );
 }
 
+/** Compact icon-only toggle for one chart mode. The icon's name surfaces via a Radix tooltip on hover; the button doubles as an `aria-label`'d trigger so screen readers still get the textual name. */
+function ChartModeIconButton({
+  label,
+  icon,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          size="sm"
+          variant={active ? "default" : "outline"}
+          disabled={disabled}
+          onClick={onClick}
+          aria-label={label}
+          aria-pressed={active}
+          className="h-6 w-6 p-0 sm:h-8 sm:w-8"
+        >
+          {icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function PortfolioChartLoader({
   period,
   length,
@@ -310,6 +366,7 @@ function PortfolioChartLoader({
   candleLength,
   candlestick,
   stack,
+  showContribs,
   filterAssetIds,
   selectedLabel,
   transferOut,
@@ -321,6 +378,7 @@ function PortfolioChartLoader({
   candleLength: number;
   candlestick: boolean;
   stack: boolean;
+  showContribs: boolean;
   filterAssetIds: string[];
   selectedLabel: string | null;
   transferOut: {
@@ -349,6 +407,7 @@ function PortfolioChartLoader({
   const deferredCandleLength = useDeferredValue(candleLength);
   const deferredCandlestick = useDeferredValue(candlestick);
   const deferredStack = useDeferredValue(stack);
+  const deferredShowContribs = useDeferredValue(showContribs);
   // Defer via a stable string key so a new-but-equal `string[]` reference
   // from the parent doesn't churn the deferred identity and re-fire the
   // suspense query.
@@ -364,6 +423,7 @@ function PortfolioChartLoader({
     deferredCandleLength !== candleLength ||
     deferredCandlestick !== candlestick ||
     deferredStack !== stack ||
+    deferredShowContribs !== showContribs ||
     deferredFilterKey !== filterKey;
   const { data } = useSuspenseQuery(PortfolioChartDocument, {
     variables: {
@@ -380,7 +440,8 @@ function PortfolioChartLoader({
       // Cumulative contributions / DRIP overlay only renders on the plain
       // line view — it'd just clutter a stacked-area chart and there's no
       // sensible interpretation against candle buckets.
-      contributionsLine: !deferredCandlestick && !deferredStack,
+      contributionsLine:
+        !deferredCandlestick && !deferredStack && deferredShowContribs,
       filterAssetIdIn:
         deferredFilterAssetIds.length > 0 ? deferredFilterAssetIds : null,
     },
@@ -570,7 +631,9 @@ function PortfolioChartLoader({
   // edge so the step line visibly extends to "today" rather than stopping
   // at the most recent transaction.
   const overlayLines: import("./portfolio-chart").LineSeries[] = (() => {
-    if (deferredCandlestick || deferredStack) return [];
+    if (deferredCandlestick || deferredStack || !deferredShowContribs) {
+      return [];
+    }
     const contrib = portfolio?.contributions;
     if (!contrib || !initialDate) return [];
     const tsPoints = portfolio?.timeseries?.points;
@@ -600,8 +663,8 @@ function PortfolioChartLoader({
         color: "#6b7280",
         points: contribPoints,
         step: true,
-        dotted: true,
-        strokeWidth: 1.5,
+        dashed: true,
+        strokeWidth: 1,
       });
     }
     // Only render the DRIP overlay when at least one DRIP changed the running
@@ -617,8 +680,8 @@ function PortfolioChartLoader({
           color: "#22a53e",
           points: dripPoints,
           step: true,
-          dotted: true,
-          strokeWidth: 1.5,
+          dashed: true,
+          strokeWidth: 1,
         });
       }
     }

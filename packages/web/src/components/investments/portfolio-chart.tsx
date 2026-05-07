@@ -13,8 +13,8 @@ export type LineSeries = {
   points: { x: number; y: number }[];
   /** Render as a step-before path (horizontal then vertical between points), so the segment between two points carries the earlier point's `y`. Used for cumulative series whose backend only emits points where the value changes. */
   step?: boolean;
-  /** Render the stroke as a dotted line (round caps on zero-length dashes — every dot is a circle of stroke-width diameter). */
-  dotted?: boolean;
+  /** Render the stroke as a dashed line (round caps on zero-length dashes — every dot is a circle of stroke-width diameter). */
+  dashed?: boolean;
   /** Stroke width in user units. Defaults to `1.5`. */
   strokeWidth?: number;
 };
@@ -646,8 +646,8 @@ export function PortfolioChart({
               fill="none"
               stroke={line.color}
               strokeWidth={line.strokeWidth ?? 1.5}
-              strokeDasharray={line.dotted ? "0 4" : undefined}
-              strokeLinecap={line.dotted ? "round" : undefined}
+              strokeDasharray={line.dashed ? "3 5" : undefined}
+              strokeLinecap={line.dashed ? "round" : undefined}
             />
           );
         })}
