@@ -397,6 +397,15 @@ input PayslipAdjustmentInput {
 }
 
 """
+A dated gross-pay rise/cut to attach to a `PlanningEarning`. Rows are upserted by (earnings, startDate). The initial (null-startDate) rate is set via the earning's top-level `amountGross` argument and is not represented here.
+"""
+input PlanningEarningGrossPayInput {
+  amountGross: MoneyInput!
+  """First day this rate takes effect."""
+  startDate: Date!
+}
+
+"""
 A parental-leave stage to attach to a `PlanningEarning`. Rows are upserted by (earnings, start) — re-supplying the same `start` overwrites the previous stage. `isSMP` and `isSPP` are mutually exclusive.
 """
 input PlanningEarningParentalLeaveInput {
@@ -1187,6 +1196,10 @@ type Mutation {
     """ISO-3166-1 alpha-2 country where the earnings are taxed (e.g. `"GB"`)."""
     countryCode: String!
     end: Date
+    """
+    Pay rises and cuts effective from each `startDate`. The earning's top-level `amountGross` defines the initial rate; entries here add subsequent dated rates. Replace-all semantics: the supplied list becomes the complete set of dated entries.
+    """
+    grossPays: [PlanningEarningGrossPayInput!]
     name: String!
     """
     Parental-leave stages affecting predicted gross during their date ranges. Provide one row per stage of an enhanced scheme (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid).
@@ -1225,12 +1238,31 @@ type Mutation {
   """
   earningsDelete(id: ID!): Void!
   """
+  Remove a gross-pay entry by `(earningsId, startDate)`. The initial null-startDate row cannot be deleted — every earning must keep its initial rate; use `earningsUpdate` with a new `amountGross` to revise it instead.
+  """
+  earningsGrossPayDelete(earningsId: ID!, startDate: Date!): PlanningEarning!
+  """
+  Add or replace a gross-pay rate on an earning. When `startDate` is null, the row is the *initial* rate (only one such row may exist per earning); when a date is given, the row represents a pay rise or cut taking effect that day. Re-supplying the same `(earningsId, startDate)` overwrites the existing entry.
+  """
+  earningsGrossPaySet(
+    amountGross: MoneyInput!
+    earningsId: ID!
+    """
+    First day this rate applies. Pass null only for the initial entry — at most one null-startDate row may exist per earning.
+    """
+    startDate: Date
+  ): PlanningEarning!
+  """
   Partially update an earnings stream. Only fields passed in are changed — omit a field to leave it untouched. Passing `ukTaxCodes` replaces the full tax-code history (existing rows are deleted, then the supplied list is inserted). Months affected by the old or new date range have their projections recomputed.
   """
   earningsUpdate(
     amountGross: MoneyInput
     countryCode: String
     end: Date
+    """
+    New full set of dated pay rises/cuts; pass to replace the existing list. Each entry's `startDate` must be set — the initial null-date rate is patched via `amountGross`. Omit to leave the history untouched.
+    """
+    grossPays: [PlanningEarningGrossPayInput!]
     id: ID!
     name: String
     """
@@ -2126,7 +2158,14 @@ type PlanningBillEdge {
 A stream of gross earnings (salary, contract income, …) paid into a specific asset account.
 """
 type PlanningEarning {
+  """
+  Annual gross pay rate currently in effect (today), pulled from the most recent `PlanningEarningGrossPay` whose `startDate` has arrived (or the initial null-startDate row when no dated entries apply yet).
+  """
   amountGross: Money!
+  """
+  Initial annual gross pay rate — the `PlanningEarningGrossPay` entry with no `startDate`, in effect from the earning's `start` until the first dated rise/cut takes over. Distinct from `amountGross`, which resolves to the rate active *today*. Useful for displaying both endpoints (e.g. `£50k → £60k`) when a pay rise has already kicked in.
+  """
+  amountGrossInitial: Money!
   """
   Human-readable summary of the earning's pension and student-loan attributes, comma-joined (e.g. `"5% salary sacrifice, 3% net pay pension, student loan plan 2"`). Empty string if none apply.
   """
@@ -2134,6 +2173,10 @@ type PlanningEarning {
   """ISO-3166-1 alpha-2 country where the earnings are taxed."""
   countryCode: String!
   end: Date
+  """
+  All gross-pay entries for this earning, sorted with the initial null-startDate entry first (when present), then by `startDate` ascending. Each subsequent entry represents a pay rise or cut effective from its date.
+  """
+  grossPays: [PlanningEarningGrossPay!]!
   id: ID!
   name: String!
   """
@@ -2187,6 +2230,19 @@ A single entry inside a `Connection`. Carries its own `cursor` so clients can re
 type PlanningEarningEdge {
   cursor: ID!
   node: PlanningEarning!
+}
+
+"""
+A single gross-pay rate effective from `startDate` until the next entry (or indefinitely if it's the latest). Pay rises and cuts on a `PlanningEarning` are modelled as additional rows on this list. The entry with `startDate = null` is the initial rate, used until the first dated entry takes over; at most one such row exists per earning.
+"""
+type PlanningEarningGrossPay {
+  """Annual gross pay at this rate."""
+  amountGross: Money!
+  id: ID!
+  """
+  First day this rate takes effect. Null on the single initial-rate entry — it applies from the earning's `start` until superseded by the first dated entry.
+  """
+  startDate: Date
 }
 
 """

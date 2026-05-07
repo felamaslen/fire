@@ -28,6 +28,63 @@ import {
 import { graphql, type ResultOf } from "../../../graphql";
 import { PlanningYearViewDocument } from "../$year";
 
+/** Every field the earnings dialog reads off a `PlanningEarning`. Lifted into a
+ * fragment so create/update mutations can return the same shape and Apollo's
+ * cache merges the result back into the dialog's query without a refetch. */
+const PlanningEarningRowDocument = graphql(
+  `
+    fragment PlanningEarningRow on PlanningEarning {
+      id
+      name
+      start
+      end
+      amountGross {
+        amount
+        currency
+        ...Figure
+      }
+      attributes
+      pensionReliefAtSource
+      pensionNetPay
+      pensionSalarySacrifice
+      studentLoanPlan2
+      studentLoanLiability {
+        id
+        name
+      }
+      pensionAsset {
+        id
+        name
+      }
+      ukTaxCodes {
+        start
+        end
+        taxCode
+      }
+      parentalLeaves {
+        start
+        end
+        fractionOfGross
+        isSMP
+        isSPP
+      }
+      grossPays {
+        id
+        startDate
+        amountGross {
+          amount
+          currency
+        }
+      }
+      toAccount {
+        id
+        name
+      }
+    }
+  `,
+  [FigureDocument],
+);
+
 const PlanningEarningsDialogDocument = graphql(
   `
     query PlanningEarningsDialog($year: ID!) {
@@ -39,6 +96,11 @@ const PlanningEarningsDialogDocument = graphql(
             start
             end
             amountGross {
+              amount
+              currency
+              ...Figure
+            }
+            amountGrossInitial {
               amount
               currency
               ...Figure
@@ -67,6 +129,14 @@ const PlanningEarningsDialogDocument = graphql(
               fractionOfGross
               isSMP
               isSPP
+            }
+            grossPays {
+              id
+              startDate
+              amountGross {
+                amount
+                currency
+              }
             }
             toAccount {
               id
@@ -103,81 +173,91 @@ const PlanningEarningsDialogDocument = graphql(
   [FigureDocument],
 );
 
-const PlanningEarningsCreateDocument = graphql(`
-  mutation PlanningEarningsCreate(
-    $name: String!
-    $start: Date!
-    $amountGross: MoneyInput!
-    $countryCode: String!
-    $toAccountId: ID!
-    $end: Date
-    $pensionReliefAtSource: Float
-    $pensionNetPay: Float
-    $pensionSalarySacrifice: Float
-    $studentLoanPlan2: Boolean
-    $studentLoanLiabilityId: ID
-    $pensionAssetId: ID
-    $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
-    $parentalLeaves: [PlanningEarningParentalLeaveInput!]
-  ) {
-    earningsCreate(
-      name: $name
-      start: $start
-      amountGross: $amountGross
-      countryCode: $countryCode
-      pensionReliefAtSource: $pensionReliefAtSource
-      pensionNetPay: $pensionNetPay
-      toAccountId: $toAccountId
-      end: $end
-      pensionSalarySacrifice: $pensionSalarySacrifice
-      studentLoanPlan2: $studentLoanPlan2
-      studentLoanLiabilityId: $studentLoanLiabilityId
-      pensionAssetId: $pensionAssetId
-      ukTaxCodes: $ukTaxCodes
-      parentalLeaves: $parentalLeaves
+const PlanningEarningsCreateDocument = graphql(
+  `
+    mutation PlanningEarningsCreate(
+      $name: String!
+      $start: Date!
+      $amountGross: MoneyInput!
+      $countryCode: String!
+      $toAccountId: ID!
+      $end: Date
+      $pensionReliefAtSource: Float
+      $pensionNetPay: Float
+      $pensionSalarySacrifice: Float
+      $studentLoanPlan2: Boolean
+      $studentLoanLiabilityId: ID
+      $pensionAssetId: ID
+      $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
+      $parentalLeaves: [PlanningEarningParentalLeaveInput!]
+      $grossPays: [PlanningEarningGrossPayInput!]
     ) {
-      id
+      earningsCreate(
+        name: $name
+        start: $start
+        amountGross: $amountGross
+        countryCode: $countryCode
+        pensionReliefAtSource: $pensionReliefAtSource
+        pensionNetPay: $pensionNetPay
+        toAccountId: $toAccountId
+        end: $end
+        pensionSalarySacrifice: $pensionSalarySacrifice
+        studentLoanPlan2: $studentLoanPlan2
+        studentLoanLiabilityId: $studentLoanLiabilityId
+        pensionAssetId: $pensionAssetId
+        ukTaxCodes: $ukTaxCodes
+        parentalLeaves: $parentalLeaves
+        grossPays: $grossPays
+      ) {
+        ...PlanningEarningRow
+      }
     }
-  }
-`);
+  `,
+  [PlanningEarningRowDocument],
+);
 
-const PlanningEarningsUpdateDocument = graphql(`
-  mutation PlanningEarningsUpdate(
-    $id: ID!
-    $name: String
-    $start: Date
-    $amountGross: MoneyInput
-    $pensionReliefAtSource: Float
-    $pensionNetPay: Float
-    $toAccountId: ID
-    $end: Date
-    $pensionSalarySacrifice: Float
-    $studentLoanPlan2: Boolean
-    $studentLoanLiabilityId: ID
-    $pensionAssetId: ID
-    $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
-    $parentalLeaves: [PlanningEarningParentalLeaveInput!]
-  ) {
-    earningsUpdate(
-      id: $id
-      name: $name
-      start: $start
-      amountGross: $amountGross
-      pensionReliefAtSource: $pensionReliefAtSource
-      pensionNetPay: $pensionNetPay
-      toAccountId: $toAccountId
-      end: $end
-      pensionSalarySacrifice: $pensionSalarySacrifice
-      studentLoanPlan2: $studentLoanPlan2
-      studentLoanLiabilityId: $studentLoanLiabilityId
-      pensionAssetId: $pensionAssetId
-      ukTaxCodes: $ukTaxCodes
-      parentalLeaves: $parentalLeaves
+const PlanningEarningsUpdateDocument = graphql(
+  `
+    mutation PlanningEarningsUpdate(
+      $id: ID!
+      $name: String
+      $start: Date
+      $amountGross: MoneyInput
+      $pensionReliefAtSource: Float
+      $pensionNetPay: Float
+      $toAccountId: ID
+      $end: Date
+      $pensionSalarySacrifice: Float
+      $studentLoanPlan2: Boolean
+      $studentLoanLiabilityId: ID
+      $pensionAssetId: ID
+      $ukTaxCodes: [PlanningEarningUKTaxCodeInput!]
+      $parentalLeaves: [PlanningEarningParentalLeaveInput!]
+      $grossPays: [PlanningEarningGrossPayInput!]
     ) {
-      id
+      earningsUpdate(
+        id: $id
+        name: $name
+        start: $start
+        amountGross: $amountGross
+        pensionReliefAtSource: $pensionReliefAtSource
+        pensionNetPay: $pensionNetPay
+        toAccountId: $toAccountId
+        end: $end
+        pensionSalarySacrifice: $pensionSalarySacrifice
+        studentLoanPlan2: $studentLoanPlan2
+        studentLoanLiabilityId: $studentLoanLiabilityId
+        pensionAssetId: $pensionAssetId
+        ukTaxCodes: $ukTaxCodes
+        parentalLeaves: $parentalLeaves
+        grossPays: $grossPays
+      ) {
+        ...PlanningEarningRow
+      }
     }
-  }
-`);
+  `,
+  [PlanningEarningRowDocument],
+);
 
 const PlanningEarningsDeleteDocument = graphql(`
   mutation PlanningEarningsDelete($id: ID!) {
@@ -235,6 +315,9 @@ type ParentalLeaveEntry = {
   eligibility: "NONE" | "SMP" | "SPP";
 };
 
+/** One dated pay rise/cut row. `amount` is stored as a string so empty inputs don't coerce to 0. */
+type GrossPayEntry = { startDate: string; amount: string };
+
 type FormValues = {
   name: string;
   start: string;
@@ -251,6 +334,7 @@ type FormValues = {
   pensionAssetId: string;
   taxCodes: TaxCodeEntry[];
   parentalLeaves: ParentalLeaveEntry[];
+  grossPays: GrossPayEntry[];
 };
 
 const emptyForm: FormValues = {
@@ -267,6 +351,7 @@ const emptyForm: FormValues = {
   pensionAssetId: "",
   taxCodes: [],
   parentalLeaves: [],
+  grossPays: [],
 };
 
 function earningToForm(earning: Earning): FormValues {
@@ -274,7 +359,10 @@ function earningToForm(earning: Earning): FormValues {
     name: earning.name,
     start: earning.start,
     end: earning.end ?? "",
-    amount: String(earning.amountGross.amount),
+    // The "Gross (per year)" field is the *initial* rate. `earning.amountGross`
+    // resolves to the rate active today, so it would pre-fill with the post-
+    // rise figure once any rise has kicked in.
+    amount: String(earning.amountGrossInitial.amount),
     toAccountId: earning.toAccount.id,
     pensionReliefAtSourcePct:
       earning.pensionReliefAtSource == null
@@ -301,7 +389,27 @@ function earningToForm(earning: Earning): FormValues {
         fractionPct: String(Math.round(l.fractionOfGross * 100)),
         eligibility: l.isSMP ? "SMP" : l.isSPP ? "SPP" : "NONE",
       })),
+    // Drop the initial null-startDate row — it's edited via the top-level
+    // `amount` field. Only dated rises/cuts are managed in the list.
+    grossPays: earning.grossPays
+      .filter((g) => g.startDate != null)
+      .sort((a, b) => (a.startDate ?? "").localeCompare(b.startDate ?? ""))
+      .map((g) => ({
+        startDate: g.startDate ?? "",
+        amount: String(g.amountGross.amount),
+      })),
   };
+}
+
+function grossPaysForMutation(
+  entries: GrossPayEntry[],
+): { startDate: string; amountGross: { amount: number; currency: string } }[] {
+  return entries
+    .filter((e) => e.startDate !== "" && e.amount.trim() !== "")
+    .map((e) => ({
+      startDate: e.startDate,
+      amountGross: { amount: Number(e.amount), currency: CURRENCY },
+    }));
 }
 
 /** Build the `PlanningEarningParentalLeaveInput[]` the backend expects from the form's entries — drops rows with no start date and clamps the percentage to `[0, 100]`. */
@@ -501,10 +609,19 @@ function EarningRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate text-sm font-medium">{earning.name}</span>
-          <Figure
-            data={earning.amountGross}
-            className="font-mono text-xs tabular-nums"
-          />
+          <span className="flex items-baseline gap-1 font-mono text-xs tabular-nums">
+            {earning.amountGrossInitial.amount !==
+              earning.amountGross.amount && (
+              <>
+                <Figure
+                  data={earning.amountGrossInitial}
+                  className="text-muted-foreground"
+                />
+                <span className="text-muted-foreground">→</span>
+              </>
+            )}
+            <Figure data={earning.amountGross} />
+          </span>
         </div>
         <div className="mt-0.5 flex items-baseline justify-between gap-2 text-[11px] text-muted-foreground">
           <span>{range}</span>
@@ -581,6 +698,7 @@ function AddEarningForm({
         toAccountId: values.toAccountId,
         ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
         parentalLeaves: parentalLeavesForMutation(values.parentalLeaves),
+        grossPays: grossPaysForMutation(values.grossPays),
       },
     });
     toast.success(`Added ${values.name.trim()}`);
@@ -665,6 +783,7 @@ function EditEarningForm({
         toAccountId: values.toAccountId,
         ukTaxCodes: taxCodesForMutation(values.start, values.taxCodes),
         parentalLeaves: parentalLeavesForMutation(values.parentalLeaves),
+        grossPays: grossPaysForMutation(values.grossPays),
       },
     });
     toast.success(`Updated ${values.name.trim()}`);
@@ -863,11 +982,83 @@ function EarningFormFields({
         entries={values.taxCodes}
         onChange={(taxCodes) => patch({ taxCodes })}
       />
+      <GrossPaysField
+        entries={values.grossPays}
+        onChange={(grossPays) => patch({ grossPays })}
+      />
       <ParentalLeavesField
         entries={values.parentalLeaves}
         onChange={(parentalLeaves) => patch({ parentalLeaves })}
       />
     </>
+  );
+}
+
+function GrossPaysField({
+  entries,
+  onChange,
+}: {
+  entries: GrossPayEntry[];
+  onChange: (next: GrossPayEntry[]) => void;
+}) {
+  const addEntry = () => {
+    onChange([...entries, { startDate: "", amount: "" }]);
+  };
+  const patchAt = (i: number, p: Partial<GrossPayEntry>) => {
+    onChange(entries.map((e, idx) => (idx === i ? { ...e, ...p } : e)));
+  };
+  const removeAt = (i: number) => {
+    onChange(entries.filter((_, idx) => idx !== i));
+  };
+
+  return (
+    <details className="rounded-md border bg-muted/20 p-2 text-xs">
+      <summary className="cursor-pointer font-medium">Pay rises / cuts</summary>
+      <p className="mt-2 text-muted-foreground">
+        Add a row for each pay change. The rate stays in effect from its date
+        until the next entry takes over. Months before the first entry use the
+        initial gross above.
+      </p>
+      <ul className="mt-2 space-y-2">
+        {entries.map((entry, i) => (
+          <li key={i} className="flex flex-wrap items-end gap-2">
+            <FormField label="From">
+              <Input
+                type="date"
+                value={entry.startDate}
+                onChange={(e) => patchAt(i, { startDate: e.target.value })}
+                required
+              />
+            </FormField>
+            <FormField label="New gross (per year)">
+              <Input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                currency={CURRENCY}
+                value={entry.amount}
+                onChange={(e) => patchAt(i, { amount: e.target.value })}
+              />
+            </FormField>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => removeAt(i)}
+              aria-label={`Remove pay change ${i + 1}`}
+            >
+              <X className="size-4" />
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2 flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={addEntry}>
+          <Plus className="mr-1 size-3" />
+          Add pay change
+        </Button>
+      </div>
+    </details>
   );
 }
 
