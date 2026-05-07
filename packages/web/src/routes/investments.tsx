@@ -200,6 +200,7 @@ const InvestmentsPageDocument = graphql(
       $candleLength: Int!
       $candlestick: Boolean!
       $stack: Boolean!
+      $contributionsLine: Boolean!
       $skipLive: Boolean!
       $filterAssetIdIn: [ID!]
       $filterIsSold: Boolean
@@ -636,6 +637,7 @@ function InvestmentsPageContent() {
       candleLength,
       candlestick: c.mode === "candlestick",
       stack: c.stack,
+      contributionsLine: c.mode !== "candlestick" && !c.stack,
       skipLive: true,
       filterAssetIdIn: ids.length > 0 ? ids : null,
       filterIsSold: loadHideSold() ? false : null,

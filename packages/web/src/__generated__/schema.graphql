@@ -2453,6 +2453,10 @@ type Portfolio {
   """
   cash: Money!
   """
+  Step-line view of cumulative invested capital over the same period as `timeseries` — non-DRIP contributions and a "with DRIPs added on top" overlay. Returns `null` when the scope has no transactions.
+  """
+  contributions(length: Int, period: PortfolioTimePeriod!): PortfolioContributions
+  """
   ISO-4217 code every aggregate on this `Portfolio` is expressed in. Investments held in other currencies are excluded from these numbers.
   """
   currency: String!
@@ -2578,6 +2582,26 @@ A cursor-paginated list. Concrete materialisations (e.g. `Connection<NetWorthEnt
 type PortfolioConnection {
   edges: [PortfolioEdge!]!
   pageInfo: PageInfo!
+}
+
+"""
+Step-line view of cumulative invested capital for the portfolio scope, split into out-of-pocket contributions and dividend reinvestments (DRIPs). Both series are evaluated at end-of-day for each date the running total changes; render as a step-before line drawing horizontally to the next point and then jumping vertically. The values are raw `units × price` from the booked transactions (buys add, sells subtract); stock splits are intentionally not folded in — the line tracks the cash actually transacted, not the present-day equivalent.
+"""
+type PortfolioContributions {
+  """
+  Cumulative `units × price` over non-DRIP transactions in scope. Always begins with an `x = 0` anchor whose `y` carries any pre-window total, followed by one entry per in-window date that moved the running total.
+  """
+  contributions: [PortfolioTimeseriesPoint!]!
+  """ISO-4217 code the values are expressed in."""
+  currency: String!
+  """
+  Calendar anchor for the series — `x = 0` corresponds to this date. Mirrors the period/length-clamped left edge of the matching `Portfolio.timeseries` so the two series can be plotted on the same X axis.
+  """
+  initialDate: Date!
+  """
+  Same as `contributions` but with DRIP transactions added on top of the non-DRIP running total. By construction sits at-or-above `contributions`; the gap reads as "value of dividends reinvested".
+  """
+  withDrips: [PortfolioTimeseriesPoint!]!
 }
 
 """
