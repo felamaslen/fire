@@ -137,10 +137,13 @@ it("paymentHistory aggregates PlanningTransactions and payslip adjustments by mo
   );
 
   // Two GBP outflows in May 2025 → should sum to £1500 in that month.
+  // `PlanningTransactions.(year, date)` FKs to `PlanningMonths`, whose `date`
+  // is anchored at the 1st — so transactions inside the same calendar month
+  // share the same month-anchor here even when they happen on different days.
   await db.insert(PlanningTransactions).values([
     {
       year: 2025,
-      date: new Date(Date.UTC(2025, 4, 5)),
+      date: new Date(Date.UTC(2025, 4, 1)),
       amount: -100_000,
       currency: "GBP",
       name: "Mortgage May",
@@ -149,7 +152,7 @@ it("paymentHistory aggregates PlanningTransactions and payslip adjustments by mo
     },
     {
       year: 2025,
-      date: new Date(Date.UTC(2025, 4, 20)),
+      date: new Date(Date.UTC(2025, 4, 1)),
       amount: -50_000,
       currency: "GBP",
       name: "Mortgage May overpayment",
@@ -292,5 +295,92 @@ it("paymentHistory expands recurring PlanningBills against past months and respe
   // Apr 2025 → Apr 2026 inclusive (collection on the 1st, 2026-04-01 ≤
   // 2026-04-18). Sep 2025 dropped (override.amount = null), Jun 2025 = £950,
   // every other month = £1000.
-  expect(row?.paymentHistory).toMatchInlineSnapshot();
+  expect(row?.paymentHistory).toMatchInlineSnapshot(`
+    [
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2025-04-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2025-05-01",
+      },
+      {
+        "amount": {
+          "amount": 950,
+          "currency": "GBP",
+        },
+        "month": "2025-06-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2025-07-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2025-08-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2025-10-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2025-11-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2025-12-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2026-01-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2026-02-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2026-03-01",
+      },
+      {
+        "amount": {
+          "amount": 1000,
+          "currency": "GBP",
+        },
+        "month": "2026-04-01",
+      },
+    ]
+  `);
 });

@@ -1,5 +1,7 @@
 import "@/index";
 
+import { strict as assert } from "node:assert";
+
 import { db } from "@/db";
 import {
   PlanningEarnings,
@@ -1243,17 +1245,17 @@ it("a dated gross-pay rise shifts the predicted balances from its start month on
   expect(await balanceTable("2025")).toMatchInlineSnapshot(`
     "
     MONTH    ACCOUNT VALUE START VALUE END
-    apr-2025 Main    10000       12093.3
-    may-2025 Main    12093.3     14186.6
-    jun-2025 Main    14186.6     16279.9
-    jul-2025 Main    16279.9     18373.2
-    aug-2025 Main    18373.2     20466.5
-    sep-2025 Main    20466.5     22559.8
-    oct-2025 Main    22559.8     26339.58
-    nov-2025 Main    26339.58    30119.36
-    dec-2025 Main    30119.36    33899.14
-    jan-2026 Main    33899.14    37678.92
-    feb-2026 Main    37678.92    41458.7
+    apr-2025 Main    10000       12093.3  
+    may-2025 Main    12093.3     14186.6  
+    jun-2025 Main    14186.6     16279.9  
+    jul-2025 Main    16279.9     18373.2  
+    aug-2025 Main    18373.2     20466.5  
+    sep-2025 Main    20466.5     22559.8  
+    oct-2025 Main    22559.8     26339.58 
+    nov-2025 Main    26339.58    30119.36 
+    dec-2025 Main    30119.36    33899.14 
+    jan-2026 Main    33899.14    37678.92 
+    feb-2026 Main    37678.92    41458.7  
     mar-2026 Main    41458.7     45238.48 "
   `);
 });
@@ -1473,12 +1475,21 @@ it("the unique constraint rejects a second null-startDate gross-pay row per earn
   );
   const earningId = await firstEarningId();
 
-  await expect(
-    db.insert(PlanningEarningsGrossPay).values({
+  let caught: unknown;
+  try {
+    await db.insert(PlanningEarningsGrossPay).values({
       earningsId: earningId,
       startDate: null,
       amountGross: 12345,
       currency: "GBP",
-    }),
-  ).rejects.toThrow(/PlanningEarningsGrossPay_earningsStart_uq/);
+    });
+  } catch (e) {
+    caught = e;
+  }
+  // Drizzle wraps the pg error in `cause`, so the constraint name is on the
+  // inner error rather than the outer "Failed query: …" message.
+  assert(caught instanceof Error);
+  expect(
+    (caught.cause as { constraint?: string } | undefined)?.constraint,
+  ).toBe("PlanningEarningsGrossPay_earningsStart_uq");
 });
