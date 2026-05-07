@@ -12,6 +12,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -153,9 +154,6 @@ export const PlanningEarnings = pgTable(
     start: date("start", { mode: "date" }).notNull(),
     /** Last day this stream was/is in effect; null if ongoing. */
     end: date("end", { mode: "date" }),
-    /** Gross earnings amount per pay period, in fractional units of `currency`. */
-    amountGross: bigint("amountGross", { mode: "number" }).notNull(),
-    currency: currencyCode("currency").notNull(),
     /** Country where the earnings are taxed. */
     countryCode: countryCode("countryCode").notNull(),
     /** Fraction of gross diverted via salary sacrifice (null if not used). */
@@ -224,6 +222,46 @@ export const planningEarningsRelations = relations(
     }),
     ukTaxCodes: many(PlanningEarningsUKTaxCodes),
     parentalLeaves: many(PlanningEarningsParentalLeave),
+    grossPays: many(PlanningEarningsGrossPay),
+  }),
+);
+
+/** Gross-pay history for a `PlanningEarnings`. Each row represents a constant pay rate (annual gross) effective from `startDate` until superseded by a later row. A single row per earning may have a null `startDate`, representing the initial gross pay for the stream — every other row carries a date. Pay rises and cuts are modelled by adding more rows. */
+export const PlanningEarningsGrossPay = pgTable(
+  "PlanningEarningsGrossPay",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    earningsId: uuid("earningsId")
+      .notNull()
+      .references(() => PlanningEarnings.id, { onDelete: "cascade" }),
+    /** First day this pay rate is in effect. Null = the initial gross pay for the earning, used until the first dated entry takes over. At most one null row per earning. */
+    startDate: date("startDate", { mode: "date" }),
+    /** Annual gross pay, in fractional units of `currency`. */
+    amountGross: bigint("amountGross", { mode: "number" }).notNull(),
+    currency: currencyCode("currency").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("PlanningEarningsGrossPay_earningsStart_uq")
+      .on(t.earningsId, t.startDate)
+      .nullsNotDistinct(),
+  ],
+);
+
+export const planningEarningsGrossPayRelations = relations(
+  PlanningEarningsGrossPay,
+  ({ one }) => ({
+    earnings: one(PlanningEarnings, {
+      fields: [PlanningEarningsGrossPay.earningsId],
+      references: [PlanningEarnings.id],
+    }),
   }),
 );
 

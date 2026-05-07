@@ -404,8 +404,6 @@ CREATE TABLE "PlanningEarnings" (
   "name" text NOT NULL,
   "start" date NOT NULL,
   "end" date,
-  "amountGross" bigint NOT NULL,
-  "currency" "CurrencyCode" NOT NULL,
   "countryCode" "CountryCode" NOT NULL,
   "pensionSalarySacrifice" double precision,
   "pensionReliefAtSource" double precision,
@@ -444,6 +442,17 @@ CREATE TABLE "PlanningEarnings" (
       OR "PlanningEarnings"."pensionReliefAtSource" IS NOT NULL
     )
   )
+);
+
+CREATE TABLE "PlanningEarningsGrossPay" (
+  "id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
+  "earningsId" uuid NOT NULL,
+  "startDate" date,
+  "amountGross" bigint NOT NULL,
+  "currency" "CurrencyCode" NOT NULL,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "PlanningEarningsGrossPay_earningsStart_uq" UNIQUE NULLS NOT DISTINCT ("earningsId", "startDate")
 );
 
 CREATE TABLE "PlanningEarningsParentalLeave" (
@@ -708,6 +717,9 @@ ADD CONSTRAINT "PlanningEarnings_studentLoanLiabilityId_NetWorthCategoryLiabilit
 
 ALTER TABLE "PlanningEarnings"
 ADD CONSTRAINT "PlanningEarnings_pensionAssetId_NetWorthCategoryAssets_id_fk" FOREIGN KEY ("pensionAssetId") REFERENCES "public"."NetWorthCategoryAssets" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
+
+ALTER TABLE "PlanningEarningsGrossPay"
+ADD CONSTRAINT "PlanningEarningsGrossPay_earningsId_PlanningEarnings_id_fk" FOREIGN KEY ("earningsId") REFERENCES "public"."PlanningEarnings" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
 ALTER TABLE "PlanningEarningsParentalLeave"
 ADD CONSTRAINT "PlanningEarningsParentalLeave_earningsId_PlanningEarnings_id_fk" FOREIGN KEY ("earningsId") REFERENCES "public"."PlanningEarnings" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
