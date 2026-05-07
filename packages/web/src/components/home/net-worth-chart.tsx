@@ -59,6 +59,8 @@ export type NetWorthChartSeries = {
    * for that point.
    */
   tooltipValues?: (number | null)[];
+  /** When true, render this series' tooltip row as a sub-row of the previous series — no colour swatch, label indented to the right. */
+  tooltipIndent?: boolean;
 };
 
 /** A single pinned event on the chart. `index` is a fractional index into `points`. The chart picks an icon + colour based on `kind` and wraps it in a shadcn Tooltip showing `label`. */
@@ -700,25 +702,51 @@ export function NetWorthChart({
                       display != null && display < 0 && s.negativeColor
                         ? s.negativeColor
                         : s.color;
+                    const valueText =
+                      display == null
+                        ? "—"
+                        : formatAccountingMoneyRounded(currency, display);
+                    const labelLeft = s.tooltipIndent ? boxX + 40 : boxX + 32;
+                    // Reserve room for the right-aligned value so the label
+                    // never collides with it. The value is rendered in SVG
+                    // text so we approximate its width from char count
+                    // (~7px per char at the default size); the label cell
+                    // uses a foreignObject + CSS ellipsis for truncation.
+                    const valueWidthEst = Math.max(60, valueText.length * 7);
+                    const labelRight = boxX + boxW - 14 - valueWidthEst - 8;
+                    const labelWidth = Math.max(20, labelRight - labelLeft);
                     return (
                       <g
                         key={`row-${s.key}`}
                         transform={`translate(0, ${boxY + headerH + i * rowH})`}
                       >
-                        <rect
-                          x={boxX + 14}
-                          y={4}
-                          width={12}
-                          height={12}
-                          fill={swatch}
-                        />
-                        <text x={boxX + 32} y={14}>
-                          {s.label}
-                        </text>
+                        {!s.tooltipIndent && (
+                          <rect
+                            x={boxX + 14}
+                            y={4}
+                            width={12}
+                            height={12}
+                            fill={swatch}
+                          />
+                        )}
+                        <foreignObject
+                          x={labelLeft}
+                          y={0}
+                          width={labelWidth}
+                          height={20}
+                        >
+                          <div
+                            className={cn(
+                              "overflow-hidden whitespace-nowrap text-ellipsis leading-[20px] text-foreground",
+                              s.tooltipIndent && "text-muted-foreground",
+                            )}
+                            title={s.label}
+                          >
+                            {s.label}
+                          </div>
+                        </foreignObject>
                         <text x={boxX + boxW - 14} y={14} textAnchor="end">
-                          {display == null
-                            ? "—"
-                            : formatAccountingMoneyRounded(currency, display)}
+                          {valueText}
                         </text>
                       </g>
                     );
@@ -760,13 +788,26 @@ export function NetWorthChart({
                   strokeOpacity={0.35}
                   strokeDasharray="3 3"
                 />
-                <text
-                  x={markerX + 4}
-                  y={AXIS_PAD_TOP + 10}
-                  className="fill-muted-foreground"
-                >
-                  Forecast →
-                </text>
+                {(() => {
+                  // Flip the label to the left of the marker when there isn't
+                  // enough room on the right (e.g. "today" is near the right
+                  // edge of the chart). The arrow keeps pointing rightwards
+                  // either way — the forecast region is to the right of the
+                  // marker regardless of where the label sits.
+                  const labelWidth = 60;
+                  const padding = 4;
+                  const flip = markerX + padding + labelWidth > plotRight;
+                  return (
+                    <text
+                      x={flip ? markerX - padding : markerX + padding}
+                      y={AXIS_PAD_TOP + 10}
+                      textAnchor={flip ? "end" : "start"}
+                      className="fill-muted-foreground"
+                    >
+                      Forecast →
+                    </text>
+                  );
+                })()}
               </g>
             );
           })()}

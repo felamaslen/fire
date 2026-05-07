@@ -1,4 +1,5 @@
 import { useQuery } from "@apollo/client/react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Calculator } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -39,6 +40,13 @@ const LoanOverpaymentDocument = graphql(`
           currency
         }
       }
+      paymentHistory {
+        month
+        amount {
+          amount
+          currency
+        }
+      }
     }
     currencyDefault
   }
@@ -71,7 +79,15 @@ type Loan = {
   interestRate: number;
   monthlyRepayment: number;
   history: { date: Date; balance: number }[];
+  /** Per-month aggregated payments made against this loan to date — sourced from `PlanningTransactions` and payslip deductions tagged with the loan's `liabilityId`. Keyed by start-of-month timestamp (ms, UTC). */
+  paymentsByMonth: Map<number, number>;
 };
+
+function sumPayments(byMonth: Map<number, number>): number {
+  let total = 0;
+  for (const v of byMonth.values()) total += v;
+  return total;
+}
 
 function startOfMonth(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
@@ -86,17 +102,25 @@ type LoanRow = NonNullable<
 >[number];
 
 function buildLoans(rows: LoanRow[]): Loan[] {
-  return rows.map((r) => ({
-    id: r.liability.id,
-    name: r.liability.name,
-    startingBalance: r.startingBalance.amount,
-    interestRate: r.interestRate,
-    monthlyRepayment: r.monthlyRepayment.amount,
-    history: r.history.map((h) => ({
-      date: new Date(`${h.date}T00:00:00Z`),
-      balance: h.balance.amount,
-    })),
-  }));
+  return rows.map((r) => {
+    const paymentsByMonth = new Map<number, number>();
+    for (const p of r.paymentHistory) {
+      const ts = startOfMonth(new Date(`${p.month}T00:00:00Z`)).getTime();
+      paymentsByMonth.set(ts, (paymentsByMonth.get(ts) ?? 0) + p.amount.amount);
+    }
+    return {
+      id: r.liability.id,
+      name: r.liability.name,
+      startingBalance: r.startingBalance.amount,
+      interestRate: r.interestRate,
+      monthlyRepayment: r.monthlyRepayment.amount,
+      history: r.history.map((h) => ({
+        date: new Date(`${h.date}T00:00:00Z`),
+        balance: h.balance.amount,
+      })),
+      paymentsByMonth,
+    };
+  });
 }
 
 /** Maximum number of months to project forward — caps long-running interest-only loans (rate > repayment) so the chart x-axis stays bounded. */
@@ -175,7 +199,12 @@ function totalPaid(
 }
 
 export function LoanOverpaymentCalculatorButton() {
-  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: (l) => l.pathname });
+  const open = pathname === "/loan-calculator";
+  const setOpen = (next: boolean) => {
+    void navigate({ to: next ? "/loan-calculator" : "/" });
+  };
   return (
     <>
       <button
@@ -212,6 +241,7 @@ function CalculatorBody() {
   const [overpayments, setOverpayments] = useState<Map<string, number>>(
     () => new Map(),
   );
+  const [showCumulative, setShowCumulative] = useState(false);
 
   return (
     <>
@@ -240,6 +270,8 @@ function CalculatorBody() {
             setHidden={setHidden}
             overpayments={overpayments}
             setOverpayments={setOverpayments}
+            showCumulative={showCumulative}
+            setShowCumulative={setShowCumulative}
           />
         )}
       </div>
@@ -254,6 +286,8 @@ function CalculatorContent({
   setHidden,
   overpayments,
   setOverpayments,
+  showCumulative,
+  setShowCumulative,
 }: {
   loans: Loan[];
   currency: string;
@@ -261,6 +295,8 @@ function CalculatorContent({
   setHidden: (s: Set<string>) => void;
   overpayments: Map<string, number>;
   setOverpayments: (m: Map<string, number>) => void;
+  showCumulative: boolean;
+  setShowCumulative: (v: boolean) => void;
 }) {
   const { points, seriesByLoan, forecastStart } = useMemo(() => {
     // Build the unified monthly x-axis: from the earliest snapshot month
@@ -307,7 +343,12 @@ function CalculatorContent({
 
     const seriesByLoan = new Map<
       string,
-      { values: (number | null)[]; baseline: (number | null)[] | null }
+      {
+        values: (number | null)[];
+        baseline: (number | null)[] | null;
+        cumulative: (number | null)[];
+        historicalPaid: number;
+      }
     >();
     for (const loan of loans) {
       // Forward-fill historical balances across the monthly grid. Months
@@ -357,7 +398,64 @@ function CalculatorContent({
           baseline.push(baseProjection[k]);
         }
       }
-      seriesByLoan.set(loan.id, { values, baseline });
+      // Cumulative paid series: across history, accumulate the per-month
+      // payments sourced from `paymentHistory` (real `PlanningTransactions`
+      // and payslip deductions tagged to this loan). Across the forecast,
+      // walk the same monthly model as `projectBalance` to know what each
+      // future month pays. The line stops (renders `null`) once the loan
+      // is paid off so it doesn't run flat past payoff.
+      const r = loan.interestRate / 100 / 12;
+      const cumulative: (number | null)[] = new Array(allPoints.length).fill(
+        null,
+      );
+      let cum = 0;
+      // Anchor the line at zero on the first month that has a recorded
+      // payment so it doesn't draw a phantom flat segment from the start of
+      // the chart for loans with no payment history.
+      let started = false;
+      for (let i = 0; i <= fStart; i++) {
+        const ts = historyMonths[i].getTime();
+        const p = loan.paymentsByMonth.get(ts) ?? 0;
+        if (p > 0) {
+          if (!started) {
+            // Anchor the previous month at the pre-payment cumulative so the
+            // line rises out of zero rather than starting mid-air.
+            if (i > 0) cumulative[i - 1] = 0;
+            started = true;
+          }
+          cum += p;
+        }
+        if (started) cumulative[i] = cum;
+      }
+      const historicalPaidMinor = cum;
+      // Forecast: walk monthly payments using the same model as the balance
+      // projection so the cumulative line ends exactly at the loan's lifetime
+      // total when the balance hits zero — then stops, leaving subsequent
+      // months `null`.
+      let bal = loan.startingBalance;
+      const totalMonthly = loan.monthlyRepayment + op;
+      for (let k = 1; k <= projectionMonths; k++) {
+        const idx = historyMonths.length - 1 + k;
+        if (bal <= 0) break;
+        const interest = bal * r;
+        const due = bal + interest;
+        const thisPayment = Math.min(totalMonthly, due);
+        cum += thisPayment;
+        bal = due - thisPayment;
+        if (!started) {
+          if (idx > 0) cumulative[idx - 1] = 0;
+          started = true;
+        }
+        cumulative[idx] = cum;
+        if (bal <= 0) break;
+      }
+
+      seriesByLoan.set(loan.id, {
+        values,
+        baseline,
+        cumulative,
+        historicalPaid: historicalPaidMinor,
+      });
     }
 
     return { points: allPoints, seriesByLoan, forecastStart: fStart };
@@ -389,6 +487,18 @@ function CalculatorContent({
       strokeWidth: 1.75,
       values: built.values,
     });
+    if (showCumulative) {
+      series.push({
+        key: `${loan.id}:cumulative`,
+        label: "Cumulative paid",
+        color,
+        fill: "none",
+        strokeWidth: 1.5,
+        strokeDasharray: "6 3",
+        values: built.cumulative,
+        tooltipIndent: true,
+      });
+    }
   }
 
   return (
@@ -399,6 +509,13 @@ function CalculatorContent({
         currency={currency}
         forecastStart={forecastStart}
       />
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Checkbox
+          checked={showCumulative}
+          onCheckedChange={(v) => setShowCumulative(v === true)}
+        />
+        <span>Show cumulative amount paid (dashed)</span>
+      </label>
       <div className="flex flex-col gap-3">
         {loans.map((loan) => {
           const isHidden = hidden.has(loan.id);
@@ -424,20 +541,27 @@ function CalculatorContent({
             payoff != null && baselinePayoff != null
               ? baselinePayoff - payoff
               : null;
-          const paid = totalPaid(
+          const futurePaid = totalPaid(
             loan.startingBalance,
             loan.monthlyRepayment,
             op,
             loan.interestRate,
           );
-          const baselinePaid = totalPaid(
+          const baselineFuturePaid = totalPaid(
             loan.startingBalance,
             loan.monthlyRepayment,
             0,
             loan.interestRate,
           );
+          const alreadyPaid = sumPayments(loan.paymentsByMonth);
+          // Lifetime total = what's already been paid + the projected
+          // remaining payments. The delta-vs-baseline is future-only because
+          // history is fixed regardless of the slider position.
+          const paid = futurePaid != null ? futurePaid + alreadyPaid : null;
           const paidDelta =
-            paid != null && baselinePaid != null ? paid - baselinePaid : null;
+            futurePaid != null && baselineFuturePaid != null
+              ? futurePaid - baselineFuturePaid
+              : null;
           return (
             <div
               key={loan.id}
