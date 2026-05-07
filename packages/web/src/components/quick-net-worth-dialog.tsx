@@ -5,9 +5,17 @@ import {
   useSuspenseQuery,
 } from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
+import { differenceInCalendarMonths } from "date-fns/differenceInCalendarMonths";
 import { isSameMonth } from "date-fns/isSameMonth";
 import { parseISO } from "date-fns/parseISO";
-import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Loader2,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -19,6 +27,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   decodeWizardState,
   encodeWizardState,
@@ -48,6 +61,7 @@ const QuickNetWorthEntryDocument = graphql(`
         id
         name
         assetType: type
+        growthRate
       }
       liability {
         id
@@ -153,6 +167,8 @@ type WizardRow = {
   subtypeLabel: string | null;
   /** Sort key within the kind's subtype order — lower comes first. `Infinity` for unknown subtypes (sorts last). */
   subtypeRank: number;
+  /** Annual growth/depreciation rate as a percentage (e.g. `3` for +3%/year, `-15` for −15%/year). Only set for `PROPERTY` / `VEHICLE` assets that have one configured; null elsewhere. */
+  growthRate: number | null;
   /** Amounts on the snapshot row, in their original order. The wizard collects one new number per slot. */
   currencies: { currency: string; previous: number }[];
 };
@@ -185,6 +201,7 @@ function buildRows(entry: EntryFromFragment): WizardRow[] {
       name: category?.name ?? "(unknown)",
       subtypeLabel,
       subtypeRank,
+      growthRate: v.asset?.growthRate ?? null,
       currencies: v.amounts.map((a) => ({
         currency: a.currency,
         previous: a.amount,
@@ -335,7 +352,12 @@ function WizardWithSnapshot({
   // The backend enforces one entry per calendar month. If the latest entry
   // is already in the current month, the wizard updates that entry in place
   // (upserting each row by its `valueId`) instead of creating a new one.
-  const editingExisting = isSameMonth(parseISO(entry.date), new Date());
+  const entryDate = parseISO(entry.date);
+  const editingExisting = isSameMonth(entryDate, new Date());
+  const monthsSinceEntry = Math.max(
+    0,
+    differenceInCalendarMonths(new Date(), entryDate),
+  );
 
   const [create, { loading: creating }] = useMutation(
     QuickNetWorthCreateDocument,
@@ -446,6 +468,7 @@ function WizardWithSnapshot({
         key={stepIndex}
         row={row}
         initial={initialSlot}
+        monthsSinceEntry={monthsSinceEntry}
         isFirst={stepIndex === 0}
         isLast={stepIndex >= stepCount - 1}
         saving={saving}
@@ -463,6 +486,7 @@ function capitalise(s: string): string {
 function StepEditor({
   row,
   initial,
+  monthsSinceEntry,
   isFirst,
   isLast,
   saving,
@@ -471,6 +495,8 @@ function StepEditor({
 }: {
   row: WizardRow;
   initial: (number | null)[];
+  /** Whole calendar months between the snapshot entry's date and today. Drives the "apply growth" projection. */
+  monthsSinceEntry: number;
   isFirst: boolean;
   isLast: boolean;
   saving: boolean;
@@ -483,6 +509,21 @@ function StepEditor({
   const [draft, setDraft] = useState<string[]>(() =>
     initial.map((cell) => (cell == null ? "" : String(cell))),
   );
+
+  // Show the "apply growth" shortcut on PROPERTY / VEHICLE assets that have a
+  // configured growth/depreciation rate, once at least one whole month has
+  // elapsed since the snapshot — same monthly-compounding factor the forecast
+  // engine uses (`monthlyGrowthFactor` in the backend).
+  const canApplyGrowth = row.growthRate != null && monthsSinceEntry > 0;
+  const applyGrowth = (j: number) => {
+    if (row.growthRate == null) return;
+    const previous = row.currencies[j].previous;
+    const projected =
+      previous * Math.pow(1 + row.growthRate / 100, monthsSinceEntry / 12);
+    const next = draft.slice();
+    next[j] = projected.toFixed(2);
+    setDraft(next);
+  };
 
   const parsed = (): (number | null)[] =>
     draft.map((s) => {
@@ -519,6 +560,26 @@ function StepEditor({
               }}
               className="flex-1"
             />
+            {canApplyGrowth && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => applyGrowth(j)}
+                    disabled={saving}
+                  >
+                    {row.growthRate! >= 0 ? <TrendingUp /> : <TrendingDown />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Apply {row.growthRate! >= 0 ? "+" : ""}
+                  {row.growthRate}%/yr over {monthsSinceEntry} month
+                  {monthsSinceEntry === 1 ? "" : "s"}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         ))}
         <p className="text-xs text-muted-foreground">
