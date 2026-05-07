@@ -106,15 +106,6 @@ export type InvestmentTx = {
   price: number;
 };
 
-export type Payslip = {
-  /** Pay date (UTC). */
-  date: Date;
-  /** `PlanningPayslip.toAccountId` — the cash account the net pay lands in. */
-  toAccountId: string;
-  /** Net pay in minor currency units (gross + signed adjustments). */
-  netAmount: number;
-};
-
 function sumLiabilityTxInMonth(
   txs: readonly LiabilityTx[],
   monthStart: Date,
@@ -263,18 +254,4 @@ export function solveXirr(
     }
   }
   return null;
-}
-
-/**
- * EWMA of the `windowSize` most-recent payslip net amounts landing in `accountId`. Returns 0 when there are no payslips for the account — the caller should treat that as "no income projection for this account" and not synthesise a cashflow.
- */
-export function ewmaPayslipNet(
-  payslips: readonly Payslip[],
-  accountId: string,
-  windowSize = 10,
-): number {
-  const forAccount = payslips.filter((p) => p.toAccountId === accountId);
-  forAccount.sort((a, b) => b.date.getTime() - a.date.getTime());
-  const recent = forAccount.slice(0, windowSize).map((p) => p.netAmount);
-  return ewma(recent);
 }

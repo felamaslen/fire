@@ -42,7 +42,7 @@ The overview page projects monthly net worth forward from today's snapshot (`net
 
 The forecast deliberately doesn't simulate income or spending. Over the user's history, the sum of ongoing investment contributions plus loan repayments already matches the post-spending cash surplus in each month — i.e. money left over after rent, food, and everything else is already flowing out via the contribution / repayment EWMAs the engine uses. Adding a separate "income − bills − card spend" layer on top would double-count it and make the projection drift. Holding cash flat is the honest model: the things that actually move cash up or down (contributions, loan paydown, asset growth) all show up elsewhere in the forecast.
 
-Retirement-age modelling is a different question — it needs an explicit picture of monthly spend so we can simulate drawing down assets once income stops. The scaffolding for that sits in `packages/backend/src/forecast/spending.ts` (loaders + `computeCashflow`), marked unused and waiting to be wired in.
+Retirement-age modelling is the exception: once `AppSettings.retirementYear` is reached, income drops to zero, portfolios begin drawing down at `RETIREMENT_DRAWDOWN_RATE/12` of their balance per month, and an explicit monthly-spend baseline (credit-card EWMA + monthlified non-liability bills, inflated at `ANNUAL_INFLATION_RATE`) is subtracted from cash each month. That baseline is computed in `packages/backend/src/forecast/inputs.ts` and consumed directly by `engine.ts` — there's no separate cashflow module.
 
 ### Assumptions
 

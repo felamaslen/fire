@@ -2,12 +2,10 @@ import {
   creditCardEwmaSpend,
   ewma,
   ewmaMonthlyContribution,
-  ewmaPayslipNet,
   type LiabilityBill,
   type LiabilityTx,
   loanEwmaRepayment,
   monthlyGrowthFactor,
-  type Payslip,
   projectLoanBalance,
   projectMonthlyGrowth,
 } from "./growth";
@@ -239,62 +237,5 @@ describe("ewmaMonthlyContribution", () => {
       { date: new Date(Date.UTC(2026, 3 - 40, 10)), amount: -10000 },
     ];
     expect(ewmaMonthlyContribution(txs, asOf, 36)).toBe(0);
-  });
-});
-
-describe("ewmaPayslipNet", () => {
-  const ACC = "acc-1";
-  const OTHER = "acc-2";
-  const ps = (
-    date: string,
-    toAccountId: string,
-    netAmount: number,
-  ): Payslip => ({
-    date: new Date(`${date}T00:00:00Z`),
-    toAccountId,
-    netAmount,
-  });
-
-  it("returns 0 when there are no payslips for the account", () => {
-    expect(ewmaPayslipNet([], ACC)).toBe(0);
-    expect(ewmaPayslipNet([ps("2026-01-15", OTHER, 3000)], ACC)).toBe(0);
-  });
-
-  it("recovers the constant when every payslip pays the same", () => {
-    const payslips = Array.from({ length: 10 }, (_, i) =>
-      ps(`2026-${String(i + 1).padStart(2, "0")}-15`, ACC, 2500),
-    );
-    expect(ewmaPayslipNet(payslips, ACC)).toBeCloseTo(2500);
-  });
-
-  it("ignores payslips for other accounts", () => {
-    const payslips = [
-      ps("2026-03-15", ACC, 3000),
-      ps("2026-03-20", OTHER, 999999),
-      ps("2026-02-15", ACC, 3000),
-    ];
-    expect(ewmaPayslipNet(payslips, ACC)).toBeCloseTo(3000);
-  });
-
-  it("truncates to the `windowSize` most-recent payslips", () => {
-    const payslips: Payslip[] = [
-      // Oldest — outside a 10-window, so the zero mustn't pull the EWMA down.
-      ps("2026-01-15", ACC, 0),
-    ];
-    for (let m = 2; m <= 11; m++) {
-      payslips.push(ps(`2026-${String(m).padStart(2, "0")}-15`, ACC, 3000));
-    }
-    expect(ewmaPayslipNet(payslips, ACC, 10)).toBeCloseTo(3000);
-  });
-
-  it("sorts by date so input order doesn't affect the result", () => {
-    const payslips = [
-      ps("2026-01-15", ACC, 1000),
-      ps("2026-03-15", ACC, 3000),
-      ps("2026-02-15", ACC, 2000),
-    ];
-    const shuffled = ewmaPayslipNet(payslips, ACC);
-    const sorted = ewmaPayslipNet([payslips[1], payslips[2], payslips[0]], ACC);
-    expect(shuffled).toBe(sorted);
   });
 });
