@@ -1,3 +1,4 @@
+import { LRUCache } from "lru-cache";
 import YahooFinance from "yahoo-finance2";
 
 import { isDemoSession } from "@/auth/session-als";
@@ -27,6 +28,13 @@ type Quote = {
 
 /** Per-process dedup of in-flight Yahoo fetches. The persisted `InvestmentPricesLive` row is the cache; this map only collapses concurrent requests for the same symbol within a single tick. */
 const inflight = new Map<string, Promise<Quote | null>>();
+
+/** Hard rate-limit on `yahooFinance.quote` calls per symbol: at most one network hit every 4 minutes. Entries store the last resolved `Quote | null` so repeated calls within the window short-circuit to that value without re-fetching or re-persisting. */
+const QUOTE_RATE_LIMIT_MS = 4 * 60 * 1000;
+const quoteRateLimit = new LRUCache<string, { value: Quote | null }>({
+  max: 1000,
+  ttl: QUOTE_RATE_LIMIT_MS,
+});
 
 /** Whether `now` is inside the live-fetch window for the given currency. For `GBP` the window is Mon–Fri 07:00–17:30 Europe/London (LSE 08:00–16:30 with a one-hour buffer either side). All other currencies are unrestricted for now. */
 export function isInBusinessHours(
@@ -73,6 +81,9 @@ export async function fetchQuote(
   if (!opts.bypassBusinessHours && !isInBusinessHours(opts.currency)) {
     return null;
   }
+
+  const cached = quoteRateLimit.get(symbol);
+  if (cached) return cached.value;
 
   const existing = inflight.get(symbol);
   if (existing) return existing;
@@ -150,16 +161,23 @@ export async function fetchQuote(
       }
       return quote;
     } catch (err) {
-      log.warn(`yahoo quote for ${symbol} failed`, { err });
+      log.warn(`yahoo quote for ${symbol} failed`, {
+        err,
+        message: (err as Error).message,
+      });
       return null;
     } finally {
       inflight.delete(symbol);
     }
   })();
   inflight.set(symbol, promise);
+  void promise.then((value) => {
+    quoteRateLimit.set(symbol, { value });
+  });
   return promise;
 }
 
 export function TEST__clearInflightForTesting(): void {
   inflight.clear();
+  quoteRateLimit.clear();
 }
