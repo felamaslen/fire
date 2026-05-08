@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
+  FileX,
   Loader2,
   Paperclip,
   Pencil,
@@ -585,10 +586,16 @@ function PayslipCard({
   // taking layout space.
   const title = `${payslip.name} — ${formatDate(payslip.date)}`;
 
-  const cardClass = `flex w-72 cursor-pointer items-center gap-3 rounded-md border bg-background px-3 py-1.5 text-xs no-underline transition-colors hover:bg-muted/40 ${highlight}`;
+  const cardClass = `relative flex w-72 cursor-pointer items-center gap-3 overflow-hidden rounded-md border bg-background px-3 py-1.5 text-xs no-underline transition-colors hover:bg-muted/40 ${highlight}`;
 
   const cardBody = (
     <>
+      {!payslip.fileUrl && (
+        <FileX
+          aria-label="Missing PDF"
+          className="pointer-events-none absolute bottom-0.5 right-0.5 size-3 text-muted-foreground"
+        />
+      )}
       <div className="flex min-w-0 flex-1 flex-col">
         <Figure
           data={payslip.amountNet}
