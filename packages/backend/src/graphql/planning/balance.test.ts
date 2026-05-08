@@ -6,6 +6,15 @@ import { TestUpload } from "#test/upload";
 
 const PAYSLIP_FIXTURE = path.join(__dirname, "__fixtures__/payslip.pdf");
 
+const uuidv7Mock = vi.hoisted(() => vi.fn());
+vi.mock("uuid", async () => {
+  const mod = await vi.importActual<typeof import("uuid")>("uuid");
+  return {
+    ...mod,
+    v7: uuidv7Mock.mockImplementation(mod.v7),
+  };
+});
+
 const ukRates = {
   rateBasic: 0.2,
   rateHigher: 0.4,
@@ -642,6 +651,8 @@ it("payslipFileUrl on the gross transaction row is the signed file URL when a PD
   const current = await createAsset("Current");
   await assign(current, "Current");
 
+  uuidv7Mock.mockReturnValueOnce("019e08fa-57ab-70d4-887a-8e10425a59e7");
+
   await runGql(
     graphql(`
       mutation ($a: ID!, $file: Upload) {
@@ -714,8 +725,8 @@ it("payslipFileUrl on the gross transaction row is the signed file URL when a PD
     (r) => r.month === "may-2025" && r.isPayslipGross,
   )!;
   // Gross row of a real payslip with an attached file → signed `/files/*` URL.
-  expect(aprilGross.payslipFileUrl).toMatch(
-    /^\/files\/[\w-]+-payslip\.pdf\?[A-Za-z0-9_=-]+\.\d+$/,
+  expect(aprilGross.payslipFileUrl).toMatchInlineSnapshot(
+    `"http://localhost:4000/files/019e08fa-57ab-70d4-887a-8e10425a59e7-payslip.pdf?exp=1776517201&sig=COdXjAGWRDM5fC0N8pyVYx8wqe2s9lEj4yYgCr4B6WY"`,
   );
   // Deductions never carry a file URL of their own.
   expect(aprilDeduction.payslipFileUrl).toBeNull();
