@@ -3,6 +3,7 @@ import { strict as assert } from "node:assert";
 import { eq, gt, sql } from "drizzle-orm";
 import type { ID, Int } from "grats";
 
+import { sessionMayReadKey, signFileUrl } from "@/auth/file-url";
 import { HOME_CURRENCY } from "@/config";
 import { db } from "@/db";
 import { NetWorthCategoryAssets, NetWorthEntries } from "@/db/schema/net-worth";
@@ -13,6 +14,7 @@ import {
   PlanningYearUKTaxRates,
 } from "@/db/schema/planning";
 
+import type { Context } from "../context";
 import type { Date as CalendarDate } from "../date";
 import {
   getMoneyInputFractionalAmount,
@@ -288,6 +290,8 @@ export class PlanningTransaction {
   readonly fromAccountId: string | null;
   readonly liabilityId: string | null;
   readonly assetId: string | null;
+  /** Bare storage key for the attached payslip PDF — only set when this row is the gross line of a real `PlanningPayslips` row (`kind: "pay"`) and a file was uploaded. The `payslipFileUrl` GraphQL field wraps it in a short-lived signed URL per request. */
+  private readonly payslipFileKey: string | null;
   /** When constructed from inside a `PlanningYear` roll-up, a shared map of every liability referenced anywhere in the year (pre-loaded in one batch by `loadPlanningYearData`). Lets `liability()` resolve synchronously without firing a per-row `SELECT` — avoids an N+1 across the dozens of transactions a planning-grid query returns. Null on one-off constructions (e.g. mutation return values) where lazy `fromId` loading is fine. */
   private readonly liabilitiesById: Map<string, LiabilityRow> | null;
 
@@ -305,6 +309,7 @@ export class PlanningTransaction {
     fromAccountId?: string | null;
     liabilityId: string | null;
     assetId: string | null;
+    payslipFileKey?: string | null;
     liabilitiesById?: Map<string, LiabilityRow> | null;
   }) {
     this.id = data.id;
@@ -320,7 +325,15 @@ export class PlanningTransaction {
     this.fromAccountId = data.fromAccountId ?? null;
     this.liabilityId = data.liabilityId;
     this.assetId = data.assetId;
+    this.payslipFileKey = data.payslipFileKey ?? null;
     this.liabilitiesById = data.liabilitiesById ?? null;
+  }
+
+  /** Signed, short-lived URL to the attached payslip PDF (the file uploaded with the underlying `PlanningPayslip`). Only populated when this row is the gross line of a recorded payslip (`isPayslipGross` true and not `isProjected`) and a file was uploaded; null on every other row, when no file is attached, or when the current session isn't allowed to read it. @gqlField */
+  payslipFileUrl(ctx: Context): string | null {
+    if (!this.payslipFileKey) return null;
+    if (!sessionMayReadKey(ctx.session, this.payslipFileKey)) return null;
+    return signFileUrl(this.payslipFileKey);
   }
 
   /** Destination planning account for the from-side of a manual transfer. Null on every other kind of transaction (the to-side, predictions, payslips, ...). @gqlField */

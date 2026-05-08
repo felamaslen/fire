@@ -1,5 +1,10 @@
+import path from "node:path";
+
 import { formatTable } from "#test/format-table";
 import { graphql, runGql } from "#test/gql";
+import { TestUpload } from "#test/upload";
+
+const PAYSLIP_FIXTURE = path.join(__dirname, "__fixtures__/payslip.pdf");
 
 const ukRates = {
   rateBasic: 0.2,
@@ -630,4 +635,90 @@ it("in-month snapshot overrides valueEnd — no discontinuity with next month's 
     feb-2026 Joint   6362.26 true        6362.26 true     
     mar-2026 Joint   6362.26 true        6362.26 true     "
   `);
+});
+
+it("payslipFileUrl on the gross transaction row is the signed file URL when a PDF is attached, null on deductions and predicted rows", async () => {
+  await seedYear("2025");
+  const current = await createAsset("Current");
+  await assign(current, "Current");
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!, $file: Upload) {
+        payslipCreate(
+          date: "2025-04-30"
+          amountGross: { amount: 3000, currency: "GBP" }
+          name: "April payslip"
+          toAccountId: $a
+          adjustments: [
+            { amount: { amount: -500, currency: "GBP" }, name: "Income Tax" }
+          ]
+          file: $file
+        ) {
+          id
+        }
+      }
+    `),
+    { a: current, file: new TestUpload(PAYSLIP_FIXTURE) },
+  );
+  // Bare payslip with no file in the next month — the gross row should report
+  // a null `payslipFileUrl`, distinguishing "no file" from "file present".
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        payslipCreate(
+          date: "2025-05-30"
+          amountGross: { amount: 3000, currency: "GBP" }
+          name: "May payslip"
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: current },
+  );
+
+  const data = await runGql(
+    graphql(`
+      query ($y: ID!) {
+        planningYear(id: $y) {
+          months {
+            id
+            accounts {
+              transactions {
+                name
+                isPayslipGross
+                isPayslipDeduction
+                payslipFileUrl
+              }
+            }
+          }
+        }
+      }
+    `),
+    { y: "2025" },
+  );
+  const rows = data.planningYear!.months.flatMap((m) =>
+    m.accounts.flatMap((a) =>
+      a.transactions.map((tx) => ({ month: m.id, ...tx })),
+    ),
+  );
+  const aprilGross = rows.find(
+    (r) => r.month === "apr-2025" && r.isPayslipGross,
+  )!;
+  const aprilDeduction = rows.find(
+    (r) => r.month === "apr-2025" && r.isPayslipDeduction,
+  )!;
+  const mayGross = rows.find(
+    (r) => r.month === "may-2025" && r.isPayslipGross,
+  )!;
+  // Gross row of a real payslip with an attached file → signed `/files/*` URL.
+  expect(aprilGross.payslipFileUrl).toMatch(
+    /^\/files\/[\w-]+-payslip\.pdf\?[A-Za-z0-9_=-]+\.\d+$/,
+  );
+  // Deductions never carry a file URL of their own.
+  expect(aprilDeduction.payslipFileUrl).toBeNull();
+  // Gross row of a real payslip with no file → null.
+  expect(mayGross.payslipFileUrl).toBeNull();
 });

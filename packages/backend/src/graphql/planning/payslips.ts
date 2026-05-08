@@ -47,7 +47,7 @@ import { VOID, type Void } from "../void";
 import { PlanningAccount } from "./index";
 
 /** Legacy rows stored `/files/<key>`; strip the prefix so downstream code sees a bare storage key. */
-function storageKeyFromColumn(value: string): string {
+export function storageKeyFromColumn(value: string): string {
   return value.startsWith("/files/") ? value.slice("/files/".length) : value;
 }
 
