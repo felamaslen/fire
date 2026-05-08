@@ -17,6 +17,7 @@ import {
   ChevronRight,
   CornerDownRight,
   CreditCard,
+  FileText,
   HandCoins,
   Landmark,
   Menu,
@@ -38,6 +39,7 @@ import { toast } from "sonner";
 
 import { Figure, FigureDocument } from "@/components/figure";
 import { NavHeaderActions, NavHeaderTitle } from "@/components/nav-header";
+import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -99,6 +101,7 @@ const PlanningTransactionRowDocument = graphql(
       isBill
       isPayslipGross
       isPayslipDeduction
+      payslipFileUrl
       toAccount {
         id
       }
@@ -1108,11 +1111,32 @@ function TransactionRow({
   const rowBody = (
     <>
       <TransactionKindIcon tx={tx} />
-      <span className="flex-1 truncate">
-        {tx.name}
+      <span className="flex min-w-0 flex-1 items-center gap-1">
+        <span className="truncate">{tx.name}</span>
         {tx.isProvisional && (
-          <span className="ml-1.5 rounded-sm border border-amber-500/60 bg-amber-500/10 px-1 py-px align-baseline text-[9px] font-medium tracking-wide text-amber-700 uppercase">
+          <span className="rounded-sm border border-amber-500/60 bg-amber-500/10 px-1 py-px align-baseline text-[9px] font-medium tracking-wide text-amber-700 uppercase">
             Provisional
+          </span>
+        )}
+        {tx.payslipFileUrl && (
+          <span
+            // Stop the click bubbling to the row, which would otherwise open
+            // the transaction edit dialog on top of the PDF preview.
+            onClick={(e) => e.stopPropagation()}
+            className="contents"
+          >
+            <PdfPreviewDialog
+              url={tx.payslipFileUrl}
+              label={`Payslip — ${tx.name}`}
+            >
+              <button
+                type="button"
+                aria-label={`Preview payslip — ${tx.name}`}
+                className="inline-flex shrink-0 cursor-pointer items-center justify-center hover:text-foreground"
+              >
+                <FileText className="size-3" />
+              </button>
+            </PdfPreviewDialog>
           </span>
         )}
       </span>
@@ -1326,7 +1350,7 @@ function TransactionKindIcon({
 }: {
   tx: ResultOf<typeof PlanningTransactionRowDocument>;
 }) {
-  const cls = "size-3 shrink-0 text-muted-foreground/60";
+  const cls = "size-3 shrink-0 text-foreground/60";
   // Deductions hang off the immediately-preceding payslip-gross row, so the
   // leading slot shows a child-of-parent corner glyph instead of the row's
   // own kind icon — mirrors how a tree view nests children under a parent.
