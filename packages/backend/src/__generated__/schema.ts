@@ -16,7 +16,7 @@ import { cashPosition as queryCashPositionResolver } from "./../graphql/investme
 import { currencies as queryCurrenciesResolver, currencyDefault as queryCurrencyDefaultResolver } from "./../graphql/money";
 import { currencyExchangeRates as queryCurrencyExchangeRatesResolver } from "./../graphql/fx-rates";
 import { demos as queryDemosResolver, me as queryMeResolver, demoLogin as mutationDemoLoginResolver, login as mutationLoginResolver, logout as mutationLogoutResolver, demoProgress as subscriptionDemoProgressResolver } from "./../graphql/auth";
-import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
+import { earnings as queryEarningsResolver, earningsCreate as mutationEarningsCreateResolver, earningsDelete as mutationEarningsDeleteResolver, earningsGrossPayDelete as mutationEarningsGrossPayDeleteResolver, earningsGrossPaySet as mutationEarningsGrossPaySetResolver, earningsUpdate as mutationEarningsUpdateResolver } from "./../graphql/planning/earnings";
 import { investmentPortfolios as queryInvestmentPortfoliosResolver, investments as queryInvestmentsResolver, investmentCreate as mutationInvestmentCreateResolver, investmentDelete as mutationInvestmentDeleteResolver, investmentUpdate as mutationInvestmentUpdateResolver } from "./../graphql/investments/index";
 import { loanCalculator as queryLoanCalculatorResolver } from "./../graphql/net-worth/loan-calculator";
 import { currencyRates as netWorthEntryCurrencyRatesResolver, amountHome as netWorthValueAmountHomeResolver, amounts as netWorthValueAmountsResolver, asset as netWorthValueAssetResolver, liability as netWorthValueLiabilityResolver, option as netWorthValueOptionResolver, loans as netWorthEntryLoansResolver, totalAssets as netWorthEntryTotalAssetsResolver, totalLiabilities as netWorthEntryTotalLiabilitiesResolver, totalNet as netWorthEntryTotalNetResolver, values as netWorthEntryValuesResolver, netWorth as queryNetWorthResolver, netWorthEntry as queryNetWorthEntryResolver, netWorthCreate as mutationNetWorthCreateResolver, netWorthDelete as mutationNetWorthDeleteResolver, netWorthUpdate as mutationNetWorthUpdateResolver } from "./../graphql/net-worth/index";
@@ -1157,6 +1157,28 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PlanningEarningGrossPayType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PlanningEarningGrossPay",
+        description: "A single gross-pay rate effective from `startDate` until the next entry (or indefinitely if it's the latest). Pay rises and cuts on a `PlanningEarning` are modelled as additional rows on this list. The entry with `startDate = null` is the initial rate, used until the first dated entry takes over; at most one such row exists per earning.",
+        fields() {
+            return {
+                amountGross: {
+                    description: "Annual gross pay at this rate.",
+                    name: "amountGross",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                id: {
+                    name: "id",
+                    type: new GraphQLNonNull(GraphQLID)
+                },
+                startDate: {
+                    description: "First day this rate takes effect. Null on the single initial-rate entry \u2014 it applies from the earning's `start` until superseded by the first dated entry.",
+                    name: "startDate",
+                    type: DateType
+                }
+            };
+        }
+    });
     const PlanningEarningParentalLeaveType: GraphQLObjectType = new GraphQLObjectType({
         name: "PlanningEarningParentalLeave",
         description: "A parental-leave stage on a `PlanningEarning`. Each stage represents a single, constant pay level over a date range \u2014 an enhanced employer scheme is modelled as several stages in sequence (e.g. 6 weeks at `0.9`, then 33 weeks at `0.0` with `isSMP` set, then 13 weeks unpaid). Has no `id` on purpose: keyed by (earnings, start), so cache libraries should invalidate the parent `PlanningEarning` when entries change rather than try to normalise these rows individually. During a stage the effective gross is `max(fractionOfGross \u00D7 normal, statutoryFloor)` where `statutoryFloor` is `min(year's statutory weekly rate, 90% of normal weekly gross)` when the stage is statutorily eligible. The two eligibility flags are mutually exclusive.",
@@ -1217,7 +1239,13 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 amountGross: {
+                    description: "Annual gross pay rate currently in effect (today), pulled from the most recent `PlanningEarningGrossPay` whose `startDate` has arrived (or the initial null-startDate row when no dated entries apply yet).",
                     name: "amountGross",
+                    type: new GraphQLNonNull(MoneyType)
+                },
+                amountGrossInitial: {
+                    description: "Initial annual gross pay rate \u2014 the `PlanningEarningGrossPay` entry with no `startDate`, in effect from the earning's `start` until the first dated rise/cut takes over. Distinct from `amountGross`, which resolves to the rate active *today*. Useful for displaying both endpoints (e.g. `\u00A350k \u2192 \u00A360k`) when a pay rise has already kicked in.",
+                    name: "amountGrossInitial",
                     type: new GraphQLNonNull(MoneyType)
                 },
                 attributes: {
@@ -1233,6 +1261,11 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 end: {
                     name: "end",
                     type: DateType
+                },
+                grossPays: {
+                    description: "All gross-pay entries for this earning, sorted with the initial null-startDate entry first (when present), then by `startDate` ascending. Each subsequent entry represents a pay rise or cut effective from its date.",
+                    name: "grossPays",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningEarningGrossPayType)))
                 },
                 id: {
                     name: "id",
@@ -3471,6 +3504,23 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
             };
         }
     });
+    const PlanningEarningGrossPayInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
+        description: "A dated gross-pay rise/cut to attach to a `PlanningEarning`. Rows are upserted by (earnings, startDate). The initial (null-startDate) rate is set via the earning's top-level `amountGross` argument and is not represented here.",
+        name: "PlanningEarningGrossPayInput",
+        fields() {
+            return {
+                amountGross: {
+                    name: "amountGross",
+                    type: new GraphQLNonNull(MoneyInputType)
+                },
+                startDate: {
+                    description: "First day this rate takes effect.",
+                    name: "startDate",
+                    type: new GraphQLNonNull(DateType)
+                }
+            };
+        }
+    });
     const PlanningEarningParentalLeaveInputType: GraphQLInputObjectType = new GraphQLInputObjectType({
         description: "A parental-leave stage to attach to a `PlanningEarning`. Rows are upserted by (earnings, start) \u2014 re-supplying the same `start` overwrites the previous stage. `isSMP` and `isSPP` are mutually exclusive.",
         name: "PlanningEarningParentalLeaveInput",
@@ -4475,6 +4525,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         end: {
                             type: DateType
                         },
+                        grossPays: {
+                            description: "Pay rises and cuts effective from each `startDate`. The earning's top-level `amountGross` defines the initial rate; entries here add subsequent dated rates. Replace-all semantics: the supplied list becomes the complete set of dated entries.",
+                            type: new GraphQLList(new GraphQLNonNull(PlanningEarningGrossPayInputType))
+                        },
                         name: {
                             type: new GraphQLNonNull(GraphQLString)
                         },
@@ -4517,7 +4571,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes, args.parentalLeaves);
+                        return mutationEarningsCreateResolver(args.name, args.start, args.amountGross, args.countryCode, args.toAccountId, args.end, args.pensionReliefAtSource, args.pensionNetPay, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes, args.parentalLeaves, args.grossPays);
                     }
                 },
                 earningsDelete: {
@@ -4533,6 +4587,42 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         return mutationEarningsDeleteResolver(args.id);
                     }
                 },
+                earningsGrossPayDelete: {
+                    description: "Remove a gross-pay entry by `(earningsId, startDate)`. The initial null-startDate row cannot be deleted \u2014 every earning must keep its initial rate; use `earningsUpdate` with a new `amountGross` to revise it instead.",
+                    name: "earningsGrossPayDelete",
+                    type: new GraphQLNonNull(PlanningEarningType),
+                    args: {
+                        earningsId: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        startDate: {
+                            type: new GraphQLNonNull(DateType)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationEarningsGrossPayDeleteResolver(args.earningsId, args.startDate);
+                    }
+                },
+                earningsGrossPaySet: {
+                    description: "Add or replace a gross-pay rate on an earning. When `startDate` is null, the row is the *initial* rate (only one such row may exist per earning); when a date is given, the row represents a pay rise or cut taking effect that day. Re-supplying the same `(earningsId, startDate)` overwrites the existing entry.",
+                    name: "earningsGrossPaySet",
+                    type: new GraphQLNonNull(PlanningEarningType),
+                    args: {
+                        amountGross: {
+                            type: new GraphQLNonNull(MoneyInputType)
+                        },
+                        earningsId: {
+                            type: new GraphQLNonNull(GraphQLID)
+                        },
+                        startDate: {
+                            description: "First day this rate applies. Pass null only for the initial entry \u2014 at most one null-startDate row may exist per earning.",
+                            type: DateType
+                        }
+                    },
+                    resolve(_source, args) {
+                        return mutationEarningsGrossPaySetResolver(args.earningsId, args.amountGross, args.startDate);
+                    }
+                },
                 earningsUpdate: {
                     description: "Partially update an earnings stream. Only fields passed in are changed \u2014 omit a field to leave it untouched. Passing `ukTaxCodes` replaces the full tax-code history (existing rows are deleted, then the supplied list is inserted). Months affected by the old or new date range have their projections recomputed.",
                     name: "earningsUpdate",
@@ -4546,6 +4636,10 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         },
                         end: {
                             type: DateType
+                        },
+                        grossPays: {
+                            description: "New full set of dated pay rises/cuts; pass to replace the existing list. Each entry's `startDate` must be set \u2014 the initial null-date rate is patched via `amountGross`. Omit to leave the history untouched.",
+                            type: new GraphQLList(new GraphQLNonNull(PlanningEarningGrossPayInputType))
                         },
                         id: {
                             type: new GraphQLNonNull(GraphQLID)
@@ -4589,7 +4683,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                         }
                     },
                     resolve(_source, args) {
-                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes, args.parentalLeaves);
+                        return mutationEarningsUpdateResolver(args.id, args.name, args.start, args.amountGross, args.countryCode, args.pensionReliefAtSource, args.pensionNetPay, args.toAccountId, args.end, args.pensionSalarySacrifice, args.studentLoanPlan2, args.studentLoanLiabilityId, args.pensionAssetId, args.ukTaxCodes, args.parentalLeaves, args.grossPays);
                     }
                 },
                 investmentAllocationsSet: {
@@ -5469,7 +5563,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, ContractNoteImportResultType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, LoanCalculatorRowType, LoanHistoryPointType, LoanPaymentMonthType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioContributionsType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningGrossPayInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, ContractNoteImportResultType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, LoanCalculatorRowType, LoanHistoryPointType, LoanPaymentMonthType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningGrossPayType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioContributionsType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }
 const typeNameMap = new Map();

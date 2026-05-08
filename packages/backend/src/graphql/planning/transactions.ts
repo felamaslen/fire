@@ -25,6 +25,7 @@ import {
 import {
   PlanningBills,
   PlanningEarnings,
+  PlanningEarningsGrossPay,
   PlanningEarningsParentalLeave,
   PlanningEarningsUKTaxCodes,
   PlanningMonthBills,
@@ -45,6 +46,7 @@ import {
   NetWorthCategoryLiability,
 } from "../net-worth/categories";
 import { VOID, type Void } from "../void";
+import { activeGrossPay } from "./earnings";
 import { ensurePlanningMonth, PlanningTransaction } from "./index";
 import {
   effectiveMonthGrossFraction,
@@ -592,10 +594,16 @@ export async function transactionDelete(
         .from(PlanningEarnings)
         .where(eq(PlanningEarnings.id, parsed.id));
       assert(earning, `Earning ${parsed.id} not found`);
+      const grossPays = await db
+        .select()
+        .from(PlanningEarningsGrossPay)
+        .where(eq(PlanningEarningsGrossPay.earningsId, parsed.id));
+      const activePay = activeGrossPay(grossPays, date);
+      assert(activePay, `Earning ${parsed.id} has no gross-pay row`);
       await db.insert(PlanningPayslips).values({
         date: lastDayOfMonth(date),
         amountGross: 0,
-        currency: earning.currency,
+        currency: activePay.currency,
         name: `${earning.name} — skipped`,
         toAccountId: earning.toAccountId,
         fileUrl: null,
@@ -682,10 +690,21 @@ async function materialiseEarningAsPayslip(
         ),
       ),
     );
-  const parentalLeaves = await db
-    .select()
-    .from(PlanningEarningsParentalLeave)
-    .where(eq(PlanningEarningsParentalLeave.earningsId, parsed.id));
+  const [parentalLeaves, grossPays] = await Promise.all([
+    db
+      .select()
+      .from(PlanningEarningsParentalLeave)
+      .where(eq(PlanningEarningsParentalLeave.earningsId, parsed.id)),
+    db
+      .select()
+      .from(PlanningEarningsGrossPay)
+      .where(eq(PlanningEarningsGrossPay.earningsId, parsed.id)),
+  ]);
+  const monthStart = startOfMonthUTC(date);
+  const activePay = activeGrossPay(grossPays, monthStart);
+  assert(activePay, `Earning ${parsed.id} has no gross-pay row`);
+  const annualGross = activePay.amountGross;
+  const payCurrency = activePay.currency;
   // Keep the materialised payslip in sync with the projection that produced
   // the row the user just clicked on: scale the annual gross by the month's
   // effective fraction (covers mid-month start/end and any parental leave).
@@ -698,11 +717,11 @@ async function materialiseEarningAsPayslip(
       fractionOfGross: l.fractionOfGross,
       statutoryEligible: l.isSMP || l.isSPP,
     })),
-    earning.amountGross / 52,
+    annualGross / 52,
     rates.statutoryParentalPayWeekly,
-    startOfMonthUTC(date),
+    monthStart,
   );
-  const effectiveAnnualGross = Math.round(earning.amountGross * fraction);
+  const effectiveAnnualGross = Math.round(annualGross * fraction);
   const take = computeUKTake({
     gross: effectiveAnnualGross,
     pension: {
@@ -791,7 +810,7 @@ async function materialiseEarningAsPayslip(
       .values({
         date: payslipDate,
         amountGross: gross,
-        currency: earning.currency,
+        currency: payCurrency,
         name: payslipName,
         toAccountId: earning.toAccountId,
         fileUrl: null,

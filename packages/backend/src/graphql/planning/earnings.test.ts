@@ -1,7 +1,12 @@
 import "@/index";
 
+import { strict as assert } from "node:assert";
+
 import { db } from "@/db";
-import { PlanningEarnings } from "@/db/schema/planning";
+import {
+  PlanningEarnings,
+  PlanningEarningsGrossPay,
+} from "@/db/schema/planning";
 import { formatTable } from "#test/format-table";
 import { graphql, runGql } from "#test/gql";
 
@@ -1200,4 +1205,291 @@ it("earningsUpdate replaces the parental-leave history and reprojects", async ()
   const may = data.planningYear!.months.find((m) => m.id === "may-2025")!;
   const gross = may.accounts[0].transactions.find((t) => t.isPayslipGross);
   expect(gross?.amount.amount).toBe(2500);
+});
+
+it("a dated gross-pay rise shifts the predicted balances from its start month onwards", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+  await recordSnapshot(accountIdTo, "2025-03-31", 1_000_000);
+
+  // £30k initial gross from April; £60k rise from October 2025. The take-home
+  // jump in October should match the £60k-from-day-one projection that
+  // `earningsUpdate reprojects balances when the gross changes` exercises
+  // (linear ramp at +£3779.78/mo) — but only from October onwards, with the
+  // April-September months still on the £30k +£2093.3/mo line.
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+          grossPays: [
+            {
+              startDate: "2025-10-01"
+              amountGross: { amount: 60000, currency: "GBP" }
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+  expect(await balanceTable("2025")).toMatchInlineSnapshot(`
+    "
+    MONTH    ACCOUNT VALUE START VALUE END
+    apr-2025 Main    10000       12093.3  
+    may-2025 Main    12093.3     14186.6  
+    jun-2025 Main    14186.6     16279.9  
+    jul-2025 Main    16279.9     18373.2  
+    aug-2025 Main    18373.2     20466.5  
+    sep-2025 Main    20466.5     22559.8  
+    oct-2025 Main    22559.8     26339.58 
+    nov-2025 Main    26339.58    30119.36 
+    dec-2025 Main    30119.36    33899.14 
+    jan-2026 Main    33899.14    37678.92 
+    feb-2026 Main    37678.92    41458.7  
+    mar-2026 Main    41458.7     45238.48 "
+  `);
+});
+
+it("earningsGrossPaySet upserts dated entries; earningsGrossPayDelete removes them", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+  const earningId = await firstEarningId();
+
+  // Add a rise.
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        earningsGrossPaySet(
+          earningsId: $id
+          startDate: "2025-10-01"
+          amountGross: { amount: 60000, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `),
+    { id: earningId },
+  );
+
+  // Re-supply the same date to overwrite the rate.
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        earningsGrossPaySet(
+          earningsId: $id
+          startDate: "2025-10-01"
+          amountGross: { amount: 70000, currency: "GBP" }
+        ) {
+          id
+        }
+      }
+    `),
+    { id: earningId },
+  );
+
+  let list = await runGql(
+    graphql(`
+      query {
+        earnings {
+          edges {
+            node {
+              grossPays {
+                startDate
+                amountGross {
+                  amount
+                }
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  expect(list.earnings!.edges[0].node.grossPays).toEqual([
+    { startDate: null, amountGross: { amount: 30000 } },
+    { startDate: "2025-10-01", amountGross: { amount: 70000 } },
+  ]);
+
+  // Delete the dated entry.
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        earningsGrossPayDelete(earningsId: $id, startDate: "2025-10-01") {
+          id
+        }
+      }
+    `),
+    { id: earningId },
+  );
+  list = await runGql(
+    graphql(`
+      query {
+        earnings {
+          edges {
+            node {
+              grossPays {
+                startDate
+                amountGross {
+                  amount
+                }
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  expect(list.earnings!.edges[0].node.grossPays).toEqual([
+    { startDate: null, amountGross: { amount: 30000 } },
+  ]);
+});
+
+it("earningsUpdate patches the initial gross-pay row even when grossPays is supplied in the same call", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+  const earningId = await firstEarningId();
+
+  // Both inputs change in the same call: bump the initial rate to £40k AND
+  // schedule a £60k rise from October. The null-startDate row must reflect
+  // the new £40k figure (not silently keep £30k just because grossPays was
+  // also supplied).
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        earningsUpdate(
+          id: $id
+          amountGross: { amount: 40000, currency: "GBP" }
+          grossPays: [
+            {
+              startDate: "2025-10-01"
+              amountGross: { amount: 60000, currency: "GBP" }
+            }
+          ]
+        ) {
+          id
+        }
+      }
+    `),
+    { id: earningId },
+  );
+
+  const list = await runGql(
+    graphql(`
+      query {
+        earnings {
+          edges {
+            node {
+              grossPays {
+                startDate
+                amountGross {
+                  amount
+                }
+              }
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+  expect(list.earnings!.edges[0].node.grossPays).toEqual([
+    { startDate: null, amountGross: { amount: 40000 } },
+    { startDate: "2025-10-01", amountGross: { amount: 60000 } },
+  ]);
+});
+
+it("the unique constraint rejects a second null-startDate gross-pay row per earning", async () => {
+  await seedYear();
+  const accountIdTo = await createAsset();
+  await assign(accountIdTo);
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        earningsCreate(
+          name: "Day job"
+          start: "2025-04-01"
+          amountGross: { amount: 30000, currency: "GBP" }
+          countryCode: "GB"
+          pensionReliefAtSource: 0
+          pensionNetPay: 0
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: accountIdTo },
+  );
+  const earningId = await firstEarningId();
+
+  let caught: unknown;
+  try {
+    await db.insert(PlanningEarningsGrossPay).values({
+      earningsId: earningId,
+      startDate: null,
+      amountGross: 12345,
+      currency: "GBP",
+    });
+  } catch (e) {
+    caught = e;
+  }
+  // Drizzle wraps the pg error in `cause`, so the constraint name is on the
+  // inner error rather than the outer "Failed query: …" message.
+  assert(caught instanceof Error);
+  expect(
+    (caught.cause as { constraint?: string } | undefined)?.constraint,
+  ).toBe("PlanningEarningsGrossPay_earningsStart_uq");
 });
