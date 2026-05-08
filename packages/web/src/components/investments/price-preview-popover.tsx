@@ -4,10 +4,10 @@ import { Suspense, useMemo, useRef, useState } from "react";
 
 import { Spinner } from "@/components/spinner";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { graphql } from "@/graphql";
 import { cn } from "@/lib/cn";
 import { formatUnitPrice } from "@/lib/format";
@@ -34,81 +34,41 @@ const WIDTH = 280;
 const HEIGHT = 80;
 const PAD_X = 4;
 const PAD_Y = 6;
-/** Open delay (ms) when the user's pointer enters the trigger — a short pause keeps a casual mouse-over from churning popovers across rows. */
-const OPEN_DELAY_MS = 80;
-/** Close delay (ms) after the pointer leaves both trigger and content — long enough to bridge the gap between them when the user travels to interact with the chart. */
-const CLOSE_DELAY_MS = 120;
 
 export function InvestmentPricePreviewPopover({
   investmentId,
 }: {
   investmentId: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const timer = useRef<number | null>(null);
-
-  const cancelTimer = () => {
-    if (timer.current !== null) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-  };
-  const scheduleOpen = () => {
-    cancelTimer();
-    timer.current = window.setTimeout(() => {
-      timer.current = null;
-      setOpen(true);
-    }, OPEN_DELAY_MS);
-  };
-  const scheduleClose = () => {
-    cancelTimer();
-    timer.current = window.setTimeout(() => {
-      timer.current = null;
-      setOpen(false);
-    }, CLOSE_DELAY_MS);
-  };
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <Tooltip delayDuration={150}>
+      <TooltipTrigger asChild>
         <button
           type="button"
           aria-label="Show price history"
           onClick={(e) => e.stopPropagation()}
-          onMouseEnter={scheduleOpen}
-          onMouseLeave={scheduleClose}
-          onFocus={scheduleOpen}
-          onBlur={scheduleClose}
-          className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="shrink-0 cursor-zoom-in rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
           <LineChartIcon className="h-3.5 w-3.5" />
         </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
+      </TooltipTrigger>
+      <TooltipContent
         side="top"
-        className="w-[300px] p-3"
+        align="start"
+        className="w-[300px] max-w-none p-3 text-foreground"
         onClick={(e) => e.stopPropagation()}
-        onMouseEnter={cancelTimer}
-        onMouseLeave={scheduleClose}
-        // Hover-driven popover: prevent Radix from auto-focusing the
-        // content on open, which would steal focus from the table row
-        // and feel janky when the user's just sweeping the mouse.
-        onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        {open && (
-          <Suspense
-            fallback={
-              <div className="flex h-[100px] items-center justify-center">
-                <Spinner />
-              </div>
-            }
-          >
-            <PriceHistoryChartLoader investmentId={investmentId} />
-          </Suspense>
-        )}
-      </PopoverContent>
-    </Popover>
+        <Suspense
+          fallback={
+            <div className="flex h-[100px] items-center justify-center">
+              <Spinner />
+            </div>
+          }
+        >
+          <PriceHistoryChartLoader investmentId={investmentId} />
+        </Suspense>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
