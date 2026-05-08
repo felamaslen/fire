@@ -528,12 +528,18 @@ function parsePortfolioIds(raw: string | undefined): string[] {
   return raw.split(",").filter((s) => s.length > 0);
 }
 
+/** Pick the subset of search params worth persisting to localStorage. The portfolio filter is intentionally excluded — the user shouldn't land on a wrapper-filtered view from a fresh visit just because they once narrowed it down. */
+function persistableSearch(s: InvestmentsSearch): InvestmentsSearch {
+  const { "filter-portfolio-id": _filter, ...rest } = s;
+  return rest;
+}
+
 function loadPersistedSearch(): InvestmentsSearch {
   if (typeof window === "undefined") return {};
   try {
     const raw = window.localStorage.getItem(SEARCH_STORAGE_KEY);
     if (!raw) return {};
-    return investmentsSearchSchema.parse(JSON.parse(raw));
+    return persistableSearch(investmentsSearchSchema.parse(JSON.parse(raw)));
   } catch {
     return {};
   }
@@ -590,7 +596,10 @@ function InvestmentsPageContent() {
 
   useEffect(() => {
     if (!isOnListPage) return;
-    window.localStorage.setItem(SEARCH_STORAGE_KEY, JSON.stringify(search));
+    window.localStorage.setItem(
+      SEARCH_STORAGE_KEY,
+      JSON.stringify(persistableSearch(search)),
+    );
   }, [search, isOnListPage]);
 
   const chart = searchToChart(search);
