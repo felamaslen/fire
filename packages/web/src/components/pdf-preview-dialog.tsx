@@ -8,6 +8,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { useIsDesktop } from "@/lib/use-is-desktop";
 
 /** Append the PDF Open Parameters that suppress the embedded viewer's pages / bookmarks sidebar (`pagemode=none` for Adobe / Firefox; `navpanes=0` for Chromium's built-in viewer). The signed URL's existing query string carries through unchanged — these are URL-fragment parameters, which are viewer-only and not sent to the server. */
 function withPdfViewerParams(url: string): string {
@@ -15,7 +16,7 @@ function withPdfViewerParams(url: string): string {
   return `${url}${sep}pagemode=none&navpanes=0`;
 }
 
-/** Open a PDF (e.g. a payslip or contract note attachment) inside an in-app modal `iframe`, with an "Open in new tab" escape hatch. The trigger defaults to a paperclip-style ghost icon button; pass `children` to use a custom trigger element. `url` should already be an absolute, signed URL — backend resolvers serialize file links pre-signed via the API origin so the SPA can embed them directly. */
+/** Open a PDF (e.g. a payslip or contract note attachment) inside an in-app modal `iframe`, with an "Open in new tab" escape hatch. On screens narrower than the `sm` breakpoint the iframe is skipped entirely — the trigger just opens the file in a new tab. The trigger defaults to a paperclip-style ghost icon button; pass `children` to use a custom trigger element. `url` should already be an absolute, signed URL — backend resolvers serialize file links pre-signed via the API origin so the SPA can embed them directly. */
 export function PdfPreviewDialog({
   url,
   label,
@@ -25,6 +26,20 @@ export function PdfPreviewDialog({
   label: string;
   children?: React.ReactNode;
 }) {
+  const isDesktop = useIsDesktop();
+  if (!isDesktop) {
+    return children ? (
+      <a href={url} target="_blank" rel="noreferrer" aria-label={label}>
+        {children}
+      </a>
+    ) : (
+      <Button variant="ghost" size="icon" asChild aria-label={label}>
+        <a href={url} target="_blank" rel="noreferrer">
+          <FileText className="size-4" />
+        </a>
+      </Button>
+    );
+  }
   return (
     <Dialog>
       <DialogTrigger asChild>

@@ -2098,6 +2098,18 @@ type PayslipParseResult {
 }
 
 """
+One calendar-month bucket of payslips inside a `payslipsByYear` result. The list always contains exactly 12 buckets (`month` 1-12) regardless of activity, so the UI can render a fixed-height grid with empty months shown as placeholders.
+"""
+type PayslipsByYearMonth {
+  """Calendar month, 1-12."""
+  month: Int!
+  """
+  Payslips paid in this month, ordered by destination account display name (alias or underlying asset name), then `id`.
+  """
+  payslips: [PlanningPayslip!]!
+}
+
+"""
 A NetWorthCategoryAsset that's been tagged for planning, optionally with a display alias.
 """
 type PlanningAccount {
@@ -2334,6 +2346,14 @@ type PlanningPayslip {
   adjustments: [PlanningPayslipAdjustment!]!
   """Gross pay for this pay period."""
   amountGross: Money!
+  """
+  Gross plus the sum of any positive adjustments (bonuses, employer top-ups, …). Deductions are excluded. Equals `amountGross` when there are no positive adjustments.
+  """
+  amountGrossAdjusted: Money!
+  """
+  Take-home pay: gross plus the signed sum of every adjustment (deductions and additions).
+  """
+  amountNet: Money!
   """Pay date."""
   date: Date!
   """
@@ -2830,6 +2850,13 @@ type Query {
   Every recorded payslip, paginated and sorted by pay date descending (most-recent first, `id` tiebreak).
   """
   payslips(after: ID, first: Int): PlanningPayslipConnection @semanticNonNull
+  """
+  Every payslip paid inside calendar `year`, pre-grouped into 12 month buckets so the result is suitable for a fixed-height grid view. Each bucket's payslips are ordered by destination account display name; empty months come back with an empty list rather than being omitted.
+  """
+  payslipsByYear(
+    """Calendar year (e.g. 2026)."""
+    year: Int!
+  ): [PayslipsByYearMonth!] @semanticNonNull
   """Call this to check that the GraphQL server is working properly"""
   ping: Pong @semanticNonNull
   """

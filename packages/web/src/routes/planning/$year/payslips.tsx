@@ -1,4 +1,4 @@
-import { useMutation, useSuspenseQuery } from "@apollo/client/react";
+import { useMutation, useQuery, useSuspenseQuery } from "@apollo/client/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Loader2,
@@ -9,8 +9,9 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { Suspense, useId, useState } from "react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 
 import { DeleteButton } from "@/components/delete-button";
 import { Figure, FigureDocument } from "@/components/figure";
@@ -66,43 +67,42 @@ const PlanningPayslipsDialogDocument = graphql(`
   }
 `);
 
-const PlanningPayslipsListDocument = graphql(
+const PlanningPayslipsByYearDocument = graphql(
   `
-    query PlanningPayslipsList($first: Int!, $after: ID) {
-      payslips(first: $first, after: $after) {
-        edges {
-          node {
+    query PlanningPayslipsByYear($year: Int!) {
+      payslipsByYear(year: $year) {
+        month
+        payslips {
+          id
+          name
+          date
+          amountGross {
+            amount
+            currency
+          }
+          amountGrossAdjusted {
+            ...Figure
+          }
+          amountNet {
+            ...Figure
+          }
+          fileUrl
+          toAccount {
             id
             name
-            date
-            amountGross {
+          }
+          adjustments {
+            id
+            name
+            amount {
               amount
               currency
-              ...Figure
             }
-            fileUrl
-            toAccount {
+            liability {
               id
               name
-            }
-            adjustments {
-              id
-              name
-              amount {
-                amount
-                currency
-              }
-              liability {
-                id
-                name
-              }
             }
           }
-        }
-        pageInfo {
-          hasNextPage
-          hasPreviousPage
-          endCursor
         }
       }
     }
@@ -191,15 +191,23 @@ export const PlanningPayslipParseDocument = graphql(`
   }
 `);
 
+const payslipsSearchSchema = z.object({
+  year: z.coerce.number().int().optional().catch(undefined),
+});
+
 export const Route = createFileRoute("/planning/$year/payslips")({
   component: PlanningPayslipsDialog,
+  validateSearch: payslipsSearchSchema,
 });
 
 type PlanningPayslipsData = ResultOf<typeof PlanningPayslipsDialogDocument>;
-type PlanningPayslipsListData = ResultOf<typeof PlanningPayslipsListDocument>;
-type Payslip = NonNullable<
-  PlanningPayslipsListData["payslips"]
->["edges"][number]["node"];
+type PlanningPayslipsByYearData = ResultOf<
+  typeof PlanningPayslipsByYearDocument
+>;
+type MonthBucket = NonNullable<
+  PlanningPayslipsByYearData["payslipsByYear"]
+>[number];
+type Payslip = MonthBucket["payslips"][number];
 export type AccountOption = NonNullable<
   PlanningPayslipsData["planningYear"]
 >["accounts"][number];
@@ -212,8 +220,8 @@ export type LiabilityOption = Extract<
 
 type RefetchEntry =
   | {
-      query: typeof PlanningPayslipsListDocument;
-      variables: { first: number; after: string | null };
+      query: typeof PlanningPayslipsByYearDocument;
+      variables: { year: number };
     }
   | { query: typeof PlanningYearViewDocument; variables: { id: string } };
 
@@ -308,15 +316,23 @@ export function formIsValid(v: FormValues): boolean {
   );
 }
 
-const PAGE_SIZE = 10;
-
 function PlanningPayslipsDialog() {
   const { year } = Route.useParams();
+  const search = Route.useSearch();
   const navigate = useNavigate();
-  // Stack of `after` cursors, one per page already shown. Page 1 is `null`,
-  // page 2 is stack[0], etc — pushing appends the end-cursor of the current
-  // page when paging forward; popping takes us back.
-  const [cursorStack, setCursorStack] = useState<Array<string | null>>([null]);
+  const fallbackYear = Number.parseInt(year, 10);
+  const viewYear =
+    search.year ??
+    (Number.isFinite(fallbackYear)
+      ? fallbackYear
+      : new Date().getUTCFullYear());
+  const setViewYear = (next: number) =>
+    void navigate({
+      to: "/planning/$year/payslips",
+      params: { year },
+      search: { year: next },
+      replace: true,
+    });
   const { data } = useSuspenseQuery(PlanningPayslipsDialogDocument, {
     variables: { year },
   });
@@ -327,18 +343,16 @@ function PlanningPayslipsDialog() {
       (n): n is LiabilityOption => n.__typename === "NetWorthCategoryLiability",
     );
 
-  const after = cursorStack[cursorStack.length - 1];
   const refetch: RefetchEntry[] = [
     {
-      query: PlanningPayslipsListDocument,
-      variables: { first: PAGE_SIZE, after },
+      query: PlanningPayslipsByYearDocument,
+      variables: { year: viewYear },
     },
     { query: PlanningYearViewDocument, variables: { id: year } },
   ];
 
   const close = () =>
     void navigate({ to: "/planning/$year", params: { year } });
-  const resetToFirstPage = () => setCursorStack([null]);
 
   return (
     <Dialog
@@ -347,46 +361,36 @@ function PlanningPayslipsDialog() {
         if (!open) close();
       }}
     >
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Payslips</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          {/* Inner Suspense boundary: paginating the payslips list re-runs
-              `useSuspenseQuery` with new variables, which would otherwise
-              bubble up and unmount the dialog. Scoping the fallback here
-              keeps the dialog (and the upload / add-payslip forms below)
-              mounted while only the table dims. */}
-          <Suspense fallback={<PayslipsTableFallback />}>
-            <PayslipsTable
-              year={year}
-              cursorStack={cursorStack}
-              setCursorStack={setCursorStack}
-              accounts={accounts}
-              liabilities={liabilities}
-            />
-          </Suspense>
           {accounts.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               Assign a planning account first so payslips have a landing
               account.
             </p>
           ) : (
-            <>
-              <PayslipParseDropZone
-                accounts={accounts}
-                isDemo={!!data.me?.isDemo}
-                liabilities={liabilities}
-                refetch={refetch}
-                onCreated={resetToFirstPage}
-              />
-              <AddPayslipForm
-                accounts={accounts}
-                liabilities={liabilities}
-                refetch={refetch}
-                onCreated={resetToFirstPage}
-              />
-            </>
+            <PayslipParseDropZone
+              accounts={accounts}
+              isDemo={!!data.me?.isDemo}
+              liabilities={liabilities}
+              refetch={refetch}
+            />
+          )}
+          <PayslipsYearGrid
+            viewYear={viewYear}
+            setViewYear={setViewYear}
+            accounts={accounts}
+            liabilities={liabilities}
+          />
+          {accounts.length > 0 && (
+            <AddPayslipForm
+              accounts={accounts}
+              liabilities={liabilities}
+              refetch={refetch}
+            />
           )}
         </div>
         <div className="flex justify-end">
@@ -399,101 +403,115 @@ function PlanningPayslipsDialog() {
   );
 }
 
-/** Placeholder shown inside the dialog while the payslips list is loading or
- * re-suspending (e.g. during pagination). Keeps the dialog's visual height
- * roughly stable so the controls below don't jump. */
-function PayslipsTableFallback() {
-  return (
-    <ul className="divide-y rounded-md border">
-      <li className="flex items-center justify-center px-3 py-6">
-        <Loader2 className="size-4 animate-spin text-muted-foreground" />
-      </li>
-    </ul>
-  );
-}
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
-function PayslipsTable({
-  year,
-  cursorStack,
-  setCursorStack,
+function PayslipsYearGrid({
+  viewYear,
+  setViewYear,
   accounts,
   liabilities,
 }: {
-  year: string;
-  cursorStack: Array<string | null>;
-  setCursorStack: React.Dispatch<React.SetStateAction<Array<string | null>>>;
+  viewYear: number;
+  setViewYear: (next: number) => void;
   accounts: AccountOption[];
   liabilities: LiabilityOption[];
 }) {
-  const after = cursorStack[cursorStack.length - 1];
-  const variables = { first: PAGE_SIZE, after };
-  const { data } = useSuspenseQuery(PlanningPayslipsListDocument, {
-    variables,
-  });
+  const variables = { year: viewYear };
+  // Non-suspending so switching years keeps the previous data on screen
+  // (dimmed) instead of re-mounting via a Suspense fallback.
+  const { data, previousData, loading } = useQuery(
+    PlanningPayslipsByYearDocument,
+    { variables },
+  );
+  const effective = data ?? previousData;
 
   const refetch: RefetchEntry[] = [
-    { query: PlanningPayslipsListDocument, variables },
-    { query: PlanningYearViewDocument, variables: { id: year } },
+    { query: PlanningPayslipsByYearDocument, variables },
   ];
 
-  const payslips: Payslip[] = data.payslips?.edges.map((e) => e.node) ?? [];
-  const pageInfo = data.payslips?.pageInfo;
-  const pageNumber = cursorStack.length;
-  const onNext = () => {
-    if (pageInfo?.hasNextPage && pageInfo.endCursor) {
-      setCursorStack((s) => [...s, pageInfo.endCursor as string]);
-    }
-  };
-  const onPrev = () => {
-    setCursorStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
-  };
+  const months: MonthBucket[] = effective?.payslipsByYear ?? [];
+  const dim = loading && effective != null;
+  const initialLoad = loading && effective == null;
 
   return (
-    <>
-      <ul className="divide-y rounded-md border">
-        {payslips.length === 0 && (
-          <li className="px-3 py-6 text-center text-sm text-muted-foreground">
-            No payslips yet.
+    <div className="relative rounded-md border">
+      <div className="flex items-center justify-between border-b px-2 py-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setViewYear(viewYear - 1)}
+          aria-label="Previous year"
+        >
+          ← {viewYear - 1}
+        </Button>
+        <span className="text-sm font-medium tabular-nums">{viewYear}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setViewYear(viewYear + 1)}
+          aria-label="Next year"
+        >
+          {viewYear + 1} →
+        </Button>
+      </div>
+      <ul
+        className={`divide-y transition-opacity ${
+          dim ? "pointer-events-none opacity-50" : ""
+        }`}
+      >
+        {(initialLoad
+          ? Array.from({ length: 12 }, (_, i) => ({
+              month: i + 1,
+              payslips: [] as Payslip[],
+            }))
+          : months
+        ).map((m) => (
+          <li
+            key={m.month}
+            className={`flex min-h-16 items-stretch gap-2 px-3 py-2 ${
+              m.payslips.length === 0 ? "bg-muted/30" : ""
+            }`}
+          >
+            <div className="w-10 shrink-0 self-center text-xs font-medium text-muted-foreground tabular-nums">
+              {MONTH_NAMES[m.month - 1]}
+            </div>
+            <div className="flex flex-1 flex-wrap gap-2">
+              {m.payslips.map((p) => (
+                <PayslipCard
+                  key={p.id}
+                  payslip={p}
+                  accounts={accounts}
+                  liabilities={liabilities}
+                  refetch={refetch}
+                />
+              ))}
+            </div>
           </li>
-        )}
-        {payslips.map((p) => (
-          <PayslipRow
-            key={p.id}
-            payslip={p}
-            accounts={accounts}
-            liabilities={liabilities}
-            refetch={refetch}
-          />
         ))}
       </ul>
-      {(pageInfo?.hasNextPage || pageInfo?.hasPreviousPage) && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Page {pageNumber}</span>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onPrev}
-              disabled={!pageInfo?.hasPreviousPage}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onNext}
-              disabled={!pageInfo?.hasNextPage}
-            >
-              Next
-            </Button>
-          </div>
+      {initialLoad && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
         </div>
       )}
-    </>
+    </div>
   );
 }
 
-function PayslipRow({
+function PayslipCard({
   payslip,
   accounts,
   liabilities,
@@ -535,21 +553,7 @@ function PayslipRow({
     );
   };
 
-  if (editing) {
-    return (
-      <li className="px-3 py-2">
-        <EditPayslipForm
-          payslip={payslip}
-          accounts={accounts}
-          liabilities={liabilities}
-          refetch={refetch}
-          onDone={() => setEditing(false)}
-        />
-      </li>
-    );
-  }
-
-  // Dragging onto a row with an existing file highlights amber to signal
+  // Dragging onto a card with an existing file highlights amber to signal
   // "this will replace", vs. primary for "this will add a file".
   const highlight = dragging
     ? payslip.fileUrl
@@ -557,53 +561,97 @@ function PayslipRow({
       : "bg-primary/10 ring-2 ring-primary"
     : "";
 
-  return (
-    <li
-      className={`flex items-center gap-2 px-3 py-2 transition-colors ${highlight}`}
-      onDragOver={(e) => {
-        if (!e.dataTransfer.types.includes("Files")) return;
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={(e) => {
-        // `onDragLeave` fires when the drag crosses into a child element too;
-        // only reset when it leaves the row entirely.
-        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-        setDragging(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragging(false);
-        const f = e.dataTransfer.files[0];
-        if (f) void uploadFile(f);
-      }}
-    >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-sm font-medium">{payslip.name}</span>
-          <Figure
-            data={payslip.amountGross}
-            className="font-mono text-xs tabular-nums"
-          />
-        </div>
-        <div className="mt-0.5 flex items-baseline justify-between gap-2 text-[11px] text-muted-foreground">
-          <span>{formatDate(payslip.date)}</span>
-          <span className="truncate">→ {payslip.toAccount.name}</span>
-        </div>
-        {payslip.adjustments.length > 0 && (
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
-            {payslip.adjustments.length} adjustment
-            {payslip.adjustments.length === 1 ? "" : "s"}
-          </div>
-        )}
+  const adjCount = payslip.adjustments.length;
+
+  const dragHandlers = {
+    onDragOver: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes("Files")) return;
+      e.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+      setDragging(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragging(false);
+      const f = e.dataTransfer.files[0];
+      if (f) void uploadFile(f);
+    },
+  };
+
+  // Card title: shown on hover so the name remains discoverable without
+  // taking layout space.
+  const title = `${payslip.name} — ${formatDate(payslip.date)}`;
+
+  const cardClass = `flex w-72 cursor-pointer items-center gap-3 rounded-md border bg-background px-3 py-1.5 text-xs no-underline transition-colors hover:bg-muted/40 ${highlight}`;
+
+  const cardBody = (
+    <>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Figure
+          data={payslip.amountNet}
+          className="truncate font-mono text-base font-semibold tabular-nums"
+        />
+        <span className="truncate text-[11px] text-muted-foreground">
+          → {payslip.toAccount.name}
+        </span>
       </div>
+      <div className="flex shrink-0 flex-col items-end text-[11px] text-muted-foreground">
+        <Figure
+          data={payslip.amountGrossAdjusted}
+          className="font-mono tabular-nums"
+        />
+        <span>{adjCount} adj.</span>
+      </div>
+      <div
+        className="flex shrink-0 items-center"
+        // Stop clicks here from following the wrapping link / triggering the
+        // hidden upload input.
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setEditing(true)}
+          aria-label={`Edit ${payslip.name}`}
+        >
+          <Pencil className="size-4" />
+        </Button>
+        <DeleteButton onConfirm={onDelete} />
+      </div>
+    </>
+  );
+
+  return (
+    <>
       {payslip.fileUrl ? (
         <PdfPreviewDialog
           url={resolveFileUrl(payslip.fileUrl)}
           label={`View ${payslip.name} file`}
-        />
+        >
+          <div
+            {...dragHandlers}
+            className={cardClass}
+            title={title}
+            role="button"
+            tabIndex={0}
+          >
+            {cardBody}
+          </div>
+        </PdfPreviewDialog>
       ) : (
-        <>
+        <label
+          {...dragHandlers}
+          className={cardClass}
+          htmlFor={quickInputId}
+          title={title}
+          aria-label={`Upload file for ${payslip.name}`}
+        >
           <input
             id={quickInputId}
             type="file"
@@ -615,28 +663,31 @@ function PayslipRow({
               e.target.value = "";
             }}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            asChild
-            aria-label={`Upload file for ${payslip.name}`}
-          >
-            <label htmlFor={quickInputId} className="cursor-pointer">
-              <Upload className="size-4" />
-            </label>
-          </Button>
-        </>
+          {cardBody}
+        </label>
       )}
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={() => setEditing(true)}
-        aria-label={`Edit ${payslip.name}`}
-      >
-        <Pencil className="size-4" />
-      </Button>
-      <DeleteButton onConfirm={onDelete} />
-    </li>
+      {editing && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditing(false);
+          }}
+        >
+          <DialogContent className="sm:max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Edit payslip</DialogTitle>
+            </DialogHeader>
+            <EditPayslipForm
+              payslip={payslip}
+              accounts={accounts}
+              liabilities={liabilities}
+              refetch={refetch}
+              onDone={() => setEditing(false)}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }
 

@@ -17,6 +17,7 @@ import {
   formatAccountingMoney,
   formatAccountingMoneyRounded,
 } from "@/lib/format";
+import { useIsDesktop } from "@/lib/use-is-desktop";
 
 export type NetWorthChartSeries = {
   /** Stable key used in tooltips and to identify the series. */
@@ -120,24 +121,6 @@ const AXIS_PAD_LEFT_DESKTOP = 86;
 const AXIS_PAD_RIGHT = 16;
 const AXIS_PAD_TOP = 12;
 const AXIS_PAD_BOTTOM = 36;
-
-// Mirror Tailwind's `sm:` breakpoint by reading `--breakpoint-sm` at
-// module load — keeps the media query in lockstep with `sm:` utility
-// classes. Module-scoped so every chart instance shares the same
-// `MediaQueryList` and listener set.
-const smMediaQuery = (() => {
-  if (typeof window === "undefined") return null;
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue("--breakpoint-sm")
-    .trim();
-  return window.matchMedia(`(min-width: ${raw || "40rem"})`);
-})();
-const subscribeSmBreakpoint = (onChange: () => void) => {
-  if (!smMediaQuery) return () => {};
-  smMediaQuery.addEventListener("change", onChange);
-  return () => smMediaQuery.removeEventListener("change", onChange);
-};
-const getSmBreakpointMatch = () => smMediaQuery?.matches ?? false;
 
 function shortDate(d: Date): string {
   return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
@@ -254,13 +237,9 @@ export function NetWorthChart({
   const [measuredW, measuredH] = sizeKey.split("x").map(Number);
   const width = widthProp ?? measuredW;
   const height = widthProp != null ? heightProp : measuredH;
-  // Mirror Tailwind's `sm:` breakpoint (40rem) via matchMedia — keeps the
-  // padding switch tied to viewport width, not the chart's own width.
-  const isDesktop = useSyncExternalStore(
-    subscribeSmBreakpoint,
-    getSmBreakpointMatch,
-    () => false,
-  );
+  // Mirror Tailwind's `sm:` breakpoint via matchMedia — keeps the padding
+  // switch tied to viewport width, not the chart's own width.
+  const isDesktop = useIsDesktop();
   const AXIS_PAD_LEFT = isDesktop
     ? AXIS_PAD_LEFT_DESKTOP
     : AXIS_PAD_LEFT_MOBILE;
