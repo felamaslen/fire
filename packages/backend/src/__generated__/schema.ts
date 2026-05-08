@@ -2405,6 +2405,14 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     name: "name",
                     type: new GraphQLNonNull(GraphQLString)
                 },
+                payslipFileUrl: {
+                    description: "Signed, short-lived URL to the attached payslip PDF (the file uploaded with the underlying `PlanningPayslip`). Only populated when this row is the gross line of a recorded payslip (`isPayslipGross` true and not `isProjected`) and a file was uploaded; null on every other row, when no file is attached, or when the current session isn't allowed to read it.",
+                    name: "payslipFileUrl",
+                    type: GraphQLString,
+                    resolve(source, _args, context) {
+                        return source.payslipFileUrl(context);
+                    }
+                },
                 toAccount: {
                     description: "Destination planning account for the from-side of a manual transfer. Null on every other kind of transaction (the to-side, predictions, payslips, ...).",
                     name: "toAccount",

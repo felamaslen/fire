@@ -55,6 +55,7 @@ import {
   planningMonthKey,
   startOfMonthUTC,
 } from "./months";
+import { storageKeyFromColumn } from "./payslips";
 import { computeUKTake } from "./tax";
 
 /**
@@ -471,9 +472,11 @@ async function reloadTransaction(
         amount: Money.fromMinorDenomination(row.amountGross, row.currency),
         isProjected: false,
         isEditable: true,
+        isPayslipGross: true,
         toAccountId: null,
         liabilityId: null,
         assetId: null,
+        payslipFileKey: row.fileUrl ? storageKeyFromColumn(row.fileUrl) : null,
       });
     }
     case "adj": {

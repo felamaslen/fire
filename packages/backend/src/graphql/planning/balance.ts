@@ -49,6 +49,7 @@ import {
   monthYearLabel,
   startOfMonthUTC,
 } from "./months";
+import { storageKeyFromColumn } from "./payslips";
 import { computeUKTake } from "./tax";
 import { encodePlanningTransactionId } from "./transactions";
 
@@ -553,6 +554,7 @@ export function monthTransactionsFor(
         toAccountId: null,
         liabilityId: null,
         assetId: null,
+        payslipFileKey: p.fileUrl ? storageKeyFromColumn(p.fileUrl) : null,
       }),
     );
     for (const a of adjustments) {
