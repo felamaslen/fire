@@ -36,6 +36,10 @@ import {
   InvestmentWrapper,
   loadInvestmentWrappers,
 } from "./position";
+import {
+  InvestmentPriceHistory,
+  loadInvestmentPriceHistory,
+} from "./price-history";
 import { loadInvestmentStats } from "./stats";
 import {
   InvestmentStockSplit,
@@ -285,6 +289,11 @@ export class Investment {
    */
   async wrappers(): Promise<InvestmentWrapper[] | null> {
     return loadInvestmentWrappers(this.id);
+  }
+
+  /** Full split-adjusted unit-price history for this investment, oldest sample first. Drives the compact price-preview chart on the investments list. `null` when no daily-close quotes have been recorded yet. @gqlField */
+  async priceHistory(): Promise<InvestmentPriceHistory | null> {
+    return loadInvestmentPriceHistory(this.id, this.currency);
   }
 }
 
@@ -632,6 +641,19 @@ export async function investments(
     },
     { hasNextPage, hasPreviousPage: afterCursor != null },
   );
+}
+
+/** Look up a single investment by id. Returns `null` if no investment with that id exists.
+ *
+ * @gqlQueryField
+ */
+export async function investment(id: ID): Promise<Investment | null> {
+  const [row] = await db
+    .select()
+    .from(Investments)
+    .where(eq(Investments.id, id));
+  if (!row) return null;
+  return Investment.load(row);
 }
 
 /** Every wrapper (a `STOCK` or `PENSION` `NetWorthCategoryAsset`) that has at least one `InvestmentTransaction` booked against it, ordered with `STOCK` wrappers before `PENSION`s and alphabetically by `name` within each group. Drives the portfolio switcher on the investments page.
