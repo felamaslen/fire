@@ -191,46 +191,49 @@ if (!globalThis.__apolloRouted) {
           ctx.session.kind === "demo"
             ? getDemoDb(ctx.session.database)
             : defaultDb;
-        const [body, init] = await otelContext.with(
-          suppressTracing(otelContext.active()),
-          () =>
-            sse({
-              method: request.method,
-              url: request.url,
-              headers: { get: (key) => headerMap.get(key.toLowerCase()) },
-              body: request.body as Record<string, unknown> | null,
-              raw: request.raw,
-              context: ctx,
-            }),
+        // The whole SSE flow — including the `sse(...)` call that builds the
+        // subscription iterator — has to run inside `runWithSession` /
+        // `runWithDb`. Otherwise the underlying resolver async generator
+        // captures an empty ALS scope at *creation* time, and every later
+        // `db` access from inside it falls back to `defaultDb` (so a demo
+        // subscription would silently read from the real schema).
+        const run = async () => {
+          const [body, init] = await sse({
+            method: request.method,
+            url: request.url,
+            headers: { get: (key) => headerMap.get(key.toLowerCase()) },
+            body: request.body as Record<string, unknown> | null,
+            raw: request.raw,
+            context: ctx,
+          });
+          raw.writeHead(init.status, init.statusText, init.headers);
+          raw.flushHeaders();
+          if (body == null) {
+            raw.end();
+            return;
+          }
+          if (typeof body === "string") {
+            raw.end(body);
+            return;
+          }
+          // Disable Nagle so each SSE event hits the wire immediately rather
+          // than sitting in the TCP buffer for up to 200ms.
+          raw.socket?.setNoDelay(true);
+          request.raw.on("close", () => {
+            void body.return?.(undefined);
+          });
+          try {
+            for await (const chunk of body) {
+              if (raw.writableEnded) break;
+              raw.write(chunk);
+            }
+          } finally {
+            if (!raw.writableEnded) raw.end();
+          }
+        };
+        await otelContext.with(suppressTracing(otelContext.active()), () =>
+          runWithSession(ctx.session, () => runWithDb(scopedDb, run)),
         );
-        raw.writeHead(init.status, init.statusText, init.headers);
-        raw.flushHeaders();
-        if (body == null) {
-          raw.end();
-          return;
-        }
-        if (typeof body === "string") {
-          raw.end(body);
-          return;
-        }
-        // Disable Nagle so each SSE event hits the wire immediately rather
-        // than sitting in the TCP buffer for up to 200ms.
-        raw.socket?.setNoDelay(true);
-        request.raw.on("close", () => {
-          void body.return?.(undefined);
-        });
-        try {
-          await runWithSession(ctx.session, () =>
-            runWithDb(scopedDb, async () => {
-              for await (const chunk of body) {
-                if (raw.writableEnded) break;
-                raw.write(chunk);
-              }
-            }),
-          );
-        } finally {
-          if (!raw.writableEnded) raw.end();
-        }
       },
     });
   };
