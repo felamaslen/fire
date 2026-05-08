@@ -640,3 +640,153 @@ it("stores the attached PDF fixture in the local bucket and serves it via GET /f
   expect(served.statusCode).toBe(200);
   expect(Buffer.from(served.rawPayload).equals(expected)).toBe(true);
 });
+
+it("payslipsByYear groups payslips into 12 month buckets ordered by destination account name", async () => {
+  await seedYear();
+  const zebraId = await createAsset("Zebra");
+  const alphaId = await createAsset("Alpha");
+  await assign(zebraId, "Zebra");
+  await assign(alphaId, "Alpha");
+
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        payslipCreate(
+          date: "2026-04-30"
+          amountGross: { amount: 1000, currency: "GBP" }
+          name: "Z April"
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: zebraId },
+  );
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        payslipCreate(
+          date: "2026-04-30"
+          amountGross: { amount: 2000, currency: "GBP" }
+          name: "A April"
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: alphaId },
+  );
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        payslipCreate(
+          date: "2026-09-15"
+          amountGross: { amount: 3000, currency: "GBP" }
+          name: "A September"
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: alphaId },
+  );
+  await runGql(
+    graphql(`
+      mutation ($a: ID!) {
+        payslipCreate(
+          date: "2025-12-15"
+          amountGross: { amount: 4000, currency: "GBP" }
+          name: "Other year"
+          toAccountId: $a
+        ) {
+          id
+        }
+      }
+    `),
+    { a: alphaId },
+  );
+
+  const data = await runGql(
+    graphql(`
+      query {
+        payslipsByYear(year: 2026) {
+          month
+          payslips {
+            name
+            toAccount {
+              name
+            }
+          }
+        }
+      }
+    `),
+    {},
+  );
+
+  expect(data.payslipsByYear).toHaveLength(12);
+  expect(
+    data.payslipsByYear!.map((b) => ({
+      month: b.month,
+      payslips: b.payslips.map((p) => `${p.toAccount.name}:${p.name}`),
+    })),
+  ).toMatchInlineSnapshot(`
+    [
+      {
+        "month": 1,
+        "payslips": [],
+      },
+      {
+        "month": 2,
+        "payslips": [],
+      },
+      {
+        "month": 3,
+        "payslips": [],
+      },
+      {
+        "month": 4,
+        "payslips": [
+          "Alpha:A April",
+          "Zebra:Z April",
+        ],
+      },
+      {
+        "month": 5,
+        "payslips": [],
+      },
+      {
+        "month": 6,
+        "payslips": [],
+      },
+      {
+        "month": 7,
+        "payslips": [],
+      },
+      {
+        "month": 8,
+        "payslips": [],
+      },
+      {
+        "month": 9,
+        "payslips": [
+          "Alpha:A September",
+        ],
+      },
+      {
+        "month": 10,
+        "payslips": [],
+      },
+      {
+        "month": 11,
+        "payslips": [],
+      },
+      {
+        "month": 12,
+        "payslips": [],
+      },
+    ]
+  `);
+});

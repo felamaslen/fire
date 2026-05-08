@@ -1,6 +1,18 @@
 import { strict as assert } from "node:assert";
 
-import { and, desc, eq, lt, notInArray, or } from "drizzle-orm";
+import DataLoader from "dataloader";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  lt,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { ID, Int } from "grats";
 
 import { sessionMayReadKey, signFileUrl } from "@/auth/file-url";
@@ -16,7 +28,7 @@ import {
 } from "@/db/schema/planning";
 import { storeUpload } from "@/uploads";
 
-import type { Context } from "../context";
+import { type Context, contextAwareDataLoader } from "../context";
 import type { Date as CalendarDate } from "../date";
 import { Money } from "../money";
 import { getMoneyInputFractionalAmount, type MoneyInput } from "../money";
@@ -39,6 +51,33 @@ function storageKeyFromColumn(value: string): string {
   return value.startsWith("/files/") ? value.slice("/files/".length) : value;
 }
 
+/** Per-request batched loader for `PlanningPayslip.adjustments` (and the resolvers derived from it: `amountGrossAdjusted`, `amountNet`). One SQL fetches every adjustment row for the requested payslip ids; the result map is then sliced per payslip in memory. Lifts the previous per-payslip query out of an N+1. */
+const adjustmentsLoader = contextAwareDataLoader(
+  () =>
+    new DataLoader<string, (typeof PlanningPayslipAdjustments.$inferSelect)[]>(
+      async (payslipIds) => {
+        const ids = [...payslipIds];
+        const rows = await db
+          .select()
+          .from(PlanningPayslipAdjustments)
+          .where(inArray(PlanningPayslipAdjustments.payslipId, ids));
+        const byPayslip = new Map<
+          string,
+          (typeof PlanningPayslipAdjustments.$inferSelect)[]
+        >();
+        for (const r of rows) {
+          let bucket = byPayslip.get(r.payslipId);
+          if (!bucket) {
+            bucket = [];
+            byPayslip.set(r.payslipId, bucket);
+          }
+          bucket.push(r);
+        }
+        return ids.map((id) => byPayslip.get(id) ?? []);
+      },
+    ),
+);
+
 /** A recorded pay-period snapshot: the gross amount plus zero or more adjustments (tax, NIC, student loan, …). Payslips suppress earnings projections for the same month+account. @gqlType */
 export class PlanningPayslip {
   constructor(
@@ -54,6 +93,8 @@ export class PlanningPayslip {
     private readonly fileKey: string | null,
     public readonly toAccountId: string,
     private readonly currency: string,
+    /** Gross in minor units; kept so resolvers that combine with adjustments (also stored minor) don't have to round-trip through `Money.amount` (major-unit `Float`). */
+    private readonly amountGrossMinor: number,
   ) {}
 
   static load(row: typeof PlanningPayslips.$inferSelect): PlanningPayslip {
@@ -65,6 +106,7 @@ export class PlanningPayslip {
       row.fileUrl ? storageKeyFromColumn(row.fileUrl) : null,
       row.toAccountId,
       row.currency,
+      row.amountGross,
     );
   }
 
@@ -102,12 +144,32 @@ export class PlanningPayslip {
   }
 
   /** Line items on this payslip (tax / NIC / student-loan / any custom). Signed; negative = deduction. @gqlField */
-  async adjustments(): Promise<PlanningPayslipAdjustment[]> {
-    const rows = await db
-      .select()
-      .from(PlanningPayslipAdjustments)
-      .where(eq(PlanningPayslipAdjustments.payslipId, this.id));
+  async adjustments(ctx: Context): Promise<PlanningPayslipAdjustment[]> {
+    const rows = await adjustmentsLoader(ctx).load(this.id);
     return rows.map((r) => PlanningPayslipAdjustment.load(r, this.currency));
+  }
+
+  /** Gross plus the sum of any positive adjustments (bonuses, employer top-ups, …). Deductions are excluded. Equals `amountGross` when there are no positive adjustments. @gqlField */
+  async amountGrossAdjusted(ctx: Context): Promise<Money> {
+    const rows = await adjustmentsLoader(ctx).load(this.id);
+    const positiveSum = rows.reduce(
+      (sum, r) => sum + (r.amount > 0 ? r.amount : 0),
+      0,
+    );
+    return Money.fromMinorDenomination(
+      this.amountGrossMinor + positiveSum,
+      this.currency,
+    );
+  }
+
+  /** Take-home pay: gross plus the signed sum of every adjustment (deductions and additions). @gqlField */
+  async amountNet(ctx: Context): Promise<Money> {
+    const rows = await adjustmentsLoader(ctx).load(this.id);
+    const signedSum = rows.reduce((sum, r) => sum + r.amount, 0);
+    return Money.fromMinorDenomination(
+      this.amountGrossMinor + signedSum,
+      this.currency,
+    );
   }
 }
 
@@ -349,5 +411,62 @@ export async function payslips(
     page.map((r) => PlanningPayslip.load(r)),
     (node) => encodeCursor(dateById.get(node.id)!.toISOString(), node.id),
     { hasNextPage: hasExtra, hasPreviousPage: cursor != null },
+  );
+}
+
+/** One calendar-month bucket of payslips inside a `payslipsByYear` result. The list always contains exactly 12 buckets (`month` 1-12) regardless of activity, so the UI can render a fixed-height grid with empty months shown as placeholders. @gqlType */
+export class PayslipsByYearMonth {
+  constructor(
+    /** Calendar month, 1-12. @gqlField */
+    public readonly month: Int,
+    /** Payslips paid in this month, ordered by destination account display name (alias or underlying asset name), then `id`. @gqlField */
+    public readonly payslips: PlanningPayslip[],
+  ) {}
+}
+
+/**
+ * Every payslip paid inside calendar `year`, pre-grouped into 12 month buckets so the result is suitable for a fixed-height grid view. Each bucket's payslips are ordered by destination account display name; empty months come back with an empty list rather than being omitted.
+ *
+ * @gqlQueryField
+ * @gqlAnnotate semanticNonNull
+ */
+export async function payslipsByYear(
+  /** Calendar year (e.g. 2026). */
+  year: Int,
+): Promise<PayslipsByYearMonth[] | null> {
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
+
+  const rows = await db
+    .select({ payslip: PlanningPayslips })
+    .from(PlanningPayslips)
+    .innerJoin(
+      PlanningAccounts,
+      eq(PlanningPayslips.toAccountId, PlanningAccounts.accountId),
+    )
+    .innerJoin(
+      NetWorthCategoryAssets,
+      eq(PlanningAccounts.accountId, NetWorthCategoryAssets.id),
+    )
+    .where(
+      and(
+        gte(PlanningPayslips.date, yearStart),
+        lt(PlanningPayslips.date, yearEnd),
+      ),
+    )
+    .orderBy(
+      asc(
+        sql`coalesce(${PlanningAccounts.alias}, ${NetWorthCategoryAssets.name})`,
+      ),
+      asc(PlanningPayslips.id),
+    );
+
+  const buckets: PlanningPayslip[][] = Array.from({ length: 12 }, () => []);
+  for (const { payslip } of rows) {
+    const m = payslip.date.getUTCMonth();
+    buckets[m].push(PlanningPayslip.load(payslip));
+  }
+  return buckets.map(
+    (payslips, i) => new PayslipsByYearMonth((i + 1) as Int, payslips),
   );
 }

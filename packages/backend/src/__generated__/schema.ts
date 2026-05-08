@@ -24,7 +24,7 @@ import { netWorthCategories as queryNetWorthCategoriesResolver, netWorthCategory
 import { netWorthCurrent as queryNetWorthCurrentResolver } from "./../graphql/net-worth/current";
 import { netWorthForecast as queryNetWorthForecastResolver } from "./../graphql/net-worth/forecast";
 import { netWorthHistory as queryNetWorthHistoryResolver } from "./../graphql/net-worth/history";
-import { payslips as queryPayslipsResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
+import { payslips as queryPayslipsResolver, payslipsByYear as queryPayslipsByYearResolver, payslipCreate as mutationPayslipCreateResolver, payslipDelete as mutationPayslipDeleteResolver, payslipUpdate as mutationPayslipUpdateResolver } from "./../graphql/planning/payslips";
 import { ping as queryPingResolver } from "./../graphql/ping";
 import { planningYear as queryPlanningYearResolver, planningYearCurrent as queryPlanningYearCurrentResolver, planningYears as queryPlanningYearsResolver, planningAccountAssign as mutationPlanningAccountAssignResolver, planningAccountReorder as mutationPlanningAccountReorderResolver, planningAccountUnassign as mutationPlanningAccountUnassignResolver, planningYearSet as mutationPlanningYearSetResolver } from "./../graphql/planning/index";
 import { portfolio as queryPortfolioResolver, portfolios as queryPortfoliosResolver } from "./../graphql/investments/portfolio";
@@ -2224,12 +2224,31 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 adjustments: {
                     description: "Line items on this payslip (tax / NIC / student-loan / any custom). Signed; negative = deduction.",
                     name: "adjustments",
-                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningPayslipAdjustmentType)))
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningPayslipAdjustmentType))),
+                    resolve(source, _args, context) {
+                        return source.adjustments(context);
+                    }
                 },
                 amountGross: {
                     description: "Gross pay for this pay period.",
                     name: "amountGross",
                     type: new GraphQLNonNull(MoneyType)
+                },
+                amountGrossAdjusted: {
+                    description: "Gross plus the sum of any positive adjustments (bonuses, employer top-ups, \u2026). Deductions are excluded. Equals `amountGross` when there are no positive adjustments.",
+                    name: "amountGrossAdjusted",
+                    type: new GraphQLNonNull(MoneyType),
+                    resolve(source, _args, context) {
+                        return source.amountGrossAdjusted(context);
+                    }
+                },
+                amountNet: {
+                    description: "Take-home pay: gross plus the signed sum of every adjustment (deductions and additions).",
+                    name: "amountNet",
+                    type: new GraphQLNonNull(MoneyType),
+                    resolve(source, _args, context) {
+                        return source.amountNet(context);
+                    }
                 },
                 date: {
                     description: "Pay date.",
@@ -2288,6 +2307,24 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                 pageInfo: {
                     name: "pageInfo",
                     type: new GraphQLNonNull(PageInfoType)
+                }
+            };
+        }
+    });
+    const PayslipsByYearMonthType: GraphQLObjectType = new GraphQLObjectType({
+        name: "PayslipsByYearMonth",
+        description: "One calendar-month bucket of payslips inside a `payslipsByYear` result. The list always contains exactly 12 buckets (`month` 1-12) regardless of activity, so the UI can render a fixed-height grid with empty months shown as placeholders.",
+        fields() {
+            return {
+                month: {
+                    description: "Calendar month, 1-12.",
+                    name: "month",
+                    type: new GraphQLNonNull(GraphQLInt)
+                },
+                payslips: {
+                    description: "Payslips paid in this month, ordered by destination account display name (alias or underlying asset name), then `id`.",
+                    name: "payslips",
+                    type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(PlanningPayslipType)))
                 }
             };
         }
@@ -3317,6 +3354,20 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     },
                     resolve(_source, args) {
                         return assertNonNull(queryPayslipsResolver(args.first, args.after));
+                    }
+                },
+                payslipsByYear: {
+                    description: "Every payslip paid inside calendar `year`, pre-grouped into 12 month buckets so the result is suitable for a fixed-height grid view. Each bucket's payslips are ordered by destination account display name; empty months come back with an empty list rather than being omitted.",
+                    name: "payslipsByYear",
+                    type: new GraphQLList(new GraphQLNonNull(PayslipsByYearMonthType)),
+                    args: {
+                        year: {
+                            description: "Calendar year (e.g. 2026).",
+                            type: new GraphQLNonNull(GraphQLInt)
+                        }
+                    },
+                    resolve(_source, args) {
+                        return assertNonNull(queryPayslipsByYearResolver(args.year));
                     }
                 },
                 ping: {
@@ -5563,7 +5614,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         query: QueryType,
         mutation: MutationType,
         subscription: SubscriptionType,
-        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningGrossPayInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, ContractNoteImportResultType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, LoanCalculatorRowType, LoanHistoryPointType, LoanPaymentMonthType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningGrossPayType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioContributionsType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
+        types: [DateType, DateTimeType, UploadType, NetWorthAssetTypeType, NetWorthCategoryKindType, NetWorthCategoryTypeType, NetWorthForecastMilestoneKindType, NetWorthLiabilityTypeType, PlanningBillsFrequencyType, PortfolioCandleUnitType, PortfolioTimePeriodType, SortDirectionType, CashContributionType, InvestmentAssetType, NetWorthForecastCategoryType, PlanningYearTaxRatesType, NetWorthCategoryType, InvestmentAllocationInputType, InvestmentAssetInputType, InvestmentFundInputType, InvestmentInitialTransactionInputType, InvestmentSortType, InvestmentStockInputType, MoneyInputType, NetWorthCategoryAssetInputType, NetWorthCategoryAssetPatchType, NetWorthCategoryInputType, NetWorthCategoryLiabilityInputType, NetWorthCategoryLiabilityPatchType, NetWorthCategoryOptionInputType, NetWorthCategoryOptionPatchType, NetWorthCategoryPatchType, NetWorthCategoryRefType, NetWorthCurrencyRateInputType, NetWorthValueAssetInputType, NetWorthValueInputType, NetWorthValueLiabilityInputType, NetWorthValueOptionInputType, PayslipAdjustmentInputType, PlanningEarningGrossPayInputType, PlanningEarningParentalLeaveInputType, PlanningEarningUKTaxCodeInputType, PlanningYearTaxRatesInputType, PlanningYearTaxRatesUKInputType, AssetCashPlanningTransactionType, AssetValueSnapshotType, AuthResultType, CashContributionConnectionType, CashContributionEdgeType, ContractNoteImportResultType, CurrencyType, CurrencyExchangeRateType, DemoType, DemoLoginStartType, DemoProgressType, InvalidationType, InvestmentType, InvestmentAllocationType, InvestmentAllocationsResultType, InvestmentConnectionType, InvestmentDepositType, InvestmentEdgeType, InvestmentFundType, InvestmentPositionType, InvestmentPriceLatestType, InvestmentReinvestedType, InvestmentStockType, InvestmentStockSplitType, InvestmentTradePseudoTransactionType, InvestmentTransactionType, InvestmentTransactionConnectionType, InvestmentTransactionEdgeType, InvestmentTransferType, InvestmentWrapperType, LoanCalculatorRowType, LoanHistoryPointType, LoanPaymentMonthType, MoneyType, MutationType, NetWorthCategoryAssetType, NetWorthCategoryConnectionType, NetWorthCategoryEdgeType, NetWorthCategoryLiabilityType, NetWorthCategoryOptionType, NetWorthCurrencyRateType, NetWorthCurrentType, NetWorthCurrentBreakdownType, NetWorthEntryType, NetWorthEntryConnectionType, NetWorthEntryEdgeType, NetWorthForecastType, NetWorthForecastFlatAssetType, NetWorthForecastFlatLiabilityType, NetWorthForecastGrowthAssetType, NetWorthForecastLoanType, NetWorthForecastMilestoneType, NetWorthForecastOptionCategoryType, NetWorthForecastPortfolioType, NetWorthForecastRetirementType, NetWorthForecastWorkingsType, NetWorthHistoryAssetBucketType, NetWorthHistoryPointType, NetWorthValueType, PageInfoType, PayslipParseAdjustmentType, PayslipParseResultType, PayslipsByYearMonthType, PlanningAccountType, PlanningBillType, PlanningBillConnectionType, PlanningBillEdgeType, PlanningEarningType, PlanningEarningConnectionType, PlanningEarningEdgeType, PlanningEarningGrossPayType, PlanningEarningParentalLeaveType, PlanningEarningUKTaxCodeType, PlanningMonthType, PlanningMonthAccountType, PlanningPayslipType, PlanningPayslipAdjustmentType, PlanningPayslipConnectionType, PlanningPayslipEdgeType, PlanningTransactionType, PlanningYearType, PlanningYearConnectionType, PlanningYearEdgeType, PlanningYearTaxRatesUKType, PongType, PortfolioType, PortfolioAllocationType, PortfolioCandlestickType, PortfolioCandlestickPointType, PortfolioConnectionType, PortfolioContributionsType, PortfolioEdgeType, PortfolioLiveTickType, PortfolioTimeseriesType, PortfolioTimeseriesPointType, QueryType, RetirementSettingsType, SubscriptionType, VoidType]
     });
 }
 const typeNameMap = new Map();
