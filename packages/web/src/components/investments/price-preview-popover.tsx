@@ -1,5 +1,5 @@
 import { useSuspenseQuery } from "@apollo/client/react";
-import { LineChart as LineChartIcon } from "lucide-react";
+import { Search } from "lucide-react";
 import { Suspense, useMemo, useRef, useState } from "react";
 
 import { Spinner } from "@/components/spinner";
@@ -47,9 +47,9 @@ export function InvestmentPricePreviewPopover({
           type="button"
           aria-label="Show price history"
           onClick={(e) => e.stopPropagation()}
-          className="shrink-0 cursor-zoom-in rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
-          <LineChartIcon className="h-3.5 w-3.5" />
+          <Search className="h-3.5 w-3.5" />
         </button>
       </TooltipTrigger>
       <TooltipContent
