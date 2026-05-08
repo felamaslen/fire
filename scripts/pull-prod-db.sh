@@ -3,7 +3,9 @@
 # local dev `postgres` service (defined in `packages/backend/docker-compose.yml`),
 # overwriting whatever's currently there. Streams `pg_dump -Fc` straight from
 # the remote container into a local `pg_restore` — no dump file is written
-# to disk on either side.
+# to disk on either side. Then rsyncs the prod `uploads/` tree into the
+# local `uploads-data` docker volume, skipping files already present
+# (so re-runs are cheap and never clobber a locally-modified file).
 #
 # Usage:
 #   scripts/pull-prod-db.sh --host myserver [--location /opt/fire] [--yes]
@@ -78,4 +80,31 @@ docker compose exec -T postgres psql -U fire -d postgres -v ON_ERROR_STOP=1 \
 ssh "$HOST" "cd '$LOCATION' && docker compose exec -T postgres pg_dump -U fire -d fire -Fc" \
   | docker compose exec -T postgres pg_restore -U fire -d fire --no-owner --no-privileges --exit-on-error
 
-echo "==> Done. Local 'fire' database now mirrors prod on $HOST."
+# Prod stores uploads as a host bind under `$LOCATION/var/uploads` (see
+# `docker-compose.prod.yml`). Locally they live in the named docker volume
+# `<project>_uploads-data` mounted into the backend container. Stage the
+# remote tree into a host tempdir with rsync, then merge it into the
+# volume via a one-shot alpine container using `cp -rn` (no-clobber) —
+# files already present locally are kept untouched.
+echo "==> Syncing uploads from $HOST:$LOCATION/var/uploads"
+
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$BACKEND_DIR")}"
+UPLOADS_VOLUME="${COMPOSE_PROJECT}_uploads-data"
+
+if ! docker volume inspect "$UPLOADS_VOLUME" >/dev/null 2>&1; then
+  echo "Could not find docker volume '$UPLOADS_VOLUME' (is the backend stack up?)" >&2
+  exit 1
+fi
+
+STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
+
+rsync -ah --stats --progress "$HOST:$LOCATION/var/uploads/" "$STAGING/"
+
+docker run --rm \
+  -v "$UPLOADS_VOLUME:/dst" \
+  -v "$STAGING:/src:ro" \
+  alpine:3 \
+  sh -c 'apk add --no-cache rsync >/dev/null && rsync -a --ignore-existing --stats /src/ /dst/'
+
+echo "==> Done. Local 'fire' database and uploads now mirror prod on $HOST."
