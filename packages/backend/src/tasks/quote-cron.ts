@@ -1,8 +1,13 @@
 import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { eq, isNotNull, sql } from "drizzle-orm";
 import { schedule, type ScheduledTask } from "node-cron";
 
 import { db } from "@/db";
-import { InvestmentPrices, Investments } from "@/db/schema/investments";
+import {
+  InvestmentPrices,
+  Investments,
+  InvestmentTransactions,
+} from "@/db/schema/investments";
 import { log } from "@/log";
 
 import { fetchQuote } from "./yahoo";
@@ -24,13 +29,30 @@ export async function refreshAllStockQuotes(
         span.setAttribute("quote_cron.skipped_reason", "non_business_day");
         return;
       }
+      // Only investments with held units > 0 (sum of every transaction's
+      // units, fractional shares included) need a fresh quote — quoting a
+      // fully-sold position just churns the upstream API and writes price
+      // rows we'll never read. Inner-join + GROUP BY filters out fund-only
+      // investments (no `stockCode`) and zero-tx rows in the same query.
+      // `1e-9` mirrors the held-vs-sold epsilon used in
+      // `Query.investments`'s sold filter — fractional buys + sells of the
+      // same nominal lot can leave a sub-unit residue instead of an exact 0.
       const rows = await db
         .select({
           id: Investments.id,
           stockCode: Investments.stockCode,
           currency: Investments.currency,
         })
-        .from(Investments);
+        .from(Investments)
+        .innerJoin(
+          InvestmentTransactions,
+          eq(InvestmentTransactions.investmentId, Investments.id),
+        )
+        .where(isNotNull(Investments.stockCode))
+        .groupBy(Investments.id, Investments.stockCode, Investments.currency)
+        .having(
+          sql`abs(coalesce(sum(${InvestmentTransactions.units}), 0)) >= 1e-9`,
+        );
       const today = new Date(
         Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
       );

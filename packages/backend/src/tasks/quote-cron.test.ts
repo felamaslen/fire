@@ -1,7 +1,12 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { InvestmentPrices, Investments } from "@/db/schema/investments";
+import {
+  InvestmentPrices,
+  Investments,
+  InvestmentTransactions,
+} from "@/db/schema/investments";
+import { NetWorthCategoryAssets } from "@/db/schema/net-worth";
 import { http, HttpResponse, useMswServer } from "#test/msw";
 
 import { refreshAllStockQuotes } from "./quote-cron";
@@ -66,9 +71,35 @@ async function createInvestment(
   return row.id;
 }
 
+async function createWrapper(name: string): Promise<string> {
+  const [row] = await db
+    .insert(NetWorthCategoryAssets)
+    .values({ name, type: "STOCK" })
+    .returning({ id: NetWorthCategoryAssets.id });
+  return row.id;
+}
+
+async function buy(
+  investmentId: string,
+  assetId: string,
+  units: number,
+  date: string = "2024-01-01",
+): Promise<void> {
+  await db.insert(InvestmentTransactions).values({
+    investmentId,
+    assetId,
+    date: new Date(date),
+    units,
+    price: 100,
+    currency: "GBP",
+  });
+}
+
 describe("refreshAllStockQuotes", () => {
   it("persists a fresh price row for each stock investment on business days", async () => {
     const id = await createInvestment("Apple", "AAPL", "GBP");
+    const wrapper = await createWrapper("ISA");
+    await buy(id, wrapper, 1);
     server.use(
       yahooQuoteHandler([
         { symbol: "AAPL", regularMarketPrice: 5, currency: "GBP" },
@@ -103,6 +134,8 @@ describe("refreshAllStockQuotes", () => {
 
   it("skips persisting when the quote currency doesn't match", async () => {
     const id = await createInvestment("Apple", "AAPL", "GBP");
+    const wrapper = await createWrapper("ISA");
+    await buy(id, wrapper, 1);
     server.use(
       yahooQuoteHandler([
         { symbol: "AAPL", regularMarketPrice: 5, currency: "USD" },
@@ -116,8 +149,23 @@ describe("refreshAllStockQuotes", () => {
     expect(rows).toHaveLength(0);
   });
 
+  it("skips investments with zero held units (fully sold)", async () => {
+    const id = await createInvestment("Apple", "AAPL", "GBP");
+    const wrapper = await createWrapper("ISA");
+    await buy(id, wrapper, 1, "2024-01-01");
+    await buy(id, wrapper, -1, "2024-02-01");
+    const hits = { count: 0 };
+    server.use(yahooQuoteHandler([], { hits }));
+    await refreshAllStockQuotes(new Date("2024-03-04T18:00:00Z"));
+    expect(hits.count).toBe(0);
+    const rows = await db.select().from(InvestmentPrices);
+    expect(rows).toHaveLength(0);
+  });
+
   it("upserts when a price already exists for today", async () => {
     const id = await createInvestment("Apple", "AAPL", "GBP");
+    const wrapper = await createWrapper("ISA");
+    await buy(id, wrapper, 1);
     const today = new Date(Date.UTC(2024, 2, 4));
     await db.insert(InvestmentPrices).values({
       investmentId: id,
