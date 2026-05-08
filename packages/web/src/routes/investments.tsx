@@ -41,6 +41,7 @@ import {
   type PortfolioChartSettings,
   PortfolioSection,
 } from "@/components/investments/portfolio-section";
+import { InvestmentPricePreviewPopover } from "@/components/investments/price-preview-popover";
 import { NavHeaderTitle } from "@/components/nav-header";
 import { Spinner } from "@/components/spinner";
 import { Button } from "@/components/ui/button";
@@ -1132,6 +1133,7 @@ function InvestmentRow({
         <span className="flex items-center gap-1.5">
           <span className="truncate sm:hidden">{ticker ?? inv.name}</span>
           <span className="hidden truncate sm:inline">{inv.name}</span>
+          <InvestmentPricePreviewPopover investmentId={inv.id} />
           {inv.asset.__typename === "InvestmentFund" && (
             <a
               href={inv.asset.url}
