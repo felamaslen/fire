@@ -502,21 +502,15 @@ function CalculatorContent({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-      <NetWorthChart
-        points={points}
-        series={series}
-        currency={currency}
-        forecastStart={forecastStart}
-      />
-      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Checkbox
-          checked={showCumulative}
-          onCheckedChange={(v) => setShowCumulative(v === true)}
-        />
-        <span>Show cumulative amount paid (dashed)</span>
-      </label>
-      <div className="flex flex-col gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row md:gap-6 md:overflow-hidden">
+      <div className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto md:w-72 md:pr-1">
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Checkbox
+            checked={showCumulative}
+            onCheckedChange={(v) => setShowCumulative(v === true)}
+          />
+          <span>Show cumulative paid (dashed)</span>
+        </label>
         {loans.map((loan) => {
           const isHidden = hidden.has(loan.id);
           const op = overpayments.get(loan.id) ?? 0;
@@ -590,68 +584,62 @@ function CalculatorContent({
                 isHidden && "opacity-60",
               )}
             >
-              <div className="flex items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  <Checkbox
-                    checked={!isHidden}
-                    onCheckedChange={(v) => {
-                      const next = new Set(hidden);
-                      if (v) next.delete(loan.id);
-                      else next.add(loan.id);
-                      setHidden(next);
-                    }}
-                  />
-                  <span
-                    className="inline-block h-2.5 w-2.5 rounded-full"
-                    style={{
-                      background: colorForLoan(loan.id),
-                    }}
-                  />
-                  <span>{loan.name}</span>
-                </label>
-                <div className="text-sm tabular-nums text-muted-foreground">
-                  {formatAccountingMoney(currency, loan.startingBalance)} ·{" "}
-                  {loan.interestRate.toFixed(2)}% ·{" "}
-                  {formatAccountingMoney(currency, loan.monthlyRepayment)}/mo
-                </div>
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <Checkbox
+                  checked={!isHidden}
+                  onCheckedChange={(v) => {
+                    const next = new Set(hidden);
+                    if (v) next.delete(loan.id);
+                    else next.add(loan.id);
+                    setHidden(next);
+                  }}
+                />
+                <span
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ background: colorForLoan(loan.id) }}
+                />
+                <span className="truncate">{loan.name}</span>
+              </label>
+              <div className="text-xs tabular-nums text-muted-foreground">
+                {formatAccountingMoney(currency, loan.startingBalance)} ·{" "}
+                {loan.interestRate.toFixed(2)}% ·{" "}
+                {formatAccountingMoney(currency, loan.monthlyRepayment)}/mo
               </div>
-              <div className="flex items-center gap-3">
-                <span className="w-28 shrink-0 text-xs text-muted-foreground">
-                  Extra / month
-                </span>
-                <div className="relative flex flex-1 items-center">
-                  <input
-                    type="range"
-                    min={0}
-                    max={sliderMax}
-                    step={step}
-                    value={sliderValue}
-                    onChange={(e) => {
-                      const next = new Map(overpayments);
-                      const raw = Number(e.target.value);
-                      const val =
-                        hasFullPayoffSnap && raw > baseSliderMax
-                          ? loan.startingBalance
-                          : raw;
-                      if (val === 0) next.delete(loan.id);
-                      else next.set(loan.id, val);
-                      setOverpayments(next);
-                    }}
-                    className="w-full accent-primary"
-                    disabled={isHidden}
-                  />
-                  {hasFullPayoffSnap && (
-                    <div
-                      className="pointer-events-none absolute inset-y-1 w-px bg-border"
-                      style={{ left: `${separatorPercent}%` }}
-                    />
-                  )}
-                </div>
-                <span className="w-20 shrink-0 text-right text-sm tabular-nums">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-muted-foreground">Extra / month</span>
+                <span className="tabular-nums">
                   {formatAccountingMoney(currency, op)}
                 </span>
               </div>
-              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <div className="relative flex items-center">
+                <input
+                  type="range"
+                  min={0}
+                  max={sliderMax}
+                  step={step}
+                  value={sliderValue}
+                  onChange={(e) => {
+                    const next = new Map(overpayments);
+                    const raw = Number(e.target.value);
+                    const val =
+                      hasFullPayoffSnap && raw > baseSliderMax
+                        ? loan.startingBalance
+                        : raw;
+                    if (val === 0) next.delete(loan.id);
+                    else next.set(loan.id, val);
+                    setOverpayments(next);
+                  }}
+                  className="w-full accent-primary"
+                  disabled={isHidden}
+                />
+                {hasFullPayoffSnap && (
+                  <div
+                    className="pointer-events-none absolute inset-y-1 w-px bg-border"
+                    style={{ left: `${separatorPercent}%` }}
+                  />
+                )}
+              </div>
+              <div className="flex flex-col gap-1 text-xs text-muted-foreground">
                 <span>
                   {payoff == null
                     ? "Repayment doesn't cover interest — balance never clears."
@@ -689,6 +677,14 @@ function CalculatorContent({
             </div>
           );
         })}
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <NetWorthChart
+          points={points}
+          series={series}
+          currency={currency}
+          forecastStart={forecastStart}
+        />
       </div>
     </div>
   );
