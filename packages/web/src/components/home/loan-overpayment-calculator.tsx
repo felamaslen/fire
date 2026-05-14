@@ -1,7 +1,7 @@
 import { useQuery } from "@apollo/client/react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, useLocation, useNavigate } from "@tanstack/react-router";
 import { Calculator } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -100,6 +100,34 @@ function addMonths(d: Date, n: number): Date {
 type LoanRow = NonNullable<
   ResultOf<typeof LoanOverpaymentDocument>["loanCalculator"]
 >[number];
+
+const loanCalculatorRoute = getRouteApi("/loan-calculator");
+
+function parseHidden(s: string | undefined): Set<string> {
+  if (!s) return new Set();
+  return new Set(s.split(",").filter(Boolean));
+}
+
+function serializeHidden(h: Set<string>): string | undefined {
+  if (h.size === 0) return undefined;
+  return [...h].join(",");
+}
+
+function parseOverpayments(s: string | undefined): Map<string, number> {
+  const m = new Map<string, number>();
+  if (!s) return m;
+  for (const part of s.split(",")) {
+    const [id, val] = part.split(":");
+    const n = Number(val);
+    if (id && Number.isFinite(n) && n > 0) m.set(id, n);
+  }
+  return m;
+}
+
+function serializeOverpayments(m: Map<string, number>): string | undefined {
+  if (m.size === 0) return undefined;
+  return [...m.entries()].map(([id, v]) => `${id}:${v}`).join(",");
+}
 
 function buildLoans(rows: LoanRow[]): Loan[] {
   return rows.map((r) => {
@@ -226,6 +254,8 @@ export function LoanOverpaymentCalculatorButton() {
 
 function CalculatorBody() {
   const { data, loading, error } = useQuery(LoanOverpaymentDocument);
+  const search = loanCalculatorRoute.useSearch();
+  const navigate = loanCalculatorRoute.useNavigate();
 
   const loans = useMemo<Loan[]>(() => {
     if (!data?.loanCalculator) return [];
@@ -237,11 +267,32 @@ function CalculatorBody() {
     data?.currencyDefault ??
     "GBP";
 
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
-  const [overpayments, setOverpayments] = useState<Map<string, number>>(
-    () => new Map(),
+  // Seed local state once from URL search params; subsequent edits live in
+  // local state and are mirrored back to the URL via the debounced effect
+  // below (`replace: true` so we don't pollute history with every drag tick).
+  const [hidden, setHidden] = useState<Set<string>>(() =>
+    parseHidden(search.hidden),
   );
-  const [showCumulative, setShowCumulative] = useState(false);
+  const [overpayments, setOverpayments] = useState<Map<string, number>>(() =>
+    parseOverpayments(search.op),
+  );
+  const [showCumulative, setShowCumulative] = useState(
+    () => search.cumulative === true,
+  );
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      void navigate({
+        search: {
+          cumulative: showCumulative ? true : undefined,
+          op: serializeOverpayments(overpayments),
+          hidden: serializeHidden(hidden),
+        },
+        replace: true,
+      });
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [showCumulative, overpayments, hidden, navigate]);
 
   return (
     <>
