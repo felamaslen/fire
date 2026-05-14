@@ -520,11 +520,31 @@ function CalculatorContent({
         {loans.map((loan) => {
           const isHidden = hidden.has(loan.id);
           const op = overpayments.get(loan.id) ?? 0;
-          const sliderMax = Math.max(
+          const baseSliderMax = Math.max(
             500,
             Math.ceil((loan.monthlyRepayment * 5) / 50) * 50,
           );
-          const step = Math.max(10, Math.round(sliderMax / 200 / 5) * 5);
+          const step = Math.max(10, Math.round(baseSliderMax / 200 / 5) * 5);
+          // When the loan's current balance exceeds the regular `5× monthly`
+          // range, append a narrow snap-zone past a visual separator: dragging
+          // into it always resolves to `startingBalance` (full immediate
+          // repayment). The slider's underlying `max` is `baseSliderMax + snap
+          // zone`, but the value bound to it is mapped: any `op` ≤ baseMax
+          // shows in-place, and `op === startingBalance` pins the thumb to the
+          // far right.
+          const hasFullPayoffSnap = loan.startingBalance > baseSliderMax;
+          const snapZoneWidth = hasFullPayoffSnap
+            ? Math.max(
+                step * 4,
+                Math.round((baseSliderMax * 0.15) / step) * step,
+              )
+            : 0;
+          const sliderMax = baseSliderMax + snapZoneWidth;
+          const separatorPercent = (baseSliderMax / sliderMax) * 100;
+          const sliderValue =
+            hasFullPayoffSnap && op === loan.startingBalance
+              ? sliderMax
+              : Math.min(op, baseSliderMax);
           const payoff = monthsToPayoff(
             loan.startingBalance,
             loan.monthlyRepayment,
@@ -599,22 +619,34 @@ function CalculatorContent({
                 <span className="w-28 shrink-0 text-xs text-muted-foreground">
                   Extra / month
                 </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={sliderMax}
-                  step={step}
-                  value={op}
-                  onChange={(e) => {
-                    const next = new Map(overpayments);
-                    const val = Number(e.target.value);
-                    if (val === 0) next.delete(loan.id);
-                    else next.set(loan.id, val);
-                    setOverpayments(next);
-                  }}
-                  className="flex-1 accent-primary"
-                  disabled={isHidden}
-                />
+                <div className="relative flex flex-1 items-center">
+                  <input
+                    type="range"
+                    min={0}
+                    max={sliderMax}
+                    step={step}
+                    value={sliderValue}
+                    onChange={(e) => {
+                      const next = new Map(overpayments);
+                      const raw = Number(e.target.value);
+                      const val =
+                        hasFullPayoffSnap && raw > baseSliderMax
+                          ? loan.startingBalance
+                          : raw;
+                      if (val === 0) next.delete(loan.id);
+                      else next.set(loan.id, val);
+                      setOverpayments(next);
+                    }}
+                    className="w-full accent-primary"
+                    disabled={isHidden}
+                  />
+                  {hasFullPayoffSnap && (
+                    <div
+                      className="pointer-events-none absolute inset-y-1 w-px bg-border"
+                      style={{ left: `${separatorPercent}%` }}
+                    />
+                  )}
+                </div>
                 <span className="w-20 shrink-0 text-right text-sm tabular-nums">
                   {formatAccountingMoney(currency, op)}
                 </span>
@@ -648,11 +680,7 @@ function CalculatorContent({
                           : "text-red-700 dark:text-red-400",
                       )}
                     >
-                      {paidDelta < 0 ? "−" : "+"}
-                      {formatAccountingMoney(
-                        currency,
-                        Math.abs(paidDelta),
-                      )}{" "}
+                      {formatAccountingMoney(currency, Math.abs(paidDelta))}{" "}
                       {paidDelta < 0 ? "saved" : "extra"} overall
                     </span>
                   )}
