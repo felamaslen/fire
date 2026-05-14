@@ -118,7 +118,7 @@ type Props = {
 
 const AXIS_PAD_LEFT_MOBILE = 44;
 const AXIS_PAD_LEFT_DESKTOP = 86;
-const AXIS_PAD_RIGHT = 16;
+const AXIS_PAD_RIGHT = 28;
 const AXIS_PAD_TOP = 12;
 const AXIS_PAD_BOTTOM = 36;
 
