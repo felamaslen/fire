@@ -1,6 +1,6 @@
 import { useMutation, useSuspenseQuery } from "@apollo/client/react";
 import { Link } from "@tanstack/react-router";
-import { Info, Settings2 } from "lucide-react";
+import { Check, Info, Settings2, Square } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ import {
 } from "./forecast-workings";
 import { LoanOverpaymentCalculatorButton } from "./loan-overpayment-calculator";
 import { NetWorthBlockMapButton } from "./net-worth-block-map";
-import { NetWorthChart } from "./net-worth-chart";
+import { NetWorthChart, type NetWorthChartSeries } from "./net-worth-chart";
 
 const HomeDocument = graphql(
   `
@@ -164,6 +164,50 @@ const RetirementSettingsUpdateDocument = graphql(`
 const FORECAST_STORAGE_KEY = "fire.home.forecast";
 const LOG_SCALE_STORAGE_KEY = "fire.home.log-scale";
 const FORECAST_YEARS_STORAGE_KEY = "fire.home.forecast-years";
+const ENABLED_CATEGORIES_STORAGE_KEY = "fire.home.enabled-categories";
+
+type CategoryKey = "cash" | "stock" | "pension" | "misc" | "remainder";
+const ALL_CATEGORY_KEYS: readonly CategoryKey[] = [
+  "cash",
+  "stock",
+  "pension",
+  "misc",
+  "remainder",
+];
+
+function useEnabledCategories(): [
+  ReadonlySet<CategoryKey>,
+  (next: ReadonlySet<CategoryKey>) => void,
+] {
+  const [state, setState] = useState<ReadonlySet<CategoryKey>>(() => {
+    const all = new Set<CategoryKey>(ALL_CATEGORY_KEYS);
+    if (typeof window === "undefined") return all;
+    const raw = window.localStorage.getItem(ENABLED_CATEGORIES_STORAGE_KEY);
+    if (raw === null) return all;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return all;
+      const filtered = parsed.filter((k): k is CategoryKey =>
+        ALL_CATEGORY_KEYS.includes(k as CategoryKey),
+      );
+      return filtered.length > 0 ? new Set(filtered) : all;
+    } catch {
+      return all;
+    }
+  });
+  const set = (next: ReadonlySet<CategoryKey>) => {
+    // Never let the user disable everything — fall back to all on.
+    const safe = next.size === 0 ? new Set(ALL_CATEGORY_KEYS) : next;
+    setState(safe);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        ENABLED_CATEGORIES_STORAGE_KEY,
+        JSON.stringify([...safe]),
+      );
+    }
+  };
+  return [state, set];
+}
 const FORECAST_YEARS_MIN = 2;
 const FORECAST_YEARS_MAX = 30;
 const FORECAST_YEARS_DEFAULT = 10;
@@ -235,6 +279,7 @@ export function Home() {
     true,
   );
   const [logScale, setLogScale] = usePersistedBool(LOG_SCALE_STORAGE_KEY, true);
+  const [enabledCategories, setEnabledCategories] = useEnabledCategories();
   const [years, setYears] = useForecastYears();
   // Keep a separate local value for the slider thumb so drag updates
   // feel instant, then debounce into `years` (the query variable) so
@@ -383,13 +428,90 @@ export function Home() {
   const stock = combined.map((h) => amountOf(h, "STOCK"));
   const pension = combined.map((h) => amountOf(h, "PENSION"));
   const misc = combined.map((h) => amountOf(h, "MISC"));
-  const cumCash = cash;
-  const cumStock = cash.map((v, i) => v + stock[i]);
-  const cumPension = cumStock.map((v, i) => v + pension[i]);
-  const cumMisc = cumPension.map((v, i) => v + misc[i]);
-  // Top of the remainder band equals net worth by construction:
-  //   net = cash + stock + pension + misc + remainder
-  const cumRemainder = net;
+  // The remainder is whatever's left of net worth after the four named
+  // asset buckets. By construction `net = cash + stock + pension + misc +
+  // remainder`, so it can be negative when liabilities exceed `misc`.
+  const remainder = net.map(
+    (n, i) => n - cash[i] - stock[i] - pension[i] - misc[i],
+  );
+
+  const allCategories: {
+    key: CategoryKey;
+    label: string;
+    color: string;
+    values: number[];
+    fillOpacity: number;
+  }[] = [
+    {
+      key: "cash",
+      label: "Cash",
+      color: CASH_COLOR,
+      values: cash,
+      fillOpacity: 0.7,
+    },
+    {
+      key: "stock",
+      label: "Stocks",
+      color: STOCK_COLOR,
+      values: stock,
+      fillOpacity: 0.7,
+    },
+    {
+      key: "pension",
+      label: "Pension",
+      color: PENSION_COLOR,
+      values: pension,
+      fillOpacity: 0.7,
+    },
+    {
+      key: "misc",
+      label: "Other",
+      color: MISC_COLOR,
+      values: misc,
+      fillOpacity: 0.7,
+    },
+    {
+      key: "remainder",
+      label: "Remaining net equity",
+      color: REMAINDER_COLOR,
+      values: remainder,
+      fillOpacity: 0.35,
+    },
+  ];
+
+  // Stack only the enabled categories, in canonical order. Each band's
+  // baseline is the running total of preceding *enabled* categories, so
+  // hiding one collapses the stack rather than leaving a gap.
+  const zeros = combined.map(() => 0);
+  let runningBaseline: number[] = zeros;
+  const chartSeries: NetWorthChartSeries[] = [];
+  for (const cat of allCategories) {
+    if (!enabledCategories.has(cat.key)) continue;
+    const top = runningBaseline.map((b, i) => b + cat.values[i]);
+    chartSeries.push({
+      key: cat.key,
+      label: cat.label,
+      color: cat.color,
+      fill: "baseline",
+      baseline: runningBaseline,
+      values: top,
+      tooltipValues: cat.values,
+      fillOpacity: cat.fillOpacity,
+      strokeWidth: 0,
+    });
+    runningBaseline = top;
+  }
+  const allEnabled = enabledCategories.size === ALL_CATEGORY_KEYS.length;
+  if (allEnabled) {
+    chartSeries.push({
+      key: "net",
+      label: "Net worth",
+      color: NET_LINE_COLOR,
+      fill: "none",
+      strokeWidth: 1.5,
+      values: net,
+    });
+  }
 
   const latest = history.at(-1);
   const prev = history.length > 1 ? history.at(-2) : null;
@@ -525,72 +647,7 @@ export function Home() {
         <div className="mt-2 space-y-2 sm:mt-4">
           <NetWorthChart
             points={dates}
-            series={[
-              {
-                key: "cash",
-                label: "Cash",
-                color: CASH_COLOR,
-                fill: "zero",
-                fillOpacity: 0.7,
-                strokeWidth: 0,
-                values: cumCash,
-                tooltipValues: cash,
-              },
-              {
-                key: "stock",
-                label: "Stocks",
-                color: STOCK_COLOR,
-                fill: "baseline",
-                baseline: cumCash,
-                values: cumStock,
-                tooltipValues: stock,
-                fillOpacity: 0.7,
-                strokeWidth: 0,
-              },
-              {
-                key: "pension",
-                label: "Pension",
-                color: PENSION_COLOR,
-                fill: "baseline",
-                baseline: cumStock,
-                values: cumPension,
-                tooltipValues: pension,
-                fillOpacity: 0.7,
-                strokeWidth: 0,
-              },
-              {
-                key: "misc",
-                label: "Other",
-                color: MISC_COLOR,
-                fill: "baseline",
-                baseline: cumPension,
-                values: cumMisc,
-                tooltipValues: misc,
-                fillOpacity: 0.7,
-                strokeWidth: 0,
-              },
-              {
-                key: "remainder",
-                label: "Remaining net equity",
-                color: REMAINDER_COLOR,
-                // Translucent so the layer beneath shows through when this
-                // band is negative and painted on top of it.
-                fill: "baseline",
-                baseline: cumMisc,
-                values: cumRemainder,
-                tooltipValues: net.map((n, i) => n - cumMisc[i]),
-                fillOpacity: 0.35,
-                strokeWidth: 0,
-              },
-              {
-                key: "net",
-                label: "Net worth",
-                color: NET_LINE_COLOR,
-                fill: "none",
-                strokeWidth: 1.5,
-                values: net,
-              },
-            ]}
+            series={chartSeries}
             currency={currency}
             className="w-full"
             forecastStart={forecastStart}
@@ -600,48 +657,28 @@ export function Home() {
             milestones={milestones}
             logY={logScale}
           />
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            {(
-              [
-                { label: "Cash", color: CASH_COLOR, values: cash },
-                { label: "Stocks", color: STOCK_COLOR, values: stock },
-                { label: "Pension", color: PENSION_COLOR, values: pension },
-                { label: "Other", color: MISC_COLOR, values: misc },
-                {
-                  label: "Remaining net equity",
-                  color: REMAINDER_COLOR,
-                  opacity: 0.5,
-                  values: net.map((n, i) => n - cumMisc[i]),
-                },
-                {
-                  label: "Net worth",
-                  color: NET_LINE_COLOR,
-                  line: true,
-                  values: net,
-                },
-              ] as const
-            )
-              .filter((item) => item.values.some((v) => v !== 0))
-              .map((item) => (
-                <span
-                  key={item.label}
-                  className="inline-flex items-center gap-1.5"
-                >
-                  {"line" in item && item.line ? (
-                    <span className="inline-block h-0.5 w-3 bg-foreground" />
-                  ) : (
-                    <span
-                      className="inline-block h-2 w-3 rounded-sm"
-                      style={{
-                        background: item.color,
-                        opacity: "opacity" in item ? item.opacity : undefined,
-                      }}
-                    />
-                  )}
-                  {item.label}
-                </span>
-              ))}
-          </div>
+          <NetWorthLegend
+            categories={allCategories.filter((c) =>
+              c.values.some((v) => v !== 0),
+            )}
+            enabled={enabledCategories}
+            onToggle={(key) => {
+              const next = new Set(enabledCategories);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              setEnabledCategories(next);
+            }}
+            onSolo={(key) => {
+              // If the user clicks the pill for a category that's already
+              // the only one enabled, restore the full view.
+              if (enabledCategories.size === 1 && enabledCategories.has(key)) {
+                setEnabledCategories(new Set(ALL_CATEGORY_KEYS));
+              } else {
+                setEnabledCategories(new Set([key]));
+              }
+            }}
+            showNetLine={allEnabled && net.some((v) => v !== 0)}
+          />
         </div>
       </section>
 
@@ -700,6 +737,83 @@ export function Home() {
         </div>
       </section>
     </main>
+  );
+}
+
+type NetWorthLegendProps = {
+  categories: {
+    key: CategoryKey;
+    label: string;
+    color: string;
+    fillOpacity: number;
+  }[];
+  enabled: ReadonlySet<CategoryKey>;
+  onToggle: (key: CategoryKey) => void;
+  onSolo: (key: CategoryKey) => void;
+  showNetLine: boolean;
+};
+
+function NetWorthLegend({
+  categories,
+  enabled,
+  onToggle,
+  onSolo,
+  showNetLine,
+}: NetWorthLegendProps) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      {categories.map((cat) => {
+        const isEnabled = enabled.has(cat.key);
+        return (
+          <div
+            key={cat.key}
+            className={cn(
+              "group inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-transparent px-1.5 py-0.5 transition-colors hover:border-border hover:bg-muted",
+              !isEnabled && "opacity-50",
+            )}
+            role="button"
+            tabIndex={0}
+            onClick={() => onSolo(cat.key)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSolo(cat.key);
+              }
+            }}
+            aria-label={`Show only ${cat.label}`}
+          >
+            <span
+              className="inline-block h-2 w-3 shrink-0 rounded-sm"
+              style={{ background: cat.color, opacity: cat.fillOpacity }}
+            />
+            <span>{cat.label}</span>
+            <span
+              role="checkbox"
+              aria-checked={isEnabled}
+              aria-label={`Toggle ${cat.label}`}
+              tabIndex={-1}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggle(cat.key);
+              }}
+              className="inline-flex h-3 w-3 shrink-0 items-center justify-center opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+            >
+              {isEnabled ? (
+                <Check className="h-2.5 w-2.5" />
+              ) : (
+                <Square className="h-2.5 w-2.5" />
+              )}
+            </span>
+          </div>
+        );
+      })}
+      {showNetLine && (
+        <span className="inline-flex items-center gap-1.5 px-1.5">
+          <span className="inline-block h-0.5 w-3 bg-foreground" />
+          Net worth
+        </span>
+      )}
+    </div>
   );
 }
 
