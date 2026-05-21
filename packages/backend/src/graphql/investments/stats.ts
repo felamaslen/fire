@@ -708,12 +708,25 @@ function liveSnapshot(row: SliceRow): LiveQuoteSnapshot | null {
   };
 }
 
-/** Scan the just-loaded slice rows and fire-and-forget a Yahoo refresh for any held stock investment whose live row is missing or older than `LIVE_QUOTE_STALE_MS`. Inside the currency's business-hours window the refresh always fires; outside, it only fires when no live row exists yet (so a never-quoted ticker still gets an initial price overnight / on weekends). The current request still answers from the row we just read; the refreshed row only surfaces on the *next* loader hit (e.g. the next `portfolioLive` tick). */
+/** Scan the just-loaded slice rows and fire-and-forget a Yahoo refresh for any held stock investment whose live row is missing or older than `LIVE_QUOTE_STALE_MS`. Inside the currency's business-hours window the refresh always fires; outside, it only fires when no live row exists yet (so a never-quoted ticker still gets an initial price overnight / on weekends). Slices with no held units are skipped — burning a Yahoo call on a fully-sold (or otherwise unheld) wrapper has no effect on any value the resolver renders. The current request still answers from the row we just read; the refreshed row only surfaces on the *next* loader hit (e.g. the next `portfolioLive` tick). */
 function triggerLiveRefreshes(rows: SliceRow[]): void {
+  // Sum units across every slice for an investment before deciding to
+  // refresh — a single slice's `unitsHeld` is misleading when the position
+  // straddles wrappers. e.g. buy in A, transfer A→B, sell in B leaves
+  // slice A at +10 and slice B at −10; the investment is fully sold but a
+  // per-slice check would still see A's +10 and fire a (pointless) quote.
+  const netUnits = new Map<string, number>();
+  for (const r of rows) {
+    netUnits.set(
+      r.investmentId,
+      (netUnits.get(r.investmentId) ?? 0) + r.unitsHeld,
+    );
+  }
   const seen = new Set<string>();
   const now = Date.now();
   for (const r of rows) {
     if (!r.stockCode) continue;
+    if (netUnits.get(r.investmentId) === 0) continue;
     if (seen.has(r.investmentId)) continue;
     seen.add(r.investmentId);
     const refreshedAt = r.liveRefreshedAt;

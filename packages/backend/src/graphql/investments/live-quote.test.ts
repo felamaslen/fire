@@ -1,4 +1,12 @@
-import { fetchQuote, TEST__clearInflightForTesting } from "@/tasks/yahoo";
+import { eq } from "drizzle-orm";
+
+import { db } from "@/db";
+import { InvestmentPricesLive } from "@/db/schema/investments";
+import {
+  fetchQuote,
+  TEST__clearInflightForTesting,
+  TEST__drainInflightForTesting,
+} from "@/tasks/yahoo";
 import { graphql, runGql } from "#test/gql";
 import { http, HttpResponse, useMswServer } from "#test/msw";
 
@@ -46,32 +54,54 @@ beforeEach(() => {
   TEST__clearInflightForTesting();
 });
 
-async function createInvestment(): Promise<string> {
+async function createInvestment(
+  name = "Apple",
+  code = "AAPL",
+): Promise<string> {
   const doc = graphql(`
-    mutation {
+    mutation ($name: String!, $code: String!) {
       investmentCreate(
-        name: "Apple"
+        name: $name
         currency: "GBP"
-        asset: { stock: { code: "AAPL" } }
+        asset: { stock: { code: $code } }
       ) {
         id
       }
     }
   `);
-  const data = await runGql(doc, {});
+  const data = await runGql(doc, { name, code });
   return data.investmentCreate.id;
 }
 
-async function createAsset(): Promise<string> {
+async function createAsset(name = "ISA"): Promise<string> {
   const doc = graphql(`
-    mutation {
-      netWorthCategoryCreate(input: { asset: { name: "ISA", type: STOCK } }) {
+    mutation ($name: String!) {
+      netWorthCategoryCreate(input: { asset: { name: $name, type: STOCK } }) {
         id
       }
     }
   `);
-  const data = await runGql(doc, {});
+  const data = await runGql(doc, { name });
   return data.netWorthCategoryCreate.id;
+}
+
+async function createTransfer(
+  assetIdFrom: string,
+  assetIdTo: string,
+  date: string,
+): Promise<void> {
+  const doc = graphql(`
+    mutation ($from: ID!, $to: ID!, $date: Date!) {
+      assetStockTransferCreate(
+        assetIdFrom: $from
+        assetIdTo: $to
+        date: $date
+      ) {
+        id
+      }
+    }
+  `);
+  await runGql(doc, { from: assetIdFrom, to: assetIdTo, date });
 }
 
 async function buy(
@@ -79,6 +109,7 @@ async function buy(
   assetId: string,
   units: number,
   priceAmount: number,
+  date = "2024-01-01",
 ): Promise<void> {
   const doc = graphql(`
     mutation (
@@ -86,11 +117,12 @@ async function buy(
       $assetId: ID!
       $units: Float!
       $price: Float!
+      $date: Date!
     ) {
       investmentTransactionCreate(
         investmentId: $investmentId
         assetId: $assetId
-        date: "2024-01-01"
+        date: $date
         units: $units
         price: { amount: $price, currency: "GBP" }
       ) {
@@ -98,7 +130,7 @@ async function buy(
       }
     }
   `);
-  await runGql(doc, { investmentId, assetId, units, price: priceAmount });
+  await runGql(doc, { investmentId, assetId, units, price: priceAmount, date });
 }
 
 async function setCachedPrice(
@@ -240,5 +272,99 @@ describe("dailyGain uses live quote when available", () => {
     expect(
       data.investments?.edges[0]?.node.position?.totalValue?.amount,
     ).toBeCloseTo(10 * 5);
+  });
+});
+
+describe("triggerLiveRefreshes skips fully-sold investments", () => {
+  it("doesn't fetch a Yahoo quote for an investment with net-zero units", async () => {
+    // Two investments on different tickers so each gets its own fetchQuote
+    // call (the inflight map is keyed by symbol). AAPL is still held;
+    // MSFT has been fully sold.
+    const heldId = await createInvestment("Apple", "AAPL");
+    const soldId = await createInvestment("Microsoft", "MSFT");
+    const asset = await createAsset();
+    await buy(heldId, asset, 10, 5);
+    await buy(soldId, asset, 10, 5);
+    await buy(soldId, asset, -10, 6);
+
+    server.use(...yahooHandlers(7, "GBP", 6.5));
+
+    // Run the list query — this is what triggers `triggerLiveRefreshes`.
+    // Selecting `position` is what pulls the per-investment slice rows
+    // through the stats loader, which is where `triggerLiveRefreshes` runs.
+    const LIST_QUERY = graphql(`
+      query {
+        investments {
+          edges {
+            node {
+              id
+              position {
+                totalValue {
+                  amount
+                }
+              }
+            }
+          }
+        }
+      }
+    `);
+    await runGql(LIST_QUERY, {});
+    await TEST__drainInflightForTesting();
+
+    const liveRows = await db
+      .select()
+      .from(InvestmentPricesLive)
+      .where(eq(InvestmentPricesLive.investmentId, soldId));
+    expect(liveRows).toEqual([]);
+
+    // Sanity check: the held investment did get a live row, so the
+    // refresh path is wired up — the sold one's absence is a deliberate
+    // skip, not a side-effect of the test set-up.
+    const heldRows = await db
+      .select()
+      .from(InvestmentPricesLive)
+      .where(eq(InvestmentPricesLive.investmentId, heldId));
+    expect(heldRows).toHaveLength(1);
+  });
+
+  it("skips when units were transferred across wrappers and then sold", async () => {
+    // The transfer model leaves the original buy on the source wrapper's
+    // slice (+10) and the post-transfer sell on the destination's slice
+    // (−10), so a per-slice `unitsHeld > 0` check would still see the source
+    // row and fire a quote. The net across the investment is zero — fully
+    // sold — and no refresh should fire.
+    const id = await createInvestment("Apple", "AAPL");
+    const wrapperA = await createAsset("ISA");
+    const wrapperB = await createAsset("SIPP");
+    await buy(id, wrapperA, 10, 5, "2024-01-01");
+    await createTransfer(wrapperA, wrapperB, "2024-02-01");
+    await buy(id, wrapperB, -10, 6, "2024-03-01");
+
+    server.use(...yahooHandlers(7, "GBP", 6.5));
+
+    const LIST_QUERY = graphql(`
+      query {
+        investments {
+          edges {
+            node {
+              id
+              position {
+                totalValue {
+                  amount
+                }
+              }
+            }
+          }
+        }
+      }
+    `);
+    await runGql(LIST_QUERY, {});
+    await TEST__drainInflightForTesting();
+
+    const liveRows = await db
+      .select()
+      .from(InvestmentPricesLive)
+      .where(eq(InvestmentPricesLive.investmentId, id));
+    expect(liveRows).toEqual([]);
   });
 });

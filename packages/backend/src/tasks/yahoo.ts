@@ -181,3 +181,8 @@ export function TEST__clearInflightForTesting(): void {
   inflight.clear();
   quoteRateLimit.clear();
 }
+
+/** Resolve once every currently in-flight `fetchQuote` has settled. Tests use this to flush the fire-and-forget refreshes that `triggerLiveRefreshes` kicks off inside a resolver. */
+export async function TEST__drainInflightForTesting(): Promise<void> {
+  await Promise.allSettled([...inflight.values()]);
+}
