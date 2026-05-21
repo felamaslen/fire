@@ -4,9 +4,14 @@
 # touching the Postgres data, uploads, or backups volumes on the server.
 #
 # Usage:
-#   scripts/deploy.sh --host myserver [--location /opt/fire] [--platform linux/amd64]
+#   scripts/deploy.sh --host myserver [--location /opt/fire] [--platform linux/amd64] [--bind-extra-ips]
 #
 # `--host` is passed straight to `ssh`, so any alias from `~/.ssh/config` works.
+#
+# `--bind-extra-ips` discovers every non-link-local IPv4 address on the
+# target host (in addition to `127.0.0.1`) and — after prompting — adds a
+# matching `ports:` entry for the `app` service so the backend listens on
+# each of them. Off by default; loopback-only is the safer baseline.
 
 set -euo pipefail
 
@@ -14,6 +19,7 @@ IMAGE="felamaslen/fire"
 HOST=""
 LOCATION="/opt/fire"
 PLATFORM="linux/amd64"
+BIND_EXTRA_IPS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,6 +35,8 @@ while [[ $# -gt 0 ]]; do
       PLATFORM="$2"; shift 2 ;;
     --platform=*)
       PLATFORM="${1#*=}"; shift ;;
+    --bind-extra-ips)
+      BIND_EXTRA_IPS=1; shift ;;
     -h|--help)
       sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)
@@ -265,8 +273,79 @@ ensure_key AUTH_PIN          "\$(( RANDOM % 9000 + 1000 ))"
 EOSH
 
 # --- ship the compose file --------------------------------------------------
-echo "==> Copying docker-compose.prod.yml → $HOST:$LOCATION/docker-compose.yml"
-scp -q docker-compose.prod.yml "$HOST:$LOCATION/docker-compose.yml"
+# Upload as a `.draft` first so we can edit it in place on the server (e.g.
+# to inject extra `ports:` entries for the host's public IPs) before
+# atomically promoting it to `docker-compose.yml`. Keeps the live compose
+# file untouched if anything below fails or the operator aborts.
+DRAFT_PATH="$LOCATION/docker-compose.yml.draft"
+FINAL_PATH="$LOCATION/docker-compose.yml"
+echo "==> Copying docker-compose.prod.yml → $HOST:$DRAFT_PATH"
+scp -q docker-compose.prod.yml "$HOST:$DRAFT_PATH"
+
+if (( BIND_EXTRA_IPS )); then
+  # Discover every globally-scoped IPv4 on the server, then keep only the
+  # privately-routable ones: RFC1918 (10/8, 172.16/12, 192.168/16) plus
+  # CGNAT (100.64/10, used by Tailscale et al.). `scope global` already
+  # excludes loopback (127/8) and link-local (169.254/16); the awk filter
+  # then drops anything publicly routable so we never accidentally expose
+  # the app on a WAN interface.
+  echo "==> Discovering private (non-publicly-routable) IPv4 addresses on $HOST"
+  extra_ips_raw="$(ssh "$HOST" "ip -4 -o addr show scope global | awk '{print \$4}' | cut -d/ -f1 | awk -F. '
+    \$1==10 { print; next }
+    \$1==172 && \$2>=16 && \$2<=31 { print; next }
+    \$1==192 && \$2==168 { print; next }
+    \$1==100 && \$2>=64 && \$2<=127 { print; next }
+  '" || true)"
+  extra_ips=()
+  while IFS= read -r ip; do
+    [[ -z "$ip" ]] && continue
+    extra_ips+=("$ip")
+  done <<<"$extra_ips_raw"
+
+  selected_ips=()
+  if (( ${#extra_ips[@]} == 0 )); then
+    echo "   (no extra addresses found — leaving compose file bound to 127.0.0.1 only)"
+  else
+    for ip in "${extra_ips[@]}"; do
+      if prompt_yn "Add listen directive for $ip alongside 127.0.0.1?"; then
+        selected_ips+=("$ip")
+      fi
+    done
+  fi
+
+  if (( ${#selected_ips[@]} > 0 )); then
+    # Build the additional `ports:` lines with the same 6-space indent as
+    # the existing `- "127.0.0.1:…"` entry, ship them to the server as a
+    # temp file, and splice them in right after that line with awk.
+    insert_block=""
+    for ip in "${selected_ips[@]}"; do
+      insert_block+="      - \"$ip:\${APP_PORT:-4000}:4000\""$'\n'
+    done
+    echo "==> Adding listen directives for: ${selected_ips[*]}"
+    ssh "$HOST" "cat > '$DRAFT_PATH.insert'" <<<"$insert_block"
+    ssh "$HOST" "bash -s" <<EOSH
+set -euo pipefail
+awk '
+  BEGIN {
+    while ((getline line < "$DRAFT_PATH.insert") > 0) {
+      block = block line "\n"
+    }
+    close("$DRAFT_PATH.insert")
+  }
+  { print }
+  /^      - "127\.0\.0\.1:\\\${APP_PORT/ && !done {
+    printf "%s", block
+    done = 1
+  }
+' '$DRAFT_PATH' > '$DRAFT_PATH.new'
+mv '$DRAFT_PATH.new' '$DRAFT_PATH'
+rm -f '$DRAFT_PATH.insert'
+EOSH
+  fi
+fi
+
+echo "==> Promoting draft → $HOST:$FINAL_PATH"
+ssh "$HOST" "mv '$DRAFT_PATH' '$FINAL_PATH'"
 
 # --- redeploy ---------------------------------------------------------------
 echo "==> Pulling $IMAGE:$TAG, running migrations, and starting compose stack"
