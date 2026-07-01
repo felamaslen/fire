@@ -1,6 +1,7 @@
 import "./graphql/server";
 import "./graphql/schema-download";
 import "./uploads";
+import "./planning-export";
 import "./spa";
 
 import { ensureDemoTemplateDatabase } from "./auth/demo-database";

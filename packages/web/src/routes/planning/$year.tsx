@@ -17,6 +17,7 @@ import {
   ChevronRight,
   CornerDownRight,
   CreditCard,
+  Download,
   FileText,
   HandCoins,
   Landmark,
@@ -37,6 +38,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 
+import { getToken } from "@/auth/token";
 import { Figure, FigureDocument } from "@/components/figure";
 import { NavHeaderActions, NavHeaderTitle } from "@/components/nav-header";
 import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
@@ -81,6 +83,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { filesOrigin } from "@/lib/files-origin";
 import { useToday } from "@/lib/use-today";
 
 import {
@@ -490,6 +493,7 @@ function Header({ year, hasTaxRates }: { year: string; hasTaxRates: boolean }) {
             label="Manage tax rates"
             icon={<Scale className="size-6" />}
           />
+          <ExportCsvButton year={year} />
         </div>
         <MobileManageMenu year={year} />
       </NavHeaderActions>
@@ -525,6 +529,44 @@ function ManageIconLink({
         </Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Fetch the planning year's CSV export with the bearer token attached (a plain
+ * link can't set the auth header) and trigger a client-side file download. */
+async function downloadPlanningCsv(year: string): Promise<void> {
+  const token = getToken();
+  try {
+    const res = await fetch(`${filesOrigin}/planning/${year}/export.csv`, {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Export failed (${res.status})`);
+    const url = URL.createObjectURL(await res.blob());
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `planning-${year}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Failed to export CSV");
+  }
+}
+
+function ExportCsvButton({ year }: { year: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Export CSV"
+          onClick={() => void downloadPlanningCsv(year)}
+        >
+          <Download className="size-6" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Export CSV</TooltipContent>
     </Tooltip>
   );
 }
@@ -590,6 +632,19 @@ function MobileManageMenu({ year }: { year: string }) {
               </Button>
             </li>
           ))}
+          <li>
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-3"
+              onClick={() => {
+                setOpen(false);
+                void downloadPlanningCsv(year);
+              }}
+            >
+              <Download className="size-5" />
+              Export CSV
+            </Button>
+          </li>
         </ul>
       </DialogContent>
     </Dialog>

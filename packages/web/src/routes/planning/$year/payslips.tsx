@@ -38,6 +38,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { resolveFileUrl } from "@/lib/files-origin";
 
 import { graphql, type ResultOf } from "../../../graphql";
 import { PlanningYearViewDocument } from "../$year";
@@ -247,15 +248,6 @@ export type FormValues = {
 };
 
 export const CURRENCY = "GBP";
-
-const FILES_ORIGIN = new URL(
-  import.meta.env.VITE_GRAPHQL_URL ?? "http://localhost:4000/graphql",
-  window.location.origin,
-).origin;
-
-function resolveFileUrl(fileUrl: string): string {
-  return /^https?:\/\//.test(fileUrl) ? fileUrl : `${FILES_ORIGIN}${fileUrl}`;
-}
 
 const emptyForm: FormValues = {
   name: "",
