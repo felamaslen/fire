@@ -477,7 +477,7 @@ it("transactionUpdate on a predicted bill patches the bill's liability globally 
   expect(new Set(mortgageLiabilityIds)).toEqual(new Set([liabilityId]));
 });
 
-it("transactionDelete on a predicted bill is a no-op — the prediction stays (cancel-by-zero is the explicit way to skip)", async () => {
+it("transactionDelete on a predicted bill writes a zero-value override that stays visible and deletable", async () => {
   await seedYear("2025", false);
   const main = await createAsset();
   await assign(main);
@@ -502,6 +502,8 @@ it("transactionDelete on a predicted bill is a no-op — the prediction stays (c
   );
   const predictedId = await aprilTxId("Broadband");
 
+  // Deleting the predicted bill records a £0 override — the bill stays in the
+  // grid as an editable £0 `actual` row, not a no-op.
   await runGql(
     graphql(`
       mutation ($id: ID!) {
@@ -511,6 +513,25 @@ it("transactionDelete on a predicted bill is a no-op — the prediction stays (c
       }
     `),
     { id: predictedId },
+  );
+
+  expect(await aprilTransactions()).toMatchInlineSnapshot(`
+    "
+    NAME      AMOUNT SOURCE EDIT     ID                                                
+    Broadband 0      actual editable {"kind":"bill","id":"<uuid>","monthId":"apr-2025"}"
+  `);
+
+  // Deleting again clears the override, restoring the prediction.
+  const zeroedId = await aprilTxId("Broadband");
+  await runGql(
+    graphql(`
+      mutation ($id: ID!) {
+        transactionDelete(monthId: "apr-2025", id: $id) {
+          _
+        }
+      }
+    `),
+    { id: zeroedId },
   );
 
   expect(await aprilTransactions()).toMatchInlineSnapshot(`

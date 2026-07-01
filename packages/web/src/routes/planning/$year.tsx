@@ -1615,7 +1615,10 @@ function FullTransactionForm({
   const effectiveDirection: "+" | "-" = hasTarget ? "-" : direction;
 
   const parsed = Number(amount);
-  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed <= 0;
+  // Allow 0 here (unlike `CreateTransactionForm`): editing a computed
+  // transaction to £0 is the explicit way to cancel it for the month — for a
+  // bill it writes a zero-value override, the same effect as deleting it.
+  const disabled = !name.trim() || !Number.isFinite(parsed) || parsed < 0;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

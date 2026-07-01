@@ -536,7 +536,7 @@ async function reloadTransaction(
  * - `tx:…` / `to:…` — deletes the manual transaction.
  * - `pay:…` — deletes the payslip (and its adjustments, via cascade).
  * - `adj:…` — deletes the single adjustment.
- * - `bill:…` — clears any per-month override row for this (bill, month), so the predicted bill takes over again. To cancel a predicted bill for one month, set its amount to zero explicitly via `transactionUpdate` instead of deleting.
+ * - `bill:…` — toggles the per-month override row for this (bill, month). If an override already exists (the row is the user's `actual`, including a previously-zeroed one), the override is cleared and the predicted bill takes over again. If none exists (the row is still the engine's `predicted` bill), a zero-value override is written, so the bill reads as a visible, editable £0 `actual` row for the month that can itself be deleted to restore the prediction. This mirrors editing the bill's amount to zero via `transactionUpdate`.
  * - `earn:…` — inserts a zero-gross payslip with no adjustments, which suppresses the earnings prediction for this month.
  * - `liab:…` — materialises a zero-amount manual transaction tagged with the liability, which suppresses the credit-card spend prediction for this month while leaving the liability visible in the grid.
  *
@@ -580,9 +580,16 @@ export async function transactionDelete(
         .delete(PlanningPayslipAdjustments)
         .where(eq(PlanningPayslipAdjustments.id, parsed.id));
       break;
-    case "bill":
-      await db
-        .delete(PlanningMonthBills)
+    case "bill": {
+      // Toggle the per-month override. An existing override row (the bill is
+      // an `actual` for this month, whether a £0 cancellation or any other
+      // figure) is cleared, restoring the engine's prediction. A predicted
+      // bill with no override row is instead "deleted" by writing a £0
+      // override, which keeps the bill visible as an editable £0 `actual` row
+      // that can be deleted again to bring the prediction back.
+      const [existing] = await db
+        .select({ billId: PlanningMonthBills.billId })
+        .from(PlanningMonthBills)
         .where(
           and(
             eq(PlanningMonthBills.year, year),
@@ -590,7 +597,26 @@ export async function transactionDelete(
             eq(PlanningMonthBills.billId, parsed.id),
           ),
         );
+      if (existing) {
+        await db
+          .delete(PlanningMonthBills)
+          .where(
+            and(
+              eq(PlanningMonthBills.year, year),
+              eq(PlanningMonthBills.date, date),
+              eq(PlanningMonthBills.billId, parsed.id),
+            ),
+          );
+      } else {
+        const [bill] = await db
+          .select({ currency: PlanningBills.currency })
+          .from(PlanningBills)
+          .where(eq(PlanningBills.id, parsed.id));
+        assert(bill, `Bill ${parsed.id} not found`);
+        await upsertBillOverride(year, date, parsed.id, 0, bill.currency);
+      }
       break;
+    }
     case "earn": {
       const [earning] = await db
         .select()
