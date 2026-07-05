@@ -198,7 +198,7 @@ function computeRetirementMonthIndex(
 }
 
 /**
- * Project monthly net worth forward from a pre-loaded snapshot. Skipped liabilities drop out entirely. Cash, credit cards, options, misc, and anything without growth data stay flat pre-retirement. Growth assets compound at their configured rate; portfolios at XIRR plus EWMA contributions (stopped post-retirement, replaced by drawdown); loans accrue interest and are paid down by EWMA repayments (payslip-funded portion stops post-retirement). Post-retirement cash absorbs drawdown minus inflated spending and bill-funded loan repayments.
+ * Project monthly net worth forward from a pre-loaded snapshot. Skipped liabilities drop out entirely. Cash, credit cards, options, misc, and anything without growth data stay flat pre-retirement. Credit-card balances are folded into the `CASH` bucket (subtracted) when aggregating each point — matching `netWorthHistory` / `netWorthCurrent` — rather than surfaced as a liability. Growth assets compound at their configured rate; portfolios at XIRR plus EWMA contributions (stopped post-retirement, replaced by drawdown); loans accrue interest and are paid down by EWMA repayments (payslip-funded portion stops post-retirement). Post-retirement cash absorbs drawdown minus inflated spending and bill-funded loan repayments.
  */
 export function runForecast(inputs: ForecastInputs): ForecastResult {
   const { months, categories, startingBalance, asOfMonthStart } = inputs;
@@ -267,7 +267,16 @@ export function runForecast(inputs: ForecastInputs): ForecastResult {
         byType.set(cat.assetType, (byType.get(cat.assetType) ?? 0) + bal);
         assets += bal;
       } else if (cat.kind === "liability") {
-        liabilities += bal;
+        if (cat.liabilityType === "CREDIT_CARD") {
+          // Fold credit cards into the cash position (negative cash), matching
+          // netWorthHistory / netWorthCurrent — a card balance is
+          // spent-but-not-settled cash, not carried debt. Net worth is
+          // unchanged; only the band the balance sits in differs.
+          byType.set("CASH", (byType.get("CASH") ?? 0) - bal);
+          assets -= bal;
+        } else {
+          liabilities += bal;
+        }
       } else {
         byType.set("OPTION", (byType.get("OPTION") ?? 0) + bal);
         assets += bal;

@@ -47,6 +47,22 @@ async function createLoan(name: string, rate: number): Promise<string> {
   return data.netWorthCategoryCreate.id;
 }
 
+async function createCreditCard(name: string): Promise<string> {
+  const data = await runGql(
+    graphql(`
+      mutation ($name: String!) {
+        netWorthCategoryCreate(
+          input: { liability: { name: $name, type: CREDIT_CARD } }
+        ) {
+          id
+        }
+      }
+    `),
+    { name },
+  );
+  return data.netWorthCategoryCreate.id;
+}
+
 async function seedYear(year: string): Promise<void> {
   await runGql(
     graphql(`
@@ -228,6 +244,43 @@ it("rolls the previous month's snapshot forward through bills, payslips, and ad-
       },
       "net": {
         "amount": 10900,
+      },
+    }
+  `);
+});
+
+it("folds a credit-card balance from the previous snapshot into the cash position", async () => {
+  // Today: 2026-04-18. Prev entry Mar 31: £10,000 cash, £2,000 owed on a card.
+  // With no cashflow events the balances roll forward unchanged; the card
+  // folds into cash rather than surfacing as a liability.
+  const cash = await createCash("Current");
+  const card = await createCreditCard("Amex");
+  await recordSnapshot("2026-03-31", [
+    { categoryId: cash, amount: 1_000_000 },
+    { categoryId: card, amount: -200_000, isLiability: true },
+  ]);
+
+  const data = await runGql(NetWorthCurrentDoc, {});
+  // Available cash = 10,000 − 2,000 = 8,000; net worth unchanged either way.
+  expect(data.netWorthCurrent).toMatchInlineSnapshot(`
+    {
+      "assets": {
+        "amount": 8000,
+      },
+      "assetsByType": [
+        {
+          "amount": {
+            "amount": 8000,
+          },
+          "type": "CASH",
+        },
+      ],
+      "date": "2026-04-18",
+      "liabilities": {
+        "amount": 0,
+      },
+      "net": {
+        "amount": 8000,
       },
     }
   `);

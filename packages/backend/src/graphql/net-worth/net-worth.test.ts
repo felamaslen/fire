@@ -1082,7 +1082,7 @@ describe("entries", () => {
 });
 
 describe("netWorthHistory", () => {
-  it("returns one point per entry, oldest first, with assets bucketed by type and liabilities aggregated", async () => {
+  it("folds credit cards into cash, keeps real liabilities, and buckets assets by type", async () => {
     const seed = graphql(`
       mutation Seed {
         cash: netWorthCategoryCreate(
@@ -1100,6 +1100,13 @@ describe("netWorthHistory", () => {
         ) {
           id
         }
+        loan: netWorthCategoryCreate(
+          input: {
+            liability: { name: "Mortgage", type: LOAN, interestRate: 5 }
+          }
+        ) {
+          id
+        }
         opt: netWorthCategoryCreate(input: { option: { name: "RSUs" } }) {
           id
         }
@@ -1109,6 +1116,7 @@ describe("netWorthHistory", () => {
     const cashId: string = ids.cash.id;
     const stockId: string = ids.stock.id;
     const ccId: string = ids.cc.id;
+    const loanId: string = ids.loan.id;
     const optId: string = ids.opt.id;
 
     const createEntry = graphql(`
@@ -1117,10 +1125,12 @@ describe("netWorthHistory", () => {
         $cash: ID!
         $stock: ID!
         $cc: ID!
+        $loan: ID!
         $opt: ID!
         $cashAmt: Float!
         $stockAmt: Float!
         $ccAmt: Float!
+        $loanAmt: Float!
         $optAmt: Float!
       ) {
         netWorthCreate(
@@ -1145,6 +1155,12 @@ describe("netWorthHistory", () => {
               }
             }
             {
+              liability: {
+                categoryId: $loan
+                amounts: [{ amount: $loanAmt, currency: "GBP" }]
+              }
+            }
+            {
               option: {
                 categoryId: $opt
                 amounts: [{ amount: $optAmt, currency: "GBP" }]
@@ -1162,10 +1178,12 @@ describe("netWorthHistory", () => {
       cash: cashId,
       stock: stockId,
       cc: ccId,
+      loan: loanId,
       opt: optId,
       cashAmt: 1000,
       stockAmt: 2000,
       ccAmt: 100,
+      loanAmt: 300,
       optAmt: 500,
     });
     await runGql(createEntry, {
@@ -1173,10 +1191,12 @@ describe("netWorthHistory", () => {
       cash: cashId,
       stock: stockId,
       cc: ccId,
+      loan: loanId,
       opt: optId,
       cashAmt: 1500,
       stockAmt: 2500,
       ccAmt: 150,
+      loanAmt: 250,
       optAmt: 600,
     });
 
@@ -1206,16 +1226,18 @@ describe("netWorthHistory", () => {
       {},
     );
 
+    // Credit card folds into CASH (1000 − 100 = 900), the loan stays a
+    // liability, and net = assets − liabilities is unchanged by the fold.
     expect(data.netWorthHistory).toMatchInlineSnapshot(`
       [
         {
           "assets": {
-            "amount": 3500,
+            "amount": 3400,
           },
           "assetsByType": [
             {
               "amount": {
-                "amount": 1000,
+                "amount": 900,
               },
               "type": "CASH",
             },
@@ -1234,20 +1256,20 @@ describe("netWorthHistory", () => {
           ],
           "date": "2026-02-15",
           "liabilities": {
-            "amount": 100,
+            "amount": 300,
           },
           "net": {
-            "amount": 3400,
+            "amount": 3100,
           },
         },
         {
           "assets": {
-            "amount": 4600,
+            "amount": 4450,
           },
           "assetsByType": [
             {
               "amount": {
-                "amount": 1500,
+                "amount": 1350,
               },
               "type": "CASH",
             },
@@ -1266,10 +1288,10 @@ describe("netWorthHistory", () => {
           ],
           "date": "2026-03-15",
           "liabilities": {
-            "amount": 150,
+            "amount": 250,
           },
           "net": {
-            "amount": 4450,
+            "amount": 4200,
           },
         },
       ]

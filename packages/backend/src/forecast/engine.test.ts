@@ -136,6 +136,39 @@ describe("runForecast", () => {
     expect(points[0].net).toBe(10000);
   });
 
+  it("folds credit-card balances into the cash position, leaving net worth unchanged", () => {
+    const cash: ForecastCategory = {
+      id: "cash",
+      kind: "asset",
+      assetType: "CASH",
+    };
+    const card: ForecastCategory = {
+      id: "card",
+      kind: "liability",
+      liabilityType: "CREDIT_CARD",
+    };
+    const { points } = runForecast(
+      baseInputs({
+        categories: [cash, card],
+        startingBalance: new Map([
+          [cash.id, 10000],
+          [card.id, 2000],
+        ]),
+      }),
+    );
+    const cashAt = (p: (typeof points)[number]) =>
+      p.assetsByType.find((b) => b.type === "CASH")?.amount ?? 0;
+    // Card folds into cash: available cash = 10000 − 2000, no liability band.
+    expect(cashAt(points[0])).toBe(8000);
+    expect(points[0].liabilities).toBe(0);
+    expect(points[0].assets).toBe(8000);
+    expect(points[0].net).toBe(8000);
+    // Held flat across the horizon (both cash and card stay put).
+    expect(cashAt(points[12])).toBe(8000);
+    expect(points[12].liabilities).toBe(0);
+    expect(points[12].net).toBe(8000);
+  });
+
   it("exposes per-category workings for a LOAN", () => {
     const loan: ForecastCategory = {
       id: "loan",

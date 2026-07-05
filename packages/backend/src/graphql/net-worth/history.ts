@@ -20,11 +20,11 @@ export type NetWorthHistoryAssetBucket = {
 export type NetWorthHistoryPoint = {
   /** Any calendar date inside the target month. @gqlField */
   date: CalendarDate;
-  /** Gross assets at this point, grouped by asset type. Empty buckets are omitted. @gqlField */
+  /** Assets at this point, grouped by asset type. Empty buckets are omitted. The `CASH` bucket is net of credit-card balances (folded in as negative cash), so it can be lower than raw cash — or negative. @gqlField */
   assetsByType: NetWorthHistoryAssetBucket[];
-  /** Gross assets total at this point, in the home currency. @gqlField */
+  /** Assets total at this point, in the home currency — net of credit-card balances folded into cash. @gqlField */
   assets: Money;
-  /** Total liabilities at this point (positive magnitude), in the home currency. Liabilities marked `skip` are excluded. @gqlField */
+  /** Total liabilities at this point (positive magnitude), in the home currency. Excludes liabilities marked `skip` and credit cards (which fold into the cash position instead). @gqlField */
   liabilities: Money;
   /** Net worth at this point: `assets − liabilities`. May be negative when debts exceed assets. @gqlField */
   net: Money;

@@ -77,11 +77,11 @@ export type NetWorthCurrentBreakdown = {
 export type NetWorthCurrent = {
   /** @gqlField */
   date: CalendarDate;
-  /** Gross assets at this point, grouped by asset type. @gqlField */
+  /** Assets at this point, grouped by asset type. The `CASH` bucket is net of credit-card balances (folded in as negative cash). @gqlField */
   assetsByType: NetWorthHistoryAssetBucket[];
-  /** Gross assets total, in the home currency. @gqlField */
+  /** Assets total, in the home currency — net of credit-card balances folded into cash. @gqlField */
   assets: Money;
-  /** Total liabilities (positive magnitude), in the home currency. @gqlField */
+  /** Total liabilities (positive magnitude), in the home currency. Excludes credit cards, which fold into the cash position instead. @gqlField */
   liabilities: Money;
   /** Net worth: `assets − liabilities`. @gqlField */
   net: Money;
@@ -635,11 +635,23 @@ export async function netWorthCurrent(
       assetsTotal += amt;
     }
   }
+  // Fold credit-card balances into the cash position: a card balance is
+  // spent-but-not-settled cash, so it reduces available cash rather than
+  // showing as a standalone liability. Net worth is unchanged either way.
+  let creditCardOwed = 0;
   let liabilitiesTotal = 0;
   for (const [id, amt] of finalLiab) {
     const cat = liabCatById.get(id);
     if (!cat || cat.skip) continue;
+    if (cat.type === "CREDIT_CARD") {
+      creditCardOwed += amt;
+      continue;
+    }
     liabilitiesTotal += amt;
+  }
+  if (creditCardOwed !== 0) {
+    byType.set("CASH", (byType.get("CASH") ?? 0) - creditCardOwed);
+    assetsTotal -= creditCardOwed;
   }
 
   const assetsByType: NetWorthHistoryAssetBucket[] = [...byType.entries()]

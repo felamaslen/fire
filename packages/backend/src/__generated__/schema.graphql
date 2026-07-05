@@ -1781,16 +1781,22 @@ type NetWorthCurrencyRate {
 Predicted net worth at "today" — same shape as a `NetWorthHistoryPoint`, plus a `breakdown` of where the change from the previous snapshot came from (income, bills, investment growth, loan interest, etc.).
 """
 type NetWorthCurrent {
-  """Gross assets total, in the home currency."""
+  """
+  Assets total, in the home currency — net of credit-card balances folded into cash.
+  """
   assets: Money!
-  """Gross assets at this point, grouped by asset type."""
+  """
+  Assets at this point, grouped by asset type. The `CASH` bucket is net of credit-card balances (folded in as negative cash).
+  """
   assetsByType: [NetWorthHistoryAssetBucket!]!
   """
   Per-source signed contributions to the change between the previous snapshot and the predicted current value. The sum is approximately the net delta (off-by-zero contributions from washes such as cash → wrapper transfers and loan repayments are intentionally not surfaced).
   """
   breakdown: [NetWorthCurrentBreakdown!]!
   date: Date!
-  """Total liabilities (positive magnitude), in the home currency."""
+  """
+  Total liabilities (positive magnitude), in the home currency. Excludes credit cards, which fold into the cash position instead.
+  """
   liabilities: Money!
   """Net worth: `assets − liabilities`."""
   net: Money!
@@ -2040,16 +2046,18 @@ type NetWorthHistoryAssetBucket {
 A single point on the net-worth history timeline — one entry per recorded month.
 """
 type NetWorthHistoryPoint {
-  """Gross assets total at this point, in the home currency."""
+  """
+  Assets total at this point, in the home currency — net of credit-card balances folded into cash.
+  """
   assets: Money!
   """
-  Gross assets at this point, grouped by asset type. Empty buckets are omitted.
+  Assets at this point, grouped by asset type. Empty buckets are omitted. The `CASH` bucket is net of credit-card balances (folded in as negative cash), so it can be lower than raw cash — or negative.
   """
   assetsByType: [NetWorthHistoryAssetBucket!]!
   """Any calendar date inside the target month."""
   date: Date!
   """
-  Total liabilities at this point (positive magnitude), in the home currency. Liabilities marked `skip` are excluded.
+  Total liabilities at this point (positive magnitude), in the home currency. Excludes liabilities marked `skip` and credit cards (which fold into the cash position instead).
   """
   liabilities: Money!
   """

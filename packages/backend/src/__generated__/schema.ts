@@ -1873,12 +1873,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 assets: {
-                    description: "Gross assets total, in the home currency.",
+                    description: "Assets total, in the home currency \u2014 net of credit-card balances folded into cash.",
                     name: "assets",
                     type: new GraphQLNonNull(MoneyType)
                 },
                 assetsByType: {
-                    description: "Gross assets at this point, grouped by asset type.",
+                    description: "Assets at this point, grouped by asset type. The `CASH` bucket is net of credit-card balances (folded in as negative cash).",
                     name: "assetsByType",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthHistoryAssetBucketType)))
                 },
@@ -1892,7 +1892,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(DateType)
                 },
                 liabilities: {
-                    description: "Total liabilities (positive magnitude), in the home currency.",
+                    description: "Total liabilities (positive magnitude), in the home currency. Excludes credit cards, which fold into the cash position instead.",
                     name: "liabilities",
                     type: new GraphQLNonNull(MoneyType)
                 },
@@ -1910,12 +1910,12 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
         fields() {
             return {
                 assets: {
-                    description: "Gross assets total at this point, in the home currency.",
+                    description: "Assets total at this point, in the home currency \u2014 net of credit-card balances folded into cash.",
                     name: "assets",
                     type: new GraphQLNonNull(MoneyType)
                 },
                 assetsByType: {
-                    description: "Gross assets at this point, grouped by asset type. Empty buckets are omitted.",
+                    description: "Assets at this point, grouped by asset type. Empty buckets are omitted. The `CASH` bucket is net of credit-card balances (folded in as negative cash), so it can be lower than raw cash \u2014 or negative.",
                     name: "assetsByType",
                     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(NetWorthHistoryAssetBucketType)))
                 },
@@ -1925,7 +1925,7 @@ export function getSchema(config: SchemaConfig): GraphQLSchema {
                     type: new GraphQLNonNull(DateType)
                 },
                 liabilities: {
-                    description: "Total liabilities at this point (positive magnitude), in the home currency. Liabilities marked `skip` are excluded.",
+                    description: "Total liabilities at this point (positive magnitude), in the home currency. Excludes liabilities marked `skip` and credit cards (which fold into the cash position instead).",
                     name: "liabilities",
                     type: new GraphQLNonNull(MoneyType)
                 },
