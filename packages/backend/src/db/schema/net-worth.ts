@@ -375,7 +375,7 @@ export const netWorthValueAmountsRelations = relations(
   }),
 );
 
-/** Aggregation bucket for `NetWorthEntryBuckets`. One value per `netWorthCategoryAssetType`, plus `OPTION` (also covering `categoryOptionId` line items — the resolver merges them) and `LIABILITY` (sum of all non-`skip` liabilities, positive magnitude). */
+/** Aggregation bucket for `NetWorthEntryBuckets`. One value per `netWorthCategoryAssetType`, plus `OPTION` (also covering `categoryOptionId` line items — the resolver merges them) and `LIABILITY` (sum of all non-`skip` liabilities *except* credit cards, positive magnitude). `CREDIT_CARD` liabilities are not their own bucket — they fold into `CASH` (subtracted), since a card balance is spent-but-not-settled cash rather than carried debt. There is deliberately no `CREDIT_CARD` value here. */
 export const netWorthHistoryBucket = pgEnum("netWorthHistoryBucket", [
   "CASH",
   "STOCK",
@@ -395,7 +395,7 @@ export const NetWorthEntryBuckets = pgTable(
       .notNull()
       .references(() => NetWorthEntries.id, { onDelete: "cascade" }),
     bucket: netWorthHistoryBucket("bucket").notNull(),
-    /** Aggregated amount for this bucket at this entry, converted into the home currency via the entry's captured `NetWorthCurrencyRates`. Stored in fractional units of `HOME_CURRENCY` (e.g. pence for `GBP`). Always non-negative for the `LIABILITY` bucket — liabilities are stored signed in `NetWorthValueAmounts` but surfaced as a positive magnitude here. */
+    /** Aggregated amount for this bucket at this entry, converted into the home currency via the entry's captured `NetWorthCurrencyRates`. Stored in fractional units of `HOME_CURRENCY` (e.g. pence for `GBP`). Always non-negative for the `LIABILITY` bucket — liabilities are stored signed in `NetWorthValueAmounts` but surfaced as a positive magnitude here. The `CASH` bucket nets credit-card balances (subtracted as `-ABS(...)`) into the cash position, so it may be negative when cards owed exceed cash held. */
     amountHomeMinor: bigint("amountHomeMinor", { mode: "number" }).notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
@@ -433,7 +433,7 @@ export const NetWorthEntryBuckets_unlogged = pgCustomSQL(
 // any whitespace difference between the migrated and the schema.sql versions
 // shows up as drift. Do not re-indent.
 
-/** Recomputes `NetWorthEntryBuckets` rows for the given entry IDs. Deletes existing buckets in scope, then re-inserts one row per non-zero bucket per entry. Reads `NetWorthCurrencyRates` for FX, `NetWorthCategoryAssets.type` to bucket assets, `NetWorthCategoryLiabilities.skip` to drop hidden liabilities. Treats `categoryOptionId` line items as the `OPTION` bucket (matching the resolver). Idempotent. */
+/** Recomputes `NetWorthEntryBuckets` rows for the given entry IDs. Deletes existing buckets in scope, then re-inserts one row per non-zero bucket per entry. Reads `NetWorthCurrencyRates` for FX, `NetWorthCategoryAssets.type` to bucket assets, `NetWorthCategoryLiabilities.type` / `.skip` to bucket and drop hidden liabilities. `CREDIT_CARD` liabilities fold into the `CASH` bucket (contributing `-ABS(...)`); every other liability lands in `LIABILITY` (positive magnitude). Treats `categoryOptionId` line items as the `OPTION` bucket (matching the resolver). Idempotent. */
 export const NetWorthEntryBuckets_refresh_fn = pgCustomSQL(
   sql.raw(
     `CREATE FUNCTION "NetWorthEntryBuckets_refresh_fn"(p_entry_ids uuid[]) RETURNS void LANGUAGE plpgsql AS $$
@@ -449,6 +449,7 @@ BEGIN
     SELECT
       v."entryId",
       CASE
+        WHEN cl.type = 'CREDIT_CARD' THEN 'CASH'::"netWorthHistoryBucket"
         WHEN v."categoryLiabilityId" IS NOT NULL THEN 'LIABILITY'::"netWorthHistoryBucket"
         WHEN v."categoryOptionId"    IS NOT NULL THEN 'OPTION'::"netWorthHistoryBucket"
         ELSE ca.type::text::"netWorthHistoryBucket"
@@ -471,7 +472,8 @@ BEGIN
           )
         * power(10, "Currency_scale"('${HOME_CURRENCY}'::"CurrencyCode"))::numeric
       )::bigint AS home_minor,
-      v."categoryLiabilityId" IS NOT NULL AS is_liability
+      v."categoryLiabilityId" IS NOT NULL AS is_liability,
+      COALESCE(cl.type = 'CREDIT_CARD', false) AS is_credit_card
     FROM "NetWorthValues" v
     INNER JOIN "NetWorthValueAmounts" a ON a."valueId" = v.id
     LEFT JOIN "NetWorthCategoryAssets" ca ON ca.id = v."categoryAssetId"
@@ -481,12 +483,12 @@ BEGIN
   SELECT
     "entryId",
     bucket,
-    SUM(CASE WHEN is_liability THEN ABS(home_minor) ELSE home_minor END)::bigint AS "amountHomeMinor"
+    SUM(CASE WHEN is_credit_card THEN -ABS(home_minor) WHEN is_liability THEN ABS(home_minor) ELSE home_minor END)::bigint AS "amountHomeMinor"
   FROM converted
   WHERE NOT (is_liability AND liability_skip)
     AND home_minor IS NOT NULL
   GROUP BY "entryId", bucket
-  HAVING SUM(CASE WHEN is_liability THEN ABS(home_minor) ELSE home_minor END) <> 0;
+  HAVING SUM(CASE WHEN is_credit_card THEN -ABS(home_minor) WHEN is_liability THEN ABS(home_minor) ELSE home_minor END) <> 0;
 END;
 $$;`,
   ),
@@ -546,7 +548,8 @@ BEGIN
        WHERE nr.type IS DISTINCT FROM o.type
     );
   ELSIF TG_TABLE_NAME = 'NetWorthCategoryLiabilities' THEN
-    -- Only re-bucket when skip actually changed; other column edits
+    -- Re-bucket when skip or type changed; type decides whether the balance
+    -- folds into CASH (CREDIT_CARD) or lands in LIABILITY. Other column edits
     -- (name, interestRate, billedFromAccountId) don't affect the totals.
     affected := affected || ARRAY(
       SELECT DISTINCT v."entryId"
@@ -554,6 +557,7 @@ BEGIN
         INNER JOIN old_rows o ON o.id = nr.id
         INNER JOIN "NetWorthValues" v ON v."categoryLiabilityId" = nr.id
        WHERE nr.skip IS DISTINCT FROM o.skip
+          OR nr.type IS DISTINCT FROM o.type
     );
   END IF;
 

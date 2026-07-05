@@ -1161,7 +1161,8 @@ BEGIN
        WHERE nr.type IS DISTINCT FROM o.type
     );
   ELSIF TG_TABLE_NAME = 'NetWorthCategoryLiabilities' THEN
-    -- Only re-bucket when skip actually changed; other column edits
+    -- Re-bucket when skip or type changed; type decides whether the balance
+    -- folds into CASH (CREDIT_CARD) or lands in LIABILITY. Other column edits
     -- (name, interestRate, billedFromAccountId) don't affect the totals.
     affected := affected || ARRAY(
       SELECT DISTINCT v."entryId"
@@ -1169,6 +1170,7 @@ BEGIN
         INNER JOIN old_rows o ON o.id = nr.id
         INNER JOIN "NetWorthValues" v ON v."categoryLiabilityId" = nr.id
        WHERE nr.skip IS DISTINCT FROM o.skip
+          OR nr.type IS DISTINCT FROM o.type
     );
   END IF;
 
@@ -1194,6 +1196,7 @@ BEGIN
     SELECT
       v."entryId",
       CASE
+        WHEN cl.type = 'CREDIT_CARD' THEN 'CASH'::"netWorthHistoryBucket"
         WHEN v."categoryLiabilityId" IS NOT NULL THEN 'LIABILITY'::"netWorthHistoryBucket"
         WHEN v."categoryOptionId"    IS NOT NULL THEN 'OPTION'::"netWorthHistoryBucket"
         ELSE ca.type::text::"netWorthHistoryBucket"
@@ -1216,7 +1219,8 @@ BEGIN
           )
         * power(10, "Currency_scale"('GBP'::"CurrencyCode"))::numeric
       )::bigint AS home_minor,
-      v."categoryLiabilityId" IS NOT NULL AS is_liability
+      v."categoryLiabilityId" IS NOT NULL AS is_liability,
+      COALESCE(cl.type = 'CREDIT_CARD', false) AS is_credit_card
     FROM "NetWorthValues" v
     INNER JOIN "NetWorthValueAmounts" a ON a."valueId" = v.id
     LEFT JOIN "NetWorthCategoryAssets" ca ON ca.id = v."categoryAssetId"
@@ -1226,12 +1230,12 @@ BEGIN
   SELECT
     "entryId",
     bucket,
-    SUM(CASE WHEN is_liability THEN ABS(home_minor) ELSE home_minor END)::bigint AS "amountHomeMinor"
+    SUM(CASE WHEN is_credit_card THEN -ABS(home_minor) WHEN is_liability THEN ABS(home_minor) ELSE home_minor END)::bigint AS "amountHomeMinor"
   FROM converted
   WHERE NOT (is_liability AND liability_skip)
     AND home_minor IS NOT NULL
   GROUP BY "entryId", bucket
-  HAVING SUM(CASE WHEN is_liability THEN ABS(home_minor) ELSE home_minor END) <> 0;
+  HAVING SUM(CASE WHEN is_credit_card THEN -ABS(home_minor) WHEN is_liability THEN ABS(home_minor) ELSE home_minor END) <> 0;
 END;
 $$;
 
